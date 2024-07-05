@@ -1,0 +1,14 @@
+{
+    "entry": [
+        "frontend/js/main.js"
+    ],
+    "bundle": true,
+    "minify": true,
+    "outdir": "dist",
+    "loader": {
+        ".js": "jsx",
+        ".png": "file",
+        ".ttf": "file",
+        ".woff2": "file"
+    }
+}

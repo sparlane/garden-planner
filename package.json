@@ -1,0 +1,32 @@
+{
+  "name": "garden-planner",
+  "version": "1.0.0",
+  "main": "frontend/main.js",
+  "scripts": {
+    "check": "eslint frontend/js/",
+    "build-only": "esbuild $(esbuild-config)",
+    "build": "esbuild $(esbuild-config) && cp -dpR dist/* map/static/",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sparlane/garden-planner.git"
+  },
+  "author": "",
+  "license": "",
+  "description": "",
+  "dependencies": {
+    "bootstrap": "^5.3.3",
+    "esbuild": "^0.22.0",
+    "esbuild-config": "^1.0.1",
+    "jquery": "^3.7.1",
+    "react-bootstrap": "^2.10.4",
+    "react-datetime-picker": "^6.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.6.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-react": "^7.34.3",
+    "globals": "^15.8.0"
+  }
+}
