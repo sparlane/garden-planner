@@ -33,6 +33,7 @@ ALLOWED_HOSTS = ['localhost']
 INSTALLED_APPS = [
     "plants",
     "seeds",
+    "garden",
     "rest_framework",
     "django.contrib.admin",
     "django.contrib.auth",
