@@ -23,4 +23,5 @@ urlpatterns = [
     path("", include('frontend.urls')),
     path("plants/", include('plants.urls')),
     path("garden/", include('garden.urls')),
+    path("seeds/", include('seeds.urls')),
 ]
