@@ -6,6 +6,7 @@ import * as ReactDOM from 'react-dom/client'
 
 import { GPTopBar } from './menu.js'
 import { PlantsView } from './plants.js'
+import { SeedSuppliersTable } from './seeds.js'
 
 class FrontEndPage extends React.Component {
   constructor (props) {
@@ -28,6 +29,9 @@ class FrontEndPage extends React.Component {
     let view = (<></>)
     if (this.state.selectedView === 'plants') {
       view = (<PlantsView />)
+    }
+    else if (this.state.selectedView === 'seeds-supplier') {
+      view = (<SeedSuppliersTable />)
     }
     return (
       <>

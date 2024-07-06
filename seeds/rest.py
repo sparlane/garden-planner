@@ -6,19 +6,19 @@ from .models import Supplier, Seeds, SeedPacket
 class SupplierSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Supplier
-        fields = ['name', 'website', 'notes']
+        fields = ['pk', 'name', 'website', 'notes']
 
 
 class SeedsSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = Seeds
-        fields = ['supplier', 'plant_variety', 'supplier_code', 'url', 'notes']
+        fields = ['pk', 'supplier', 'plant_variety', 'supplier_code', 'url', 'notes']
 
 
 class SeedPacketSerializer(serializers.HyperlinkedModelSerializer):
     class Meta:
         model = SeedPacket
-        fields = ['seeds', 'purchase_date', 'sow_by', 'notes']
+        fields = ['pk', 'seeds', 'purchase_date', 'sow_by', 'notes']
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
