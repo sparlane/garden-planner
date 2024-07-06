@@ -4,17 +4,43 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 
+import { GPTopBar } from './menu.js'
+import { PlantsView } from './plants.js'
+
 class FrontEndPage extends React.Component {
-    render() {
-        return (
-            <b>Hello</b>
-        )
+  constructor (props) {
+    super(props)
+
+    this.state = {
+      selectedView: 'gardens'
     }
+
+    this.updateSelectedView = this.updateSelectedView.bind(this)
+  }
+
+  updateSelectedView (view) {
+    this.setState({
+      selectedView: view
+    })
+  }
+
+  render() {
+    let view = (<></>)
+    if (this.state.selectedView === 'plants') {
+      view = (<PlantsView />)
+    }
+    return (
+      <>
+        <GPTopBar setView={this.updateSelectedView} />
+        { view }
+      </>
+    )
+  }
 }
 
 function createFrontEnd (elementId) {
   const div = ReactDOM.createRoot(document.getElementById(elementId))
-  div.render(<><FrontEndPage /></>)
+  div.render(<FrontEndPage />)
 }
 
 globalThis.createFrontEnd = createFrontEnd

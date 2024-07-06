@@ -3,22 +3,22 @@ from rest_framework import routers, serializers, viewsets
 from .models import PlantFamily, Plant, PlantVariety
 
 
-class PlantFamilySerializer(serializers.HyperlinkedModelSerializer):
+class PlantFamilySerializer(serializers.ModelSerializer):
     class Meta:
         model = PlantFamily
-        fields = ['name', 'notes']
+        fields = ['pk', 'name', 'notes']
 
 
-class PlantSerializer(serializers.HyperlinkedModelSerializer):
+class PlantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plant
-        fields = ['family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot']
+        fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot']
 
 
-class PlantVarietySerializer(serializers.HyperlinkedModelSerializer):
+class PlantVarietySerializer(serializers.ModelSerializer):
     class Meta:
         model = PlantVariety
-        fields = ['plant', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot']
+        fields = ['pk', 'plant', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot']
 
 
 class PlantFamilyViewSet(viewsets.ModelViewSet):
