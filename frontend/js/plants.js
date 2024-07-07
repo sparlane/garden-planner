@@ -226,6 +226,10 @@ class NewPlantVarietyRow extends React.Component {
       spacing: null,
       row_spacing: null,
       per_square_foot: null,
+      germination_days_min: null,
+      germination_days_max: null,
+      maturity_days_min: null,
+      maturity_days_max: null,
       notes: ''
     }
 
@@ -234,6 +238,10 @@ class NewPlantVarietyRow extends React.Component {
     this.updateSpacing = this.updateSpacing.bind(this)
     this.updateRowSpacing = this.updateRowSpacing.bind(this)
     this.updatePerSquareFtRate = this.updatePerSquareFtRate.bind(this)
+    this.updateGerminationMin = this.updateGerminationMin.bind(this)
+    this.updateGerminationMax = this.updateGerminationMax.bind(this)
+    this.updateMaturityMin = this.updateMaturityMin.bind(this)
+    this.updateMaturityMax = this.updateMaturityMax.bind(this)
     this.add = this.add.bind(this)
   }
 
@@ -265,6 +273,34 @@ class NewPlantVarietyRow extends React.Component {
     this.setState({ per_square_foot: value })
   }
 
+  updateGerminationMin (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ germination_days_min: value })
+  }
+
+  updateGerminationMax (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ germination_days_max: value })
+  }
+
+  updateMaturityMin (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ maturity_days_min: value })
+  }
+
+  updateMaturityMax (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ maturity_days_max: value })
+  }
+
   updateNotes (event) {
     const target = event.target
     const value = target.value
@@ -287,6 +323,18 @@ class NewPlantVarietyRow extends React.Component {
     if (this.state.per_square_foot !== '' && this.state.per_square_foot !== null) {
       data['plants_per_square_foot'] = this.state.per_square_foot
     }
+    if (this.state.germination_days_min !== '' && this.state.germination_days_min !== null) {
+      data['germination_days_min'] = this.state.germination_days_min
+    }
+    if (this.state.germination_days_max !== '' && this.state.germination_days_max !== null) {
+      data['germination_days_max'] = this.state.germination_days_max
+    }
+    if (this.state.maturity_days_min !== '' && this.state.maturity_days_min !== null) {
+      data['maturity_days_min'] = this.state.maturity_days_min
+    }
+    if (this.state.maturity_days_max !== '' && this.state.maturity_days_max !== null) {
+      data['maturity_days_max'] = this.state.maturity_days_max
+    }
     $.post('/plants/variety/', data, this.props.done())
   }
 
@@ -299,6 +347,8 @@ class NewPlantVarietyRow extends React.Component {
         <td><input type='number' onChange={this.updateSpacing}></input></td>
         <td><input type='number' onChange={this.updateRowSpacing}></input></td>
         <td><input type='number' onChange={this.updatePerSquareFtRate}></input></td>
+        <td><input type='number' onChange={this.updateGerminationMin} /> - <input type='number' onChange={this.updateGerminationMax} /></td>
+        <td><input type='number' onChange={this.updateMaturityMin} /> - <input type='number' onChange={this.updateMaturityMax} /></td>
         <td><textarea onChange={this.updateNotes} /></td>
         <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
       </tr>
@@ -322,6 +372,8 @@ class PlantVarietyRow extends React.Component {
         <td>{this.props.variety.spacing}</td>
         <td>{this.props.variety.inter_row_spacing}</td>
         <td>{this.props.variety.plants_per_square_foot}</td>
+        <td>{this.props.variety.germination_days_min}-{this.props.variety.germination_days_max}</td>
+        <td>{this.props.variety.maturity_days_min}-{this.props.variety.maturity_days_max}</td>
         <td>{this.props.variety.notes}</td>
       </tr>
     )
@@ -463,9 +515,11 @@ class PlantsView extends React.Component {
             <td>Family <a href='#' onClick={this.showNewFamilyAdd}>+</a></td>
             <td>Plant</td>
             <td>Variety</td>
-            <td>Spacing</td>
-            <td>Row Spacing</td>
+            <td>Spacing (mm)</td>
+            <td>Row Spacing (mm)</td>
             <td>per sq/ft</td>
+            <td>Germination (days)</td>
+            <td>Maturity (days)</td>
             <td>Notes</td>
           </tr>
         </thead>
