@@ -3,19 +3,19 @@ from rest_framework import routers, serializers, viewsets
 from .models import Supplier, Seeds, SeedPacket
 
 
-class SupplierSerializer(serializers.HyperlinkedModelSerializer):
+class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = ['pk', 'name', 'website', 'notes']
 
 
-class SeedsSerializer(serializers.HyperlinkedModelSerializer):
+class SeedsSerializer(serializers.ModelSerializer):
     class Meta:
         model = Seeds
         fields = ['pk', 'supplier', 'plant_variety', 'supplier_code', 'url', 'notes']
 
 
-class SeedPacketSerializer(serializers.HyperlinkedModelSerializer):
+class SeedPacketSerializer(serializers.ModelSerializer):
     class Meta:
         model = SeedPacket
         fields = ['pk', 'seeds', 'purchase_date', 'sow_by', 'notes']

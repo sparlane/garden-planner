@@ -160,4 +160,230 @@ class SeedSuppliersTable extends React.Component {
   }
 }
 
-export { SeedSuppliersTable }
+class NewSeedRow extends React.Component {
+  constructor (props) {
+    super(props)
+
+    this.state = {
+      supplier: null,
+      variety: null,
+      supplierCode: null,
+      website: null,
+      notes: null
+    }
+
+    this.updateSupplier = this.updateSupplier.bind(this)
+    this.updateVariety = this.updateVariety.bind(this)
+    this.updateSupplierCode = this.updateSupplierCode.bind(this)
+    this.updateWebsite = this.updateWebsite.bind(this)
+    this.updateNotes = this.updateNotes.bind(this)
+
+    this.add = this.add.bind(this)
+  }
+
+  updateSupplier (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ supplier: value })
+  }
+
+  updateVariety (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ variety: value })
+  }
+
+  updateSupplierCode (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ supplierCode: value })
+  }
+
+  updateWebsite (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ website: value })
+  }
+
+  updateNotes (event) {
+    const target = event.target
+    const value = target.value
+
+    this.setState({ notes: value })
+  }
+
+  add () {
+    let supplier = this.state.supplier
+    if (supplier === null || supplier === '') {
+      supplier = this.props.suppliers[0].pk
+    }
+    let variety = this.state.variety
+    if (variety === null || variety === '') {
+      variety = this.props.varieties[0].pk
+    }
+    const data = {
+      supplier: supplier,
+      plant_variety: variety,
+      notes: this.state.notes
+    }
+    if (this.state.supplierCode !== '' && this.state.supplierCode !== null) {
+      data['supplier_code'] = this.state.supplierCode
+    }
+    if (this.state.website !== '' && this.state.website !== null) {
+      data['url'] = this.state.website
+    }
+    $.post('/seeds/seeds/', data, this.props.done())
+  }
+
+  render () {
+    const suppliers = []
+    for (const s in this.props.suppliers) {
+      const supplierData = this.props.suppliers[s]
+      suppliers.push(<option key={supplierData.pk} value={supplierData.pk}>{supplierData.name}</option>)
+    }
+    const varieties = []
+    for (const v in this.props.varieties) {
+      const varietyData = this.props.varieties[v]
+      varieties.push(<option key={varietyData.pk} value={varietyData.pk}>{varietyData.name}</option>)
+    }
+    return (
+      <tr>
+        <td><select onChange={this.updateSupplier}>{suppliers}</select></td>
+        <td><select onChange={this.updateVariety}>{varieties}</select></td>
+        <td><input type='text' onChange={this.updateSupplierCode}/></td>
+        <td><input type='text' onChange={this.updateWebsite}/></td>
+        <td><textarea onChange={this.updateNotes} /></td>
+        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+      </tr>
+    )
+  }
+}
+NewSeedRow.propTypes = {
+  suppliers: PropTypes.array.isRequired,
+  varieties: PropTypes.array.isRequired,
+  done: PropTypes.func.isRequired
+}
+
+class SeedRow extends React.Component {
+  render () {
+    const supplier = this.props.suppliers.find((s) => s.pk == this.props.seed.supplier)
+    const variety = this.props.varieties.find((v) => v.pk === this.props.seed.plant_variety)
+    return (
+      <tr>
+        <td>{supplier.name}</td>
+        <td>{variety.name}</td>
+        <td>{this.props.seed.supplier_code}</td>
+        <td><a href={this.props.seed.url}>{this.props.seed.url}</a></td>
+        <td>{this.props.seed.notes}</td>
+      </tr>
+    )
+  }
+}
+SeedRow.propTypes = {
+  suppliers: PropTypes.array.isRequired,
+  varieties: PropTypes.array.isRequired,
+  seed: PropTypes.object.isRequired
+}
+
+class SeedTable extends React.Component {
+  constructor (props) {
+    super(props)
+
+    this.state = {
+      showSeedAdd: false,
+      suppliers: [],
+      varieties: [],
+      seeds: []
+    }
+
+    this.showNewSeedAdd = this.showNewSeedAdd.bind(this)
+    this.hideNewSeedAdd = this.hideNewSeedAdd.bind(this)
+
+    this.updateData = this.updateData.bind(this)
+    this.updateSupplierList = this.updateSupplierList.bind(this)
+    this.updateVarietiesList = this.updateVarietiesList.bind(this)
+    this.updateSeedList = this.updateSeedList.bind(this)
+  }
+
+  showNewSeedAdd () {
+    this.setState({
+      showSeedAdd: true
+    })
+  }
+
+  hideNewSeedAdd () {
+    this.setState({
+      showSeedAdd: false
+    })
+  }
+
+  componentDidMount () {
+    $.ajaxSetup({ timeout: 2500 })
+    this.updateData()
+    this.timer = setInterval(() => this.updateData(), 10000)
+  }
+
+  componentWillUnmount () {
+    clearInterval(this.timer)
+    this.timer = null
+  }
+
+  updateSupplierList (data) {
+    this.setState({
+      suppliers: data
+    })
+  }
+
+  updateVarietiesList (data) {
+    this.setState({
+      varieties: data
+    })
+  }
+
+  updateSeedList (data) {
+    this.setState({
+      seeds: data
+    })
+  }
+
+  async updateData () {
+    await $.getJSON('/seeds/supplier/', this.updateSupplierList)
+    await $.getJSON('/plants/variety/', this.updateVarietiesList)
+    await $.getJSON('/seeds/seeds/', this.updateSeedList)
+  }
+
+  render () {
+    const rows = []
+    if (this.state.showSeedAdd) {
+      rows.push(<NewSeedRow key='new' suppliers={this.state.suppliers} varieties={this.state.varieties} done={this.hideNewSeedAdd} />)
+    }
+    for (const s in this.state.seeds) {
+      const seedData = this.state.seeds[s]
+      rows.push(<SeedRow key={seedData.pk} suppliers={this.state.suppliers} varieties={this.state.varieties} seed={seedData} />)
+    }
+    return (
+      <Table>
+        <thead>
+          <tr>
+            <td>Supplier</td>
+            <td>Variety</td>
+            <td>Supplier Code</td>
+            <td>Link</td>
+            <td>Notes</td>
+            <td><a href='#' onClick={this.showNewSeedAdd}>+</a></td>
+          </tr>
+        </thead>
+        <tbody>
+          {rows}
+        </tbody>
+      </Table>
+    )
+  }
+}
+
+
+export { SeedSuppliersTable, SeedTable }
