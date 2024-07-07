@@ -1,5 +1,6 @@
 from django.db import models
-from django.utils import timezone
+
+from datetime import date
 
 from seeds.models import SeedPacket
 from garden.models import GardenRow, GardenSquare
@@ -9,7 +10,7 @@ class Planting(models.Model):
     """
     An abstract class for planting of seeds
     """
-    planted = models.DateField(default=timezone.now)
+    planted = models.DateField(default=date.today)
     seeds_used = models.ForeignKey(SeedPacket, on_delete=models.PROTECT)
     quantity = models.IntegerField()
     location = None

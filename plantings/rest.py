@@ -3,22 +3,22 @@ from rest_framework import routers, serializers, viewsets
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting
 
 
-class GardenRowDirectSowPlantingSerializer(serializers.HyperlinkedModelSerializer):
+class GardenRowDirectSowPlantingSerializer(serializers.ModelSerializer):
     class Meta:
         model = GardenRowDirectSowPlanting
-        fields = ['planted', 'seeds_used', 'quantity', 'location', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
 
 
-class GardenSquareDirectSowSerializer(serializers.HyperlinkedModelSerializer):
+class GardenSquareDirectSowSerializer(serializers.ModelSerializer):
     class Meta:
         model = GardenRowDirectSowPlanting
-        fields = ['planted', 'seeds_used', 'quantity', 'location', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
 
 
-class SeedTrayPlantingSerializer(serializers.HyperlinkedModelSerializer):
+class SeedTrayPlantingSerializer(serializers.ModelSerializer):
     class Meta:
         model = SeedTrayPlanting
-        fields = ['planted', 'seeds_used', 'quantity', 'location', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
 
 
 class GardenRowDirectSowPlantingViewSet(viewsets.ModelViewSet):
