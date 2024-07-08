@@ -7,3 +7,8 @@ markdown==3.6
 psycopg2-binary==2.9.9
 
 uwsgi==2.0.26
+
+# Checker
+pycodestyle
+pylint==3.2.*
+pylint-django==2.5.5

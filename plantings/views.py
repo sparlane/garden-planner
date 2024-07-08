@@ -1,10 +1,18 @@
+"""
+Planting views
+"""
+
 import datetime
 
 from django.http import JsonResponse
 
 from .models import SeedTrayPlanting
 
+
 def seedtray_current(request):
+    """
+    List the seedtray plantings that are currently growing
+    """
     plantings = SeedTrayPlanting.objects.all()
     planting_data = []
     for planting in plantings:
