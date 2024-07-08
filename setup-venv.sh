@@ -8,6 +8,7 @@ pip install -r requirements.txt
 
 if [ "x${NODE_DONE}" != "xyes" ]
 then
+    mkdir -p frontend/static/
     npm ci
     npm run build
 fi
