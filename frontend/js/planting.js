@@ -95,15 +95,13 @@ NewSeedTrayPlantingRow.propTypes = {
 
 class SeedTrayPlantingRow extends React.Component {
   render () {
-    const seedPacket = this.props.seedPackets.find((sp) => sp.pk === this.props.planting.seeds_used)
-    const seeds = this.props.seeds.find((s) => s.pk === seedPacket.seeds)
-    const variety = this.props.varieties.find((v) => v.pk === seeds.plant_variety)
     return (
       <tr>
-        <td>{ variety.name }</td>
+        <td>{ this.props.planting.plant } - { this.props.planting.variety }</td>
         <td>{ this.props.planting.quantity }</td>
         <td>{ this.props.planting.planted }</td>
         <td>{ this.props.planting.location }</td>
+        <td>{ this.props.planting.germination_date_early } - { this.props.planting.germination_date_late }</td>
         <td>{ this.props.planting.notes }</td>
       </tr>
     )
@@ -190,7 +188,7 @@ class SeedTrayPlantingTable extends React.Component {
 
   updatePlantingList (data) {
     this.setState({
-      plantings: data
+      plantings: data.plantings
     })
   }
 
@@ -199,7 +197,7 @@ class SeedTrayPlantingTable extends React.Component {
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
-    await $.getJSON('/plantings/seedtray/', this.updatePlantingList)
+    await $.getJSON('/plantings/seedtray/current/', this.updatePlantingList)
   }
 
   render () {
@@ -215,10 +213,11 @@ class SeedTrayPlantingTable extends React.Component {
       <Table>
         <thead>
           <tr>
-            <td>Variety <a href='#' onClick={this.showNewPlantingAdd}>+</a></td>
+            <td>Plant <a href='#' onClick={this.showNewPlantingAdd}>+</a></td>
             <td>Quantity</td>
             <td>Date</td>
             <td>Location</td>
+            <td>Expected Germination</td>
             <td>Notes</td>
           </tr>
         </thead>
