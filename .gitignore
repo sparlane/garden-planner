@@ -5,3 +5,5 @@
 __pycache__/
 /db.sqlite3
 /frontend/static/
+/gp/local_settings.py
+/gp/secretkey.txt

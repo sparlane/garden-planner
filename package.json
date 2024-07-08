@@ -5,7 +5,7 @@
   "scripts": {
     "check": "eslint frontend/js/",
     "build-only": "esbuild $(esbuild-config)",
-    "build": "esbuild $(esbuild-config) && cp -dpR dist/* map/static/",
+    "build": "esbuild $(esbuild-config) && cp -dpR dist/* frontend/static/",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
