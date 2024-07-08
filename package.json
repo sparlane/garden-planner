@@ -17,7 +17,7 @@
   "description": "",
   "dependencies": {
     "bootstrap": "^5.3.3",
-    "esbuild": "^0.22.0",
+    "esbuild": "^0.23.0",
     "esbuild-config": "^1.0.1",
     "jquery": "^3.7.1",
     "react-bootstrap": "^2.10.4",
