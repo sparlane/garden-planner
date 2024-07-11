@@ -413,7 +413,6 @@ class PlantsView extends React.Component {
   }
 
   componentDidMount () {
-    $.ajaxSetup({ timeout: 2500 })
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
