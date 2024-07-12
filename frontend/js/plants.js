@@ -454,7 +454,7 @@ class PlantsView extends React.Component {
 
   hideNewVarietyAdd () {
     this.setState({
-      showPlantAdd: null
+      showVarietyAdd: null
     })
   }
 
