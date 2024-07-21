@@ -20,7 +20,7 @@ class GardenSquareDirectSowSerializer(serializers.ModelSerializer):
     Serializer for GardenSquareDirectSowPlanting
     """
     class Meta:
-        model = GardenRowDirectSowPlanting
+        model = GardenSquareDirectSowPlanting
         fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
 
 

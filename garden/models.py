@@ -60,3 +60,17 @@ class GardenSquare(models.Model):
 
     def __str__(self):
         return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
+
+    def as_json(self):
+        """
+        Return an object that can be used as json
+        """
+        return {
+            'bed': self.bed.name,
+            'area': self.bed.area.name,
+            'name': self.name,
+            'placement_x': self.placement_x,
+            'placement_y': self.placement_y,
+            'size_x': self.size_x,
+            'size_y': self.size_y
+        }
