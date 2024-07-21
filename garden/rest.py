@@ -6,40 +6,40 @@ from rest_framework import routers, serializers, viewsets
 from .models import GardenArea, GardenBed, GardenRow, GardenSquare
 
 
-class GardenAreaSerializer(serializers.HyperlinkedModelSerializer):
+class GardenAreaSerializer(serializers.ModelSerializer):
     """
     Serializer Garden Area
     """
     class Meta:
         model = GardenArea
-        fields = ['name', 'size_x', 'size_y']
+        fields = ['pk', 'name', 'size_x', 'size_y']
 
 
-class GardenBedSerializer(serializers.HyperlinkedModelSerializer):
+class GardenBedSerializer(serializers.ModelSerializer):
     """
     Serializer for Garden Bed
     """
     class Meta:
         model = GardenBed
-        fields = ['area', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
+        fields = ['pk', 'area', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
 
-class GardenRowSerializer(serializers.HyperlinkedModelSerializer):
+class GardenRowSerializer(serializers.ModelSerializer):
     """
     Serializer for Garden Row
     """
     class Meta:
         model = GardenRow
-        fields = ['bed', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
+        fields = ['pk', 'bed', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
 
-class GardenSquareSerializer(serializers.HyperlinkedModelSerializer):
+class GardenSquareSerializer(serializers.ModelSerializer):
     """
     Serializer for Garden Square
     """
     class Meta:
         model = GardenSquare
-        fields = ['bed', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
+        fields = ['pk', 'bed', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
 
 class GardenAreaViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors

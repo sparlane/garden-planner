@@ -43,6 +43,9 @@ class GardenRow(models.Model):
     size_x = models.IntegerField()
     size_y = models.IntegerField()
 
+    def __str__(self):
+        return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
+
 
 class GardenSquare(models.Model):
     """
@@ -54,3 +57,6 @@ class GardenSquare(models.Model):
     placement_y = models.IntegerField()
     size_x = models.IntegerField()
     size_y = models.IntegerField()
+
+    def __str__(self):
+        return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
