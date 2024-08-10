@@ -66,6 +66,7 @@ class GardenSquare(models.Model):
         Return an object that can be used as json
         """
         return {
+            'pk': self.pk,
             'bed': self.bed.name,
             'area': self.bed.area.name,
             'name': self.name,

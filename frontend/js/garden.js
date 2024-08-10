@@ -38,6 +38,21 @@ class GardenAreaDisplay extends React.Component {
     ctx.stroke()
   }
 
+  fillBox (ctx, offsetX, offsetY, startX, startY, sizeX, sizeY) {
+    ctx.fillRect(this.calculateX(offsetX, startX), this.calculateY(offsetY, startY + sizeY), sizeX, sizeY)
+  }
+
+  drawSquare (ctx, bed, square) {
+    ctx.beginPath()
+    ctx.strokeStyle = 'lightblue'
+    this.drawBox(ctx, 10, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
+    const planting = this.props.plantings.find((p) => p.location.pk === square.pk)
+    if (planting) {
+      ctx.fillStyle = 'lightgreen'
+      this.fillBox(ctx, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
+    }
+  }
+
   drawBed (ctx, bed) {
     ctx.beginPath()
     ctx.strokeStyle = 'grey'
@@ -45,9 +60,7 @@ class GardenAreaDisplay extends React.Component {
     const squares = this.props.squares.filter((s) => s.bed === bed.pk)
     for (const idx in squares) {
       const square = squares[idx]
-      ctx.beginPath()
-      ctx.strokeStyle = 'lightblue'
-      this.drawBox(ctx, 10, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
+      this.drawSquare(ctx, bed, square)
     }
   }
 
@@ -88,7 +101,8 @@ class GardenAreaDisplay extends React.Component {
 GardenAreaDisplay.propTypes = {
   area: PropTypes.object.isRequired,
   gardenBeds: PropTypes.array.isRequired,
-  squares: PropTypes.array.isRequired
+  squares: PropTypes.array.isRequired,
+  plantings: PropTypes.array.isRequired
 }
 
 class GardenDisplay extends React.Component {
@@ -100,7 +114,8 @@ class GardenDisplay extends React.Component {
       areas: [],
       beds: [],
       rows: [],
-      squares: []
+      squares: [],
+      plantings: []
     }
 
     this.updateSelectedGardenArea = this.updateSelectedGardenArea.bind(this)
@@ -108,6 +123,7 @@ class GardenDisplay extends React.Component {
     this.updateGardenBeds = this.updateGardenBeds.bind(this)
     this.updateGardenRows = this.updateGardenRows.bind(this)
     this.updateGardenSquares = this.updateGardenSquares.bind(this)
+    this.updateGardenSquaresPlanting = this.updateGardenSquaresPlanting.bind(this)
   }
 
   componentDidMount () {
@@ -155,11 +171,18 @@ class GardenDisplay extends React.Component {
     })
   }
 
+  updateGardenSquaresPlanting (data) {
+    this.setState({
+      plantings: data['plantings']
+    })
+  }
+
   async updateData () {
     await $.getJSON('/garden/areas/', this.updateGardenAreas)
     await $.getJSON('/garden/beds/', this.updateGardenBeds)
     await $.getJSON('/garden/rows/', this.updateGardenRows)
     await $.getJSON('/garden/squares/', this.updateGardenSquares)
+    await $.getJSON('/plantings/garden/squares/current/', this.updateGardenSquaresPlanting)
   }
 
   render () {
@@ -172,7 +195,7 @@ class GardenDisplay extends React.Component {
     if (this.state.selectedArea !== null) {
       const area = this.state.areas.find((a) => a.pk === this.state.selectedArea)
       const beds = this.state.beds.filter((b) => b.area === area.pk)
-      areaView = (<GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds} squares={this.state.squares} />)
+      areaView = (<GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds} squares={this.state.squares} plantings={this.state.plantings} />)
     }
     return (
       <>
