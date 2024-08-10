@@ -295,9 +295,12 @@ class NewGardenSquarePlantingRow extends React.Component {
       seedPackets.push((<option key={seedPacketData.pk} value={seedPacketData.pk}>{variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})</option>))
     }
     const locations = [<option key='blank'></option>]
-    for (const l in this.props.gardenSquares) {
-      const gardenSquareData = this.props.gardenSquares[l]
-      locations.push(<option key={gardenSquareData.pk} value={gardenSquareData.pk}>{gardenSquareData.name}</option>)
+    for (const b in this.props.gardenBeds) {
+      const gardenBedData = this.props.gardenBeds[b]
+      for (const l in this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)) {
+        const gardenSquareData = this.props.gardenSquares[l]
+        locations.push(<option key={gardenSquareData.pk} value={gardenSquareData.pk}>{gardenBedData.name} - {gardenSquareData.name}</option>)
+      }
     }
     return (
       <tr>
@@ -317,6 +320,7 @@ NewGardenSquarePlantingRow.propTypes = {
   seeds: PropTypes.array.isRequired,
   seedPackets: PropTypes.array.isRequired,
   done: PropTypes.func.isRequired,
+  gardenBeds: PropTypes.array.isRequired,
   gardenSquares: PropTypes.array.isRequired
 }
 
@@ -354,7 +358,8 @@ class GardenSquarePlantingTable extends React.Component {
       seeds: [],
       seedPackets: [],
       plantings: [],
-      gardenSquares: []
+      gardenSquares: [],
+      gardenBeds: []
     }
 
     this.showNewPlantingAdd = this.showNewPlantingAdd.bind(this)
@@ -367,6 +372,7 @@ class GardenSquarePlantingTable extends React.Component {
     this.updateSeedPacketList = this.updateSeedPacketList.bind(this)
     this.updatePlantingList = this.updatePlantingList.bind(this)
     this.updateGardenSquares = this.updateGardenSquares.bind(this)
+    this.updateGardenBeds = this.updateGardenBeds.bind(this)
   }
 
   showNewPlantingAdd () {
@@ -427,6 +433,12 @@ class GardenSquarePlantingTable extends React.Component {
     })
   }
 
+  updateGardenBeds (data) {
+    this.setState({
+      gardenBeds: data
+    })
+  }
+
   async updateData () {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
@@ -434,12 +446,13 @@ class GardenSquarePlantingTable extends React.Component {
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
     await $.getJSON('/plantings/garden/squares/current/', this.updatePlantingList)
     await $.getJSON('/garden/squares/', this.updateGardenSquares)
+    await $.getJSON('/garden/beds/', this.updateGardenBeds)
   }
 
   render () {
     const rows = []
     if (this.state.showPlantingAdd) {
-      rows.push(<NewGardenSquarePlantingRow key='new' seedPackets={this.state.seedPackets} seeds={this.state.seeds} suppliers={this.state.suppliers} varieties={this.state.varieties} gardenSquares={this.state.gardenSquares} done={this.hideNewPlantingAdd} />)
+      rows.push(<NewGardenSquarePlantingRow key='new' seedPackets={this.state.seedPackets} seeds={this.state.seeds} suppliers={this.state.suppliers} varieties={this.state.varieties} gardenSquares={this.state.gardenSquares} gardenBeds={this.state.gardenBeds}done={this.hideNewPlantingAdd} />)
     }
     for (const p in this.state.plantings) {
       const plantingData = this.state.plantings[p]
