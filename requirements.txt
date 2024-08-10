@@ -4,7 +4,7 @@ django-filter==24.3
 markdown==3.6
 
 # Database
-psycopg2-binary==2.9.9
+psycopg[binary]==3.2.1
 
 uwsgi==2.0.26
 
