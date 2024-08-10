@@ -297,8 +297,9 @@ class NewGardenSquarePlantingRow extends React.Component {
     const locations = [<option key='blank'></option>]
     for (const b in this.props.gardenBeds) {
       const gardenBedData = this.props.gardenBeds[b]
-      for (const l in this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)) {
-        const gardenSquareData = this.props.gardenSquares[l]
+      const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
+      for (const l in bedSquares) {
+        const gardenSquareData = bedSquares[l]
         locations.push(<option key={gardenSquareData.pk} value={gardenSquareData.pk}>{gardenBedData.name} - {gardenSquareData.name}</option>)
       }
     }
