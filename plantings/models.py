@@ -45,3 +45,17 @@ class SeedTrayPlanting(Planting):
     Planting into a seed tray
     """
     location = models.CharField(max_length=1024)
+
+
+class GardenSquareTransplant(models.Model):
+    """
+    Transplant from a seedtray into a garden square
+    """
+    original_planting = models.ForeignKey(SeedTrayPlanting, on_delete=models.PROTECT)
+    transplanted = models.DateField(default=date.today)
+    quantity = models.IntegerField()
+    location = models.ForeignKey(GardenSquare, on_delete=models.PROTECT)
+    notes = models.TextField(null=True, blank=True)
+
+    def __str__(self):
+        return f'{self.quantity} {self.original_planting.seeds_used.seeds.plant_variety} planted {self.original_planting.planted} transplanted {self.transplanted} in {self.location}'
