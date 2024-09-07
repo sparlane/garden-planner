@@ -12,7 +12,7 @@ class GardenRowDirectSowPlantingSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = GardenRowDirectSowPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
 
 
 class GardenSquareDirectSowSerializer(serializers.ModelSerializer):
@@ -21,7 +21,7 @@ class GardenSquareDirectSowSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = GardenSquareDirectSowPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
 
 
 class SeedTrayPlantingSerializer(serializers.ModelSerializer):
@@ -30,7 +30,7 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = SeedTrayPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
 
 
 class GardenSquareTransplantSerializer(serializers.ModelSerializer):
@@ -39,7 +39,7 @@ class GardenSquareTransplantSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = GardenSquareTransplant
-        fields = ['pk', 'transplanted', 'original_planting', 'quantity', 'location', 'notes']
+        fields = ['pk', 'transplanted', 'original_planting', 'quantity', 'location', 'removed', 'notes']
 
 
 class GardenRowDirectSowPlantingViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
