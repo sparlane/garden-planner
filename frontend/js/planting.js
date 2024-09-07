@@ -463,6 +463,23 @@ NewGardenSquarePlantingRow.propTypes = {
 }
 
 class GardenSquarePlantingRow extends React.Component {
+  constructor (props) {
+    super (props)
+
+    this.empty = this.empty.bind(this)
+  }
+
+  empty () {
+    $.ajax({
+      url: this.props.planting.transplanted ? '/plantings/garden/squares/transplant/complete/' : '/plantings/garden/squares/complete/',
+      method: 'POST',
+      data: {'planting': this.props.planting.transplanted ? this.props.planting.transplanting_pk : this.props.planting.planting_pk},
+      beforeSend: function(xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    })
+  }
+
   render () {
     let planted = ''
     if (this.props.planting.transplanted) {
@@ -479,6 +496,7 @@ class GardenSquarePlantingRow extends React.Component {
         <td>{ this.props.planting.germination_date_early } - { this.props.planting.germination_date_late }</td>
         <td>{ this.props.planting.maturity_date_early } - { this.props.planting.maturity_date_late }</td>
         <td>{ this.props.planting.notes }</td>
+        <td><Button onClick={this.empty}>Harvested</Button></td>
       </tr>
     )
   }

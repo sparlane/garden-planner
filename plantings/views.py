@@ -116,3 +116,29 @@ def gardensquare_current(request):
             'maturity_date_late': transplanting.transplanted + datetime.timedelta(days=maturity_max)
         })
     return JsonResponse({'plantings': planting_data})
+
+
+def gardensquare_complete(request):
+    """
+    Harvest Complete/Remove the remaining contents of a garden square
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    planting = get_object_or_404(GardenSquareDirectSowPlanting, pk=request.POST.get('planting'))
+    planting.removed = True
+    planting.save()
+    return HttpResponse(status=204)
+
+
+def gardensquare_transplant_complete(request):
+    """
+    Harvest Complete/Remove the remaining contents of a garden square (that was transplanted)
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    planting = get_object_or_404(GardenSquareTransplant, pk=request.POST.get('planting'))
+    planting.removed = True
+    planting.save()
+    return HttpResponse(status=204)
