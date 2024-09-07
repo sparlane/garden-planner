@@ -14,7 +14,7 @@ def seedtray_current(request):
     """
     List the seedtray plantings that are currently growing
     """
-    plantings = SeedTrayPlanting.objects.filter(removed=False)
+    plantings = SeedTrayPlanting.objects.filter(removed=False).order_by('planted')
     planting_data = []
     for planting in plantings:
         variety = planting.seeds_used.seeds.plant_variety
@@ -55,7 +55,7 @@ def gardensquare_current(request):
     """
     List the GardenSquare plantings that are currently growing
     """
-    plantings = GardenSquareDirectSowPlanting.objects.filter(removed=False)
+    plantings = GardenSquareDirectSowPlanting.objects.filter(removed=False).order_by('planted')
     planting_data = []
     for planting in plantings:
         variety = planting.seeds_used.seeds.plant_variety
