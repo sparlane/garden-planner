@@ -39,6 +39,7 @@ class SeedPacket(models.Model):
     seeds = models.ForeignKey(Seeds, on_delete=models.PROTECT)
     purchase_date = models.DateField(null=True, blank=True)
     sow_by = models.DateField(null=True, blank=True)
+    empty = models.BooleanField(default=False)
     notes = models.TextField(null=True, blank=True)
 
     def __str__(self):

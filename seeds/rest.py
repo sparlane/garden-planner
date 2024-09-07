@@ -30,7 +30,7 @@ class SeedPacketSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = SeedPacket
-        fields = ['pk', 'seeds', 'purchase_date', 'sow_by', 'notes']
+        fields = ['pk', 'seeds', 'purchase_date', 'sow_by', 'empty', 'notes']
 
 
 class SupplierViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
@@ -49,9 +49,17 @@ class SeedsViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     serializer_class = SeedsSerializer
 
 
-class SeedPacketViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedPacketCurrentViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
-    ViewSet of SeedPackets
+    ViewSet of non-empty SeedPackets
+    """
+    queryset = SeedPacket.objects.filter(empty=False)
+    serializer_class = SeedPacketSerializer
+
+
+class SeedPacketAllViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of all SeedPackets
     """
     queryset = SeedPacket.objects.all()
     serializer_class = SeedPacketSerializer
@@ -60,4 +68,5 @@ class SeedPacketViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ance
 router = routers.DefaultRouter()
 router.register(r'supplier', SupplierViewSet)
 router.register(r'seeds', SeedsViewSet)
-router.register(r'packets', SeedPacketViewSet)
+router.register(r'packets', SeedPacketCurrentViewSet)
+router.register(r'packets/all', SeedPacketAllViewSet, 'AllSeedPackets')

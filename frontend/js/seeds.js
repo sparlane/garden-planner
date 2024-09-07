@@ -6,6 +6,7 @@ import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
 
 import $ from 'jquery'
+import Cookies from 'js-cookie'
 
 class NewSeedSupplierRow extends React.Component {
   constructor (props) {
@@ -475,6 +476,23 @@ NewSeedPacketRow.propTypes = {
 }
 
 class SeedPacketRow extends React.Component {
+  constructor (props) {
+    super (props)
+
+    this.empty = this.empty.bind(this)
+  }
+
+  empty () {
+    $.ajax({
+      url: '/seeds/packets/empty/',
+      method: 'POST',
+      data: {'packet': this.props.seedPacket.pk},
+      beforeSend: function(xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    })
+  }
+
   render () {
     const seed = this.props.seeds.find((s) => s.pk === this.props.seedPacket.seeds)
     const supplier = this.props.suppliers.find((s) => s.pk == seed.supplier)
@@ -485,6 +503,7 @@ class SeedPacketRow extends React.Component {
         <td>{this.props.seedPacket.purchase_date}</td>
         <td>{this.props.seedPacket.sow_by}</td>
         <td>{this.props.seedPacket.notes}</td>
+        <td><Button onClick={this.empty}>Empty</Button></td>
       </tr>
     )
   }
