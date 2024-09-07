@@ -18,6 +18,7 @@ class Planting(models.Model):
     quantity = models.IntegerField()
     location = None
     notes = models.TextField(null=True, blank=True)
+    removed = models.BooleanField(default=False)
 
     def __str__(self):
         return f'{self.quantity} {self.seeds_used.seeds.plant_variety} planted {self.planted} in {self.location}'
@@ -56,6 +57,7 @@ class GardenSquareTransplant(models.Model):
     quantity = models.IntegerField()
     location = models.ForeignKey(GardenSquare, on_delete=models.PROTECT)
     notes = models.TextField(null=True, blank=True)
+    removed = models.BooleanField(default=False)
 
     def __str__(self):
         return f'{self.quantity} {self.original_planting.seeds_used.seeds.plant_variety} planted {self.original_planting.planted} transplanted {self.transplanted} in {self.location}'
