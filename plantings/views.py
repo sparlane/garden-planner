@@ -4,7 +4,8 @@ Planting views
 
 import datetime
 
-from django.http import JsonResponse
+from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
+from django.shortcuts import get_object_or_404
 
 from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant
 
@@ -13,7 +14,7 @@ def seedtray_current(request):
     """
     List the seedtray plantings that are currently growing
     """
-    plantings = SeedTrayPlanting.objects.all()
+    plantings = SeedTrayPlanting.objects.filter(removed=False)
     planting_data = []
     for planting in plantings:
         variety = planting.seeds_used.seeds.plant_variety
@@ -37,11 +38,24 @@ def seedtray_current(request):
     return JsonResponse({'plantings': planting_data})
 
 
+def seedtray_complete(request):
+    """
+    Complete/Remove the remaining contents of a seed tray
+    """
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    planting = get_object_or_404(SeedTrayPlanting, pk=request.POST.get('planting'))
+    planting.removed = True
+    planting.save()
+    return HttpResponse(status=204)
+
+
 def gardensquare_current(request):
     """
     List the GardenSquare plantings that are currently growing
     """
-    plantings = GardenSquareDirectSowPlanting.objects.all()
+    plantings = GardenSquareDirectSowPlanting.objects.filter(removed=False)
     planting_data = []
     for planting in plantings:
         variety = planting.seeds_used.seeds.plant_variety
@@ -70,7 +84,7 @@ def gardensquare_current(request):
             'maturity_date_early': planting.planted + datetime.timedelta(days=maturity_min),
             'maturity_date_late': planting.planted + datetime.timedelta(days=maturity_max)
         })
-    transplantings = GardenSquareTransplant.objects.all()
+    transplantings = GardenSquareTransplant.objects.filter(removed=False)
     for transplanting in transplantings:
         planting = transplanting.original_planting
         variety = planting.seeds_used.seeds.plant_variety

@@ -6,6 +6,8 @@ import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
 
 import $ from 'jquery'
+import Cookies from 'js-cookie'
+
 
 class NewSeedTrayPlantingRow extends React.Component {
   constructor (props) {
@@ -177,10 +179,22 @@ class SeedTrayPlantingRow extends React.Component {
     super (props)
 
     this.transplant = this.transplant.bind(this)
+    this.empty = this.empty.bind(this)
   }
 
   transplant () {
     this.props.transplantAction(this.props.planting)
+  }
+
+  empty () {
+    $.ajax({
+      url: '/plantings/seedtray/complete/',
+      method: 'POST',
+      data: {'planting': this.props.planting.pk},
+      beforeSend: function(xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    })
   }
 
   render () {
@@ -192,14 +206,15 @@ class SeedTrayPlantingRow extends React.Component {
         <td>{ this.props.planting.location }</td>
         <td>{ this.props.planting.germination_date_early } - { this.props.planting.germination_date_late }</td>
         <td>{ this.props.planting.notes }</td>
-        <td><Button onClick={this.transplant}>Transplant</Button></td>
+        <td><Button onClick={this.transplant}>Transplant</Button><Button onClick={this.empty}>Empty</Button></td>
       </tr>
     )
   }
 }
 SeedTrayPlantingRow.propTypes = {
   planting: PropTypes.object.isRequired,
-  transplantAction: PropTypes.func.isRequired
+  transplantAction: PropTypes.func.isRequired,
+  csrftoken: PropTypes.string.isRequired
 }
 
 class SeedTrayPlantingTable extends React.Component {
