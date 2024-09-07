@@ -107,7 +107,7 @@ def gardensquare_current(request):
             'plant': planting.seeds_used.seeds.plant_variety.plant.name,
             'variety': planting.seeds_used.seeds.plant_variety.name,
             'planted': planting.planted,
-            'quantity': planting.quantity,
+            'quantity': transplanting.quantity,
             'location': transplanting.location.as_json(),
             'notes': planting.notes,
             'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
