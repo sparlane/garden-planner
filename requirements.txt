@@ -11,5 +11,5 @@ uwsgi==2.0.26
 
 # Checker
 pycodestyle
-pylint==3.2.*
+pylint==3.3.*
 pylint-django==2.5.5
