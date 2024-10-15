@@ -8,8 +8,8 @@ import { Table, Button } from 'react-bootstrap'
 import $ from 'jquery'
 
 class NewPlantFamilyRow extends React.Component {
-  constructor (props) {
-    super (props)
+  constructor(props) {
+    super(props)
 
     this.state = {
       name: '',
@@ -21,38 +21,49 @@ class NewPlantFamilyRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName (event) {
+  updateName(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ name: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
-    $.post('/plants/family/', {
-      name: this.state.name,
-      notes: this.state.notes
-    }, this.props.done())
+  add() {
+    $.post(
+      '/plants/family/',
+      {
+        name: this.state.name,
+        notes: this.state.notes
+      },
+      this.props.done()
+    )
   }
 
-  render () {
+  render() {
     return (
       <tr>
-        <td><input type='text' onChange={this.updateName}/></td>
+        <td>
+          <input type="text" onChange={this.updateName} />
+        </td>
         <td></td>
         <td></td>
         <td></td>
         <td></td>
         <td></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -62,21 +73,25 @@ NewPlantFamilyRow.propTypes = {
 }
 
 class PlantFamilyRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.addNewPlant = this.addNewPlant.bind(this)
   }
 
-  addNewPlant () {
+  addNewPlant() {
     this.props.addNewPlant(this.props.family.pk)
   }
 
-  render () {
+  render() {
     return (
       <tr>
         <td>{this.props.family.name}</td>
-        <td><a href='#' onClick={this.addNewPlant}>+</a></td>
+        <td>
+          <a href="#" onClick={this.addNewPlant}>
+            +
+          </a>
+        </td>
         <td></td>
         <td></td>
         <td></td>
@@ -93,8 +108,8 @@ PlantFamilyRow.propTypes = {
 }
 
 class NewPlantRow extends React.Component {
-  constructor (props) {
-    super (props)
+  constructor(props) {
+    super(props)
 
     this.state = {
       name: '',
@@ -112,42 +127,42 @@ class NewPlantRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName (event) {
+  updateName(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ name: value })
   }
 
-  updateSpacing (event) {
+  updateSpacing(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ spacing: value })
   }
 
-  updateRowSpacing (event) {
+  updateRowSpacing(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ row_spacing: value })
   }
 
-  updatePerSquareFtRate (event) {
+  updatePerSquareFtRate(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ per_square_foot: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     const data = {
       family: this.props.familyId,
       name: this.state.name,
@@ -165,17 +180,30 @@ class NewPlantRow extends React.Component {
     $.post('/plants/plant/', data, this.props.done())
   }
 
-  render () {
+  render() {
     return (
       <tr>
         <td>{this.props.familyName}</td>
-        <td><input type='text' onChange={this.updateName}/></td>
+        <td>
+          <input type="text" onChange={this.updateName} />
+        </td>
         <td></td>
-        <td><input type='number' onChange={this.updateSpacing}></input></td>
-        <td><input type='number' onChange={this.updateRowSpacing}></input></td>
-        <td><input type='number' onChange={this.updatePerSquareFtRate}></input></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <input type="number" onChange={this.updateSpacing}></input>
+        </td>
+        <td>
+          <input type="number" onChange={this.updateRowSpacing}></input>
+        </td>
+        <td>
+          <input type="number" onChange={this.updatePerSquareFtRate}></input>
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -187,22 +215,26 @@ NewPlantRow.propTypes = {
 }
 
 class PlantRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.addNewPlantVariety = this.addNewPlantVariety.bind(this)
   }
 
-  addNewPlantVariety () {
-    this.props.addNewPlantVariety (this.props.plant.pk)
+  addNewPlantVariety() {
+    this.props.addNewPlantVariety(this.props.plant.pk)
   }
 
-  render () {
+  render() {
     return (
       <tr>
         <td>{this.props.familyName}</td>
         <td>{this.props.plant.name}</td>
-        <td><a href='#' onClick={this.addNewPlantVariety}>+</a></td>
+        <td>
+          <a href="#" onClick={this.addNewPlantVariety}>
+            +
+          </a>
+        </td>
         <td>{this.props.plant.spacing}</td>
         <td>{this.props.plant.row_spacing}</td>
         <td>{this.props.plant.per_square_foot}</td>
@@ -218,8 +250,8 @@ PlantRow.propTypes = {
 }
 
 class NewPlantVarietyRow extends React.Component {
-  constructor (props) {
-    super (props)
+  constructor(props) {
+    super(props)
 
     this.state = {
       name: '',
@@ -245,70 +277,70 @@ class NewPlantVarietyRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName (event) {
+  updateName(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ name: value })
   }
 
-  updateSpacing (event) {
+  updateSpacing(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ spacing: value })
   }
 
-  updateRowSpacing (event) {
+  updateRowSpacing(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ row_spacing: value })
   }
 
-  updatePerSquareFtRate (event) {
+  updatePerSquareFtRate(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ per_square_foot: value })
   }
 
-  updateGerminationMin (event) {
+  updateGerminationMin(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ germination_days_min: value })
   }
 
-  updateGerminationMax (event) {
+  updateGerminationMax(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ germination_days_max: value })
   }
 
-  updateMaturityMin (event) {
+  updateMaturityMin(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ maturity_days_min: value })
   }
 
-  updateMaturityMax (event) {
+  updateMaturityMax(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ maturity_days_max: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     const data = {
       plant: this.props.plantId,
       name: this.state.name,
@@ -338,19 +370,36 @@ class NewPlantVarietyRow extends React.Component {
     $.post('/plants/variety/', data, this.props.done())
   }
 
-  render () {
+  render() {
     return (
       <tr>
         <td>{this.props.familyName}</td>
         <td>{this.props.plantName}</td>
-        <td><input type='text' onChange={this.updateName}/></td>
-        <td><input type='number' onChange={this.updateSpacing}></input></td>
-        <td><input type='number' onChange={this.updateRowSpacing}></input></td>
-        <td><input type='number' onChange={this.updatePerSquareFtRate}></input></td>
-        <td><input type='number' onChange={this.updateGerminationMin} /> - <input type='number' onChange={this.updateGerminationMax} /></td>
-        <td><input type='number' onChange={this.updateMaturityMin} /> - <input type='number' onChange={this.updateMaturityMax} /></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <input type="text" onChange={this.updateName} />
+        </td>
+        <td>
+          <input type="number" onChange={this.updateSpacing}></input>
+        </td>
+        <td>
+          <input type="number" onChange={this.updateRowSpacing}></input>
+        </td>
+        <td>
+          <input type="number" onChange={this.updatePerSquareFtRate}></input>
+        </td>
+        <td>
+          <input type="number" onChange={this.updateGerminationMin} /> - <input type="number" onChange={this.updateGerminationMax} />
+        </td>
+        <td>
+          <input type="number" onChange={this.updateMaturityMin} /> - <input type="number" onChange={this.updateMaturityMax} />
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -363,7 +412,7 @@ NewPlantVarietyRow.propTypes = {
 }
 
 class PlantVarietyRow extends React.Component {
-  render () {
+  render() {
     return (
       <tr>
         <td>{this.props.familyName}</td>
@@ -372,8 +421,12 @@ class PlantVarietyRow extends React.Component {
         <td>{this.props.variety.spacing}</td>
         <td>{this.props.variety.inter_row_spacing}</td>
         <td>{this.props.variety.plants_per_square_foot}</td>
-        <td>{this.props.variety.germination_days_min}-{this.props.variety.germination_days_max}</td>
-        <td>{this.props.variety.maturity_days_min}-{this.props.variety.maturity_days_max}</td>
+        <td>
+          {this.props.variety.germination_days_min}-{this.props.variety.germination_days_max}
+        </td>
+        <td>
+          {this.props.variety.maturity_days_min}-{this.props.variety.maturity_days_max}
+        </td>
         <td>{this.props.variety.notes}</td>
       </tr>
     )
@@ -386,16 +439,16 @@ PlantVarietyRow.propTypes = {
 }
 
 class PlantsView extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
-      'showFamilyAdd': false,
-      'showPlantAdd': null,
-      'showVarietyAdd': null,
-      'families': [],
-      'plants': [],
-      'varieties': [],
+      showFamilyAdd: false,
+      showPlantAdd: null,
+      showVarietyAdd: null,
+      families: [],
+      plants: [],
+      varieties: []
     }
 
     this.showNewFamilyAdd = this.showNewFamilyAdd.bind(this)
@@ -412,93 +465,93 @@ class PlantsView extends React.Component {
     this.updatePlantVarietiesResponse = this.updatePlantVarietiesResponse.bind(this)
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  showNewFamilyAdd () {
+  showNewFamilyAdd() {
     this.setState({
       showFamilyAdd: true
     })
   }
 
-  hideNewFamilyAdd () {
+  hideNewFamilyAdd() {
     this.setState({
       showFamilyAdd: false
     })
   }
 
-  showNewPlantAdd (familyId) {
+  showNewPlantAdd(familyId) {
     this.setState({
       showPlantAdd: familyId
     })
   }
 
-  hideNewPlantAdd () {
+  hideNewPlantAdd() {
     this.setState({
       showPlantAdd: null
     })
   }
 
-  showNewVarietyAdd (plantId) {
+  showNewVarietyAdd(plantId) {
     this.setState({
       showVarietyAdd: plantId
     })
   }
 
-  hideNewVarietyAdd () {
+  hideNewVarietyAdd() {
     this.setState({
       showVarietyAdd: null
     })
   }
 
-  updatePlantFamilyResponse (data) {
+  updatePlantFamilyResponse(data) {
     this.setState({
-      families: data,
+      families: data
     })
   }
 
-  updatePlantResponse (data) {
+  updatePlantResponse(data) {
     this.setState({
-      plants: data,
+      plants: data
     })
   }
 
-  updatePlantVarietiesResponse (data) {
+  updatePlantVarietiesResponse(data) {
     this.setState({
-      varieties: data,
+      varieties: data
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/plants/family/', this.updatePlantFamilyResponse)
     await $.getJSON('/plants/plant/', this.updatePlantResponse)
     await $.getJSON('/plants/variety/', this.updatePlantVarietiesResponse)
   }
 
-  render () {
+  render() {
     const rows = []
     if (this.state.showFamilyAdd) {
-      rows.push(<NewPlantFamilyRow done={this.hideNewFamilyAdd} key='family-add' />)
+      rows.push(<NewPlantFamilyRow done={this.hideNewFamilyAdd} key="family-add" />)
     }
     for (const f in this.state.families) {
       const familyData = this.state.families[f]
-      rows.push((<PlantFamilyRow family={familyData} key={'family-' + familyData.pk} addNewPlant={this.showNewPlantAdd} />))
+      rows.push(<PlantFamilyRow family={familyData} key={'family-' + familyData.pk} addNewPlant={this.showNewPlantAdd} />)
       if (this.state.showPlantAdd === familyData.pk) {
-        rows.push(<NewPlantRow done={this.hideNewPlantAdd} familyId={familyData.pk} familyName={familyData.name} key='plant-add' />)
+        rows.push(<NewPlantRow done={this.hideNewPlantAdd} familyId={familyData.pk} familyName={familyData.name} key="plant-add" />)
       }
       const plants = this.state.plants.filter((plant) => plant.family === familyData.pk)
       for (const p in plants) {
         const plantData = plants[p]
         rows.push(<PlantRow familyName={familyData.name} plant={plantData} key={'plant-' + plantData.pk} addNewPlantVariety={this.showNewVarietyAdd} />)
         if (this.state.showVarietyAdd === plantData.pk) {
-          rows.push(<NewPlantVarietyRow done={this.hideNewVarietyAdd} plantId={plantData.pk} familyName={familyData.name} plantName={plantData.name} key='variety-add' />)
+          rows.push(<NewPlantVarietyRow done={this.hideNewVarietyAdd} plantId={plantData.pk} familyName={familyData.name} plantName={plantData.name} key="variety-add" />)
         }
         const varieties = this.state.varieties.filter((variety) => variety.plant === plantData.pk)
         for (const v in varieties) {
@@ -511,7 +564,12 @@ class PlantsView extends React.Component {
       <Table>
         <thead>
           <tr>
-            <td>Family <a href='#' onClick={this.showNewFamilyAdd}>+</a></td>
+            <td>
+              Family{' '}
+              <a href="#" onClick={this.showNewFamilyAdd}>
+                +
+              </a>
+            </td>
             <td>Plant</td>
             <td>Variety</td>
             <td>Spacing (mm)</td>
@@ -522,9 +580,7 @@ class PlantsView extends React.Component {
             <td>Notes</td>
           </tr>
         </thead>
-        <tbody>
-          { rows }
-        </tbody>
+        <tbody>{rows}</tbody>
       </Table>
     )
   }

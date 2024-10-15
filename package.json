@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "frontend/main.js",
   "scripts": {
-    "check": "eslint frontend/js/",
+    "check": "eslint frontend/js/ && prettier -c frontend/js/",
     "build-only": "esbuild $(esbuild-config)",
     "build": "esbuild $(esbuild-config) && cp -dpR dist/* frontend/static/",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -28,6 +28,7 @@
     "@eslint/js": "^9.12.0",
     "eslint": "^9.12.0",
     "eslint-plugin-react": "^7.37.1",
-    "globals": "^15.11.0"
+    "globals": "^15.11.0",
+    "prettier": "^3.3.3"
   }
 }

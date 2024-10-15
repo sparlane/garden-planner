@@ -8,9 +8,8 @@ import { Table, Button } from 'react-bootstrap'
 import $ from 'jquery'
 import Cookies from 'js-cookie'
 
-
 class NewSeedTrayPlantingRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -28,35 +27,35 @@ class NewSeedTrayPlantingRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeedPacket (event) {
+  updateSeedPacket(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ seedPacket: value })
   }
 
-  updateQuantity (event) {
+  updateQuantity(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ quantity: value })
   }
 
-  updateLocation (event) {
+  updateLocation(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ location: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     const data = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
@@ -66,23 +65,38 @@ class NewSeedTrayPlantingRow extends React.Component {
     $.post('/plantings/seedtray/', data, this.props.done())
   }
 
-  render () {
-    const seedPackets = [(<option key='blank'></option>)]
+  render() {
+    const seedPackets = [<option key="blank"></option>]
     for (const sp in this.props.seedPackets) {
       const seedPacketData = this.props.seedPackets[sp]
       const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
       const supplier = this.props.suppliers.find((s) => s.pk === seeds.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seeds.plant_variety)
-      seedPackets.push((<option key={seedPacketData.pk} value={seedPacketData.pk}>{variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})</option>))
+      seedPackets.push(
+        <option key={seedPacketData.pk} value={seedPacketData.pk}>
+          {variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})
+        </option>
+      )
     }
     return (
       <tr>
-        <td><select onChange={this.updateSeedPacket}>{seedPackets}</select></td>
-        <td><input type='number' defaultValue={this.state.quantity} onChange={this.updateQuantity}/></td>
+        <td>
+          <select onChange={this.updateSeedPacket}>{seedPackets}</select>
+        </td>
+        <td>
+          <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
+        </td>
         <td></td>
-        <td><input type='text' onChange={this.updateLocation} /></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <input type="text" onChange={this.updateLocation} />
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -96,7 +110,7 @@ NewSeedTrayPlantingRow.propTypes = {
 }
 
 class SeedTrayTransplantingGardenSquareRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -112,28 +126,28 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateQuantity (event) {
+  updateQuantity(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ quantity: value })
   }
 
-  updateLocation (event) {
+  updateLocation(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ location: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     const data = {
       original_planting: this.props.planting.pk,
       quantity: this.state.quantity,
@@ -143,25 +157,40 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
     $.post('/plantings/transplantedgardensquare/', data, this.props.done())
   }
 
-  render () {
-    const locations = [<option key='blank'></option>]
+  render() {
+    const locations = [<option key="blank"></option>]
     for (const b in this.props.gardenBeds) {
       const gardenBedData = this.props.gardenBeds[b]
       const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
       for (const l in bedSquares) {
         const gardenSquareData = bedSquares[l]
-        locations.push(<option key={gardenSquareData.pk} value={gardenSquareData.pk}>{gardenBedData.name} - {gardenSquareData.name}</option>)
+        locations.push(
+          <option key={gardenSquareData.pk} value={gardenSquareData.pk}>
+            {gardenBedData.name} - {gardenSquareData.name}
+          </option>
+        )
       }
     }
 
     return (
       <tr>
-        <td>{ this.props.planting.plant } - { this.props.planting.variety }</td>
-        <td><input type='number' defaultValue={this.state.quantity} onChange={this.updateQuantity}/></td>
+        <td>
+          {this.props.planting.plant} - {this.props.planting.variety}
+        </td>
+        <td>
+          <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
+        </td>
         <td></td>
-        <td><select onChange={this.updateLocation}>{locations}</select></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Transplant</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <select onChange={this.updateLocation}>{locations}</select>
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Transplant</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -173,40 +202,46 @@ SeedTrayTransplantingGardenSquareRow.propTypes = {
   done: PropTypes.func.isRequired
 }
 
-
 class SeedTrayPlantingRow extends React.Component {
-  constructor (props) {
-    super (props)
+  constructor(props) {
+    super(props)
 
     this.transplant = this.transplant.bind(this)
     this.empty = this.empty.bind(this)
   }
 
-  transplant () {
+  transplant() {
     this.props.transplantAction(this.props.planting)
   }
 
-  empty () {
+  empty() {
     $.ajax({
       url: '/plantings/seedtray/complete/',
       method: 'POST',
-      data: {'planting': this.props.planting.pk},
-      beforeSend: function(xhr) {
+      data: { planting: this.props.planting.pk },
+      beforeSend: function (xhr) {
         xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
       }
     })
   }
 
-  render () {
+  render() {
     return (
       <tr>
-        <td>{ this.props.planting.plant } - { this.props.planting.variety }</td>
-        <td>{ this.props.planting.quantity }</td>
-        <td>{ this.props.planting.planted }</td>
-        <td>{ this.props.planting.location }</td>
-        <td>{ this.props.planting.germination_date_early } - { this.props.planting.germination_date_late }</td>
-        <td>{ this.props.planting.notes }</td>
-        <td><Button onClick={this.transplant}>Transplant</Button><Button onClick={this.empty}>Empty</Button></td>
+        <td>
+          {this.props.planting.plant} - {this.props.planting.variety}
+        </td>
+        <td>{this.props.planting.quantity}</td>
+        <td>{this.props.planting.planted}</td>
+        <td>{this.props.planting.location}</td>
+        <td>
+          {this.props.planting.germination_date_early} - {this.props.planting.germination_date_late}
+        </td>
+        <td>{this.props.planting.notes}</td>
+        <td>
+          <Button onClick={this.transplant}>Transplant</Button>
+          <Button onClick={this.empty}>Empty</Button>
+        </td>
       </tr>
     )
   }
@@ -218,7 +253,7 @@ SeedTrayPlantingRow.propTypes = {
 }
 
 class SeedTrayPlantingTable extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -247,83 +282,83 @@ class SeedTrayPlantingTable extends React.Component {
     this.updateGardenBeds = this.updateGardenBeds.bind(this)
   }
 
-  showNewPlantingAdd () {
+  showNewPlantingAdd() {
     this.setState({
       showPlantingAdd: true
     })
   }
 
-  hideNewPlantingAdd () {
+  hideNewPlantingAdd() {
     this.setState({
       showPlantingAdd: false
     })
   }
 
-  showTransplanting (planting) {
+  showTransplanting(planting) {
     this.setState({
       showTransplanting: planting
     })
   }
 
-  hideTransplanting () {
+  hideTransplanting() {
     this.setState({
       showTransplanting: null
     })
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  updateSupplierList (data) {
+  updateSupplierList(data) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList (data) {
+  updateVarietiesList(data) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList (data) {
+  updateSeedList(data) {
     this.setState({
       seeds: data
     })
   }
 
-  updateSeedPacketList (data) {
+  updateSeedPacketList(data) {
     this.setState({
       seedPackets: data
     })
   }
 
-  updatePlantingList (data) {
+  updatePlantingList(data) {
     this.setState({
       plantings: data.plantings
     })
   }
 
-  updateGardenSquares (data) {
+  updateGardenSquares(data) {
     this.setState({
       gardenSquares: data
     })
   }
 
-  updateGardenBeds (data) {
+  updateGardenBeds(data) {
     this.setState({
       gardenBeds: data
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
@@ -333,23 +368,45 @@ class SeedTrayPlantingTable extends React.Component {
     await $.getJSON('/garden/beds/', this.updateGardenBeds)
   }
 
-  render () {
+  render() {
     const rows = []
     if (this.state.showPlantingAdd) {
-      rows.push(<NewSeedTrayPlantingRow key='new' seedPackets={this.state.seedPackets} seeds={this.state.seeds} suppliers={this.state.suppliers} varieties={this.state.varieties} done={this.hideNewPlantingAdd} />)
+      rows.push(
+        <NewSeedTrayPlantingRow
+          key="new"
+          seedPackets={this.state.seedPackets}
+          seeds={this.state.seeds}
+          suppliers={this.state.suppliers}
+          varieties={this.state.varieties}
+          done={this.hideNewPlantingAdd}
+        />
+      )
     }
     for (const p in this.state.plantings) {
       const plantingData = this.state.plantings[p]
-      rows.push((<SeedTrayPlantingRow key={plantingData.pk} planting={plantingData} transplantAction={this.showTransplanting} />))
+      rows.push(<SeedTrayPlantingRow key={plantingData.pk} planting={plantingData} transplantAction={this.showTransplanting} />)
       if (this.state.showTransplanting !== null && this.state.showTransplanting.pk === this.state.plantings[p].pk) {
-        rows.push((<SeedTrayTransplantingGardenSquareRow key='transplanting' planting={plantingData} done={this.hideTransplanting} gardenBeds={this.state.gardenBeds} gardenSquares={this.state.gardenSquares} />))
+        rows.push(
+          <SeedTrayTransplantingGardenSquareRow
+            key="transplanting"
+            planting={plantingData}
+            done={this.hideTransplanting}
+            gardenBeds={this.state.gardenBeds}
+            gardenSquares={this.state.gardenSquares}
+          />
+        )
       }
     }
     return (
       <Table>
         <thead>
           <tr>
-            <td>Plant <a href='#' onClick={this.showNewPlantingAdd}>+</a></td>
+            <td>
+              Plant{' '}
+              <a href="#" onClick={this.showNewPlantingAdd}>
+                +
+              </a>
+            </td>
             <td>Quantity</td>
             <td>Date</td>
             <td>Location</td>
@@ -357,16 +414,14 @@ class SeedTrayPlantingTable extends React.Component {
             <td>Notes</td>
           </tr>
         </thead>
-        <tbody>
-          {rows}
-        </tbody>
+        <tbody>{rows}</tbody>
       </Table>
     )
   }
 }
 
 class NewGardenSquarePlantingRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -384,35 +439,35 @@ class NewGardenSquarePlantingRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeedPacket (event) {
+  updateSeedPacket(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ seedPacket: value })
   }
 
-  updateQuantity (event) {
+  updateQuantity(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ quantity: value })
   }
 
-  updateLocation (event) {
+  updateLocation(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ location: Number(value) })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     const data = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
@@ -422,32 +477,51 @@ class NewGardenSquarePlantingRow extends React.Component {
     $.post('/plantings/directsowgardensquare/', data, this.props.done())
   }
 
-  render () {
-    const seedPackets = [(<option key='blank'></option>)]
+  render() {
+    const seedPackets = [<option key="blank"></option>]
     for (const sp in this.props.seedPackets) {
       const seedPacketData = this.props.seedPackets[sp]
       const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
       const supplier = this.props.suppliers.find((s) => s.pk === seeds.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seeds.plant_variety)
-      seedPackets.push((<option key={seedPacketData.pk} value={seedPacketData.pk}>{variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})</option>))
+      seedPackets.push(
+        <option key={seedPacketData.pk} value={seedPacketData.pk}>
+          {variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})
+        </option>
+      )
     }
-    const locations = [<option key='blank'></option>]
+    const locations = [<option key="blank"></option>]
     for (const b in this.props.gardenBeds) {
       const gardenBedData = this.props.gardenBeds[b]
       const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
       for (const l in bedSquares) {
         const gardenSquareData = bedSquares[l]
-        locations.push(<option key={gardenSquareData.pk} value={gardenSquareData.pk}>{gardenBedData.name} - {gardenSquareData.name}</option>)
+        locations.push(
+          <option key={gardenSquareData.pk} value={gardenSquareData.pk}>
+            {gardenBedData.name} - {gardenSquareData.name}
+          </option>
+        )
       }
     }
     return (
       <tr>
-        <td><select onChange={this.updateSeedPacket}>{seedPackets}</select></td>
-        <td><input type='number' defaultValue={this.state.quantity} onChange={this.updateQuantity}/></td>
+        <td>
+          <select onChange={this.updateSeedPacket}>{seedPackets}</select>
+        </td>
+        <td>
+          <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
+        </td>
         <td></td>
-        <td><select onChange={this.updateLocation}>{locations}</select></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <select onChange={this.updateLocation}>{locations}</select>
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -463,24 +537,24 @@ NewGardenSquarePlantingRow.propTypes = {
 }
 
 class GardenSquarePlantingRow extends React.Component {
-  constructor (props) {
-    super (props)
+  constructor(props) {
+    super(props)
 
     this.empty = this.empty.bind(this)
   }
 
-  empty () {
+  empty() {
     $.ajax({
       url: this.props.planting.transplanted ? '/plantings/garden/squares/transplant/complete/' : '/plantings/garden/squares/complete/',
       method: 'POST',
-      data: {'planting': this.props.planting.transplanted ? this.props.planting.transplanting_pk : this.props.planting.planting_pk},
-      beforeSend: function(xhr) {
+      data: { planting: this.props.planting.transplanted ? this.props.planting.transplanting_pk : this.props.planting.planting_pk },
+      beforeSend: function (xhr) {
         xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
       }
     })
   }
 
-  render () {
+  render() {
     let planted = ''
     if (this.props.planting.transplanted) {
       planted = `${this.props.planting.transplanted} (S: ${this.props.planting.planted})`
@@ -489,14 +563,24 @@ class GardenSquarePlantingRow extends React.Component {
     }
     return (
       <tr>
-        <td>{ this.props.planting.plant } - { this.props.planting.variety }</td>
-        <td>{ this.props.planting.quantity }</td>
-        <td>{ planted }</td>
-        <td>{this.props.planting.location.area } - { this.props.planting.location.bed } - { this.props.planting.location.name }</td>
-        <td>{ this.props.planting.germination_date_early } - { this.props.planting.germination_date_late }</td>
-        <td>{ this.props.planting.maturity_date_early } - { this.props.planting.maturity_date_late }</td>
-        <td>{ this.props.planting.notes }</td>
-        <td><Button onClick={this.empty}>Harvested</Button></td>
+        <td>
+          {this.props.planting.plant} - {this.props.planting.variety}
+        </td>
+        <td>{this.props.planting.quantity}</td>
+        <td>{planted}</td>
+        <td>
+          {this.props.planting.location.area} - {this.props.planting.location.bed} - {this.props.planting.location.name}
+        </td>
+        <td>
+          {this.props.planting.germination_date_early} - {this.props.planting.germination_date_late}
+        </td>
+        <td>
+          {this.props.planting.maturity_date_early} - {this.props.planting.maturity_date_late}
+        </td>
+        <td>{this.props.planting.notes}</td>
+        <td>
+          <Button onClick={this.empty}>Harvested</Button>
+        </td>
       </tr>
     )
   }
@@ -510,7 +594,7 @@ GardenSquarePlantingRow.propTypes = {
 }
 
 class GardenSquarePlantingTable extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -537,71 +621,71 @@ class GardenSquarePlantingTable extends React.Component {
     this.updateGardenBeds = this.updateGardenBeds.bind(this)
   }
 
-  showNewPlantingAdd () {
+  showNewPlantingAdd() {
     this.setState({
       showPlantingAdd: true
     })
   }
 
-  hideNewPlantingAdd () {
+  hideNewPlantingAdd() {
     this.setState({
       showPlantingAdd: false
     })
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  updateSupplierList (data) {
+  updateSupplierList(data) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList (data) {
+  updateVarietiesList(data) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList (data) {
+  updateSeedList(data) {
     this.setState({
       seeds: data
     })
   }
 
-  updateSeedPacketList (data) {
+  updateSeedPacketList(data) {
     this.setState({
       seedPackets: data
     })
   }
 
-  updatePlantingList (data) {
+  updatePlantingList(data) {
     this.setState({
       plantings: data.plantings
     })
   }
 
-  updateGardenSquares (data) {
+  updateGardenSquares(data) {
     this.setState({
       gardenSquares: data
     })
   }
 
-  updateGardenBeds (data) {
+  updateGardenBeds(data) {
     this.setState({
       gardenBeds: data
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
@@ -611,20 +695,45 @@ class GardenSquarePlantingTable extends React.Component {
     await $.getJSON('/garden/beds/', this.updateGardenBeds)
   }
 
-  render () {
+  render() {
     const rows = []
     if (this.state.showPlantingAdd) {
-      rows.push(<NewGardenSquarePlantingRow key='new' seedPackets={this.state.seedPackets} seeds={this.state.seeds} suppliers={this.state.suppliers} varieties={this.state.varieties} gardenSquares={this.state.gardenSquares} gardenBeds={this.state.gardenBeds}done={this.hideNewPlantingAdd} />)
+      rows.push(
+        <NewGardenSquarePlantingRow
+          key="new"
+          seedPackets={this.state.seedPackets}
+          seeds={this.state.seeds}
+          suppliers={this.state.suppliers}
+          varieties={this.state.varieties}
+          gardenSquares={this.state.gardenSquares}
+          gardenBeds={this.state.gardenBeds}
+          done={this.hideNewPlantingAdd}
+        />
+      )
     }
     for (const p in this.state.plantings) {
       const plantingData = this.state.plantings[p]
-      rows.push((<GardenSquarePlantingRow key={plantingData.pk} seedPackets={this.state.seedPackets} seeds={this.state.seeds} suppliers={this.state.suppliers} varieties={this.state.varieties} planting={plantingData} />))
+      rows.push(
+        <GardenSquarePlantingRow
+          key={plantingData.pk}
+          seedPackets={this.state.seedPackets}
+          seeds={this.state.seeds}
+          suppliers={this.state.suppliers}
+          varieties={this.state.varieties}
+          planting={plantingData}
+        />
+      )
     }
     return (
       <Table>
         <thead>
           <tr>
-            <td>Plant <a href='#' onClick={this.showNewPlantingAdd}>+</a></td>
+            <td>
+              Plant{' '}
+              <a href="#" onClick={this.showNewPlantingAdd}>
+                +
+              </a>
+            </td>
             <td>Quantity</td>
             <td>Date</td>
             <td>Location</td>
@@ -633,9 +742,7 @@ class GardenSquarePlantingTable extends React.Component {
             <td>Notes</td>
           </tr>
         </thead>
-        <tbody>
-          {rows}
-        </tbody>
+        <tbody>{rows}</tbody>
       </Table>
     )
   }

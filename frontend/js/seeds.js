@@ -9,7 +9,7 @@ import $ from 'jquery'
 import Cookies from 'js-cookie'
 
 class NewSeedSupplierRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -25,28 +25,28 @@ class NewSeedSupplierRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName (event) {
+  updateName(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ name: value })
   }
 
-  updateWebsite (event) {
+  updateWebsite(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ website: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     const data = {
       name: this.state.name,
       notes: this.state.notes
@@ -57,13 +57,22 @@ class NewSeedSupplierRow extends React.Component {
     $.post('/seeds/supplier/', data, this.props.done())
   }
 
-  render () {
+  render() {
     return (
       <tr>
-        <td><input type='text' onChange={this.updateName}/></td>
-        <td><input type='text' onChange={this.updateWebsite}/></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <input type="text" onChange={this.updateName} />
+        </td>
+        <td>
+          <input type="text" onChange={this.updateWebsite} />
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -73,12 +82,14 @@ NewSeedSupplierRow.propTypes = {
 }
 
 class SeedSupplierRow extends React.Component {
-  render () {
+  render() {
     return (
       <tr>
-        <td>{ this.props.supplier.name }</td>
-        <td><a href={ this.props.supplier.website }>{ this.props.supplier.website }</a></td>
-        <td>{ this.props.supplier.notes }</td>
+        <td>{this.props.supplier.name}</td>
+        <td>
+          <a href={this.props.supplier.website}>{this.props.supplier.website}</a>
+        </td>
+        <td>{this.props.supplier.notes}</td>
       </tr>
     )
   }
@@ -88,7 +99,7 @@ SeedSupplierRow.propTypes = {
 }
 
 class SeedSuppliersTable extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -102,66 +113,69 @@ class SeedSuppliersTable extends React.Component {
     this.updateSupplierList = this.updateSupplierList.bind(this)
   }
 
-  showNewSupplierAdd () {
+  showNewSupplierAdd() {
     this.setState({
       showSupplierAdd: true
     })
   }
 
-  hideNewSupplierAdd () {
+  hideNewSupplierAdd() {
     this.setState({
       showSupplierAdd: false
     })
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  updateSupplierList (data) {
+  updateSupplierList(data) {
     this.setState({
       suppliers: data
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
   }
 
-  render () {
+  render() {
     const rows = []
     if (this.state.showSupplierAdd) {
-      rows.push(<NewSeedSupplierRow key='new' done={this.hideNewSupplierAdd} />)
+      rows.push(<NewSeedSupplierRow key="new" done={this.hideNewSupplierAdd} />)
     }
     for (const s in this.state.suppliers) {
       const supplierData = this.state.suppliers[s]
-      rows.push((<SeedSupplierRow key={supplierData.pk} supplier={supplierData} />))
+      rows.push(<SeedSupplierRow key={supplierData.pk} supplier={supplierData} />)
     }
     return (
       <Table>
         <thead>
           <tr>
-            <td>Name <a href='#' onClick={this.showNewSupplierAdd}>+</a></td>
+            <td>
+              Name{' '}
+              <a href="#" onClick={this.showNewSupplierAdd}>
+                +
+              </a>
+            </td>
             <td>Website</td>
             <td>Notes</td>
           </tr>
         </thead>
-        <tbody>
-          {rows}
-        </tbody>
+        <tbody>{rows}</tbody>
       </Table>
     )
   }
 }
 
 class NewSeedRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -181,42 +195,42 @@ class NewSeedRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSupplier (event) {
+  updateSupplier(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ supplier: value })
   }
 
-  updateVariety (event) {
+  updateVariety(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ variety: value })
   }
 
-  updateSupplierCode (event) {
+  updateSupplierCode(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ supplierCode: value })
   }
 
-  updateWebsite (event) {
+  updateWebsite(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ website: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     let supplier = this.state.supplier
     if (supplier === null || supplier === '') {
       supplier = this.props.suppliers[0].pk
@@ -239,25 +253,46 @@ class NewSeedRow extends React.Component {
     $.post('/seeds/seeds/', data, this.props.done())
   }
 
-  render () {
+  render() {
     const suppliers = []
     for (const s in this.props.suppliers) {
       const supplierData = this.props.suppliers[s]
-      suppliers.push(<option key={supplierData.pk} value={supplierData.pk}>{supplierData.name}</option>)
+      suppliers.push(
+        <option key={supplierData.pk} value={supplierData.pk}>
+          {supplierData.name}
+        </option>
+      )
     }
     const varieties = []
     for (const v in this.props.varieties) {
       const varietyData = this.props.varieties[v]
-      varieties.push(<option key={varietyData.pk} value={varietyData.pk}>{varietyData.name}</option>)
+      varieties.push(
+        <option key={varietyData.pk} value={varietyData.pk}>
+          {varietyData.name}
+        </option>
+      )
     }
     return (
       <tr>
-        <td><select onChange={this.updateSupplier}>{suppliers}</select></td>
-        <td><select onChange={this.updateVariety}>{varieties}</select></td>
-        <td><input type='text' onChange={this.updateSupplierCode}/></td>
-        <td><input type='text' onChange={this.updateWebsite}/></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <select onChange={this.updateSupplier}>{suppliers}</select>
+        </td>
+        <td>
+          <select onChange={this.updateVariety}>{varieties}</select>
+        </td>
+        <td>
+          <input type="text" onChange={this.updateSupplierCode} />
+        </td>
+        <td>
+          <input type="text" onChange={this.updateWebsite} />
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -269,7 +304,7 @@ NewSeedRow.propTypes = {
 }
 
 class SeedRow extends React.Component {
-  render () {
+  render() {
     const supplier = this.props.suppliers.find((s) => s.pk == this.props.seed.supplier)
     const variety = this.props.varieties.find((v) => v.pk === this.props.seed.plant_variety)
     return (
@@ -277,7 +312,9 @@ class SeedRow extends React.Component {
         <td>{supplier.name}</td>
         <td>{variety.name}</td>
         <td>{this.props.seed.supplier_code}</td>
-        <td><a href={this.props.seed.url}>{this.props.seed.url}</a></td>
+        <td>
+          <a href={this.props.seed.url}>{this.props.seed.url}</a>
+        </td>
         <td>{this.props.seed.notes}</td>
       </tr>
     )
@@ -290,7 +327,7 @@ SeedRow.propTypes = {
 }
 
 class SeedTable extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -309,56 +346,56 @@ class SeedTable extends React.Component {
     this.updateSeedList = this.updateSeedList.bind(this)
   }
 
-  showNewSeedAdd () {
+  showNewSeedAdd() {
     this.setState({
       showSeedAdd: true
     })
   }
 
-  hideNewSeedAdd () {
+  hideNewSeedAdd() {
     this.setState({
       showSeedAdd: false
     })
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  updateSupplierList (data) {
+  updateSupplierList(data) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList (data) {
+  updateVarietiesList(data) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList (data) {
+  updateSeedList(data) {
     this.setState({
       seeds: data
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
   }
 
-  render () {
+  render() {
     const rows = []
     if (this.state.showSeedAdd) {
-      rows.push(<NewSeedRow key='new' suppliers={this.state.suppliers} varieties={this.state.varieties} done={this.hideNewSeedAdd} />)
+      rows.push(<NewSeedRow key="new" suppliers={this.state.suppliers} varieties={this.state.varieties} done={this.hideNewSeedAdd} />)
     }
     for (const s in this.state.seeds) {
       const seedData = this.state.seeds[s]
@@ -373,19 +410,21 @@ class SeedTable extends React.Component {
             <td>Supplier Code</td>
             <td>Link</td>
             <td>Notes</td>
-            <td><a href='#' onClick={this.showNewSeedAdd}>+</a></td>
+            <td>
+              <a href="#" onClick={this.showNewSeedAdd}>
+                +
+              </a>
+            </td>
           </tr>
         </thead>
-        <tbody>
-          {rows}
-        </tbody>
+        <tbody>{rows}</tbody>
       </Table>
     )
   }
 }
 
 class NewSeedPacketRow extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -403,35 +442,35 @@ class NewSeedPacketRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeeds (event) {
+  updateSeeds(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ seeds: value })
   }
 
-  updatePurchaseDate (event) {
+  updatePurchaseDate(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ purchaseDate: value })
   }
 
-  updateSowBy (event) {
+  updateSowBy(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ sowBy: value })
   }
 
-  updateNotes (event) {
+  updateNotes(event) {
     const target = event.target
     const value = target.value
 
     this.setState({ notes: value })
   }
 
-  add () {
+  add() {
     let seeds = this.state.seeds
     if (seeds === null || seeds === '') {
       seeds = this.props.seeds[0].pk
@@ -449,21 +488,36 @@ class NewSeedPacketRow extends React.Component {
     $.post('/seeds/packets/', data, this.props.done())
   }
 
-  render () {
+  render() {
     const seeds = []
     for (const s in this.props.seeds) {
       const seedsData = this.props.seeds[s]
       const supplier = this.props.suppliers.find((s) => s.pk === seedsData.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seedsData.plant_variety)
-      seeds.push(<option key={seedsData.pk} value={seedsData.pk}>{variety.name} from {supplier.name}</option>)
+      seeds.push(
+        <option key={seedsData.pk} value={seedsData.pk}>
+          {variety.name} from {supplier.name}
+        </option>
+      )
     }
     return (
       <tr>
-        <td><select onChange={this.updateSeeds}>{seeds}</select></td>
-        <td><input type='text' onChange={this.updatePurchaseDate}/></td>
-        <td><input type='text' onChange={this.updateSowBy}/></td>
-        <td><textarea onChange={this.updateNotes} /></td>
-        <td><Button onClick={this.add}>Add</Button><Button onClick={this.props.done}>Cancel</Button></td>
+        <td>
+          <select onChange={this.updateSeeds}>{seeds}</select>
+        </td>
+        <td>
+          <input type="text" onChange={this.updatePurchaseDate} />
+        </td>
+        <td>
+          <input type="text" onChange={this.updateSowBy} />
+        </td>
+        <td>
+          <textarea onChange={this.updateNotes} />
+        </td>
+        <td>
+          <Button onClick={this.add}>Add</Button>
+          <Button onClick={this.props.done}>Cancel</Button>
+        </td>
       </tr>
     )
   }
@@ -476,34 +530,38 @@ NewSeedPacketRow.propTypes = {
 }
 
 class SeedPacketRow extends React.Component {
-  constructor (props) {
-    super (props)
+  constructor(props) {
+    super(props)
 
     this.empty = this.empty.bind(this)
   }
 
-  empty () {
+  empty() {
     $.ajax({
       url: '/seeds/packets/empty/',
       method: 'POST',
-      data: {'packet': this.props.seedPacket.pk},
-      beforeSend: function(xhr) {
+      data: { packet: this.props.seedPacket.pk },
+      beforeSend: function (xhr) {
         xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
       }
     })
   }
 
-  render () {
+  render() {
     const seed = this.props.seeds.find((s) => s.pk === this.props.seedPacket.seeds)
     const supplier = this.props.suppliers.find((s) => s.pk == seed.supplier)
     const variety = this.props.varieties.find((v) => v.pk === seed.plant_variety)
     return (
       <tr>
-        <td>{variety.name} from {supplier.name}</td>
+        <td>
+          {variety.name} from {supplier.name}
+        </td>
         <td>{this.props.seedPacket.purchase_date}</td>
         <td>{this.props.seedPacket.sow_by}</td>
         <td>{this.props.seedPacket.notes}</td>
-        <td><Button onClick={this.empty}>Empty</Button></td>
+        <td>
+          <Button onClick={this.empty}>Empty</Button>
+        </td>
       </tr>
     )
   }
@@ -516,7 +574,7 @@ SeedPacketRow.propTypes = {
 }
 
 class SeedStockTable extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -537,63 +595,63 @@ class SeedStockTable extends React.Component {
     this.updateSeedPacketList = this.updateSeedPacketList.bind(this)
   }
 
-  showNewSeedPacketAdd () {
+  showNewSeedPacketAdd() {
     this.setState({
       showSeedPacketAdd: true
     })
   }
 
-  hideNewSeedPacketAdd () {
+  hideNewSeedPacketAdd() {
     this.setState({
       showSeedPacketAdd: false
     })
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  updateSupplierList (data) {
+  updateSupplierList(data) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList (data) {
+  updateVarietiesList(data) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList (data) {
+  updateSeedList(data) {
     this.setState({
       seeds: data
     })
   }
 
-  updateSeedPacketList (data) {
+  updateSeedPacketList(data) {
     this.setState({
       seedPackets: data
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
   }
 
-  render () {
+  render() {
     const rows = []
     if (this.state.showSeedPacketAdd) {
-      rows.push(<NewSeedPacketRow key='new' suppliers={this.state.suppliers} varieties={this.state.varieties} seeds={this.state.seeds} done={this.hideNewSeedPacketAdd} />)
+      rows.push(<NewSeedPacketRow key="new" suppliers={this.state.suppliers} varieties={this.state.varieties} seeds={this.state.seeds} done={this.hideNewSeedPacketAdd} />)
     }
     for (const s in this.state.seedPackets) {
       const seedPacketData = this.state.seedPackets[s]
@@ -607,12 +665,14 @@ class SeedStockTable extends React.Component {
             <td>Purchase Date</td>
             <td>Sow By</td>
             <td>Notes</td>
-            <td><a href='#' onClick={this.showNewSeedPacketAdd}>+</a></td>
+            <td>
+              <a href="#" onClick={this.showNewSeedPacketAdd}>
+                +
+              </a>
+            </td>
           </tr>
         </thead>
-        <tbody>
-          {rows}
-        </tbody>
+        <tbody>{rows}</tbody>
       </Table>
     )
   }

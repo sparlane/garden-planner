@@ -7,7 +7,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import { Nav, Navbar, NavDropdown } from 'react-bootstrap'
 
 class GPTopBar extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.setGardensView = this.setGardensView.bind(this)
@@ -19,50 +19,64 @@ class GPTopBar extends React.Component {
     this.setPlantingGardenSquareView = this.setPlantingGardenSquareView.bind(this)
   }
 
-  setGardensView () {
+  setGardensView() {
     this.props.setView('gardens')
   }
 
-  setPlantsView () {
+  setPlantsView() {
     this.props.setView('plants')
   }
 
-  setSeedsSupplierView () {
+  setSeedsSupplierView() {
     this.props.setView('seeds-supplier')
   }
 
-  setSeedsView () {
+  setSeedsView() {
     this.props.setView('seeds-seed')
   }
 
-  setSeedsStockView () {
+  setSeedsStockView() {
     this.props.setView('seeds-stock')
   }
 
-  setPlantingSeedTrayView () {
+  setPlantingSeedTrayView() {
     this.props.setView('planting-seedtrays')
   }
 
-  setPlantingGardenSquareView () {
+  setPlantingGardenSquareView() {
     this.props.setView('planting-gardensquare')
   }
 
-  render () {
+  render() {
     return (
-      <Navbar expand='lg' bg='secondary' data-bs-theme='dark' collapseOnSelect fixed={top} >
-        <Navbar.Toggle aria-controls='responsive-navbar-nav' />
-        <Navbar.Collapse id='responsive-navbar-nav'>
+      <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect fixed={top}>
+        <Navbar.Toggle aria-controls="responsive-navbar-nav" />
+        <Navbar.Collapse id="responsive-navbar-nav">
           <Nav>
-            <Nav.Link href='#gardens' onClick={this.setGardensView}>Gardens</Nav.Link>
-            <Nav.Link href='#plants' onClick={this.setPlantsView}>Plants</Nav.Link>
+            <Nav.Link href="#gardens" onClick={this.setGardensView}>
+              Gardens
+            </Nav.Link>
+            <Nav.Link href="#plants" onClick={this.setPlantsView}>
+              Plants
+            </Nav.Link>
             <NavDropdown title="Seeds">
-              <Nav.Link href='#seeds-supplier' onClick={this.setSeedsSupplierView}>Suppliers</Nav.Link>
-              <Nav.Link href='#seeds' onClick={this.setSeedsView}>Seeds</Nav.Link>
-              <Nav.Link href='#seeds-stock' onClick={this.setSeedsStockView}>Stock</Nav.Link>
+              <Nav.Link href="#seeds-supplier" onClick={this.setSeedsSupplierView}>
+                Suppliers
+              </Nav.Link>
+              <Nav.Link href="#seeds" onClick={this.setSeedsView}>
+                Seeds
+              </Nav.Link>
+              <Nav.Link href="#seeds-stock" onClick={this.setSeedsStockView}>
+                Stock
+              </Nav.Link>
             </NavDropdown>
             <NavDropdown title="Planting">
-              <Nav.Link href='#planting-seedtray' onClick={this.setPlantingSeedTrayView}>Seed Trays</Nav.Link>
-              <Nav.Link href='#planting-gardensquare' onClick={this.setPlantingGardenSquareView}>Garden Squares</Nav.Link>
+              <Nav.Link href="#planting-seedtray" onClick={this.setPlantingSeedTrayView}>
+                Seed Trays
+              </Nav.Link>
+              <Nav.Link href="#planting-gardensquare" onClick={this.setPlantingGardenSquareView}>
+                Garden Squares
+              </Nav.Link>
             </NavDropdown>
           </Nav>
         </Navbar.Collapse>
@@ -71,7 +85,7 @@ class GPTopBar extends React.Component {
   }
 }
 GPTopBar.propTypes = {
-  setView: PropTypes.func.isRequired,
+  setView: PropTypes.func.isRequired
 }
 
 export { GPTopBar }

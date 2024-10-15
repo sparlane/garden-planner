@@ -11,7 +11,7 @@ import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
 
 class FrontEndPage extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -21,45 +21,39 @@ class FrontEndPage extends React.Component {
     this.updateSelectedView = this.updateSelectedView.bind(this)
   }
 
-  updateSelectedView (view) {
+  updateSelectedView(view) {
     this.setState({
       selectedView: view
     })
   }
 
   render() {
-    let view = (<></>)
+    let view = <></>
     if (this.state.selectedView === 'plants') {
-      view = (<PlantsView />)
-    }
-    else if (this.state.selectedView === 'seeds-supplier') {
-      view = (<SeedSuppliersTable />)
-    }
-    else if (this.state.selectedView === 'seeds-seed') {
-      view = (<SeedTable />)
-    }
-    else if (this.state.selectedView === 'seeds-stock') {
-      view = (<SeedStockTable />)
-    }
-    else if (this.state.selectedView === 'planting-seedtrays') {
-      view = (<SeedTrayPlantingTable />)
-    }
-    else if (this.state.selectedView === 'planting-gardensquare') {
-      view = (<GardenSquarePlantingTable />)
-    }
-    else {
-      view = (<GardenDisplay />)
+      view = <PlantsView />
+    } else if (this.state.selectedView === 'seeds-supplier') {
+      view = <SeedSuppliersTable />
+    } else if (this.state.selectedView === 'seeds-seed') {
+      view = <SeedTable />
+    } else if (this.state.selectedView === 'seeds-stock') {
+      view = <SeedStockTable />
+    } else if (this.state.selectedView === 'planting-seedtrays') {
+      view = <SeedTrayPlantingTable />
+    } else if (this.state.selectedView === 'planting-gardensquare') {
+      view = <GardenSquarePlantingTable />
+    } else {
+      view = <GardenDisplay />
     }
     return (
       <>
         <GPTopBar setView={this.updateSelectedView} />
-        { view }
+        {view}
       </>
     )
   }
 }
 
-function createFrontEnd (elementId) {
+function createFrontEnd(elementId) {
   const div = ReactDOM.createRoot(document.getElementById(elementId))
   div.render(<FrontEndPage />)
 }

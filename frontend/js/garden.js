@@ -6,23 +6,22 @@ import PropTypes from 'prop-types'
 
 import $ from 'jquery'
 
-
 class GardenAreaDisplay extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
     this.canvasRef = React.createRef()
     this.outlineWidth = 100
   }
 
-  calculateX (offsetX, X) {
+  calculateX(offsetX, X) {
     return this.outlineWidth + offsetX + X
   }
 
-  calculateY (offsetY, Y) {
+  calculateY(offsetY, Y) {
     return this.outlineWidth + (this.props.area.size_y - (offsetY + Y))
   }
 
-  drawBox (ctx, line_width, offsetX, offsetY, startX, startY, sizeX, sizeY) {
+  drawBox(ctx, line_width, offsetX, offsetY, startX, startY, sizeX, sizeY) {
     ctx.lineWidth = line_width
     const halfLineWidth = line_width / 2
     // goto the bottom left (lowest x, y)
@@ -38,11 +37,11 @@ class GardenAreaDisplay extends React.Component {
     ctx.stroke()
   }
 
-  fillBox (ctx, offsetX, offsetY, startX, startY, sizeX, sizeY) {
+  fillBox(ctx, offsetX, offsetY, startX, startY, sizeX, sizeY) {
     ctx.fillRect(this.calculateX(offsetX, startX), this.calculateY(offsetY, startY + sizeY), sizeX, sizeY)
   }
 
-  drawSquare (ctx, bed, square) {
+  drawSquare(ctx, bed, square) {
     ctx.beginPath()
     ctx.strokeStyle = 'lightblue'
     this.drawBox(ctx, 10, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
@@ -53,7 +52,7 @@ class GardenAreaDisplay extends React.Component {
     }
   }
 
-  drawBed (ctx, bed) {
+  drawBed(ctx, bed) {
     ctx.beginPath()
     ctx.strokeStyle = 'grey'
     this.drawBox(ctx, 50, 0, 0, bed.placement_x, bed.placement_y, bed.size_x, bed.size_y)
@@ -64,11 +63,11 @@ class GardenAreaDisplay extends React.Component {
     }
   }
 
-  drawGarden (canvas) {
+  drawGarden(canvas) {
     const area = this.props.area
     const ctx = canvas.getContext('2d')
-    const scaleX = canvas.width / (area.size_x + (this.outlineWidth * 2))
-    const scaleY = canvas.height / (area.size_y + (this.outlineWidth * 2))
+    const scaleX = canvas.width / (area.size_x + this.outlineWidth * 2)
+    const scaleY = canvas.height / (area.size_y + this.outlineWidth * 2)
     let scale = scaleX
     if (scaleY < scaleX) {
       scale = scaleY
@@ -88,13 +87,13 @@ class GardenAreaDisplay extends React.Component {
     }
   }
 
-  componentDidMount () {
+  componentDidMount() {
     const canvas = this.canvasRef.current
     this.drawGarden(canvas)
   }
 
-  render () {
-    return (<canvas ref={this.canvasRef} width={(this.props.area.size_x + (this.outlineWidth * 2)) / 10} height={(this.props.area.size_y + (this.outlineWidth * 2)) / 10} />)
+  render() {
+    return <canvas ref={this.canvasRef} width={(this.props.area.size_x + this.outlineWidth * 2) / 10} height={(this.props.area.size_y + this.outlineWidth * 2) / 10} />
   }
 }
 
@@ -106,7 +105,7 @@ GardenAreaDisplay.propTypes = {
 }
 
 class GardenDisplay extends React.Component {
-  constructor (props) {
+  constructor(props) {
     super(props)
 
     this.state = {
@@ -126,17 +125,17 @@ class GardenDisplay extends React.Component {
     this.updateGardenSquaresPlanting = this.updateGardenSquaresPlanting.bind(this)
   }
 
-  componentDidMount () {
+  componentDidMount() {
     this.updateData()
     this.timer = setInterval(() => this.updateData(), 10000)
   }
 
-  componentWillUnmount () {
+  componentWillUnmount() {
     clearInterval(this.timer)
     this.timer = null
   }
 
-  updateSelectedGardenArea (event) {
+  updateSelectedGardenArea(event) {
     const target = event.target
     const value = target.value
 
@@ -147,37 +146,37 @@ class GardenDisplay extends React.Component {
     }
   }
 
-  updateGardenAreas (data) {
+  updateGardenAreas(data) {
     this.setState({
       areas: data
     })
   }
 
-  updateGardenBeds (data) {
+  updateGardenBeds(data) {
     this.setState({
       beds: data
     })
   }
 
-  updateGardenRows (data) {
+  updateGardenRows(data) {
     this.setState({
       rows: data
     })
   }
 
-  updateGardenSquares (data) {
+  updateGardenSquares(data) {
     this.setState({
       squares: data
     })
   }
 
-  updateGardenSquaresPlanting (data) {
+  updateGardenSquaresPlanting(data) {
     this.setState({
       plantings: data['plantings']
     })
   }
 
-  async updateData () {
+  async updateData() {
     await $.getJSON('/garden/areas/', this.updateGardenAreas)
     await $.getJSON('/garden/beds/', this.updateGardenBeds)
     await $.getJSON('/garden/rows/', this.updateGardenRows)
@@ -185,24 +184,26 @@ class GardenDisplay extends React.Component {
     await $.getJSON('/plantings/garden/squares/current/', this.updateGardenSquaresPlanting)
   }
 
-  render () {
-    const areas = [(<option key='blank' value='none'></option>)]
+  render() {
+    const areas = [<option key="blank" value="none"></option>]
     for (const idx in this.state.areas) {
       const area = this.state.areas[idx]
-      areas.push((<option key={area.pk} value={area.pk}>{area.name}</option>))
+      areas.push(
+        <option key={area.pk} value={area.pk}>
+          {area.name}
+        </option>
+      )
     }
     let areaView = null
     if (this.state.selectedArea !== null) {
       const area = this.state.areas.find((a) => a.pk === this.state.selectedArea)
       const beds = this.state.beds.filter((b) => b.area === area.pk)
-      areaView = (<GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds} squares={this.state.squares} plantings={this.state.plantings} />)
+      areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds} squares={this.state.squares} plantings={this.state.plantings} />
     }
     return (
       <>
         <select onChange={this.updateSelectedGardenArea}>{areas}</select>
-        <div>
-          {areaView}
-        </div>
+        <div>{areaView}</div>
       </>
     )
   }
