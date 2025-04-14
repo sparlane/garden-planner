@@ -6,7 +6,7 @@ markdown==3.7
 # Database
 psycopg[binary,pool]==3.2.6
 
-uwsgi==2.0.28
+uwsgi==2.0.29
 
 # Checker
 pycodestyle
