@@ -548,13 +548,10 @@ class SeedPacketRow extends React.Component {
   }
 
   render() {
-    const seed = this.props.seeds.find((s) => s.pk === this.props.seedPacket.seeds)
-    const supplier = this.props.suppliers.find((s) => s.pk == seed.supplier)
-    const variety = this.props.varieties.find((v) => v.pk === seed.plant_variety)
     return (
       <tr>
         <td>
-          {variety.name} from {supplier.name}
+          {this.props.seedPacket.plant}, {this.props.seedPacket.variety} from {this.props.seedPacket.supplier}
         </td>
         <td>{this.props.seedPacket.purchase_date}</td>
         <td>{this.props.seedPacket.sow_by}</td>
@@ -567,9 +564,6 @@ class SeedPacketRow extends React.Component {
   }
 }
 SeedPacketRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  seeds: PropTypes.array.isRequired,
   seedPacket: PropTypes.object.isRequired
 }
 
@@ -637,7 +631,7 @@ class SeedStockTable extends React.Component {
 
   updateSeedPacketList(data) {
     this.setState({
-      seedPackets: data
+      seedPackets: data['packets']
     })
   }
 
@@ -645,7 +639,7 @@ class SeedStockTable extends React.Component {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
-    await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
+    await $.getJSON('/seeds/packets/current/', this.updateSeedPacketList)
   }
 
   render() {
@@ -655,7 +649,7 @@ class SeedStockTable extends React.Component {
     }
     for (const s in this.state.seedPackets) {
       const seedPacketData = this.state.seedPackets[s]
-      rows.push(<SeedPacketRow key={seedPacketData.pk} suppliers={this.state.suppliers} varieties={this.state.varieties} seeds={this.state.seeds} seedPacket={seedPacketData} />)
+      rows.push(<SeedPacketRow key={seedPacketData.pk} seedPacket={seedPacketData} />)
     }
     return (
       <Table>
