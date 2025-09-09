@@ -231,7 +231,9 @@ class SeedTrayPlantingRow extends React.Component {
         <td>
           {this.props.planting.plant} - {this.props.planting.variety}
         </td>
-        <td>{this.props.planting.quantity}</td>
+        <td>
+          {this.props.planting.quantity} (<span title="Number that have been transplanted to a garden square">Transplanted: {this.props.planting.transplanted_count}</span>)
+        </td>
         <td>{this.props.planting.planted}</td>
         <td>{this.props.planting.location}</td>
         <td>
