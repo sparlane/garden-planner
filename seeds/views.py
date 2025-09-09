@@ -2,9 +2,11 @@
 Views for seeds
 """
 
-
+from django.db.models import Sum
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404
+
+from plantings.models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant
 
 from .models import SeedPacket
 
@@ -22,7 +24,10 @@ def packets_current(request):
             'supplier': packet.seeds.supplier.name,
             'purchase_date': packet.purchase_date.isoformat() if packet.purchase_date else None,
             'sow_by': packet.sow_by.isoformat() if packet.sow_by else None,
-            'notes': packet.notes
+            'notes': packet.notes,
+            'seeds_planted_trays': SeedTrayPlanting.objects.filter(seeds_used=packet).aggregate(total=Sum('quantity'))['total'] or 0,
+            'seeds_planted_direct': GardenSquareDirectSowPlanting.objects.filter(seeds_used=packet).aggregate(total=Sum('quantity'))['total'] or 0,
+            'transplanted_count': GardenSquareTransplant.objects.filter(original_planting__seeds_used=packet).aggregate(total=Sum('quantity'))['total'] or 0
         }
         for packet in packets
     ]

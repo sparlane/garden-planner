@@ -4,6 +4,7 @@ Planting views
 
 import datetime
 
+from django.db.models import Sum
 from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
@@ -17,6 +18,9 @@ def seedtray_current(request):
     plantings = SeedTrayPlanting.objects.filter(removed=False).order_by('planted')
     planting_data = []
     for planting in plantings:
+        transplanted_count = GardenSquareTransplant.objects.filter(
+            original_planting=planting
+        ).aggregate(total=Sum('quantity'))['total'] or 0
         variety = planting.seeds_used.seeds.plant_variety
         germination_min = variety.plant.germination_days_min
         germination_max = variety.plant.germination_days_max
@@ -33,7 +37,8 @@ def seedtray_current(request):
             'location': planting.location,
             'notes': planting.notes,
             'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
-            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max)
+            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
+            'transplanted_count': transplanted_count,
         })
     return JsonResponse({'plantings': planting_data})
 

@@ -555,6 +555,10 @@ class SeedPacketRow extends React.Component {
         </td>
         <td>{this.props.seedPacket.purchase_date}</td>
         <td>{this.props.seedPacket.sow_by}</td>
+        <td>{this.props.seedPacket.seeds_planted_direct}</td>
+        <td>
+          {this.props.seedPacket.transplanted_count}/{this.props.seedPacket.seeds_planted_trays}
+        </td>
         <td>{this.props.seedPacket.notes}</td>
         <td>
           <Button onClick={this.empty}>Empty</Button>
@@ -658,6 +662,8 @@ class SeedStockTable extends React.Component {
             <td>Seeds</td>
             <td>Purchase Date</td>
             <td>Sow By</td>
+            <td>Direct Planted</td>
+            <td>Transplanted/Seed Tray</td>
             <td>Notes</td>
             <td>
               <a href="#" onClick={this.showNewSeedPacketAdd}>
