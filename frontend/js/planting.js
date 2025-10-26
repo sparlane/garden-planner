@@ -607,7 +607,10 @@ class GardenSquarePlantingTable extends React.Component {
       seedPackets: [],
       plantings: [],
       gardenSquares: [],
-      gardenBeds: []
+      gardenBeds: [],
+      gardenAreas: [],
+      filterGardenArea: undefined,
+      filterGardenBed: undefined
     }
 
     this.showNewPlantingAdd = this.showNewPlantingAdd.bind(this)
@@ -621,6 +624,9 @@ class GardenSquarePlantingTable extends React.Component {
     this.updatePlantingList = this.updatePlantingList.bind(this)
     this.updateGardenSquares = this.updateGardenSquares.bind(this)
     this.updateGardenBeds = this.updateGardenBeds.bind(this)
+    this.updateGardenAreas = this.updateGardenAreas.bind(this)
+    this.updateGardenAreaFilter = this.updateGardenAreaFilter.bind(this)
+    this.updateGardenBedFilter = this.updateGardenBedFilter.bind(this)
   }
 
   showNewPlantingAdd() {
@@ -687,17 +693,64 @@ class GardenSquarePlantingTable extends React.Component {
     })
   }
 
+  updateGardenAreas(data) {
+    this.setState({
+      gardenAreas: data
+    })
+  }
+
+  updateGardenAreaFilter(event) {
+    const { value } = event.target
+    if (value === 'all') {
+      this.setState({ filterGardenArea: undefined })
+      return
+    }
+    this.setState({ filterGardenArea: Number(value) })
+  }
+
+  updateGardenBedFilter(event) {
+    const { value } = event.target
+    if (value === 'all') {
+      this.setState({ filterGardenBed: undefined })
+      return
+    }
+    this.setState({ filterGardenBed: value })
+  }
+
   async updateData() {
     await $.getJSON('/seeds/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
     await $.getJSON('/plantings/garden/squares/current/', this.updatePlantingList)
+    await $.getJSON('/garden/areas/', this.updateGardenAreas)
     await $.getJSON('/garden/squares/', this.updateGardenSquares)
     await $.getJSON('/garden/beds/', this.updateGardenBeds)
   }
 
   render() {
+    const areas = this.state.gardenAreas.map((area) => (
+      <option value={area.pk} key={area.pk}>
+        {area.name}
+      </option>
+    ))
+    const beds = this.state.gardenBeds
+      .filter((bed) => this.state.filterGardenArea && bed.area === this.state.filterGardenArea)
+      .map((bed) => (
+        <option value={bed.name} key={bed.name}>
+          {bed.name}
+        </option>
+      ))
+    areas.unshift(
+      <option key="all" value="all">
+        All Areas
+      </option>
+    )
+    beds.unshift(
+      <option key="all" value="all">
+        All Beds
+      </option>
+    )
     const rows = []
     if (this.state.showPlantingAdd) {
       rows.push(
@@ -715,21 +768,27 @@ class GardenSquarePlantingTable extends React.Component {
     }
     for (const p in this.state.plantings) {
       const plantingData = this.state.plantings[p]
-      rows.push(
-        <GardenSquarePlantingRow
-          key={plantingData.pk}
-          seedPackets={this.state.seedPackets}
-          seeds={this.state.seeds}
-          suppliers={this.state.suppliers}
-          varieties={this.state.varieties}
-          planting={plantingData}
-        />
-      )
+      if (
+        !this.state.filterGardenArea ||
+        (this.state.gardenAreas.find((area) => area.pk === this.state.filterGardenArea)?.name === plantingData.location.area &&
+          (!this.state.filterGardenBed || this.state.filterGardenBed === plantingData.location.bed))
+      ) {
+        rows.push(
+          <GardenSquarePlantingRow
+            key={plantingData.transplanting_pk ? 't' + plantingData.transplanting_pk : plantingData.planting_pk}
+            seedPackets={this.state.seedPackets}
+            seeds={this.state.seeds}
+            suppliers={this.state.suppliers}
+            varieties={this.state.varieties}
+            planting={plantingData}
+          />
+        )
+      }
     }
     return (
       <Table>
         <thead>
-          <tr>
+          <tr key="header">
             <td>
               Plant{' '}
               <a href="#" onClick={this.showNewPlantingAdd}>
@@ -742,6 +801,18 @@ class GardenSquarePlantingTable extends React.Component {
             <td>Expected Germination</td>
             <td>Expected Maturity</td>
             <td>Notes</td>
+          </tr>
+          <tr key="filters">
+            <td></td>
+            <td></td>
+            <td></td>
+            <td>
+              <select onChange={this.updateGardenAreaFilter}>{areas}</select>
+              <select onChange={this.updateGardenBedFilter}>{beds}</select>
+            </td>
+            <td></td>
+            <td></td>
+            <td></td>
           </tr>
         </thead>
         <tbody>{rows}</tbody>
