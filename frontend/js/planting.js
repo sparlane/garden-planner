@@ -361,7 +361,7 @@ class SeedTrayPlantingTable extends React.Component {
   }
 
   async updateData() {
-    await $.getJSON('/seeds/supplier/', this.updateSupplierList)
+    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
@@ -718,7 +718,7 @@ class GardenSquarePlantingTable extends React.Component {
   }
 
   async updateData() {
-    await $.getJSON('/seeds/supplier/', this.updateSupplierList)
+    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)

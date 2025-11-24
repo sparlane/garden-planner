@@ -3,16 +3,7 @@ Rest related classes for seeds
 """
 from rest_framework import routers, serializers, viewsets
 
-from .models import Supplier, Seeds, SeedPacket
-
-
-class SupplierSerializer(serializers.ModelSerializer):
-    """
-    Serializer for a Supplier
-    """
-    class Meta:
-        model = Supplier
-        fields = ['pk', 'name', 'website', 'notes']
+from .models import Seeds, SeedPacket
 
 
 class SeedsSerializer(serializers.ModelSerializer):
@@ -31,14 +22,6 @@ class SeedPacketSerializer(serializers.ModelSerializer):
     class Meta:
         model = SeedPacket
         fields = ['pk', 'seeds', 'purchase_date', 'sow_by', 'empty', 'notes']
-
-
-class SupplierViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
-    """
-    ViewSet of Suppliers
-    """
-    queryset = Supplier.objects.all()
-    serializer_class = SupplierSerializer
 
 
 class SeedsViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
@@ -66,7 +49,6 @@ class SeedPacketAllViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-a
 
 
 router = routers.DefaultRouter()
-router.register(r'supplier', SupplierViewSet)
 router.register(r'seeds', SeedsViewSet)
 router.register(r'packets', SeedPacketCurrentViewSet)
 router.register(r'packets/all', SeedPacketAllViewSet, 'AllSeedPackets')
