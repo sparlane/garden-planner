@@ -54,7 +54,7 @@ class NewSeedSupplierRow extends React.Component {
     if (this.state.website !== '' && this.state.website !== null) {
       data['website'] = this.state.website
     }
-    $.post('/seeds/supplier/', data, this.props.done())
+    $.post('/supplies/supplier/', data, this.props.done())
   }
 
   render() {
@@ -142,7 +142,7 @@ class SeedSuppliersTable extends React.Component {
   }
 
   async updateData() {
-    await $.getJSON('/seeds/supplier/', this.updateSupplierList)
+    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
   }
 
   render() {
@@ -387,7 +387,7 @@ class SeedTable extends React.Component {
   }
 
   async updateData() {
-    await $.getJSON('/seeds/supplier/', this.updateSupplierList)
+    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
   }
@@ -640,7 +640,7 @@ class SeedStockTable extends React.Component {
   }
 
   async updateData() {
-    await $.getJSON('/seeds/supplier/', this.updateSupplierList)
+    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/current/', this.updateSeedPacketList)
