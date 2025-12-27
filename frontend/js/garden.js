@@ -64,7 +64,7 @@ class GardenAreaDisplay extends React.Component {
   }
 
   drawGarden(canvas) {
-    const area = this.props.area
+    const { area } = this.props
     const ctx = canvas.getContext('2d')
     const scaleX = canvas.width / (area.size_x + this.outlineWidth * 2)
     const scaleY = canvas.height / (area.size_y + this.outlineWidth * 2)
@@ -136,8 +136,7 @@ class GardenDisplay extends React.Component {
   }
 
   updateSelectedGardenArea(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     if (value === 'none') {
       this.setState({ selectedArea: null })
