@@ -4,6 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
+import Select from 'react-select'
 
 import $ from 'jquery'
 import Cookies from 'js-cookie'
@@ -192,14 +193,14 @@ class NewSeedRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSupplier(event) {
-    const { value } = event.target
+  updateSupplier(selectedSupplier) {
+    const value = selectedSupplier?.value
 
     this.setState({ supplier: value })
   }
 
-  updateVariety(event) {
-    const { value } = event.target
+  updateVariety(selectedVariety) {
+    const value = selectedVariety?.value
 
     this.setState({ variety: value })
   }
@@ -249,28 +250,20 @@ class NewSeedRow extends React.Component {
     const suppliers = []
     for (const s in this.props.suppliers) {
       const supplierData = this.props.suppliers[s]
-      suppliers.push(
-        <option key={supplierData.pk} value={supplierData.pk}>
-          {supplierData.name}
-        </option>
-      )
+      suppliers.push({ value: supplierData.pk, label: supplierData.name })
     }
     const varieties = []
     for (const v in this.props.varieties) {
       const varietyData = this.props.varieties[v]
-      varieties.push(
-        <option key={varietyData.pk} value={varietyData.pk}>
-          {varietyData.name}
-        </option>
-      )
+      varieties.push({ value: varietyData.pk, label: varietyData.name })
     }
     return (
       <tr>
         <td>
-          <select onChange={this.updateSupplier}>{suppliers}</select>
+          <Select onChange={this.updateSupplier} options={suppliers} value={suppliers.find((o) => o.value === this.state.supplier)} />
         </td>
         <td>
-          <select onChange={this.updateVariety}>{varieties}</select>
+          <Select onChange={this.updateVariety} options={varieties} value={varieties.find((o) => o.value === this.state.variety)} />
         </td>
         <td>
           <input type="text" onChange={this.updateSupplierCode} />
