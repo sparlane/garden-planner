@@ -427,8 +427,8 @@ class NewSeedPacketRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeeds(event) {
-    const { value } = event.target
+  updateSeeds(selectedSeeds) {
+    const value = selectedSeeds?.value
 
     this.setState({ seeds: value })
   }
@@ -475,16 +475,12 @@ class NewSeedPacketRow extends React.Component {
       const seedsData = this.props.seeds[s]
       const supplier = this.props.suppliers.find((s) => s.pk === seedsData.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seedsData.plant_variety)
-      seeds.push(
-        <option key={seedsData.pk} value={seedsData.pk}>
-          {variety.name} from {supplier.name}
-        </option>
-      )
+      seeds.push({ value: seedsData.pk, label: `${variety.name} from ${supplier.name}` })
     }
     return (
       <tr>
         <td>
-          <select onChange={this.updateSeeds}>{seeds}</select>
+          <Select onChange={this.updateSeeds} options={seeds} value={seeds.find((o) => o.value === this.state.seeds)} />
         </td>
         <td>
           <input type="text" onChange={this.updatePurchaseDate} />
