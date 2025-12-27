@@ -4,6 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
+import Select from 'react-select'
 
 import $ from 'jquery'
 import Cookies from 'js-cookie'
@@ -133,9 +134,8 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
     this.setState({ quantity: value })
   }
 
-  updateLocation(event) {
-    const target = event.target
-    const value = target.value
+  updateLocation(selectedLocation) {
+    const value = selectedLocation?.value
 
     this.setState({ location: value })
   }
@@ -164,11 +164,7 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
       const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
       for (const l in bedSquares) {
         const gardenSquareData = bedSquares[l]
-        locations.push(
-          <option key={gardenSquareData.pk} value={gardenSquareData.pk}>
-            {gardenBedData.name} - {gardenSquareData.name}
-          </option>
-        )
+        locations.push({ value: gardenSquareData.pk, label: `${gardenBedData.name} - ${gardenSquareData.name}` })
       }
     }
 
@@ -182,7 +178,7 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
         </td>
         <td></td>
         <td>
-          <select onChange={this.updateLocation}>{locations}</select>
+          <Select onChange={this.updateLocation} options={locations} value={locations.find((o) => o.value === this.state.location)} />
         </td>
         <td>
           <textarea onChange={this.updateNotes} />
