@@ -29,29 +29,25 @@ class NewSeedTrayPlantingRow extends React.Component {
   }
 
   updateSeedPacket(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ seedPacket: value })
   }
 
   updateQuantity(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ quantity: value })
   }
 
   updateLocation(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ location: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
@@ -128,8 +124,7 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
   }
 
   updateQuantity(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ quantity: value })
   }
@@ -141,8 +136,7 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
@@ -438,29 +432,25 @@ class NewGardenSquarePlantingRow extends React.Component {
   }
 
   updateSeedPacket(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ seedPacket: value })
   }
 
   updateQuantity(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ quantity: value })
   }
 
   updateLocation(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ location: Number(value) })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }

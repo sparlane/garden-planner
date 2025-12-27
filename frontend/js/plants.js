@@ -22,15 +22,13 @@ class NewPlantFamilyRow extends React.Component {
   }
 
   updateName(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ name: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
@@ -128,36 +126,31 @@ class NewPlantRow extends React.Component {
   }
 
   updateName(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ name: value })
   }
 
   updateSpacing(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ spacing: value })
   }
 
   updateRowSpacing(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ row_spacing: value })
   }
 
   updatePerSquareFtRate(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ per_square_foot: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
@@ -278,64 +271,55 @@ class NewPlantVarietyRow extends React.Component {
   }
 
   updateName(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ name: value })
   }
 
   updateSpacing(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ spacing: value })
   }
 
   updateRowSpacing(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ row_spacing: value })
   }
 
   updatePerSquareFtRate(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ per_square_foot: value })
   }
 
   updateGerminationMin(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ germination_days_min: value })
   }
 
   updateGerminationMax(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ germination_days_max: value })
   }
 
   updateMaturityMin(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ maturity_days_min: value })
   }
 
   updateMaturityMax(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ maturity_days_max: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }

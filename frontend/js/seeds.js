@@ -26,22 +26,19 @@ class NewSeedSupplierRow extends React.Component {
   }
 
   updateName(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ name: value })
   }
 
   updateWebsite(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ website: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
@@ -196,46 +193,41 @@ class NewSeedRow extends React.Component {
   }
 
   updateSupplier(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ supplier: value })
   }
 
   updateVariety(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ variety: value })
   }
 
   updateSupplierCode(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ supplierCode: value })
   }
 
   updateWebsite(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ website: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
 
   add() {
-    let supplier = this.state.supplier
+    let { supplier } = this.state
     if (supplier === null || supplier === '') {
       supplier = this.props.suppliers[0].pk
     }
-    let variety = this.state.variety
+    let { variety } = this.state
     if (variety === null || variety === '') {
       variety = this.props.varieties[0].pk
     }
@@ -443,35 +435,31 @@ class NewSeedPacketRow extends React.Component {
   }
 
   updateSeeds(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ seeds: value })
   }
 
   updatePurchaseDate(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ purchaseDate: value })
   }
 
   updateSowBy(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ sowBy: value })
   }
 
   updateNotes(event) {
-    const target = event.target
-    const value = target.value
+    const { value } = event.target
 
     this.setState({ notes: value })
   }
 
   add() {
-    let seeds = this.state.seeds
+    let { seeds } = this.state
     if (seeds === null || seeds === '') {
       seeds = this.props.seeds[0].pk
     }
