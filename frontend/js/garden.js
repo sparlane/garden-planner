@@ -3,6 +3,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
 import PropTypes from 'prop-types'
+import Select from 'react-select'
 
 import $ from 'jquery'
 
@@ -135,10 +136,10 @@ class GardenDisplay extends React.Component {
     this.timer = null
   }
 
-  updateSelectedGardenArea(event) {
-    const { value } = event.target
+  updateSelectedGardenArea(selectedGardenArea) {
+    const value = selectedGardenArea?.value
 
-    if (value === 'none') {
+    if (value === undefined || value === null) {
       this.setState({ selectedArea: null })
     } else {
       this.setState({ selectedArea: Number(value) })
@@ -184,14 +185,10 @@ class GardenDisplay extends React.Component {
   }
 
   render() {
-    const areas = [<option key="blank" value="none"></option>]
+    const areas = []
     for (const idx in this.state.areas) {
       const area = this.state.areas[idx]
-      areas.push(
-        <option key={area.pk} value={area.pk}>
-          {area.name}
-        </option>
-      )
+      areas.push({ value: area.pk, label: area.name })
     }
     let areaView = null
     if (this.state.selectedArea !== null) {
@@ -201,7 +198,7 @@ class GardenDisplay extends React.Component {
     }
     return (
       <>
-        <select onChange={this.updateSelectedGardenArea}>{areas}</select>
+        <Select onChange={this.updateSelectedGardenArea} options={areas} value={areas.find((o) => o.value === this.state.selectedArea)} />
         <div>{areaView}</div>
       </>
     )
