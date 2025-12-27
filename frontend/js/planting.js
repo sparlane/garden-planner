@@ -431,8 +431,8 @@ class NewGardenSquarePlantingRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeedPacket(event) {
-    const { value } = event.target
+  updateSeedPacket(selectedSeedPacket) {
+    const value = selectedSeedPacket?.value
 
     this.setState({ seedPacket: value })
   }
@@ -443,10 +443,10 @@ class NewGardenSquarePlantingRow extends React.Component {
     this.setState({ quantity: value })
   }
 
-  updateLocation(event) {
-    const { value } = event.target
+  updateLocation(selectedLocation) {
+    const value = selectedLocation?.value
 
-    this.setState({ location: Number(value) })
+    this.setState({ location: value })
   }
 
   updateNotes(event) {
@@ -466,42 +466,34 @@ class NewGardenSquarePlantingRow extends React.Component {
   }
 
   render() {
-    const seedPackets = [<option key="blank"></option>]
+    const seedPackets = []
     for (const sp in this.props.seedPackets) {
       const seedPacketData = this.props.seedPackets[sp]
       const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
       const supplier = this.props.suppliers.find((s) => s.pk === seeds.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seeds.plant_variety)
-      seedPackets.push(
-        <option key={seedPacketData.pk} value={seedPacketData.pk}>
-          {variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})
-        </option>
-      )
+      seedPackets.push({ value: seedPacketData.pk, label: `${variety.name} from ${supplier.name} (Sow By: ${seedPacketData.sow_by})` })
     }
-    const locations = [<option key="blank"></option>]
+    const locations = []
     for (const b in this.props.gardenBeds) {
       const gardenBedData = this.props.gardenBeds[b]
       const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
       for (const l in bedSquares) {
         const gardenSquareData = bedSquares[l]
-        locations.push(
-          <option key={gardenSquareData.pk} value={gardenSquareData.pk}>
-            {gardenBedData.name} - {gardenSquareData.name}
-          </option>
-        )
+        locations.push({ value: gardenSquareData.pk, label: `${gardenBedData.name} - ${gardenSquareData.name}` })
       }
     }
     return (
       <tr>
         <td>
-          <select onChange={this.updateSeedPacket}>{seedPackets}</select>
+          <Select onChange={this.updateSeedPacket} options={seedPackets} value={seedPackets.find((o) => o.value === this.state.seedPacket)} />
         </td>
         <td>
           <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
         </td>
         <td></td>
         <td>
-          <select onChange={this.updateLocation}>{locations}</select>
+          <Select onChange={this.updateLocation} options={locations} value={locations.find((o) => o.value === this.state.location)} />
         </td>
         <td>
           <textarea onChange={this.updateNotes} />
