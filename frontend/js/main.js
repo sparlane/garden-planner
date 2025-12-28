@@ -9,6 +9,7 @@ import { PlantsView } from './plants.js'
 import { SeedStockTable, SeedSuppliersTable, SeedTable } from './seeds.js'
 import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
+import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
 
 class FrontEndPage extends React.Component {
   constructor(props) {
@@ -37,6 +38,10 @@ class FrontEndPage extends React.Component {
       view = <SeedTable />
     } else if (this.state.selectedView === 'seeds-stock') {
       view = <SeedStockTable />
+    } else if (this.state.selectedView === 'seedtrays-models') {
+      view = <SeedTrayModelsTable />
+    } else if (this.state.selectedView === 'seedtrays') {
+      view = <SeedTraysTable />
     } else if (this.state.selectedView === 'planting-seedtrays') {
       view = <SeedTrayPlantingTable />
     } else if (this.state.selectedView === 'planting-gardensquare') {

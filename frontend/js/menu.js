@@ -15,6 +15,8 @@ class GPTopBar extends React.Component {
     this.setSeedsSupplierView = this.setSeedsSupplierView.bind(this)
     this.setSeedsView = this.setSeedsView.bind(this)
     this.setSeedsStockView = this.setSeedsStockView.bind(this)
+    this.setSeedTrayModelView = this.setSeedTrayModelView.bind(this)
+    this.setSeedTrayView = this.setSeedTrayView.bind(this)
     this.setPlantingSeedTrayView = this.setPlantingSeedTrayView.bind(this)
     this.setPlantingGardenSquareView = this.setPlantingGardenSquareView.bind(this)
   }
@@ -47,6 +49,14 @@ class GPTopBar extends React.Component {
     this.props.setView('planting-gardensquare')
   }
 
+  setSeedTrayModelView() {
+    this.props.setView('seedtrays-models')
+  }
+
+  setSeedTrayView() {
+    this.props.setView('seedtrays')
+  }
+
   render() {
     return (
       <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect fixed={top}>
@@ -68,6 +78,14 @@ class GPTopBar extends React.Component {
               </Nav.Link>
               <Nav.Link href="#seeds-stock" onClick={this.setSeedsStockView}>
                 Stock
+              </Nav.Link>
+            </NavDropdown>
+            <NavDropdown title="Seed Trays">
+              <Nav.Link href="#seedtrays-models" onClick={this.setSeedTrayModelView}>
+                Seed Tray Models
+              </Nav.Link>
+              <Nav.Link href="#seedtrays" onClick={this.setSeedTrayView}>
+                Seed Trays
               </Nav.Link>
             </NavDropdown>
             <NavDropdown title="Planting">
