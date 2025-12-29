@@ -1,13 +1,16 @@
 import React from 'react'
-import PropTypes from 'prop-types'
 
 import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import { Nav, Navbar, NavDropdown } from 'react-bootstrap'
 
-class GPTopBar extends React.Component {
-  constructor(props) {
+interface GPTopBarProps {
+  setView: (view: string) => void
+}
+
+class GPTopBar extends React.Component<GPTopBarProps> {
+  constructor(props: GPTopBarProps) {
     super(props)
 
     this.setGardensView = this.setGardensView.bind(this)
@@ -59,7 +62,7 @@ class GPTopBar extends React.Component {
 
   render() {
     return (
-      <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect fixed={top}>
+      <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
         <Navbar.Toggle aria-controls="responsive-navbar-nav" />
         <Navbar.Collapse id="responsive-navbar-nav">
           <Nav>
@@ -101,9 +104,6 @@ class GPTopBar extends React.Component {
       </Navbar>
     )
   }
-}
-GPTopBar.propTypes = {
-  setView: PropTypes.func.isRequired
 }
 
 export { GPTopBar }

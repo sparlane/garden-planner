@@ -4,8 +4,14 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import { Table } from 'react-bootstrap'
 
-class SeedTrayModelsTable extends React.Component {
-  constructor(props) {
+import { SeedTrayModel, SeedTray } from './types/seedtrays'
+
+interface SeedTrayModelsTableState {
+  seedTrayModels: Array<SeedTrayModel>
+}
+
+class SeedTrayModelsTable extends React.Component<undefined, SeedTrayModelsTableState> {
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
@@ -55,8 +61,13 @@ class SeedTrayModelsTable extends React.Component {
   }
 }
 
-class SeedTraysTable extends React.Component {
-  constructor(props) {
+interface SeedTraysTableState {
+  seedTrays: Array<SeedTray>
+  seedTrayModels: { [key: number]: SeedTrayModel }
+}
+
+class SeedTraysTable extends React.Component<undefined, SeedTraysTableState> {
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
@@ -75,7 +86,7 @@ class SeedTraysTable extends React.Component {
     Promise.all([fetch('/seedtrays/seedtrays/').then((response) => response.json()), fetch('/seedtrays/seedtraymodels/').then((response) => response.json())])
       .then(([seedTraysData, seedTrayModelsData]) => [
         seedTraysData,
-        seedTrayModelsData.reduce((acc, model) => {
+        seedTrayModelsData.reduce((acc: { [key: number]: SeedTrayModel }, model: SeedTrayModel) => {
           acc[model.pk] = model
           return acc
         }, {})

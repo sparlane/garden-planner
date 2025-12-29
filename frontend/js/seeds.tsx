@@ -2,21 +2,35 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 
 import $ from 'jquery'
 import Cookies from 'js-cookie'
 
-class NewSeedSupplierRow extends React.Component {
-  constructor(props) {
+import { Supplier } from './types/suppliers'
+import { Seed, SeedPacketDetails } from './types/seeds'
+import { PlantVariety } from './types/plants'
+import { SelectOption } from './types/others'
+
+interface NewSeedSupplierRowProps {
+  done: () => void
+}
+
+interface NewSeedSupplierRowState {
+  name: string
+  website?: string
+  notes?: string
+}
+
+class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSeedSupplierRowState> {
+  constructor(props: NewSeedSupplierRowProps) {
     super(props)
 
     this.state = {
       name: '',
-      website: null,
-      notes: null
+      website: undefined,
+      notes: undefined
     }
 
     this.updateName = this.updateName.bind(this)
@@ -26,31 +40,31 @@ class NewSeedSupplierRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName(event) {
+  updateName(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ name: value })
   }
 
-  updateWebsite(event) {
+  updateWebsite(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ website: value })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
   }
 
   add() {
-    const data = {
+    const data: { name: string; website?: string; notes?: string } = {
       name: this.state.name,
       notes: this.state.notes
     }
-    if (this.state.website !== '' && this.state.website !== null) {
-      data['website'] = this.state.website
+    if (this.state.website && this.state.website !== '') {
+      data.website = this.state.website
     }
     $.post('/supplies/supplier/', data, this.props.done())
   }
@@ -75,11 +89,12 @@ class NewSeedSupplierRow extends React.Component {
     )
   }
 }
-NewSeedSupplierRow.propTypes = {
-  done: PropTypes.func.isRequired
+
+interface SeedSupplierRowProps {
+  supplier: Supplier
 }
 
-class SeedSupplierRow extends React.Component {
+class SeedSupplierRow extends React.Component<SeedSupplierRowProps> {
   render() {
     return (
       <tr>
@@ -92,12 +107,16 @@ class SeedSupplierRow extends React.Component {
     )
   }
 }
-SeedSupplierRow.propTypes = {
-  supplier: PropTypes.object.isRequired
+
+interface SeedSuppliersTableState {
+  showSupplierAdd: boolean
+  suppliers: Array<Supplier>
 }
 
-class SeedSuppliersTable extends React.Component {
-  constructor(props) {
+class SeedSuppliersTable extends React.Component<undefined, SeedSuppliersTableState> {
+  timer?: number
+
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
@@ -130,10 +149,10 @@ class SeedSuppliersTable extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
-  updateSupplierList(data) {
+  updateSupplierList(data: Array<Supplier>) {
     this.setState({
       suppliers: data
     })
@@ -172,16 +191,30 @@ class SeedSuppliersTable extends React.Component {
   }
 }
 
-class NewSeedRow extends React.Component {
-  constructor(props) {
+interface NewSeedRowProps {
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  done: () => void
+}
+
+interface NewSeedRowState {
+  supplier?: number
+  variety?: number
+  supplierCode?: string
+  website?: string
+  notes?: string
+}
+
+class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
+  constructor(props: NewSeedRowProps) {
     super(props)
 
     this.state = {
-      supplier: null,
-      variety: null,
-      supplierCode: null,
-      website: null,
-      notes: null
+      supplier: undefined,
+      variety: undefined,
+      supplierCode: undefined,
+      website: undefined,
+      notes: undefined
     }
 
     this.updateSupplier = this.updateSupplier.bind(this)
@@ -193,31 +226,39 @@ class NewSeedRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSupplier(selectedSupplier) {
+  updateSupplier(selectedSupplier: SelectOption | null) {
     const value = selectedSupplier?.value
 
-    this.setState({ supplier: value })
+    if (value === undefined || value === null) {
+      this.setState({ supplier: undefined })
+      return
+    }
+    this.setState({ supplier: Number(value) })
   }
 
-  updateVariety(selectedVariety) {
+  updateVariety(selectedVariety: SelectOption | null) {
     const value = selectedVariety?.value
 
-    this.setState({ variety: value })
+    if (value === undefined || value === null) {
+      this.setState({ variety: undefined })
+      return
+    }
+    this.setState({ variety: Number(value) })
   }
 
-  updateSupplierCode(event) {
+  updateSupplierCode(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ supplierCode: value })
   }
 
-  updateWebsite(event) {
+  updateWebsite(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ website: value })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
@@ -225,23 +266,23 @@ class NewSeedRow extends React.Component {
 
   add() {
     let { supplier } = this.state
-    if (supplier === null || supplier === '') {
+    if (!supplier) {
       supplier = this.props.suppliers[0].pk
     }
     let { variety } = this.state
-    if (variety === null || variety === '') {
+    if (!variety) {
       variety = this.props.varieties[0].pk
     }
-    const data = {
+    const data: { supplier: number; plant_variety: number; notes?: string; supplier_code?: string; url?: string } = {
       supplier: supplier,
       plant_variety: variety,
       notes: this.state.notes
     }
-    if (this.state.supplierCode !== '' && this.state.supplierCode !== null) {
-      data['supplier_code'] = this.state.supplierCode
+    if (this.state.supplierCode !== undefined && this.state.supplierCode !== '') {
+      data.supplier_code = this.state.supplierCode
     }
-    if (this.state.website !== '' && this.state.website !== null) {
-      data['url'] = this.state.website
+    if (this.state.website !== undefined && this.state.website !== '') {
+      data.url = this.state.website
     }
     $.post('/seeds/seeds/', data, this.props.done())
   }
@@ -282,20 +323,21 @@ class NewSeedRow extends React.Component {
     )
   }
 }
-NewSeedRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  done: PropTypes.func.isRequired
+
+interface SeedRowProps {
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seed: Seed
 }
 
-class SeedRow extends React.Component {
+class SeedRow extends React.Component<SeedRowProps> {
   render() {
     const supplier = this.props.suppliers.find((s) => s.pk == this.props.seed.supplier)
     const variety = this.props.varieties.find((v) => v.pk === this.props.seed.plant_variety)
     return (
       <tr>
-        <td>{supplier.name}</td>
-        <td>{variety.name}</td>
+        <td>{supplier?.name}</td>
+        <td>{variety?.name}</td>
         <td>{this.props.seed.supplier_code}</td>
         <td>
           <a href={this.props.seed.url}>{this.props.seed.url}</a>
@@ -305,14 +347,17 @@ class SeedRow extends React.Component {
     )
   }
 }
-SeedRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  seed: PropTypes.object.isRequired
+
+interface SeedTableState {
+  showSeedAdd: boolean
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
 }
 
-class SeedTable extends React.Component {
-  constructor(props) {
+class SeedTable extends React.Component<undefined, SeedTableState> {
+  timer?: number
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
@@ -350,22 +395,22 @@ class SeedTable extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
-  updateSupplierList(data) {
+  updateSupplierList(data: Array<Supplier>) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList(data) {
+  updateVarietiesList(data: Array<PlantVariety>) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList(data) {
+  updateSeedList(data: Array<Seed>) {
     this.setState({
       seeds: data
     })
@@ -408,15 +453,29 @@ class SeedTable extends React.Component {
   }
 }
 
-class NewSeedPacketRow extends React.Component {
-  constructor(props) {
+interface NewSeedPacketRowProps {
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
+  done: () => void
+}
+
+interface NewSeedPacketRowState {
+  seeds?: number
+  purchaseDate?: string
+  sowBy?: string
+  notes?: string
+}
+
+class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPacketRowState> {
+  constructor(props: NewSeedPacketRowProps) {
     super(props)
 
     this.state = {
-      seeds: null,
-      purchaseDate: null,
-      sowBy: null,
-      notes: null
+      seeds: undefined,
+      purchaseDate: undefined,
+      sowBy: undefined,
+      notes: undefined
     }
 
     this.updateSeeds = this.updateSeeds.bind(this)
@@ -427,25 +486,30 @@ class NewSeedPacketRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeeds(selectedSeeds) {
+  updateSeeds(selectedSeeds: SelectOption | null) {
     const value = selectedSeeds?.value
 
-    this.setState({ seeds: value })
+    if (value === undefined || value === null) {
+      this.setState({ seeds: undefined })
+      return
+    }
+
+    this.setState({ seeds: Number(value) })
   }
 
-  updatePurchaseDate(event) {
+  updatePurchaseDate(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ purchaseDate: value })
   }
 
-  updateSowBy(event) {
+  updateSowBy(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ sowBy: value })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
@@ -453,18 +517,18 @@ class NewSeedPacketRow extends React.Component {
 
   add() {
     let { seeds } = this.state
-    if (seeds === null || seeds === '') {
+    if (!seeds) {
       seeds = this.props.seeds[0].pk
     }
-    const data = {
+    const data: { seeds: number; purchase_date?: string; sow_by?: string; notes?: string } = {
       seeds: seeds,
       notes: this.state.notes
     }
-    if (this.state.purchaseDate !== '' && this.state.purchaseDate !== null) {
-      data['purchase_date'] = this.state.purchaseDate
+    if (this.state.purchaseDate !== undefined && this.state.purchaseDate !== '') {
+      data.purchase_date = this.state.purchaseDate
     }
-    if (this.state.sowBy !== '' && this.state.sowBy !== null) {
-      data['sow_by'] = this.state.sowBy
+    if (this.state.sowBy !== undefined && this.state.sowBy !== '') {
+      data.sow_by = this.state.sowBy
     }
     $.post('/seeds/packets/', data, this.props.done())
   }
@@ -475,7 +539,7 @@ class NewSeedPacketRow extends React.Component {
       const seedsData = this.props.seeds[s]
       const supplier = this.props.suppliers.find((s) => s.pk === seedsData.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seedsData.plant_variety)
-      seeds.push({ value: seedsData.pk, label: `${variety.name} from ${supplier.name}` })
+      seeds.push({ value: seedsData.pk, label: `${variety?.name} from ${supplier?.name}` })
     }
     return (
       <tr>
@@ -499,15 +563,13 @@ class NewSeedPacketRow extends React.Component {
     )
   }
 }
-NewSeedPacketRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  seeds: PropTypes.array.isRequired,
-  done: PropTypes.func.isRequired
+
+interface SeedPacketRowProps {
+  seedPacket: SeedPacketDetails
 }
 
-class SeedPacketRow extends React.Component {
-  constructor(props) {
+class SeedPacketRow extends React.Component<SeedPacketRowProps> {
+  constructor(props: SeedPacketRowProps) {
     super(props)
 
     this.empty = this.empty.bind(this)
@@ -544,12 +606,19 @@ class SeedPacketRow extends React.Component {
     )
   }
 }
-SeedPacketRow.propTypes = {
-  seedPacket: PropTypes.object.isRequired
+
+interface SeedStockTableState {
+  showSeedPacketAdd: boolean
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
+  seedPackets: Array<SeedPacketDetails>
 }
 
-class SeedStockTable extends React.Component {
-  constructor(props) {
+class SeedStockTable extends React.Component<undefined, SeedStockTableState> {
+  timer?: number
+
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
@@ -589,30 +658,30 @@ class SeedStockTable extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
-  updateSupplierList(data) {
+  updateSupplierList(data: Array<Supplier>) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList(data) {
+  updateVarietiesList(data: Array<PlantVariety>) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList(data) {
+  updateSeedList(data: Array<Seed>) {
     this.setState({
       seeds: data
     })
   }
 
-  updateSeedPacketList(data) {
+  updateSeedPacketList(data: { packets: Array<SeedPacketDetails> }) {
     this.setState({
-      seedPackets: data['packets']
+      seedPackets: data.packets
     })
   }
 

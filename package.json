@@ -16,6 +16,7 @@
   "license": "",
   "description": "",
   "dependencies": {
+    "@types/jquery": "^3.5.33",
     "bootstrap": "^5.3.3",
     "esbuild": "^0.27.0",
     "esbuild-config": "^1.0.1",
@@ -23,7 +24,8 @@
     "js-cookie": "^3.0.5",
     "react-bootstrap": "^2.10.4",
     "react-datetime-picker": "^7.0.1",
-    "react-select": "^5.10.2"
+    "react-select": "^5.10.2",
+    "typescript-eslint": "^8.50.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",

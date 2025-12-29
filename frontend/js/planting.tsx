@@ -2,22 +2,43 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 
 import $ from 'jquery'
 import Cookies from 'js-cookie'
 
-class NewSeedTrayPlantingRow extends React.Component {
-  constructor(props) {
+import { Supplier } from './types/suppliers'
+import { PlantVariety } from './types/plants'
+import { Seed, SeedPacket } from './types/seeds'
+import { GardenArea, GardenBed, GardenSquare } from './types/garden'
+import { GardenSquarePlanting, SeedTrayPlantingDetails } from './types/plantings'
+import { SelectOption } from './types/others'
+
+interface NewSeedTrayPlantingRowProps {
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
+  seedPackets: Array<SeedPacket>
+  done: () => void
+}
+
+interface NewSeedTrayPlantingRowState {
+  seedPacket?: number
+  quantity: number
+  location?: string
+  notes?: string
+}
+
+class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps, NewSeedTrayPlantingRowState> {
+  constructor(props: NewSeedTrayPlantingRowProps) {
     super(props)
 
     this.state = {
-      seedPacket: null,
+      seedPacket: undefined,
       quantity: 1,
-      location: null,
-      notes: null
+      location: undefined,
+      notes: undefined
     }
 
     this.updateSeedPacket = this.updateSeedPacket.bind(this)
@@ -28,25 +49,33 @@ class NewSeedTrayPlantingRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeedPacket(event) {
+  updateSeedPacket(event: React.ChangeEvent<HTMLSelectElement>) {
     const { value } = event.target
 
-    this.setState({ seedPacket: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ seedPacket: undefined })
+      return
+    }
+    this.setState({ seedPacket: Number(value) })
   }
 
-  updateQuantity(event) {
+  updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ quantity: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ quantity: 0 })
+      return
+    }
+    this.setState({ quantity: Number(value) })
   }
 
-  updateLocation(event) {
+  updateLocation(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ location: value })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
@@ -67,11 +96,11 @@ class NewSeedTrayPlantingRow extends React.Component {
     for (const sp in this.props.seedPackets) {
       const seedPacketData = this.props.seedPackets[sp]
       const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
-      const supplier = this.props.suppliers.find((s) => s.pk === seeds.supplier)
-      const variety = this.props.varieties.find((v) => v.pk === seeds.plant_variety)
+      const supplier = this.props.suppliers.find((s) => s.pk === seeds?.supplier)
+      const variety = this.props.varieties.find((v) => v.pk === seeds?.plant_variety)
       seedPackets.push(
         <option key={seedPacketData.pk} value={seedPacketData.pk}>
-          {variety.name} from {supplier.name} (Sow By: {seedPacketData.sow_by})
+          {variety?.name} from {supplier?.name} (Sow By: {seedPacketData.sow_by})
         </option>
       )
     }
@@ -98,22 +127,28 @@ class NewSeedTrayPlantingRow extends React.Component {
     )
   }
 }
-NewSeedTrayPlantingRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  seeds: PropTypes.array.isRequired,
-  seedPackets: PropTypes.array.isRequired,
-  done: PropTypes.func.isRequired
+
+interface SeedTrayTransplantingGardenSquareRowProps {
+  planting: SeedTrayPlantingDetails
+  gardenBeds: Array<GardenBed>
+  gardenSquares: Array<GardenSquare>
+  done: () => void
 }
 
-class SeedTrayTransplantingGardenSquareRow extends React.Component {
-  constructor(props) {
+interface SeedTrayTransplantingGardenSquareRowState {
+  quantity: number
+  location?: number
+  notes?: string
+}
+
+class SeedTrayTransplantingGardenSquareRow extends React.Component<SeedTrayTransplantingGardenSquareRowProps, SeedTrayTransplantingGardenSquareRowState> {
+  constructor(props: SeedTrayTransplantingGardenSquareRowProps) {
     super(props)
 
     this.state = {
       quantity: 1,
-      location: null,
-      notes: null
+      location: undefined,
+      notes: undefined
     }
 
     this.updateQuantity = this.updateQuantity.bind(this)
@@ -123,19 +158,26 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateQuantity(event) {
+  updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ quantity: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ quantity: 0 })
+      return
+    }
+    this.setState({ quantity: Number(value) })
   }
 
-  updateLocation(selectedLocation) {
+  updateLocation(selectedLocation: SelectOption | null) {
     const value = selectedLocation?.value
-
-    this.setState({ location: value })
+    if (value === undefined || value === null) {
+      this.setState({ location: undefined })
+    } else {
+      this.setState({ location: Number(value) })
+    }
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
@@ -152,7 +194,7 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
   }
 
   render() {
-    const locations = [<option key="blank"></option>]
+    const locations: Array<SelectOption> = []
     for (const b in this.props.gardenBeds) {
       const gardenBedData = this.props.gardenBeds[b]
       const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
@@ -185,15 +227,14 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component {
     )
   }
 }
-SeedTrayTransplantingGardenSquareRow.propTypes = {
-  planting: PropTypes.object.isRequired,
-  gardenBeds: PropTypes.array.isRequired,
-  gardenSquares: PropTypes.array.isRequired,
-  done: PropTypes.func.isRequired
+
+interface SeedTrayPlantingRowProps {
+  planting: SeedTrayPlantingDetails
+  transplantAction: (planting: SeedTrayPlantingDetails) => void
 }
 
-class SeedTrayPlantingRow extends React.Component {
-  constructor(props) {
+class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
+  constructor(props: SeedTrayPlantingRowProps) {
     super(props)
 
     this.transplant = this.transplant.bind(this)
@@ -238,24 +279,35 @@ class SeedTrayPlantingRow extends React.Component {
     )
   }
 }
-SeedTrayPlantingRow.propTypes = {
-  planting: PropTypes.object.isRequired,
-  transplantAction: PropTypes.func.isRequired,
-  csrftoken: PropTypes.string.isRequired
+
+interface SeedTrayPlantingTableState {
+  showPlantingAdd: boolean
+  showTransplanting?: SeedTrayPlantingDetails
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
+  seedPackets: Array<SeedPacket>
+  plantings: Array<SeedTrayPlantingDetails>
+  gardenSquares: Array<GardenSquare>
+  gardenBeds: Array<GardenBed>
 }
 
-class SeedTrayPlantingTable extends React.Component {
-  constructor(props) {
+class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingTableState> {
+  timer?: number
+
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
       showPlantingAdd: false,
-      showTransplanting: null,
+      showTransplanting: undefined,
       suppliers: [],
-      varities: [],
+      varieties: [],
       seeds: [],
       seedPackets: [],
-      plantings: []
+      plantings: [],
+      gardenSquares: [],
+      gardenBeds: []
     }
 
     this.showNewPlantingAdd = this.showNewPlantingAdd.bind(this)
@@ -286,7 +338,7 @@ class SeedTrayPlantingTable extends React.Component {
     })
   }
 
-  showTransplanting(planting) {
+  showTransplanting(planting: SeedTrayPlantingDetails) {
     this.setState({
       showTransplanting: planting
     })
@@ -294,7 +346,7 @@ class SeedTrayPlantingTable extends React.Component {
 
   hideTransplanting() {
     this.setState({
-      showTransplanting: null
+      showTransplanting: undefined
     })
   }
 
@@ -305,46 +357,46 @@ class SeedTrayPlantingTable extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
-  updateSupplierList(data) {
+  updateSupplierList(data: Array<Supplier>) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList(data) {
+  updateVarietiesList(data: Array<PlantVariety>) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList(data) {
+  updateSeedList(data: Array<Seed>) {
     this.setState({
       seeds: data
     })
   }
 
-  updateSeedPacketList(data) {
+  updateSeedPacketList(data: Array<SeedPacket>) {
     this.setState({
       seedPackets: data
     })
   }
 
-  updatePlantingList(data) {
+  updatePlantingList(data: { plantings: Array<SeedTrayPlantingDetails> }) {
     this.setState({
       plantings: data.plantings
     })
   }
 
-  updateGardenSquares(data) {
+  updateGardenSquares(data: Array<GardenSquare>) {
     this.setState({
       gardenSquares: data
     })
   }
 
-  updateGardenBeds(data) {
+  updateGardenBeds(data: Array<GardenBed>) {
     this.setState({
       gardenBeds: data
     })
@@ -377,7 +429,7 @@ class SeedTrayPlantingTable extends React.Component {
     for (const p in this.state.plantings) {
       const plantingData = this.state.plantings[p]
       rows.push(<SeedTrayPlantingRow key={plantingData.pk} planting={plantingData} transplantAction={this.showTransplanting} />)
-      if (this.state.showTransplanting !== null && this.state.showTransplanting.pk === this.state.plantings[p].pk) {
+      if (this.state.showTransplanting !== undefined && this.state.showTransplanting?.pk === this.state.plantings[p].pk) {
         rows.push(
           <SeedTrayTransplantingGardenSquareRow
             key="transplanting"
@@ -412,15 +464,32 @@ class SeedTrayPlantingTable extends React.Component {
   }
 }
 
-class NewGardenSquarePlantingRow extends React.Component {
-  constructor(props) {
+interface NewGardenSquarePlantingRowProps {
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
+  seedPackets: Array<SeedPacket>
+  gardenBeds: Array<GardenBed>
+  gardenSquares: Array<GardenSquare>
+  done: () => void
+}
+
+interface NewGardenSquarePlantingRowState {
+  seedPacket?: number
+  quantity: number
+  location?: number
+  notes?: string
+}
+
+class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlantingRowProps, NewGardenSquarePlantingRowState> {
+  constructor(props: NewGardenSquarePlantingRowProps) {
     super(props)
 
     this.state = {
-      seedPacket: null,
+      seedPacket: undefined,
       quantity: 1,
-      location: null,
-      notes: null
+      location: undefined,
+      notes: undefined
     }
 
     this.updateSeedPacket = this.updateSeedPacket.bind(this)
@@ -431,25 +500,35 @@ class NewGardenSquarePlantingRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateSeedPacket(selectedSeedPacket) {
+  updateSeedPacket(selectedSeedPacket: SelectOption | null) {
     const value = selectedSeedPacket?.value
-
-    this.setState({ seedPacket: value })
+    if (value === undefined || value === null) {
+      this.setState({ seedPacket: undefined })
+      return
+    }
+    this.setState({ seedPacket: Number(value) })
   }
 
-  updateQuantity(event) {
+  updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ quantity: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ quantity: 0 })
+      return
+    }
+    this.setState({ quantity: Number(value) })
   }
 
-  updateLocation(selectedLocation) {
+  updateLocation(selectedLocation: SelectOption | null) {
     const value = selectedLocation?.value
-
-    this.setState({ location: value })
+    if (value === undefined || value === null) {
+      this.setState({ location: undefined })
+      return
+    }
+    this.setState({ location: Number(value) })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
@@ -470,9 +549,9 @@ class NewGardenSquarePlantingRow extends React.Component {
     for (const sp in this.props.seedPackets) {
       const seedPacketData = this.props.seedPackets[sp]
       const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
-      const supplier = this.props.suppliers.find((s) => s.pk === seeds.supplier)
-      const variety = this.props.varieties.find((v) => v.pk === seeds.plant_variety)
-      seedPackets.push({ value: seedPacketData.pk, label: `${variety.name} from ${supplier.name} (Sow By: ${seedPacketData.sow_by})` })
+      const supplier = this.props.suppliers.find((s) => s.pk === seeds?.supplier)
+      const variety = this.props.varieties.find((v) => v.pk === seeds?.plant_variety)
+      seedPackets.push({ value: seedPacketData.pk, label: `${variety?.name} from ${supplier?.name} (Sow By: ${seedPacketData.sow_by})` })
     }
     const locations = []
     for (const b in this.props.gardenBeds) {
@@ -506,18 +585,13 @@ class NewGardenSquarePlantingRow extends React.Component {
     )
   }
 }
-NewGardenSquarePlantingRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  seeds: PropTypes.array.isRequired,
-  seedPackets: PropTypes.array.isRequired,
-  done: PropTypes.func.isRequired,
-  gardenBeds: PropTypes.array.isRequired,
-  gardenSquares: PropTypes.array.isRequired
+
+interface GardenSquarePlantingRowProps {
+  planting: GardenSquarePlanting
 }
 
-class GardenSquarePlantingRow extends React.Component {
-  constructor(props) {
+class GardenSquarePlantingRow extends React.Component<GardenSquarePlantingRowProps> {
+  constructor(props: GardenSquarePlantingRowProps) {
     super(props)
 
     this.empty = this.empty.bind(this)
@@ -565,22 +639,31 @@ class GardenSquarePlantingRow extends React.Component {
     )
   }
 }
-GardenSquarePlantingRow.propTypes = {
-  suppliers: PropTypes.array.isRequired,
-  varieties: PropTypes.array.isRequired,
-  seeds: PropTypes.array.isRequired,
-  seedPackets: PropTypes.array.isRequired,
-  planting: PropTypes.object.isRequired
+
+interface GardenSquarePlantingTableState {
+  showPlantingAdd: boolean
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
+  seedPackets: Array<SeedPacket>
+  plantings: Array<GardenSquarePlanting>
+  gardenSquares: Array<GardenSquare>
+  gardenBeds: Array<GardenBed>
+  gardenAreas: Array<GardenArea>
+  filterGardenArea?: number
+  filterGardenBed?: string
 }
 
-class GardenSquarePlantingTable extends React.Component {
-  constructor(props) {
+class GardenSquarePlantingTable extends React.Component<undefined, GardenSquarePlantingTableState> {
+  timer?: number
+
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
       showPlantingAdd: false,
       suppliers: [],
-      varities: [],
+      varieties: [],
       seeds: [],
       seedPackets: [],
       plantings: [],
@@ -626,58 +709,58 @@ class GardenSquarePlantingTable extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
-  updateSupplierList(data) {
+  updateSupplierList(data: Array<Supplier>) {
     this.setState({
       suppliers: data
     })
   }
 
-  updateVarietiesList(data) {
+  updateVarietiesList(data: Array<PlantVariety>) {
     this.setState({
       varieties: data
     })
   }
 
-  updateSeedList(data) {
+  updateSeedList(data: Array<Seed>) {
     this.setState({
       seeds: data
     })
   }
 
-  updateSeedPacketList(data) {
+  updateSeedPacketList(data: Array<SeedPacket>) {
     this.setState({
       seedPackets: data
     })
   }
 
-  updatePlantingList(data) {
+  updatePlantingList(data: { plantings: Array<GardenSquarePlanting> }) {
     this.setState({
       plantings: data.plantings
     })
   }
 
-  updateGardenSquares(data) {
+  updateGardenSquares(data: Array<GardenSquare>) {
     this.setState({
       gardenSquares: data
     })
   }
 
-  updateGardenBeds(data) {
+  updateGardenBeds(data: Array<GardenBed>) {
     this.setState({
       gardenBeds: data
     })
   }
 
-  updateGardenAreas(data) {
+  updateGardenAreas(data: Array<GardenArea>) {
     this.setState({
       gardenAreas: data
     })
   }
 
-  updateGardenAreaFilter(event) {
+  updateGardenAreaFilter(event: React.ChangeEvent<HTMLSelectElement>) {
     const { value } = event.target
     if (value === 'all') {
       this.setState({ filterGardenArea: undefined })
@@ -686,7 +769,7 @@ class GardenSquarePlantingTable extends React.Component {
     this.setState({ filterGardenArea: Number(value) })
   }
 
-  updateGardenBedFilter(event) {
+  updateGardenBedFilter(event: React.ChangeEvent<HTMLSelectElement>) {
     const { value } = event.target
     if (value === 'all') {
       this.setState({ filterGardenBed: undefined })
@@ -751,16 +834,7 @@ class GardenSquarePlantingTable extends React.Component {
         (this.state.gardenAreas.find((area) => area.pk === this.state.filterGardenArea)?.name === plantingData.location.area &&
           (!this.state.filterGardenBed || this.state.filterGardenBed === plantingData.location.bed))
       ) {
-        rows.push(
-          <GardenSquarePlantingRow
-            key={plantingData.transplanting_pk ? 't' + plantingData.transplanting_pk : plantingData.planting_pk}
-            seedPackets={this.state.seedPackets}
-            seeds={this.state.seeds}
-            suppliers={this.state.suppliers}
-            varieties={this.state.varieties}
-            planting={plantingData}
-          />
-        )
+        rows.push(<GardenSquarePlantingRow key={plantingData.transplanting_pk ? 't' + plantingData.transplanting_pk : plantingData.planting_pk} planting={plantingData} />)
       }
     }
     return (
