@@ -2,27 +2,40 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import PropTypes from 'prop-types'
 import Select from 'react-select'
 
 import $ from 'jquery'
 
-class GardenAreaDisplay extends React.Component {
-  constructor(props) {
+import { GardenArea, GardenBed, GardenSquare, GardenRow } from './types/garden'
+import { GardenSquarePlanting } from './types/plantings'
+import { SelectOption } from './types/others'
+
+interface GardenAreaDisplayProps {
+  area: GardenArea
+  gardenBeds: Array<GardenBed>
+  squares: Array<GardenSquare>
+  plantings: Array<GardenSquarePlanting>
+}
+
+class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
+  canvasRef: React.RefObject<HTMLCanvasElement>
+  outlineWidth: number
+
+  constructor(props: GardenAreaDisplayProps) {
     super(props)
     this.canvasRef = React.createRef()
     this.outlineWidth = 100
   }
 
-  calculateX(offsetX, X) {
+  calculateX(offsetX: number, X: number): number {
     return this.outlineWidth + offsetX + X
   }
 
-  calculateY(offsetY, Y) {
+  calculateY(offsetY: number, Y: number): number {
     return this.outlineWidth + (this.props.area.size_y - (offsetY + Y))
   }
 
-  drawBox(ctx, line_width, offsetX, offsetY, startX, startY, sizeX, sizeY) {
+  drawBox(ctx: CanvasRenderingContext2D, line_width: number, offsetX: number, offsetY: number, startX: number, startY: number, sizeX: number, sizeY: number) {
     ctx.lineWidth = line_width
     const halfLineWidth = line_width / 2
     // goto the bottom left (lowest x, y)
@@ -38,11 +51,11 @@ class GardenAreaDisplay extends React.Component {
     ctx.stroke()
   }
 
-  fillBox(ctx, offsetX, offsetY, startX, startY, sizeX, sizeY) {
+  fillBox(ctx: CanvasRenderingContext2D, offsetX: number, offsetY: number, startX: number, startY: number, sizeX: number, sizeY: number) {
     ctx.fillRect(this.calculateX(offsetX, startX), this.calculateY(offsetY, startY + sizeY), sizeX, sizeY)
   }
 
-  drawSquare(ctx, bed, square) {
+  drawSquare(ctx: CanvasRenderingContext2D, bed: GardenBed, square: GardenSquare) {
     ctx.beginPath()
     ctx.strokeStyle = 'lightblue'
     this.drawBox(ctx, 10, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
@@ -53,7 +66,7 @@ class GardenAreaDisplay extends React.Component {
     }
   }
 
-  drawBed(ctx, bed) {
+  drawBed(ctx: CanvasRenderingContext2D, bed: GardenBed) {
     ctx.beginPath()
     ctx.strokeStyle = 'grey'
     this.drawBox(ctx, 50, 0, 0, bed.placement_x, bed.placement_y, bed.size_x, bed.size_y)
@@ -64,7 +77,7 @@ class GardenAreaDisplay extends React.Component {
     }
   }
 
-  drawGarden(canvas) {
+  drawGarden(canvas: HTMLCanvasElement) {
     const { area } = this.props
     const ctx = canvas.getContext('2d')
     const scaleX = canvas.width / (area.size_x + this.outlineWidth * 2)
@@ -72,6 +85,9 @@ class GardenAreaDisplay extends React.Component {
     let scale = scaleX
     if (scaleY < scaleX) {
       scale = scaleY
+    }
+    if (ctx === null) {
+      return
     }
     ctx.scale(scale, scale)
     ctx.lineWidth = this.outlineWidth
@@ -90,6 +106,9 @@ class GardenAreaDisplay extends React.Component {
 
   componentDidMount() {
     const canvas = this.canvasRef.current
+    if (canvas === null) {
+      return
+    }
     this.drawGarden(canvas)
   }
 
@@ -98,19 +117,22 @@ class GardenAreaDisplay extends React.Component {
   }
 }
 
-GardenAreaDisplay.propTypes = {
-  area: PropTypes.object.isRequired,
-  gardenBeds: PropTypes.array.isRequired,
-  squares: PropTypes.array.isRequired,
-  plantings: PropTypes.array.isRequired
+interface GardenDisplayState {
+  selectedArea?: number
+  areas: Array<GardenArea>
+  beds: Array<GardenBed>
+  rows: Array<GardenRow>
+  squares: Array<GardenSquare>
+  plantings: Array<GardenSquarePlanting>
 }
 
-class GardenDisplay extends React.Component {
-  constructor(props) {
+class GardenDisplay extends React.Component<undefined, GardenDisplayState> {
+  timer?: number
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
-      selectedArea: null,
+      selectedArea: undefined,
       areas: [],
       beds: [],
       rows: [],
@@ -133,46 +155,46 @@ class GardenDisplay extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
-  updateSelectedGardenArea(selectedGardenArea) {
+  updateSelectedGardenArea(selectedGardenArea: SelectOption | null) {
     const value = selectedGardenArea?.value
 
     if (value === undefined || value === null) {
-      this.setState({ selectedArea: null })
+      this.setState({ selectedArea: undefined })
     } else {
       this.setState({ selectedArea: Number(value) })
     }
   }
 
-  updateGardenAreas(data) {
+  updateGardenAreas(data: Array<GardenArea>) {
     this.setState({
       areas: data
     })
   }
 
-  updateGardenBeds(data) {
+  updateGardenBeds(data: Array<GardenBed>) {
     this.setState({
       beds: data
     })
   }
 
-  updateGardenRows(data) {
+  updateGardenRows(data: Array<GardenRow>) {
     this.setState({
       rows: data
     })
   }
 
-  updateGardenSquares(data) {
+  updateGardenSquares(data: Array<GardenSquare>) {
     this.setState({
       squares: data
     })
   }
 
-  updateGardenSquaresPlanting(data) {
+  updateGardenSquaresPlanting(data: { plantings: Array<GardenSquarePlanting> }) {
     this.setState({
-      plantings: data['plantings']
+      plantings: data.plantings
     })
   }
 
@@ -190,11 +212,13 @@ class GardenDisplay extends React.Component {
       const area = this.state.areas[idx]
       areas.push({ value: area.pk, label: area.name })
     }
-    let areaView = null
-    if (this.state.selectedArea !== null) {
+    let areaView = undefined
+    if (this.state.selectedArea !== undefined) {
       const area = this.state.areas.find((a) => a.pk === this.state.selectedArea)
-      const beds = this.state.beds.filter((b) => b.area === area.pk)
-      areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds} squares={this.state.squares} plantings={this.state.plantings} />
+      if (area) {
+        const beds = this.state.beds.filter((b) => b.area === area?.pk)
+        areaView = <GardenAreaDisplay key={area?.pk} area={area} gardenBeds={beds} squares={this.state.squares} plantings={this.state.plantings} />
+      }
     }
     return (
       <>

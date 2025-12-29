@@ -11,8 +11,12 @@ import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
 
-class FrontEndPage extends React.Component {
-  constructor(props) {
+interface FrontEndPageState {
+  selectedView: string
+}
+
+class FrontEndPage extends React.Component<undefined, FrontEndPageState> {
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
@@ -22,7 +26,7 @@ class FrontEndPage extends React.Component {
     this.updateSelectedView = this.updateSelectedView.bind(this)
   }
 
-  updateSelectedView(view) {
+  updateSelectedView(view: string) {
     this.setState({
       selectedView: view
     })
@@ -58,7 +62,7 @@ class FrontEndPage extends React.Component {
   }
 }
 
-function createFrontEnd(elementId) {
+function createFrontEnd(elementId: string) {
   const div = ReactDOM.createRoot(document.getElementById(elementId))
   div.render(<FrontEndPage />)
 }

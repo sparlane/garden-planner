@@ -2,13 +2,23 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import PropTypes from 'prop-types'
 import { Table, Button } from 'react-bootstrap'
 
 import $ from 'jquery'
 
-class NewPlantFamilyRow extends React.Component {
-  constructor(props) {
+import { Plant, PlantFamily, PlantVariety } from './types/plants'
+
+interface NewPlantFamilyRowProps {
+  done: () => void
+}
+
+interface NewPlantFamilyRowState {
+  name: string
+  notes: string
+}
+
+class NewPlantFamilyRow extends React.Component<NewPlantFamilyRowProps, NewPlantFamilyRowState> {
+  constructor(props: NewPlantFamilyRowProps) {
     super(props)
 
     this.state = {
@@ -21,13 +31,13 @@ class NewPlantFamilyRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName(event) {
+  updateName(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ name: value })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
@@ -66,12 +76,14 @@ class NewPlantFamilyRow extends React.Component {
     )
   }
 }
-NewPlantFamilyRow.propTypes = {
-  done: PropTypes.func.isRequired
+
+interface PlantFamilyRowProps {
+  family: PlantFamily
+  addNewPlant: (familyId: number) => void
 }
 
-class PlantFamilyRow extends React.Component {
-  constructor(props) {
+class PlantFamilyRow extends React.Component<PlantFamilyRowProps> {
+  constructor(props: PlantFamilyRowProps) {
     super(props)
 
     this.addNewPlant = this.addNewPlant.bind(this)
@@ -100,20 +112,30 @@ class PlantFamilyRow extends React.Component {
     )
   }
 }
-PlantFamilyRow.propTypes = {
-  family: PropTypes.object.isRequired,
-  addNewPlant: PropTypes.func.isRequired
+
+interface NewPlantRowProps {
+  done: () => void
+  familyName: string
+  familyId: number
 }
 
-class NewPlantRow extends React.Component {
-  constructor(props) {
+interface NewPlantRowState {
+  name: string
+  spacing?: number
+  row_spacing?: number
+  per_square_foot?: number
+  notes: string
+}
+
+class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
+  constructor(props: NewPlantRowProps) {
     super(props)
 
     this.state = {
       name: '',
-      spacing: null,
-      row_spacing: null,
-      per_square_foot: null,
+      spacing: undefined,
+      row_spacing: undefined,
+      per_square_foot: undefined,
       notes: ''
     }
 
@@ -125,50 +147,63 @@ class NewPlantRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName(event) {
+  updateName(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ name: value })
   }
 
-  updateSpacing(event) {
+  updateSpacing(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ spacing: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ spacing: undefined })
+      return
+    }
+
+    this.setState({ spacing: Number(value) })
   }
 
-  updateRowSpacing(event) {
+  updateRowSpacing(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ row_spacing: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ row_spacing: undefined })
+      return
+    }
+    this.setState({ row_spacing: Number(value) })
   }
 
-  updatePerSquareFtRate(event) {
+  updatePerSquareFtRate(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ per_square_foot: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ per_square_foot: undefined })
+      return
+    }
+    this.setState({ per_square_foot: Number(value) })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
   }
 
   add() {
-    const data = {
+    const data: { family: number; name: string; notes?: string; spacing?: number; inter_row_spacing?: number; plants_per_square_foot?: number } = {
       family: this.props.familyId,
       name: this.state.name,
       notes: this.state.notes
     }
-    if (this.state.spacing !== '' && this.state.spacing !== null) {
-      data['spacing'] = this.state.spacing
+    if (this.state.spacing !== undefined) {
+      data.spacing = this.state.spacing
     }
-    if (this.state.row_spacing !== '' && this.state.row_spacing !== null) {
-      data['inter_row_spacing'] = this.state.row_spacing
+    if (this.state.row_spacing !== undefined) {
+      data.inter_row_spacing = this.state.row_spacing
     }
-    if (this.state.per_square_foot !== '' && this.state.per_square_foot !== null) {
-      data['plants_per_square_foot'] = this.state.per_square_foot
+    if (this.state.per_square_foot !== undefined) {
+      data.plants_per_square_foot = this.state.per_square_foot
     }
     $.post('/plants/plant/', data, this.props.done())
   }
@@ -201,14 +236,15 @@ class NewPlantRow extends React.Component {
     )
   }
 }
-NewPlantRow.propTypes = {
-  done: PropTypes.func.isRequired,
-  familyName: PropTypes.string.isRequired,
-  familyId: PropTypes.number.isRequired
+
+interface PlantRowProps {
+  familyName: string
+  plant: Plant
+  addNewPlantVariety: (plantId: number) => void
 }
 
-class PlantRow extends React.Component {
-  constructor(props) {
+class PlantRow extends React.Component<PlantRowProps> {
+  constructor(props: PlantRowProps) {
     super(props)
 
     this.addNewPlantVariety = this.addNewPlantVariety.bind(this)
@@ -236,25 +272,39 @@ class PlantRow extends React.Component {
     )
   }
 }
-PlantRow.propTypes = {
-  familyName: PropTypes.string.isRequired,
-  plant: PropTypes.object.isRequired,
-  addNewPlantVariety: PropTypes.func.isRequired
+
+interface NewPlantVarietyRowProps {
+  done: () => void
+  familyName: string
+  plantName: string
+  plantId: number
 }
 
-class NewPlantVarietyRow extends React.Component {
-  constructor(props) {
+interface NewPlantVarietyRowState {
+  name: string
+  spacing?: number
+  row_spacing?: number
+  per_square_foot?: number
+  germination_days_min?: number
+  germination_days_max?: number
+  maturity_days_min?: number
+  maturity_days_max?: number
+  notes: string
+}
+
+class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPlantVarietyRowState> {
+  constructor(props: NewPlantVarietyRowProps) {
     super(props)
 
     this.state = {
       name: '',
-      spacing: null,
-      row_spacing: null,
-      per_square_foot: null,
-      germination_days_min: null,
-      germination_days_max: null,
-      maturity_days_min: null,
-      maturity_days_max: null,
+      spacing: undefined,
+      row_spacing: undefined,
+      per_square_foot: undefined,
+      germination_days_min: undefined,
+      germination_days_max: undefined,
+      maturity_days_min: undefined,
+      maturity_days_max: undefined,
       notes: ''
     }
 
@@ -270,86 +320,130 @@ class NewPlantVarietyRow extends React.Component {
     this.add = this.add.bind(this)
   }
 
-  updateName(event) {
+  updateName(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
     this.setState({ name: value })
   }
 
-  updateSpacing(event) {
+  updateSpacing(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ spacing: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ spacing: undefined })
+      return
+    }
+
+    this.setState({ spacing: Number(value) })
   }
 
-  updateRowSpacing(event) {
+  updateRowSpacing(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ row_spacing: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ row_spacing: undefined })
+      return
+    }
+
+    this.setState({ row_spacing: Number(value) })
   }
 
-  updatePerSquareFtRate(event) {
+  updatePerSquareFtRate(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ per_square_foot: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ per_square_foot: undefined })
+      return
+    }
+
+    this.setState({ per_square_foot: Number(value) })
   }
 
-  updateGerminationMin(event) {
+  updateGerminationMin(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ germination_days_min: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ germination_days_min: undefined })
+      return
+    }
+
+    this.setState({ germination_days_min: Number(value) })
   }
 
-  updateGerminationMax(event) {
+  updateGerminationMax(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ germination_days_max: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ germination_days_max: undefined })
+      return
+    }
+
+    this.setState({ germination_days_max: Number(value) })
   }
 
-  updateMaturityMin(event) {
+  updateMaturityMin(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ maturity_days_min: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ maturity_days_min: undefined })
+      return
+    }
+    this.setState({ maturity_days_min: Number(value) })
   }
 
-  updateMaturityMax(event) {
+  updateMaturityMax(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
 
-    this.setState({ maturity_days_max: value })
+    if (value === '' || value === undefined || value === null) {
+      this.setState({ maturity_days_max: undefined })
+      return
+    }
+    this.setState({ maturity_days_max: Number(value) })
   }
 
-  updateNotes(event) {
+  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
     const { value } = event.target
 
     this.setState({ notes: value })
   }
 
   add() {
-    const data = {
+    const data: {
+      plant: number
+      name: string
+      notes?: string
+      spacing?: number
+      inter_row_spacing?: number
+      plants_per_square_foot?: number
+      germination_days_min?: number
+      germination_days_max?: number
+      maturity_days_min?: number
+      maturity_days_max?: number
+    } = {
       plant: this.props.plantId,
       name: this.state.name,
       notes: this.state.notes
     }
-    if (this.state.spacing !== '' && this.state.spacing !== null) {
-      data['spacing'] = this.state.spacing
+    if (this.state.spacing !== undefined) {
+      data.spacing = this.state.spacing
     }
-    if (this.state.row_spacing !== '' && this.state.row_spacing !== null) {
-      data['inter_row_spacing'] = this.state.row_spacing
+    if (this.state.row_spacing !== undefined) {
+      data.inter_row_spacing = this.state.row_spacing
     }
-    if (this.state.per_square_foot !== '' && this.state.per_square_foot !== null) {
-      data['plants_per_square_foot'] = this.state.per_square_foot
+    if (this.state.per_square_foot !== undefined) {
+      data.plants_per_square_foot = this.state.per_square_foot
     }
-    if (this.state.germination_days_min !== '' && this.state.germination_days_min !== null) {
-      data['germination_days_min'] = this.state.germination_days_min
+    if (this.state.germination_days_min !== undefined) {
+      data.germination_days_min = this.state.germination_days_min
     }
-    if (this.state.germination_days_max !== '' && this.state.germination_days_max !== null) {
-      data['germination_days_max'] = this.state.germination_days_max
+    if (this.state.germination_days_max !== undefined) {
+      data.germination_days_max = this.state.germination_days_max
     }
-    if (this.state.maturity_days_min !== '' && this.state.maturity_days_min !== null) {
-      data['maturity_days_min'] = this.state.maturity_days_min
+    if (this.state.maturity_days_min !== undefined) {
+      data.maturity_days_min = this.state.maturity_days_min
     }
-    if (this.state.maturity_days_max !== '' && this.state.maturity_days_max !== null) {
-      data['maturity_days_max'] = this.state.maturity_days_max
+    if (this.state.maturity_days_max !== undefined) {
+      data.maturity_days_max = this.state.maturity_days_max
     }
     $.post('/plants/variety/', data, this.props.done())
   }
@@ -388,14 +482,14 @@ class NewPlantVarietyRow extends React.Component {
     )
   }
 }
-NewPlantVarietyRow.propTypes = {
-  done: PropTypes.func.isRequired,
-  familyName: PropTypes.string.isRequired,
-  plantName: PropTypes.string.isRequired,
-  plantId: PropTypes.number.isRequired
+
+interface PlantVarietyRowProps {
+  variety: PlantVariety
+  familyName: string
+  plantName: string
 }
 
-class PlantVarietyRow extends React.Component {
+class PlantVarietyRow extends React.Component<PlantVarietyRowProps> {
   render() {
     return (
       <tr>
@@ -416,20 +510,26 @@ class PlantVarietyRow extends React.Component {
     )
   }
 }
-PlantVarietyRow.propTypes = {
-  variety: PropTypes.object.isRequired,
-  familyName: PropTypes.string.isRequired,
-  plantName: PropTypes.string.isRequired
+
+interface PlantsViewState {
+  showFamilyAdd: boolean
+  showPlantAdd?: number
+  showVarietyAdd?: number
+  families: Array<PlantFamily>
+  plants: Array<Plant>
+  varieties: Array<PlantVariety>
 }
 
-class PlantsView extends React.Component {
-  constructor(props) {
+class PlantsView extends React.Component<undefined, PlantsViewState> {
+  timer?: number
+
+  constructor(props: undefined) {
     super(props)
 
     this.state = {
       showFamilyAdd: false,
-      showPlantAdd: null,
-      showVarietyAdd: null,
+      showPlantAdd: undefined,
+      showVarietyAdd: undefined,
       families: [],
       plants: [],
       varieties: []
@@ -456,7 +556,7 @@ class PlantsView extends React.Component {
 
   componentWillUnmount() {
     clearInterval(this.timer)
-    this.timer = null
+    this.timer = undefined
   }
 
   showNewFamilyAdd() {
@@ -471,7 +571,7 @@ class PlantsView extends React.Component {
     })
   }
 
-  showNewPlantAdd(familyId) {
+  showNewPlantAdd(familyId: number) {
     this.setState({
       showPlantAdd: familyId
     })
@@ -479,11 +579,11 @@ class PlantsView extends React.Component {
 
   hideNewPlantAdd() {
     this.setState({
-      showPlantAdd: null
+      showPlantAdd: undefined
     })
   }
 
-  showNewVarietyAdd(plantId) {
+  showNewVarietyAdd(plantId: number) {
     this.setState({
       showVarietyAdd: plantId
     })
@@ -491,23 +591,23 @@ class PlantsView extends React.Component {
 
   hideNewVarietyAdd() {
     this.setState({
-      showVarietyAdd: null
+      showVarietyAdd: undefined
     })
   }
 
-  updatePlantFamilyResponse(data) {
+  updatePlantFamilyResponse(data: Array<PlantFamily>) {
     this.setState({
       families: data
     })
   }
 
-  updatePlantResponse(data) {
+  updatePlantResponse(data: Array<Plant>) {
     this.setState({
       plants: data
     })
   }
 
-  updatePlantVarietiesResponse(data) {
+  updatePlantVarietiesResponse(data: Array<PlantVariety>) {
     this.setState({
       varieties: data
     })

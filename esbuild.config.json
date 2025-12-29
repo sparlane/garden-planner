@@ -1,6 +1,6 @@
 {
     "entry": [
-        "frontend/js/main.js"
+        "frontend/js/main.tsx"
     ],
     "bundle": true,
     "minify": true,
