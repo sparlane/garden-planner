@@ -2,6 +2,7 @@
 Views for seeds
 """
 
+from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404
@@ -11,6 +12,7 @@ from plantings.models import SeedTrayPlanting, GardenSquareDirectSowPlanting, Ga
 from .models import SeedPacket
 
 
+@login_required
 def packets_current(request):
     """
     List the seed packets that are not empty
@@ -34,6 +36,7 @@ def packets_current(request):
     return JsonResponse({'packets': packet_data})
 
 
+@login_required
 def packets_empty(request):
     """
     Complete/Remove the remaining contents of a seed tray
