@@ -4,6 +4,7 @@ Planting views
 
 import datetime
 
+from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
 from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
@@ -11,6 +12,7 @@ from django.shortcuts import get_object_or_404
 from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant
 
 
+@login_required
 def seedtray_current(request):
     """
     List the seedtray plantings that are currently growing
@@ -43,6 +45,7 @@ def seedtray_current(request):
     return JsonResponse({'plantings': planting_data})
 
 
+@login_required
 def seedtray_complete(request):
     """
     Complete/Remove the remaining contents of a seed tray
@@ -56,6 +59,7 @@ def seedtray_complete(request):
     return HttpResponse(status=204)
 
 
+@login_required
 def gardensquare_current(request):
     """
     List the GardenSquare plantings that are currently growing
@@ -123,6 +127,7 @@ def gardensquare_current(request):
     return JsonResponse({'plantings': planting_data})
 
 
+@login_required
 def gardensquare_complete(request):
     """
     Harvest Complete/Remove the remaining contents of a garden square
@@ -136,6 +141,7 @@ def gardensquare_complete(request):
     return HttpResponse(status=204)
 
 
+@login_required
 def gardensquare_transplant_complete(request):
     """
     Harvest Complete/Remove the remaining contents of a garden square (that was transplanted)
