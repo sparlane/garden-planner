@@ -66,7 +66,14 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
     if (this.state.website && this.state.website !== '') {
       data.website = this.state.website
     }
-    $.post('/supplies/supplier/', data, this.props.done())
+    $.ajax({
+      url: '/supplies/supplier/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
@@ -284,7 +291,14 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     if (this.state.website !== undefined && this.state.website !== '') {
       data.url = this.state.website
     }
-    $.post('/seeds/seeds/', data, this.props.done())
+    $.ajax({
+      url: '/seeds/seeds/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
@@ -530,7 +544,14 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     if (this.state.sowBy !== undefined && this.state.sowBy !== '') {
       data.sow_by = this.state.sowBy
     }
-    $.post('/seeds/packets/', data, this.props.done())
+    $.ajax({
+      url: '/seeds/packets/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {

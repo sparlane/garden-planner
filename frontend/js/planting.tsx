@@ -88,7 +88,14 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
       location: this.state.location,
       notes: this.state.notes
     }
-    $.post('/plantings/seedtray/', data, this.props.done())
+    $.ajax({
+      url: '/plantings/seedtray/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
@@ -190,7 +197,14 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component<SeedTrayTrans
       location: this.state.location,
       notes: this.state.notes
     }
-    $.post('/plantings/transplantedgardensquare/', data, this.props.done())
+    $.ajax({
+      url: '/plantings/transplantedgardensquare/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
@@ -541,7 +555,14 @@ class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlanting
       location: this.state.location,
       notes: this.state.notes
     }
-    $.post('/plantings/directsowgardensquare/', data, this.props.done())
+    $.ajax({
+      url: '/plantings/directsowgardensquare/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
