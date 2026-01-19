@@ -6,12 +6,12 @@ import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 
 import $ from 'jquery'
-import Cookies from 'js-cookie'
 
 import { Supplier } from './types/suppliers'
 import { Seed, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
+import { csrfPost } from './utils'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -66,14 +66,7 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
     if (this.state.website && this.state.website !== '') {
       data.website = this.state.website
     }
-    $.ajax({
-      url: '/supplies/supplier/',
-      method: 'POST',
-      data: data,
-      beforeSend: function (xhr) {
-        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
-      }
-    }).done(() => this.props.done())
+    csrfPost('/supplies/supplier/', data).done(this.props.done)
   }
 
   render() {
@@ -291,14 +284,7 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     if (this.state.website !== undefined && this.state.website !== '') {
       data.url = this.state.website
     }
-    $.ajax({
-      url: '/seeds/seeds/',
-      method: 'POST',
-      data: data,
-      beforeSend: function (xhr) {
-        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
-      }
-    }).done(() => this.props.done())
+    csrfPost('/seeds/seeds/', data).done(this.props.done)
   }
 
   render() {
@@ -544,14 +530,7 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     if (this.state.sowBy !== undefined && this.state.sowBy !== '') {
       data.sow_by = this.state.sowBy
     }
-    $.ajax({
-      url: '/seeds/packets/',
-      method: 'POST',
-      data: data,
-      beforeSend: function (xhr) {
-        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
-      }
-    }).done(() => this.props.done())
+    csrfPost('/seeds/packets/', data).done(this.props.done)
   }
 
   render() {
@@ -597,14 +576,7 @@ class SeedPacketRow extends React.Component<SeedPacketRowProps> {
   }
 
   empty() {
-    $.ajax({
-      url: '/seeds/packets/empty/',
-      method: 'POST',
-      data: { packet: this.props.seedPacket.pk },
-      beforeSend: function (xhr) {
-        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
-      }
-    })
+    csrfPost('/seeds/packets/empty/', { packet: this.props.seedPacket.pk })
   }
 
   render() {
