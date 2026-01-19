@@ -30,7 +30,7 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = SeedTrayPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'seed_tray', 'location', 'removed', 'notes']
 
 
 class GardenSquareTransplantSerializer(serializers.ModelSerializer):

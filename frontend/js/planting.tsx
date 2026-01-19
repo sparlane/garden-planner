@@ -12,6 +12,7 @@ import { PlantVariety } from './types/plants'
 import { Seed, SeedPacket } from './types/seeds'
 import { GardenArea, GardenBed, GardenSquare } from './types/garden'
 import { GardenSquarePlanting, SeedTrayPlantingDetails } from './types/plantings'
+import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 
@@ -20,12 +21,15 @@ interface NewSeedTrayPlantingRowProps {
   varieties: Array<PlantVariety>
   seeds: Array<Seed>
   seedPackets: Array<SeedPacket>
+  seedTrays: Array<SeedTray>
+  seedTrayModels: { [key: number]: SeedTrayModel }
   done: () => void
 }
 
 interface NewSeedTrayPlantingRowState {
   seedPacket?: number
   quantity: number
+  seedTray?: number
   location?: string
   notes?: string
 }
@@ -37,6 +41,7 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
     this.state = {
       seedPacket: undefined,
       quantity: 1,
+      seedTray: undefined,
       location: undefined,
       notes: undefined
     }
@@ -45,6 +50,7 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
     this.updateQuantity = this.updateQuantity.bind(this)
     this.updateLocation = this.updateLocation.bind(this)
     this.updateNotes = this.updateNotes.bind(this)
+    this.updateSeedTray = this.updateSeedTray.bind(this)
 
     this.add = this.add.bind(this)
   }
@@ -81,11 +87,21 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
     this.setState({ notes: value })
   }
 
+  updateSeedTray(selectedSeedTray: SelectOption | null) {
+    const value = selectedSeedTray?.value
+    if (value === undefined || value === null) {
+      this.setState({ seedTray: undefined })
+      return
+    }
+    this.setState({ seedTray: Number(value) })
+  }
+
   add() {
     const data = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
       location: this.state.location,
+      seed_tray: this.state.seedTray,
       notes: this.state.notes
     }
     csrfPost('/plantings/seedtray/', data).done(this.props.done)
@@ -104,6 +120,10 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
         </option>
       )
     }
+    const seedTrays = []
+    for (const seedTrayData of this.props.seedTrays) {
+      seedTrays.push({ value: seedTrayData.pk, label: `${seedTrayData.pk} (${this.props.seedTrayModels[seedTrayData.model]?.description})` })
+    }
     return (
       <tr>
         <td>
@@ -113,6 +133,9 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
           <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
         </td>
         <td></td>
+        <td>
+          <Select onChange={this.updateSeedTray} options={seedTrays} value={seedTrays.find((o) => o.value === this.state.seedTray)} />
+        </td>
         <td>
           <input type="text" onChange={this.updateLocation} />
         </td>
@@ -259,6 +282,7 @@ class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
           {this.props.planting.quantity} (<span title="Number that have been transplanted to a garden square">Transplanted: {this.props.planting.transplanted_count}</span>)
         </td>
         <td>{this.props.planting.planted}</td>
+        <td>{this.props.planting.seed_tray}</td>
         <td>{this.props.planting.location}</td>
         <td>
           {this.props.planting.germination_date_early} - {this.props.planting.germination_date_late}
@@ -280,6 +304,8 @@ interface SeedTrayPlantingTableState {
   varieties: Array<PlantVariety>
   seeds: Array<Seed>
   seedPackets: Array<SeedPacket>
+  seedTrays: Array<SeedTray>
+  seedTrayModels: { [key: number]: SeedTrayModel }
   plantings: Array<SeedTrayPlantingDetails>
   gardenSquares: Array<GardenSquare>
   gardenBeds: Array<GardenBed>
@@ -298,6 +324,8 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
       varieties: [],
       seeds: [],
       seedPackets: [],
+      seedTrays: [],
+      seedTrayModels: {},
       plantings: [],
       gardenSquares: [],
       gardenBeds: []
@@ -317,6 +345,8 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
     this.updatePlantingList = this.updatePlantingList.bind(this)
     this.updateGardenSquares = this.updateGardenSquares.bind(this)
     this.updateGardenBeds = this.updateGardenBeds.bind(this)
+    this.updateSeedTrays = this.updateSeedTrays.bind(this)
+    this.updateSeedTrayModels = this.updateSeedTrayModels.bind(this)
   }
 
   showNewPlantingAdd() {
@@ -395,6 +425,21 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
     })
   }
 
+  updateSeedTrays(data: Array<SeedTray>) {
+    this.setState({
+      seedTrays: data
+    })
+  }
+
+  updateSeedTrayModels(data: Array<SeedTrayModel>) {
+    this.setState({
+      seedTrayModels: data.reduce((acc: { [key: number]: SeedTrayModel }, model: SeedTrayModel) => {
+        acc[model.pk] = model
+        return acc
+      }, {})
+    })
+  }
+
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
@@ -403,6 +448,8 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
     await $.getJSON('/plantings/seedtray/current/', this.updatePlantingList)
     await $.getJSON('/garden/squares/', this.updateGardenSquares)
     await $.getJSON('/garden/beds/', this.updateGardenBeds)
+    await $.getJSON('/seedtrays/seedtrays/', this.updateSeedTrays)
+    await $.getJSON('/seedtrays/seedtraymodels/', this.updateSeedTrayModels)
   }
 
   render() {
@@ -415,6 +462,8 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
           seeds={this.state.seeds}
           suppliers={this.state.suppliers}
           varieties={this.state.varieties}
+          seedTrays={this.state.seedTrays}
+          seedTrayModels={this.state.seedTrayModels}
           done={this.hideNewPlantingAdd}
         />
       )
@@ -446,6 +495,7 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
             </td>
             <td>Quantity</td>
             <td>Date</td>
+            <td>Seed Tray</td>
             <td>Location</td>
             <td>Expected Germination</td>
             <td>Notes</td>

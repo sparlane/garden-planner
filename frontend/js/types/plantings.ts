@@ -35,7 +35,8 @@ interface SeedTrayPlantingDetails {
   variety: string
   planted: string
   quantity: number
-  location: string
+  seed_tray?: number
+  location?: string
   notes: string
   germination_date_early?: string
   germination_date_late?: string
