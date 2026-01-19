@@ -36,6 +36,7 @@ def seedtray_current(request):
             'variety': planting.seeds_used.seeds.plant_variety.name,
             'planted': planting.planted,
             'quantity': planting.quantity,
+            'seed_tray': planting.seed_tray.pk if planting.seed_tray else None,
             'location': planting.location,
             'notes': planting.notes,
             'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),

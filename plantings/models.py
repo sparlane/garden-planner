@@ -6,6 +6,7 @@ from datetime import date
 from django.db import models
 
 from seeds.models import SeedPacket
+from seedtrays.models import SeedTray
 from garden.models import GardenRow, GardenSquare
 
 
@@ -45,7 +46,8 @@ class SeedTrayPlanting(Planting):
     """
     Planting into a seed tray
     """
-    location = models.CharField(max_length=1024)
+    location = models.CharField(max_length=1024, null=True, blank=True)
+    seed_tray = models.ForeignKey(SeedTray, on_delete=models.PROTECT, null=True, blank=True)
 
 
 class GardenSquareTransplant(models.Model):
