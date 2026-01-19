@@ -5,6 +5,7 @@ import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 
 import $ from 'jquery'
+import Cookies from 'js-cookie'
 
 import { Plant, PlantFamily, PlantVariety } from './types/plants'
 
@@ -44,14 +45,17 @@ class NewPlantFamilyRow extends React.Component<NewPlantFamilyRowProps, NewPlant
   }
 
   add() {
-    $.post(
-      '/plants/family/',
-      {
+    $.ajax({
+      url: '/plants/family/',
+      method: 'POST',
+      data: {
         name: this.state.name,
         notes: this.state.notes
       },
-      this.props.done()
-    )
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
@@ -205,7 +209,14 @@ class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
     if (this.state.per_square_foot !== undefined) {
       data.plants_per_square_foot = this.state.per_square_foot
     }
-    $.post('/plants/plant/', data, this.props.done())
+    $.ajax({
+      url: '/plants/plant/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
@@ -445,7 +456,14 @@ class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPla
     if (this.state.maturity_days_max !== undefined) {
       data.maturity_days_max = this.state.maturity_days_max
     }
-    $.post('/plants/variety/', data, this.props.done())
+    $.ajax({
+      url: '/plants/variety/',
+      method: 'POST',
+      data: data,
+      beforeSend: function (xhr) {
+        xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+      }
+    }).done(() => this.props.done())
   }
 
   render() {
