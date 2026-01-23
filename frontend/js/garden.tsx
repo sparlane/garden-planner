@@ -8,6 +8,7 @@ import $ from 'jquery'
 
 import { GardenArea, GardenBed, GardenSquare, GardenRow } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
+import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
 import { SelectOption } from './types/others'
 
 interface GardenAreaDisplayProps {
@@ -199,10 +200,10 @@ class GardenDisplay extends React.Component<undefined, GardenDisplayState> {
   }
 
   async updateData() {
-    await $.getJSON('/garden/areas/', this.updateGardenAreas)
-    await $.getJSON('/garden/beds/', this.updateGardenBeds)
-    await $.getJSON('/garden/rows/', this.updateGardenRows)
-    await $.getJSON('/garden/squares/', this.updateGardenSquares)
+    this.updateGardenAreas(await getGardenAreas())
+    this.updateGardenBeds(await getGardenBeds())
+    this.updateGardenRows(await getGardenRows())
+    this.updateGardenSquares(await getGardenSquares())
     await $.getJSON('/plantings/garden/squares/current/', this.updateGardenSquaresPlanting)
   }
 
