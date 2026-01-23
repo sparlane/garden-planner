@@ -4,11 +4,10 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import Select from 'react-select'
 
-import $ from 'jquery'
-
 import { GardenArea, GardenBed, GardenSquare, GardenRow } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
 import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
+import { getPlantingGardenSquaresCurrent } from './api/plantings'
 import { SelectOption } from './types/others'
 
 interface GardenAreaDisplayProps {
@@ -193,9 +192,9 @@ class GardenDisplay extends React.Component<undefined, GardenDisplayState> {
     })
   }
 
-  updateGardenSquaresPlanting(data: { plantings: Array<GardenSquarePlanting> }) {
+  updateGardenSquaresPlanting(plantings: Array<GardenSquarePlanting>) {
     this.setState({
-      plantings: data.plantings
+      plantings
     })
   }
 
@@ -204,7 +203,7 @@ class GardenDisplay extends React.Component<undefined, GardenDisplayState> {
     this.updateGardenBeds(await getGardenBeds())
     this.updateGardenRows(await getGardenRows())
     this.updateGardenSquares(await getGardenSquares())
-    await $.getJSON('/plantings/garden/squares/current/', this.updateGardenSquaresPlanting)
+    this.updateGardenSquaresPlanting(await getPlantingGardenSquaresCurrent())
   }
 
   render() {

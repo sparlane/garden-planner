@@ -16,6 +16,7 @@ import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
+import { getPlantingSeedTrayCurrent, getPlantingGardenSquaresCurrent } from './api/plantings'
 
 interface NewSeedTrayPlantingRowProps {
   suppliers: Array<Supplier>
@@ -446,7 +447,7 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
-    await $.getJSON('/plantings/seedtray/current/', this.updatePlantingList)
+    this.updatePlantingList(await getPlantingSeedTrayCurrent())
     this.updateGardenSquares(await getGardenSquares())
     this.updateGardenBeds(await getGardenBeds())
     await $.getJSON('/seedtrays/seedtrays/', this.updateSeedTrays)
@@ -822,7 +823,7 @@ class GardenSquarePlantingTable extends React.Component<undefined, GardenSquareP
     await $.getJSON('/plants/variety/', this.updateVarietiesList)
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
-    await $.getJSON('/plantings/garden/squares/current/', this.updatePlantingList)
+    this.updatePlantingList(await getPlantingGardenSquaresCurrent())
     this.updateGardenAreas(await getGardenAreas())
     this.updateGardenSquares(await getGardenSquares())
     this.updateGardenBeds(await getGardenBeds())
