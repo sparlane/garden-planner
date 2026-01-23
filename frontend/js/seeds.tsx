@@ -8,12 +8,12 @@ import Select from 'react-select'
 import $ from 'jquery'
 
 import { Supplier } from './types/suppliers'
-import { Seed, SeedPacketDetails } from './types/seeds'
+import { Seed, SeedCreate, SeedPacketCreate, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 import { getPlantVarieties } from './api/plants'
-import { getSeedPacketsCurrent, getSeeds } from './api/seeds'
+import { addSeed, addSeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -275,7 +275,7 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     if (!variety) {
       variety = this.props.varieties[0].pk
     }
-    const data: { supplier: number; plant_variety: number; notes?: string; supplier_code?: string; url?: string } = {
+    const data: SeedCreate = {
       supplier: supplier,
       plant_variety: variety,
       notes: this.state.notes
@@ -286,7 +286,7 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     if (this.state.website !== undefined && this.state.website !== '') {
       data.url = this.state.website
     }
-    csrfPost('/seeds/seeds/', data).done(this.props.done)
+    addSeed(data).done(this.props.done)
   }
 
   render() {
@@ -522,7 +522,7 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     if (!seeds) {
       seeds = this.props.seeds[0].pk
     }
-    const data: { seeds: number; purchase_date?: string; sow_by?: string; notes?: string } = {
+    const data: SeedPacketCreate = {
       seeds: seeds,
       notes: this.state.notes
     }
@@ -532,7 +532,7 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     if (this.state.sowBy !== undefined && this.state.sowBy !== '') {
       data.sow_by = this.state.sowBy
     }
-    csrfPost('/seeds/packets/', data).done(this.props.done)
+    addSeedPacket(data).done(this.props.done)
   }
 
   render() {
