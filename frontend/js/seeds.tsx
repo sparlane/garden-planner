@@ -13,7 +13,7 @@ import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 import { getPlantVarieties } from './api/plants'
-import { addSeed, addSeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
+import { addSeed, addSeedPacket, emptySeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -578,7 +578,7 @@ class SeedPacketRow extends React.Component<SeedPacketRowProps> {
   }
 
   empty() {
-    csrfPost('/seeds/packets/empty/', { packet: this.props.seedPacket.pk })
+    emptySeedPacket(this.props.seedPacket.pk)
   }
 
   render() {
