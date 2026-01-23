@@ -14,14 +14,16 @@ import { GardenArea, GardenBed, GardenSquare } from './types/garden'
 import { GardenSquarePlanting, SeedTrayPlantingDetails } from './types/plantings'
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
-import { csrfPost } from './utils'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
 import {
   getPlantingSeedTrayCurrent,
   getPlantingGardenSquaresCurrent,
   addPlantingDirectSowGardenSquare,
   addPlantingSeedTray,
-  addPlantingTransplantedGardenSquare
+  addPlantingTransplantedGardenSquare,
+  completePlantingDirectSowGardenSquare,
+  completePlantingTransplantedGardenSquare,
+  completePlantingSeedTray
 } from './api/plantings'
 
 interface NewSeedTrayPlantingRowProps {
@@ -105,7 +107,7 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
   }
 
   add() {
-    if (this.state.seedPacket === undefined || this.state.seedTray === undefined) {
+    if (this.state.seedPacket === undefined) {
       return
     }
     const data = {
@@ -283,7 +285,7 @@ class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
   }
 
   empty() {
-    csrfPost('/plantings/seedtray/complete/', { planting: this.props.planting.pk })
+    completePlantingSeedTray(this.props.planting.pk)
   }
 
   render() {
@@ -658,9 +660,11 @@ class GardenSquarePlantingRow extends React.Component<GardenSquarePlantingRowPro
   }
 
   empty() {
-    csrfPost(this.props.planting.transplanted ? '/plantings/garden/squares/transplant/complete/' : '/plantings/garden/squares/complete/', {
-      planting: this.props.planting.transplanted ? this.props.planting.transplanting_pk : this.props.planting.planting_pk
-    })
+    if (this.props.planting.transplanted && this.props.planting.transplanting_pk) {
+      completePlantingTransplantedGardenSquare(this.props.planting.transplanting_pk)
+    } else {
+      completePlantingDirectSowGardenSquare(this.props.planting.planting_pk)
+    }
   }
 
   render() {
