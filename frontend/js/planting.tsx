@@ -16,7 +16,13 @@ import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
-import { getPlantingSeedTrayCurrent, getPlantingGardenSquaresCurrent } from './api/plantings'
+import {
+  getPlantingSeedTrayCurrent,
+  getPlantingGardenSquaresCurrent,
+  addPlantingDirectSowGardenSquare,
+  addPlantingSeedTray,
+  addPlantingTransplantedGardenSquare
+} from './api/plantings'
 
 interface NewSeedTrayPlantingRowProps {
   suppliers: Array<Supplier>
@@ -99,6 +105,9 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
   }
 
   add() {
+    if (this.state.seedPacket === undefined || this.state.seedTray === undefined) {
+      return
+    }
     const data = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
@@ -106,7 +115,7 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
       seed_tray: this.state.seedTray,
       notes: this.state.notes
     }
-    csrfPost('/plantings/seedtray/', data).done(this.props.done)
+    addPlantingSeedTray(data).done(this.props.done)
   }
 
   render() {
@@ -209,13 +218,16 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component<SeedTrayTrans
   }
 
   add() {
+    if (this.state.location === undefined) {
+      return
+    }
     const data = {
       original_planting: this.props.planting.pk,
       quantity: this.state.quantity,
       location: this.state.location,
       notes: this.state.notes
     }
-    csrfPost('/plantings/transplantedgardensquare/', data).done(this.props.done)
+    addPlantingTransplantedGardenSquare(data).done(this.props.done)
   }
 
   render() {
@@ -409,9 +421,9 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
     })
   }
 
-  updatePlantingList(data: { plantings: Array<SeedTrayPlantingDetails> }) {
+  updatePlantingList(plantings: Array<SeedTrayPlantingDetails>) {
     this.setState({
-      plantings: data.plantings
+      plantings
     })
   }
 
@@ -580,13 +592,16 @@ class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlanting
   }
 
   add() {
+    if (this.state.seedPacket === undefined || this.state.location === undefined) {
+      return
+    }
     const data = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
       location: this.state.location,
       notes: this.state.notes
     }
-    csrfPost('/plantings/directsowgardensquare/', data).done(this.props.done)
+    addPlantingDirectSowGardenSquare(data).done(this.props.done)
   }
 
   render() {
@@ -776,9 +791,9 @@ class GardenSquarePlantingTable extends React.Component<undefined, GardenSquareP
     })
   }
 
-  updatePlantingList(data: { plantings: Array<GardenSquarePlanting> }) {
+  updatePlantingList(plantings: Array<GardenSquarePlanting>) {
     this.setState({
-      plantings: data.plantings
+      plantings
     })
   }
 

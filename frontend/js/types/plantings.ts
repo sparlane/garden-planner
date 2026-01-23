@@ -1,5 +1,31 @@
 import { GardenSquare } from './garden'
 
+interface PlantingCreate {
+  seeds_used: number
+  quantity: number
+  notes?: string
+}
+
+interface GardenRowDirectPlantingCreate extends PlantingCreate {
+  location: number
+}
+
+interface GardenSquareDirectPlantingCreate extends PlantingCreate {
+  location: number
+}
+
+interface SeedTrayPlantingCreate extends PlantingCreate {
+  seed_tray?: number
+  location?: string
+}
+
+interface GardenSquareTransplantingCreate {
+  quantity: number
+  location: number
+  original_planting: number
+  notes?: string
+}
+
 interface Planting {
   pk: number
   seeds_used: number
@@ -19,7 +45,8 @@ interface GardenSquareDirectPlanting extends Planting {
 }
 
 interface SeedTrayPlanting extends Planting {
-  location: string
+  seed_tray?: number
+  location?: string
   planted: string
 }
 
@@ -59,4 +86,16 @@ interface GardenSquarePlanting {
   maturity_date_late?: string
 }
 
-export { Planting, GardenRowDirectPlanting, GardenSquareDirectPlanting, SeedTrayPlanting, GardenSquareTransplanting, SeedTrayPlantingDetails, GardenSquarePlanting }
+export {
+  Planting,
+  GardenRowDirectPlanting,
+  GardenSquareDirectPlanting,
+  SeedTrayPlanting,
+  GardenSquareTransplanting,
+  SeedTrayPlantingDetails,
+  GardenSquarePlanting,
+  GardenRowDirectPlantingCreate,
+  GardenSquareDirectPlantingCreate,
+  SeedTrayPlantingCreate,
+  GardenSquareTransplantingCreate
+}
