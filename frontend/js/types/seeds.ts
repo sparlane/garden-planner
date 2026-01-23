@@ -7,6 +7,14 @@ interface Seed {
   notes: string
 }
 
+interface SeedCreate {
+  supplier: number
+  plant_variety: number
+  supplier_code?: string
+  url?: string
+  notes?: string
+}
+
 interface SeedPacket {
   pk: number
   seeds: number
@@ -14,6 +22,13 @@ interface SeedPacket {
   sow_by: string
   empty: boolean
   notes: string
+}
+
+interface SeedPacketCreate {
+  seeds: number
+  purchase_date?: string
+  sow_by?: string
+  notes?: string
 }
 
 interface SeedPacketDetails {
@@ -29,4 +44,4 @@ interface SeedPacketDetails {
   transplanted_count: number
 }
 
-export { Seed, SeedPacket, SeedPacketDetails }
+export { Seed, SeedPacket, SeedPacketDetails, SeedCreate, SeedPacketCreate }
