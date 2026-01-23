@@ -12,6 +12,7 @@ import { Seed, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
+import { getPlantVarieties } from './api/plants'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -418,7 +419,7 @@ class SeedTable extends React.Component<undefined, SeedTableState> {
 
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
-    await $.getJSON('/plants/variety/', this.updateVarietiesList)
+    this.updateVarietiesList(await getPlantVarieties())
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
   }
 
@@ -680,7 +681,7 @@ class SeedStockTable extends React.Component<undefined, SeedStockTableState> {
 
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
-    await $.getJSON('/plants/variety/', this.updateVarietiesList)
+    this.updateVarietiesList(await getPlantVarieties())
     await $.getJSON('/seeds/seeds/', this.updateSeedList)
     await $.getJSON('/seeds/packets/current/', this.updateSeedPacketList)
   }

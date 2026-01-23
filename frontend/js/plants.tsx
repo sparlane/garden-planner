@@ -4,10 +4,9 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 
-import $ from 'jquery'
-
 import { Plant, PlantFamily, PlantVariety } from './types/plants'
 import { csrfPost } from './utils'
+import { getPlantFamilies, getPlants, getPlantVarieties } from './api/plants'
 
 interface NewPlantFamilyRowProps {
   done: () => void
@@ -611,9 +610,9 @@ class PlantsView extends React.Component<undefined, PlantsViewState> {
   }
 
   async updateData() {
-    await $.getJSON('/plants/family/', this.updatePlantFamilyResponse)
-    await $.getJSON('/plants/plant/', this.updatePlantResponse)
-    await $.getJSON('/plants/variety/', this.updatePlantVarietiesResponse)
+    this.updatePlantFamilyResponse(await getPlantFamilies())
+    this.updatePlantVarietiesResponse(await getPlantVarieties())
+    this.updatePlantResponse(await getPlants())
   }
 
   render() {
