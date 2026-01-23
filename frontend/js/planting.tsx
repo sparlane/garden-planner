@@ -26,6 +26,7 @@ import {
   completePlantingSeedTray
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
+import { getSeedPackets, getSeeds } from './api/seeds'
 
 interface NewSeedTrayPlantingRowProps {
   suppliers: Array<Supplier>
@@ -460,8 +461,8 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     this.updateVarietiesList(await getPlantVarieties())
-    await $.getJSON('/seeds/seeds/', this.updateSeedList)
-    await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
+    this.updateSeedList(await getSeeds())
+    this.updateSeedPacketList(await getSeedPackets())
     this.updatePlantingList(await getPlantingSeedTrayCurrent())
     this.updateGardenSquares(await getGardenSquares())
     this.updateGardenBeds(await getGardenBeds())
@@ -841,8 +842,8 @@ class GardenSquarePlantingTable extends React.Component<undefined, GardenSquareP
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     this.updateVarietiesList(await getPlantVarieties())
-    await $.getJSON('/seeds/seeds/', this.updateSeedList)
-    await $.getJSON('/seeds/packets/', this.updateSeedPacketList)
+    this.updateSeedList(await getSeeds())
+    this.updateSeedPacketList(await getSeedPackets())
     this.updatePlantingList(await getPlantingGardenSquaresCurrent())
     this.updateGardenAreas(await getGardenAreas())
     this.updateGardenSquares(await getGardenSquares())

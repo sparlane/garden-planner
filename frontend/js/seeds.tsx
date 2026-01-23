@@ -13,6 +13,7 @@ import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 import { getPlantVarieties } from './api/plants'
+import { getSeedPacketsCurrent, getSeeds } from './api/seeds'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -420,7 +421,7 @@ class SeedTable extends React.Component<undefined, SeedTableState> {
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     this.updateVarietiesList(await getPlantVarieties())
-    await $.getJSON('/seeds/seeds/', this.updateSeedList)
+    this.updateSeedList(await getSeeds())
   }
 
   render() {
@@ -673,17 +674,17 @@ class SeedStockTable extends React.Component<undefined, SeedStockTableState> {
     })
   }
 
-  updateSeedPacketList(data: { packets: Array<SeedPacketDetails> }) {
+  updateSeedPacketList(seedPackets: Array<SeedPacketDetails>) {
     this.setState({
-      seedPackets: data.packets
+      seedPackets
     })
   }
 
   async updateData() {
     await $.getJSON('/supplies/supplier/', this.updateSupplierList)
     this.updateVarietiesList(await getPlantVarieties())
-    await $.getJSON('/seeds/seeds/', this.updateSeedList)
-    await $.getJSON('/seeds/packets/current/', this.updateSeedPacketList)
+    this.updateSeedList(await getSeeds())
+    this.updateSeedPacketList(await getSeedPacketsCurrent())
   }
 
   render() {
