@@ -4,9 +4,8 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 
-import { Plant, PlantFamily, PlantVariety } from './types/plants'
-import { csrfPost } from './utils'
-import { getPlantFamilies, getPlants, getPlantVarieties } from './api/plants'
+import { Plant, PlantCreate, PlantFamily, PlantVariety, PlantVarietyCreate } from './types/plants'
+import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties } from './api/plants'
 
 interface NewPlantFamilyRowProps {
   done: () => void
@@ -44,7 +43,7 @@ class NewPlantFamilyRow extends React.Component<NewPlantFamilyRowProps, NewPlant
   }
 
   add() {
-    csrfPost('/plants/family/', {
+    addPlantFamily({
       name: this.state.name,
       notes: this.state.notes
     }).done(this.props.done)
@@ -187,7 +186,7 @@ class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
   }
 
   add() {
-    const data: { family: number; name: string; notes?: string; spacing?: number; inter_row_spacing?: number; plants_per_square_foot?: number } = {
+    const data: PlantCreate = {
       family: this.props.familyId,
       name: this.state.name,
       notes: this.state.notes
@@ -201,7 +200,7 @@ class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
     if (this.state.per_square_foot !== undefined) {
       data.plants_per_square_foot = this.state.per_square_foot
     }
-    csrfPost('/plants/plant/', data).done(this.props.done)
+    addPlant(data).done(this.props.done)
   }
 
   render() {
@@ -261,8 +260,8 @@ class PlantRow extends React.Component<PlantRowProps> {
           </a>
         </td>
         <td>{this.props.plant.spacing}</td>
-        <td>{this.props.plant.row_spacing}</td>
-        <td>{this.props.plant.per_square_foot}</td>
+        <td>{this.props.plant.inter_row_spacing}</td>
+        <td>{this.props.plant.plants_per_square_foot}</td>
         <td>{this.props.plant.notes}</td>
       </tr>
     )
@@ -404,18 +403,7 @@ class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPla
   }
 
   add() {
-    const data: {
-      plant: number
-      name: string
-      notes?: string
-      spacing?: number
-      inter_row_spacing?: number
-      plants_per_square_foot?: number
-      germination_days_min?: number
-      germination_days_max?: number
-      maturity_days_min?: number
-      maturity_days_max?: number
-    } = {
+    const data: PlantVarietyCreate = {
       plant: this.props.plantId,
       name: this.state.name,
       notes: this.state.notes
@@ -441,7 +429,7 @@ class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPla
     if (this.state.maturity_days_max !== undefined) {
       data.maturity_days_max = this.state.maturity_days_max
     }
-    csrfPost('/plants/variety/', data).done(this.props.done)
+    addPlantVariety(data).done(this.props.done)
   }
 
   render() {

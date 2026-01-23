@@ -4,10 +4,15 @@ interface PlantFamily {
   notes: string
 }
 
+interface PlantFamilyCreate {
+  name: string
+  notes?: string
+}
+
 interface PlantingDetails {
   spacing?: number
-  row_spacing?: number
-  per_square_foot?: number
+  inter_row_spacing?: number
+  plants_per_square_foot?: number
   germination_days_min?: number
   germination_days_max?: number
   maturity_days_min?: number
@@ -21,6 +26,12 @@ interface Plant extends PlantingDetails {
   notes: string
 }
 
+interface PlantCreate extends PlantingDetails {
+  family: number
+  name: string
+  notes?: string
+}
+
 interface PlantVariety extends PlantingDetails {
   pk: number
   plant: number
@@ -28,4 +39,10 @@ interface PlantVariety extends PlantingDetails {
   notes: string
 }
 
-export { PlantFamily, Plant, PlantVariety, PlantingDetails }
+interface PlantVarietyCreate extends PlantingDetails {
+  plant: number
+  name: string
+  notes?: string
+}
+
+export { PlantFamily, Plant, PlantVariety, PlantingDetails, PlantFamilyCreate, PlantCreate, PlantVarietyCreate }
