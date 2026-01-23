@@ -21,4 +21,8 @@ function getSeedPacketsCurrent(): Promise<Array<SeedPacketDetails>> {
   return fetchAsJson<{ packets: Array<SeedPacketDetails> }>('/seeds/packets/current/').then((data) => data.packets)
 }
 
-export { getSeeds, getSeedPackets, getSeedPacketsCurrent, addSeed, addSeedPacket }
+function emptySeedPacket(pk: number) {
+  return csrfPost('/seeds/packets/empty/', { packet: pk })
+}
+
+export { getSeeds, getSeedPackets, getSeedPacketsCurrent, addSeed, addSeedPacket, emptySeedPacket }
