@@ -5,8 +5,6 @@ import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 
-import $ from 'jquery'
-
 import { Supplier } from './types/suppliers'
 import { PlantVariety } from './types/plants'
 import { Seed, SeedPacket } from './types/seeds'
@@ -28,6 +26,7 @@ import {
 import { getPlantVarieties } from './api/plants'
 import { getSeedPackets, getSeeds } from './api/seeds'
 import { getSeedTrayModels, getSeedTrays } from './api/seedtrays'
+import { getSuppliers } from './api/supplies'
 
 interface NewSeedTrayPlantingRowProps {
   suppliers: Array<Supplier>
@@ -460,7 +459,7 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
   }
 
   async updateData() {
-    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
+    this.updateSupplierList(await getSuppliers())
     this.updateVarietiesList(await getPlantVarieties())
     this.updateSeedList(await getSeeds())
     this.updateSeedPacketList(await getSeedPackets())
@@ -841,7 +840,7 @@ class GardenSquarePlantingTable extends React.Component<undefined, GardenSquareP
   }
 
   async updateData() {
-    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
+    this.updateSupplierList(await getSuppliers())
     this.updateVarietiesList(await getPlantVarieties())
     this.updateSeedList(await getSeeds())
     this.updateSeedPacketList(await getSeedPackets())
