@@ -5,8 +5,6 @@ import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 
-import $ from 'jquery'
-
 import { Supplier } from './types/suppliers'
 import { Seed, SeedCreate, SeedPacketCreate, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
@@ -14,6 +12,7 @@ import { SelectOption } from './types/others'
 import { csrfPost } from './utils'
 import { getPlantVarieties } from './api/plants'
 import { addSeed, addSeedPacket, emptySeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
+import { getSuppliers } from './api/supplies'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -161,7 +160,7 @@ class SeedSuppliersTable extends React.Component<undefined, SeedSuppliersTableSt
   }
 
   async updateData() {
-    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
+    this.updateSupplierList(await getSuppliers())
   }
 
   render() {
@@ -419,7 +418,7 @@ class SeedTable extends React.Component<undefined, SeedTableState> {
   }
 
   async updateData() {
-    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
+    this.updateSupplierList(await getSuppliers())
     this.updateVarietiesList(await getPlantVarieties())
     this.updateSeedList(await getSeeds())
   }
@@ -681,7 +680,7 @@ class SeedStockTable extends React.Component<undefined, SeedStockTableState> {
   }
 
   async updateData() {
-    await $.getJSON('/supplies/supplier/', this.updateSupplierList)
+    this.updateSupplierList(await getSuppliers())
     this.updateVarietiesList(await getPlantVarieties())
     this.updateSeedList(await getSeeds())
     this.updateSeedPacketList(await getSeedPacketsCurrent())
