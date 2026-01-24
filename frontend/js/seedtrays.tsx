@@ -5,6 +5,7 @@ import React from 'react'
 import { Table } from 'react-bootstrap'
 
 import { SeedTrayModel, SeedTray } from './types/seedtrays'
+import { getSeedTrayModels, getSeedTrays } from './api/seedtrays'
 
 interface SeedTrayModelsTableState {
   seedTrayModels: Array<SeedTrayModel>
@@ -25,12 +26,8 @@ class SeedTrayModelsTable extends React.Component<undefined, SeedTrayModelsTable
     this.fetchSeedTrayModels()
   }
 
-  fetchSeedTrayModels() {
-    fetch('/seedtrays/seedtraymodels/')
-      .then((response) => response.json())
-      .then((data) => {
-        this.setState({ seedTrayModels: data })
-      })
+  async fetchSeedTrayModels() {
+    this.setState({ seedTrayModels: await getSeedTrayModels() })
   }
 
   render() {
@@ -82,18 +79,15 @@ class SeedTraysTable extends React.Component<undefined, SeedTraysTableState> {
     this.fetchSeedTrays()
   }
 
-  fetchSeedTrays() {
-    Promise.all([fetch('/seedtrays/seedtrays/').then((response) => response.json()), fetch('/seedtrays/seedtraymodels/').then((response) => response.json())])
-      .then(([seedTraysData, seedTrayModelsData]) => [
-        seedTraysData,
-        seedTrayModelsData.reduce((acc: { [key: number]: SeedTrayModel }, model: SeedTrayModel) => {
-          acc[model.pk] = model
-          return acc
-        }, {})
-      ])
-      .then(([seedTraysData, seedTrayModelsData]) => {
-        this.setState({ seedTrays: seedTraysData, seedTrayModels: seedTrayModelsData })
-      })
+  async fetchSeedTrays() {
+    const [seedTraysData, seedTrayModelsData] = (await Promise.all([getSeedTrays(), getSeedTrayModels()])) as [Array<SeedTray>, Array<SeedTrayModel>]
+
+    const seedTrayModelsMap: { [key: number]: SeedTrayModel } = seedTrayModelsData.reduce((acc: { [key: number]: SeedTrayModel }, model: SeedTrayModel) => {
+      acc[model.pk] = model
+      return acc
+    }, {})
+
+    this.setState({ seedTrays: seedTraysData, seedTrayModels: seedTrayModelsMap })
   }
 
   render() {

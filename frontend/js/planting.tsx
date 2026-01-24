@@ -27,6 +27,7 @@ import {
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { getSeedPackets, getSeeds } from './api/seeds'
+import { getSeedTrayModels, getSeedTrays } from './api/seedtrays'
 
 interface NewSeedTrayPlantingRowProps {
   suppliers: Array<Supplier>
@@ -466,8 +467,8 @@ class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingT
     this.updatePlantingList(await getPlantingSeedTrayCurrent())
     this.updateGardenSquares(await getGardenSquares())
     this.updateGardenBeds(await getGardenBeds())
-    await $.getJSON('/seedtrays/seedtrays/', this.updateSeedTrays)
-    await $.getJSON('/seedtrays/seedtraymodels/', this.updateSeedTrayModels)
+    this.updateSeedTrays(await getSeedTrays())
+    this.updateSeedTrayModels(await getSeedTrayModels())
   }
 
   render() {
