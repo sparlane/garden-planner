@@ -5,14 +5,13 @@ import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 
-import { Supplier } from './types/suppliers'
+import { Supplier, SupplierCreate } from './types/suppliers'
 import { Seed, SeedCreate, SeedPacketCreate, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
-import { csrfPost } from './utils'
 import { getPlantVarieties } from './api/plants'
 import { addSeed, addSeedPacket, emptySeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
-import { getSuppliers } from './api/supplies'
+import { addSupplier, getSuppliers } from './api/supplies'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -60,14 +59,14 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
   }
 
   add() {
-    const data: { name: string; website?: string; notes?: string } = {
+    const data: SupplierCreate = {
       name: this.state.name,
       notes: this.state.notes
     }
     if (this.state.website && this.state.website !== '') {
       data.website = this.state.website
     }
-    csrfPost('/supplies/supplier/', data).done(this.props.done)
+    addSupplier(data).done(this.props.done)
   }
 
   render() {
