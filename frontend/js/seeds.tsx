@@ -66,7 +66,7 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
     if (this.state.website && this.state.website !== '') {
       data.website = this.state.website
     }
-    addSupplier(data).done(this.props.done)
+    addSupplier(data).then(this.props.done)
   }
 
   render() {
@@ -284,7 +284,7 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     if (this.state.website !== undefined && this.state.website !== '') {
       data.url = this.state.website
     }
-    addSeed(data).done(this.props.done)
+    addSeed(data).then(this.props.done)
   }
 
   render() {
@@ -530,7 +530,7 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     if (this.state.sowBy !== undefined && this.state.sowBy !== '') {
       data.sow_by = this.state.sowBy
     }
-    addSeedPacket(data).done(this.props.done)
+    addSeedPacket(data).then(this.props.done)
   }
 
   render() {

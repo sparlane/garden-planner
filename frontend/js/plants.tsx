@@ -46,7 +46,7 @@ class NewPlantFamilyRow extends React.Component<NewPlantFamilyRowProps, NewPlant
     addPlantFamily({
       name: this.state.name,
       notes: this.state.notes
-    }).done(this.props.done)
+    }).then(this.props.done)
   }
 
   render() {
@@ -200,7 +200,7 @@ class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
     if (this.state.per_square_foot !== undefined) {
       data.plants_per_square_foot = this.state.per_square_foot
     }
-    addPlant(data).done(this.props.done)
+    addPlant(data).then(this.props.done)
   }
 
   render() {
@@ -429,7 +429,7 @@ class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPla
     if (this.state.maturity_days_max !== undefined) {
       data.maturity_days_max = this.state.maturity_days_max
     }
-    addPlantVariety(data).done(this.props.done)
+    addPlantVariety(data).then(this.props.done)
   }
 
   render() {

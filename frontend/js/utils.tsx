@@ -1,14 +1,18 @@
-import $ from 'jquery'
 import Cookies from 'js-cookie'
 
-function csrfPost(url: string, data: object): JQuery.jqXHR {
-  return $.ajax({
-    url: url,
+function csrfPost(url: string, data: object): Promise<Response> {
+  return fetch(url, {
     method: 'POST',
-    data: data,
-    beforeSend: function (xhr) {
-      xhr.setRequestHeader('X-CSRFToken', Cookies.get('csrftoken'))
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': Cookies.get('csrftoken') || ''
+    },
+    body: JSON.stringify(data)
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Failed to post data to ${url} ${response.status}: ${response.statusText}`)
     }
+    return response
   })
 }
 

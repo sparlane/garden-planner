@@ -119,7 +119,7 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
       seed_tray: this.state.seedTray,
       notes: this.state.notes
     }
-    addPlantingSeedTray(data).done(this.props.done)
+    addPlantingSeedTray(data).then(this.props.done)
   }
 
   render() {
@@ -231,7 +231,7 @@ class SeedTrayTransplantingGardenSquareRow extends React.Component<SeedTrayTrans
       location: this.state.location,
       notes: this.state.notes
     }
-    addPlantingTransplantedGardenSquare(data).done(this.props.done)
+    addPlantingTransplantedGardenSquare(data).then(this.props.done)
   }
 
   render() {
@@ -605,7 +605,7 @@ class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlanting
       location: this.state.location,
       notes: this.state.notes
     }
-    addPlantingDirectSowGardenSquare(data).done(this.props.done)
+    addPlantingDirectSowGardenSquare(data).then(this.props.done)
   }
 
   render() {
