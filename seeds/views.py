@@ -2,6 +2,7 @@
 Views for seeds
 """
 
+import json
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
@@ -44,7 +45,12 @@ def packets_empty(request):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    packet = get_object_or_404(SeedPacket, pk=request.POST.get('packet'))
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        data = request.POST
+
+    packet = get_object_or_404(SeedPacket, pk=data.get('packet'))
     packet.empty = True
     packet.save()
     return HttpResponse(status=204)

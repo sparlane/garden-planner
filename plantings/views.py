@@ -3,6 +3,7 @@ Planting views
 """
 
 import datetime
+import json
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
@@ -10,6 +11,17 @@ from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
 from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant
+
+
+def get_request_data(request):
+    """
+    Helper function to get data from request body or POST
+    """
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        data = request.POST
+    return data
 
 
 @login_required
@@ -54,7 +66,9 @@ def seedtray_complete(request):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    planting = get_object_or_404(SeedTrayPlanting, pk=request.POST.get('planting'))
+    data = get_request_data(request)
+
+    planting = get_object_or_404(SeedTrayPlanting, pk=data.get('planting'))
     planting.removed = True
     planting.save()
     return HttpResponse(status=204)
@@ -136,7 +150,9 @@ def gardensquare_complete(request):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    planting = get_object_or_404(GardenSquareDirectSowPlanting, pk=request.POST.get('planting'))
+    data = get_request_data(request)
+
+    planting = get_object_or_404(GardenSquareDirectSowPlanting, pk=data.get('planting'))
     planting.removed = True
     planting.save()
     return HttpResponse(status=204)
@@ -150,7 +166,9 @@ def gardensquare_transplant_complete(request):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    planting = get_object_or_404(GardenSquareTransplant, pk=request.POST.get('planting'))
+    data = get_request_data(request)
+
+    planting = get_object_or_404(GardenSquareTransplant, pk=data.get('planting'))
     planting.removed = True
     planting.save()
     return HttpResponse(status=204)
