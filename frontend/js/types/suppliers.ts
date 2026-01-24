@@ -5,4 +5,10 @@ interface Supplier {
   notes: string
 }
 
-export { Supplier }
+interface SupplierCreate {
+  name: string
+  website?: string
+  notes?: string
+}
+
+export { Supplier, SupplierCreate }
