@@ -1,5 +1,4 @@
-interface SeedTrayModel {
-  pk: number
+interface SeedTrayModelCreate {
   identifier: string
   description: string
   height: number
@@ -9,12 +8,18 @@ interface SeedTrayModel {
   y_cells: number
   cell_size_ml: number
 }
-
-interface SeedTray {
+interface SeedTrayModel extends SeedTrayModelCreate {
   pk: number
-  model: number
+}
+
+interface SeedTrayCreate {
+  model?: number
+  notes?: string
+}
+
+interface SeedTray extends SeedTrayCreate {
+  pk: number
   created: string
-  notes: string
 }
 
 interface SeedTrayCell {
@@ -24,4 +29,4 @@ interface SeedTrayCell {
   y_position: number
 }
 
-export { SeedTrayModel, SeedTray, SeedTrayCell }
+export { SeedTrayModel, SeedTray, SeedTrayCell, SeedTrayModelCreate, SeedTrayCreate }

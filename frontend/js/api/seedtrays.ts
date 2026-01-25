@@ -1,12 +1,20 @@
-import { SeedTray, SeedTrayModel } from '../types/seedtrays'
-import { fetchAsJson } from '../utils'
+import { SeedTray, SeedTrayCreate, SeedTrayModel, SeedTrayModelCreate } from '../types/seedtrays'
+import { csrfPost, fetchAsJson } from '../utils'
 
 function getSeedTrayModels(): Promise<Array<SeedTrayModel>> {
   return fetchAsJson<Array<SeedTrayModel>>('/seedtrays/seedtraymodels/')
+}
+
+function addSeedTrayModel(model: SeedTrayModelCreate) {
+  return csrfPost('/seedtrays/seedtraymodels/', model)
 }
 
 function getSeedTrays(): Promise<Array<SeedTray>> {
   return fetchAsJson<Array<SeedTray>>('/seedtrays/seedtrays/')
 }
 
-export { getSeedTrayModels, getSeedTrays }
+function addSeedTray(tray: SeedTrayCreate) {
+  return csrfPost('/seedtrays/seedtrays/', tray)
+}
+
+export { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray }
