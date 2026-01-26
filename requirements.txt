@@ -1,7 +1,7 @@
 django==6.0.1
 djangorestframework==3.16.1
 django-filter==25.2
-markdown==3.10
+markdown==3.10.1
 
 # Database
 psycopg[binary,pool]==3.3.2
