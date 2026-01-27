@@ -1,6 +1,8 @@
 """
 Rest related classes for seed trays
 """
+from django.db import transaction
+from itertools import product
 from rest_framework import routers, serializers, viewsets
 
 from .models import SeedTrayModel, SeedTray, SeedTrayCell
@@ -22,6 +24,22 @@ class SeedTraySerializer(serializers.ModelSerializer):
     class Meta:
         model = SeedTray
         fields = ['pk', 'model', 'created', 'notes']
+
+    def create(self, validated_data):
+        """
+        Override create to automatically generate SeedTrayCells
+        """
+        with transaction.atomic():
+            seed_tray = super().create(validated_data)
+            model = seed_tray.model
+
+            # Create a cell for each position in the tray
+            cells = [
+                SeedTrayCell(tray=seed_tray, x_position=x, y_position=y)
+                for x, y in product(range(model.x_cells), range(model.y_cells))
+            ]
+            SeedTrayCell.objects.bulk_create(cells)
+        return seed_tray
 
 
 class SeedTrayCellSerializer(serializers.ModelSerializer):
