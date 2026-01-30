@@ -1,4 +1,4 @@
-import { SeedTray, SeedTrayCreate, SeedTrayModel, SeedTrayModelCreate } from '../types/seedtrays'
+import { SeedTray, SeedTrayCell, SeedTrayCreate, SeedTrayModel, SeedTrayModelCreate } from '../types/seedtrays'
 import { csrfPost, fetchAsJson } from '../utils'
 
 function getSeedTrayModels(): Promise<Array<SeedTrayModel>> {
@@ -17,4 +17,8 @@ function addSeedTray(tray: SeedTrayCreate) {
   return csrfPost('/seedtrays/seedtrays/', tray)
 }
 
-export { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray }
+function getSeedTrayCells(trayPk: number): Promise<Array<SeedTrayCell>> {
+  return fetchAsJson<Array<SeedTrayCell>>(`/seedtrays/seedtrays/${trayPk}/cells/`)
+}
+
+export { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray, getSeedTrayCells }

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+{% load static %}
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <base href="/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seed Tray Detail</title>
+    <link rel="stylesheet" href="{% static 'seedtray/seedtray_details.css' %}" />
+    <script src="{% static 'seedtray/seedtray_details.js' %}"></script>
+</head>
+<body style="height: 100%">
+  <div id="root"></div>
+</body>
+<script>
+  showSeedTrayDetails('root', {{ seed_tray.id }})
+</script>
+</html>

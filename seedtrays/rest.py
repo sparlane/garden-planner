@@ -3,7 +3,8 @@ Rest related classes for seed trays
 """
 from django.db import transaction
 from itertools import product
-from rest_framework import routers, serializers, viewsets
+from rest_framework import serializers, viewsets
+from rest_framework_nested import routers
 
 from .models import SeedTrayModel, SeedTray, SeedTrayCell
 
@@ -75,7 +76,21 @@ class SeedTrayCellViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-an
     serializer_class = SeedTrayCellSerializer
 
 
-router = routers.DefaultRouter()
+class SeedTrayCellFilteredViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of SeedTrayCells filtered by tray
+    """
+    queryset = SeedTrayCell.objects.all()
+    serializer_class = SeedTrayCellSerializer
+
+    def get_queryset(self):
+        return self.queryset.filter(tray__pk=self.kwargs['seedtray_pk'])
+
+
+router = routers.SimpleRouter()
 router.register(r'seedtraymodels', SeedTrayModelsViewSet)
 router.register(r'seedtrays', SeedTrayAllViewSet)
 router.register(r'seedtraycells', SeedTrayCellViewSet)
+
+filtered_router = routers.NestedSimpleRouter(router, r'seedtrays', lookup='seedtray')
+filtered_router.register(r'cells', SeedTrayCellFilteredViewSet, basename='seedtray-cells')

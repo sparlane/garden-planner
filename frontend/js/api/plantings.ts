@@ -38,6 +38,10 @@ function getPlantingSeedTrays(): Promise<Array<SeedTrayPlanting>> {
   return fetchAsJson<Array<SeedTrayPlanting>>('/plantings/seedtray/')
 }
 
+function getPlantingSeedTray(seedTrayPk: number): Promise<Array<SeedTrayPlanting>> {
+  return fetchAsJson<Array<SeedTrayPlanting>>(`/plantings/seedtray-data/${seedTrayPk}/plantings/`)
+}
+
 function addPlantingSeedTray(data: SeedTrayPlantingCreate) {
   return csrfPost('/plantings/seedtray/', data)
 }
@@ -77,6 +81,7 @@ export {
   addPlantingDirectSowGardenSquare,
   completePlantingDirectSowGardenSquare,
   getPlantingSeedTrays,
+  getPlantingSeedTray,
   addPlantingSeedTray,
   completePlantingSeedTray,
   getPlantingTransplantedGardenSquares,

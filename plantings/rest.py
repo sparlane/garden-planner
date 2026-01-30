@@ -66,6 +66,17 @@ class SeedTrayPlantingViewSet(viewsets.ModelViewSet):  # pylint: disable=too-man
     serializer_class = SeedTrayPlantingSerializer
 
 
+class SeedTrayPlantingViewSeedTraySet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of SeedTrayPlanting filtered by SeedTray
+    """
+    queryset = SeedTrayPlanting.objects.all()
+    serializer_class = SeedTrayPlantingSerializer
+
+    def get_queryset(self):
+        return self.queryset.filter(seed_tray__pk=self.kwargs['seed_tray_pk'])
+
+
 class GardenSquareTransplantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of GardenSquareTransplant
@@ -74,8 +85,10 @@ class GardenSquareTransplantViewSet(viewsets.ModelViewSet):  # pylint: disable=t
     serializer_class = GardenSquareTransplantSerializer
 
 
-router = routers.DefaultRouter()
+router = routers.SimpleRouter()
 router.register(r'directsowgardenrow', GardenRowDirectSowPlantingViewSet)
 router.register(r'directsowgardensquare', GardenSquareDirectSowPlantingViewSet)
 router.register(r'seedtray', SeedTrayPlantingViewSet)
 router.register(r'transplantedgardensquare', GardenSquareTransplantViewSet)
+
+router.register(r'seedtray-data/(?P<seed_tray_pk>[^/.]+)/plantings', SeedTrayPlantingViewSeedTraySet, basename='seedtray-plantings')
