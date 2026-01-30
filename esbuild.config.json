@@ -1,6 +1,7 @@
 {
     "entry": [
-        "frontend/js/main.tsx"
+        "frontend/js/main.tsx",
+        "frontend/js/seedtray/seedtray_details.tsx"
     ],
     "bundle": true,
     "minify": true,

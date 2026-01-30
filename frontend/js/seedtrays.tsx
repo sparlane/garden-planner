@@ -242,7 +242,9 @@ class SeedTraysTable extends React.Component<undefined, SeedTraysTableState> {
           {this.state.showAddRow && <SeedTrayAdd key="add" done={this.hideAddRow} models={this.state.seedTrayModelList} />}
           {this.state.seedTrays.map((tray) => (
             <tr key={tray.pk}>
-              <td>{tray.pk}</td>
+              <td>
+                <a href={`/seedtrays/seedtray/${tray.pk}/`}>{tray.pk}</a>
+              </td>
               <td>{tray.model && this.state.seedTrayModels[tray.model]?.identifier}</td>
               <td>{tray.created}</td>
               <td>{tray.notes}</td>

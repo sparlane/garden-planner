@@ -934,4 +934,4 @@ class GardenSquarePlantingTable extends React.Component<undefined, GardenSquareP
   }
 }
 
-export { SeedTrayPlantingTable, GardenSquarePlantingTable }
+export { SeedTrayPlantingTable, GardenSquarePlantingTable, SeedTrayPlantingRow }
