@@ -109,6 +109,7 @@ interface NewSeedTrayPlantingRowState {
   seedTrayCells: Array<SeedTrayCell>
   cellQuantities: { [cellPk: number]: number }
   showCellGrid: boolean
+  error?: string
 }
 
 class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps, NewSeedTrayPlantingRowState> {
@@ -129,7 +130,8 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
       notes: undefined,
       seedTrayCells: [],
       cellQuantities: {},
-      showCellGrid: false
+      showCellGrid: false,
+      error: undefined
     }
 
     this.updateSeedPacket = this.updateSeedPacket.bind(this)
@@ -230,10 +232,21 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
     if (this.state.seedPacket === undefined) {
       return
     }
+
     const cellPlantings = Object.entries(this.state.cellQuantities).map(([cellPk, qty]) => ({
       cell: Number(cellPk),
       quantity: qty
     }))
+
+    // Validate per-cell total doesn't exceed overall quantity
+    const cellTotal = Object.values(this.state.cellQuantities).reduce((sum, qty) => sum + qty, 0)
+    if (cellTotal > this.state.quantity) {
+      this.setState({ error: `Cell total (${cellTotal}) exceeds planting quantity (${this.state.quantity})` })
+      return
+    }
+
+    this.setState({ error: undefined })
+
     const data: SeedTrayPlantingCreate = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
@@ -267,6 +280,13 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
 
     return (
       <>
+        {this.state.error && (
+          <tr>
+            <td colSpan={7} style={{ padding: '8px', backgroundColor: '#f8d7da', color: '#721c24', border: '1px solid #f5c6cb' }}>
+              <strong>Error:</strong> {this.state.error}
+            </td>
+          </tr>
+        )}
         <tr>
           <td>
             <select onChange={this.updateSeedPacket}>{seedPackets}</select>
