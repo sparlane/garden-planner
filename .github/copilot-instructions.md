@@ -28,7 +28,7 @@ Developer workflows & commands (explicit)
 Project-specific conventions
 - API routers are declared in `*.rest.py` inside each app, then surfaced via that app's `urls.py`. Look for `router = routers.DefaultRouter()` and `router.register(...)`.
 - Models provide small helper serializers (e.g., `as_json()` on `GardenSquare`). Use these helpers rather than re-deriving geometry logic.
-- Frontend components are small React/TSX files under `frontend/js/` — changes to these require the esbuild-based build step above.
+- Frontend components are small React/TSX files under `frontend/js/` — changes to these require the esbuild-based build step above. **After any edit to `frontend/js/` files, run `npx prettier --write <file_path>` to format code.**
 - Local secrets: `gp/local_settings.py` is generated from `gp/local_settings.py.template` by setup scripts; do not commit `local_settings.py` or `gp/secretkey.txt`.
 
 Integration points & external dependencies
