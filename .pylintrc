@@ -1,0 +1,7 @@
+[MASTER]
+load-plugins=pylint_django
+
+django-settings-module=gp.settings
+ignore=migrations 
+
+max-line-length=240
