@@ -17,8 +17,8 @@ function addSeedTray(tray: SeedTrayCreate) {
   return csrfPost('/seedtrays/seedtrays/', tray)
 }
 
-function getSeedTrayCells(trayPk: number): Promise<Array<SeedTrayCell>> {
-  return fetchAsJson<Array<SeedTrayCell>>(`/seedtrays/seedtrays/${trayPk}/cells/`)
+function getSeedTrayCells(trayPk: number, signal?: AbortSignal): Promise<Array<SeedTrayCell>> {
+  return fetchAsJson<Array<SeedTrayCell>>(`/seedtrays/seedtrays/${trayPk}/cells/`, signal)
 }
 
 export { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray, getSeedTrayCells }

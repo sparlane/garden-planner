@@ -6,7 +6,7 @@ from datetime import date
 from django.db import models
 
 from seeds.models import SeedPacket
-from seedtrays.models import SeedTray
+from seedtrays.models import SeedTray, SeedTrayCell
 from garden.models import GardenRow, GardenSquare
 
 
@@ -48,6 +48,25 @@ class SeedTrayPlanting(Planting):
     """
     location = models.CharField(max_length=1024, null=True, blank=True)
     seed_tray = models.ForeignKey(SeedTray, on_delete=models.PROTECT, null=True, blank=True)
+
+
+class SeedTrayCellPlanting(models.Model):
+    """
+    Represents the number of seeds placed into a specific cell of a seed tray
+    as part of a `SeedTrayPlanting` event. This lets us group an overall
+    planting event while tracking per-cell quantities.
+    """
+    seed_tray_planting = models.ForeignKey(SeedTrayPlanting, on_delete=models.CASCADE, related_name='cell_plantings')
+    cell = models.ForeignKey(SeedTrayCell, on_delete=models.PROTECT)
+    quantity = models.PositiveIntegerField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['seed_tray_planting', 'cell'], name='unique_cell_per_planting')
+        ]
+
+    def __str__(self):
+        return f'{self.quantity} in {self.cell} for planting {self.seed_tray_planting.pk}'
 
 
 class GardenSquareTransplant(models.Model):

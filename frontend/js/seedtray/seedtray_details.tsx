@@ -70,6 +70,14 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
       return <div>Loading...</div>
     }
 
+    const cellTotals: { [key: number]: number } = {}
+    this.state.plantings?.forEach((p) => {
+      if (p.removed) return
+      p.cell_plantings?.forEach((cp) => {
+        cellTotals[cp.cell] = (cellTotals[cp.cell] || 0) + cp.quantity
+      })
+    })
+
     return (
       <div>
         <h1>Seed Tray Details (ID: {seedTray.pk})</h1>
@@ -114,7 +122,10 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
               seedTrayCells?.map((row, r) => (
                 <tr key={r}>
                   {row.map((cell, c) => (
-                    <td key={c}>{cell?.pk}</td>
+                    <td key={c} style={{ textAlign: 'center' }}>
+                      <div>{cell?.pk ?? ''}</div>
+                      <div style={{ fontWeight: 'bold' }}>{cell ? cellTotals[cell.pk] || 0 : ''}</div>
+                    </td>
                   ))}
                 </tr>
               ))}

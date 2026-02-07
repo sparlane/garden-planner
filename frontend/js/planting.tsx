@@ -9,7 +9,7 @@ import { Supplier } from './types/suppliers'
 import { PlantVariety } from './types/plants'
 import { Seed, SeedPacket } from './types/seeds'
 import { GardenArea, GardenBed, GardenSquare } from './types/garden'
-import { GardenSquarePlanting, SeedTrayPlantingDetails } from './types/plantings'
+import { GardenSquarePlanting, SeedTrayPlantingCreate, SeedTrayPlantingDetails } from './types/plantings'
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
@@ -25,8 +25,70 @@ import {
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { getSeedPackets, getSeeds } from './api/seeds'
-import { getSeedTrayModels, getSeedTrays } from './api/seedtrays'
+import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from './api/seedtrays'
+import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
+
+interface SeedTrayCellGridProps {
+  cells: Array<SeedTrayCell>
+  cellQuantities: { [cellPk: number]: number }
+  quantity: number
+  onUpdateCellQuantity: (cellPk: number, qty: number) => void
+}
+
+class SeedTrayCellGrid extends React.PureComponent<SeedTrayCellGridProps> {
+  render() {
+    const { cells, cellQuantities, quantity, onUpdateCellQuantity } = this.props
+    const cellsPerRow = 8
+    const cellGridRows = []
+
+    for (let i = 0; i < cells.length; i += cellsPerRow) {
+      const rowCells = cells.slice(i, i + cellsPerRow)
+      cellGridRows.push(
+        <tr key={i}>
+          {rowCells.map((cell) => (
+            <td key={cell.pk} style={{ padding: '8px', border: '1px solid #ccc', textAlign: 'center' }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                Cell {cell.x_position}, {cell.y_position}
+              </div>
+              <input
+                type="number"
+                min="0"
+                placeholder="Qty"
+                value={cellQuantities[cell.pk] || ''}
+                onChange={(e) => {
+                  const rawValue = e.target.value
+                  const parsed = parseInt(rawValue, 10)
+
+                  if (Number.isNaN(parsed)) {
+                    return
+                  }
+
+                  const clamped = Math.max(0, parsed)
+                  onUpdateCellQuantity(cell.pk, clamped)
+                }}
+                style={{ width: '50px' }}
+              />
+            </td>
+          ))}
+        </tr>
+      )
+    }
+
+    const cellTotal = Object.values(cellQuantities).reduce((sum, qty) => sum + qty, 0)
+
+    return (
+      <div style={{ marginBottom: '8px' }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
+          Select cells and quantities ({cellTotal} / {quantity}):
+        </div>
+        <Table border={1} cellPadding={5} cellSpacing={0} style={{ width: 'auto' }}>
+          <tbody>{cellGridRows}</tbody>
+        </Table>
+      </div>
+    )
+  }
+}
 
 interface NewSeedTrayPlantingRowProps {
   suppliers: Array<Supplier>
@@ -44,9 +106,18 @@ interface NewSeedTrayPlantingRowState {
   seedTray?: number
   location?: string
   notes?: string
+  seedTrayCells: Array<SeedTrayCell>
+  cellQuantities: { [cellPk: number]: number }
+  showCellGrid: boolean
 }
 
 class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps, NewSeedTrayPlantingRowState> {
+  private trayAbortController: AbortController | null = null
+
+  componentWillUnmount() {
+    this.abortTrayRequest()
+  }
+
   constructor(props: NewSeedTrayPlantingRowProps) {
     super(props)
 
@@ -55,7 +126,10 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
       quantity: 1,
       seedTray: undefined,
       location: undefined,
-      notes: undefined
+      notes: undefined,
+      seedTrayCells: [],
+      cellQuantities: {},
+      showCellGrid: false
     }
 
     this.updateSeedPacket = this.updateSeedPacket.bind(this)
@@ -63,8 +137,36 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
     this.updateLocation = this.updateLocation.bind(this)
     this.updateNotes = this.updateNotes.bind(this)
     this.updateSeedTray = this.updateSeedTray.bind(this)
+    this.updateCellQuantity = this.updateCellQuantity.bind(this)
 
     this.add = this.add.bind(this)
+  }
+
+  private abortTrayRequest() {
+    if (this.trayAbortController) {
+      this.trayAbortController.abort()
+      this.trayAbortController = null
+    }
+  }
+
+  private loadTrayCells(trayPk: number) {
+    this.abortTrayRequest()
+    this.trayAbortController = new AbortController()
+    const { signal } = this.trayAbortController
+
+    getSeedTrayCells(trayPk, signal)
+      .then((cells) => {
+        // only update state if this request wasn't aborted
+        if (!signal.aborted) {
+          this.setState({ seedTrayCells: cells, showCellGrid: true })
+        }
+      })
+      .catch((err) => {
+        // ignore abort errors
+        if (err.name !== 'AbortError') {
+          console.error('Error fetching seed tray cells:', err)
+        }
+      })
   }
 
   updateSeedPacket(event: React.ChangeEvent<HTMLSelectElement>) {
@@ -101,23 +203,46 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
 
   updateSeedTray(selectedSeedTray: SelectOption | null) {
     const value = selectedSeedTray?.value
+    this.setState({ seedTrayCells: [], cellQuantities: {}, showCellGrid: false })
+    this.abortTrayRequest()
+
     if (value === undefined || value === null) {
       this.setState({ seedTray: undefined })
       return
     }
-    this.setState({ seedTray: Number(value) })
+
+    const trayPk = Number(value)
+    this.setState({ seedTray: trayPk })
+    this.loadTrayCells(trayPk)
+  }
+
+  updateCellQuantity(cellPk: number, qty: number) {
+    const updated = { ...this.state.cellQuantities }
+    if (qty > 0) {
+      updated[cellPk] = qty
+    } else {
+      delete updated[cellPk]
+    }
+    this.setState({ cellQuantities: updated })
   }
 
   add() {
     if (this.state.seedPacket === undefined) {
       return
     }
-    const data = {
+    const cellPlantings = Object.entries(this.state.cellQuantities).map(([cellPk, qty]) => ({
+      cell: Number(cellPk),
+      quantity: qty
+    }))
+    const data: SeedTrayPlantingCreate = {
       seeds_used: this.state.seedPacket,
       quantity: this.state.quantity,
       location: this.state.location,
       seed_tray: this.state.seedTray,
       notes: this.state.notes
+    }
+    if (cellPlantings.length > 0) {
+      data.cell_plantings = cellPlantings
     }
     addPlantingSeedTray(data).then(this.props.done)
   }
@@ -139,29 +264,45 @@ class NewSeedTrayPlantingRow extends React.Component<NewSeedTrayPlantingRowProps
     for (const seedTrayData of this.props.seedTrays) {
       seedTrays.push({ value: seedTrayData.pk, label: `${seedTrayData.pk} (${this.props.seedTrayModels[seedTrayData.model]?.description})` })
     }
+
     return (
-      <tr>
-        <td>
-          <select onChange={this.updateSeedPacket}>{seedPackets}</select>
-        </td>
-        <td>
-          <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
-        </td>
-        <td></td>
-        <td>
-          <Select onChange={this.updateSeedTray} options={seedTrays} value={seedTrays.find((o) => o.value === this.state.seedTray)} />
-        </td>
-        <td>
-          <input type="text" onChange={this.updateLocation} />
-        </td>
-        <td>
-          <textarea onChange={this.updateNotes} />
-        </td>
-        <td>
-          <Button onClick={this.add}>Add</Button>
-          <Button onClick={this.props.done}>Cancel</Button>
-        </td>
-      </tr>
+      <>
+        <tr>
+          <td>
+            <select onChange={this.updateSeedPacket}>{seedPackets}</select>
+          </td>
+          <td>
+            <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
+          </td>
+          <td></td>
+          <td>
+            <Select onChange={this.updateSeedTray} options={seedTrays} value={seedTrays.find((o) => o.value === this.state.seedTray)} />
+          </td>
+          <td>
+            <input type="text" onChange={this.updateLocation} />
+          </td>
+          <td>
+            <textarea onChange={this.updateNotes} />
+          </td>
+          <td>
+            <Button onClick={this.add}>Add</Button>
+            <Button onClick={this.props.done}>Cancel</Button>
+          </td>
+        </tr>
+        {this.state.showCellGrid && this.state.seedTrayCells.length > 0 && (
+          <tr>
+            <td colSpan={7} style={{ padding: '16px' }}>
+              <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>Select cells and quantities:</div>
+              <SeedTrayCellGrid
+                cells={this.state.seedTrayCells}
+                cellQuantities={this.state.cellQuantities}
+                quantity={this.state.quantity}
+                onUpdateCellQuantity={this.updateCellQuantity}
+              />
+            </td>
+          </tr>
+        )}
+      </>
     )
   }
 }
