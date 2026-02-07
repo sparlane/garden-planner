@@ -54,6 +54,10 @@ def seedtray_current(request):
             'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
             'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
             'transplanted_count': transplanted_count,
+            'cell_plantings': [
+                {'pk': cp.pk, 'cell': cp.cell.pk, 'quantity': cp.quantity}
+                for cp in planting.cell_plantings.all()
+            ],
         })
     return JsonResponse({'plantings': planting_data})
 

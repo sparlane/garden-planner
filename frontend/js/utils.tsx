@@ -16,12 +16,13 @@ function csrfPost(url: string, data: object): Promise<Response> {
   })
 }
 
-async function fetchAsJson<T = unknown>(url: string): Promise<T> {
+async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
   return fetch(url, {
     method: 'GET',
     headers: {
       Accept: 'application/json'
-    }
+    },
+    signal
   }).then((response) => response.json() as Promise<T>)
 }
 

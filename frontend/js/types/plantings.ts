@@ -48,6 +48,7 @@ interface SeedTrayPlanting extends Planting {
   seed_tray?: number
   location?: string
   planted: string
+  cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
 }
 
 interface GardenSquareTransplanting extends Planting {
@@ -68,6 +69,7 @@ interface SeedTrayPlantingDetails {
   germination_date_early?: string
   germination_date_late?: string
   transplanted_count: number
+  cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
 }
 
 interface GardenSquarePlanting {
