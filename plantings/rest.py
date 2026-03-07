@@ -90,42 +90,40 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
         """Replace all cell plantings for a planting using bulk_create.
 
         This simplifies the logic: delete existing entries and bulk-create
-        the provided list. Wrapped in transaction.atomic() to ensure the
-        replacement is atomic from the DB perspective.
+        the provided list. Must be called inside a transaction.atomic() block.
 
         Semantics: omitted field -> no change; empty list -> cleared.
         """
-        with transaction.atomic():
-            # Remove existing child rows
-            planting.cell_plantings.all().delete()
+        # Remove existing child rows
+        planting.cell_plantings.all().delete()
 
-            # Bulk-create new ones (DRF passes `cell` as SeedTrayCell instances)
-            objs = [
-                SeedTrayCellPlanting(
-                    seed_tray_planting=planting,
-                    cell=cp['cell'],
-                    quantity=cp['quantity'],
-                )
-                for cp in cell_data
-            ]
-            if objs:
-                SeedTrayCellPlanting.objects.bulk_create(objs)
+        if objs := [
+            SeedTrayCellPlanting(
+                seed_tray_planting=planting,
+                cell=cp['cell'],
+                quantity=cp['quantity'],
+            )
+            for cp in cell_data
+        ]:
+            SeedTrayCellPlanting.objects.bulk_create(objs)
 
     def create(self, validated_data):
         cell_data = validated_data.pop('cell_plantings', [])
-        planting = SeedTrayPlanting.objects.create(**validated_data)
-        if cell_data:
-            self._save_cell_plantings(planting, cell_data)
+        with transaction.atomic():
+            planting = SeedTrayPlanting.objects.create(**validated_data)
+            if cell_data:
+                self._save_cell_plantings(planting, cell_data)
         return planting
 
     def update(self, instance, validated_data):
         cell_data = validated_data.pop('cell_plantings', None)
-        for attr, value in validated_data.items():
-            setattr(instance, attr, value)
-        instance.save()
+        with transaction.atomic():
+            for attr, value in validated_data.items():
+                setattr(instance, attr, value)
+            instance.save()
 
-        if cell_data is not None:
-            self._save_cell_plantings(instance, cell_data)
+            if cell_data is not None:
+                self._save_cell_plantings(instance, cell_data)
 
         return instance
 
