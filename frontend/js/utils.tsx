@@ -26,4 +26,20 @@ async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Prom
   }).then((response) => response.json() as Promise<T>)
 }
 
-export { csrfPost, fetchAsJson }
+function csrfPatch(url: string, data: object): Promise<Response> {
+  return fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': Cookies.get('csrftoken') || ''
+    },
+    body: JSON.stringify(data)
+  }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Failed to patch data to ${url} ${response.status}: ${response.statusText}`)
+    }
+    return response
+  })
+}
+
+export { csrfPost, csrfPatch, fetchAsJson }

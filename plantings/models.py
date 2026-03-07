@@ -3,6 +3,7 @@ Models for Plantings
 """
 from datetime import date
 
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from seeds.models import SeedPacket
@@ -67,6 +68,65 @@ class SeedTrayCellPlanting(models.Model):
 
     def __str__(self):
         return f'{self.quantity} in {self.cell} for planting {self.seed_tray_planting.pk}'
+
+
+class SpecificPlant(models.Model):
+    """
+    A specific individual plant that has germinated from a seed tray cell.
+    Created when germination is observed for a particular cell planting.
+    """
+    cell_planting = models.ForeignKey(SeedTrayCellPlanting, on_delete=models.PROTECT, related_name='specific_plants')
+    germinated = models.DateField(default=date.today)
+    notes = models.TextField(null=True, blank=True)
+
+    def __str__(self):
+        return f'Plant from {self.cell_planting} germinated {self.germinated}'
+
+
+class SpecificPlantLocation(models.Model):
+    """
+    Tracks where a specific plant has been — a seed tray cell or garden square —
+    and when it entered/left that location.
+    """
+    SEED_TRAY_CELL = 'seed_tray_cell'
+    GARDEN_SQUARE = 'garden_square'
+    LOCATION_TYPE_CHOICES = [
+        (SEED_TRAY_CELL, 'Seed Tray Cell'),
+        (GARDEN_SQUARE, 'Garden Square'),
+    ]
+
+    specific_plant = models.ForeignKey(SpecificPlant, on_delete=models.CASCADE, related_name='locations')
+    location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES)
+    seed_tray_cell = models.ForeignKey(SeedTrayCell, on_delete=models.PROTECT, null=True, blank=True)
+    garden_square = models.ForeignKey(GardenSquare, on_delete=models.PROTECT, null=True, blank=True)
+    started = models.DateField(default=date.today)
+    ended = models.DateField(null=True, blank=True)
+    notes = models.TextField(null=True, blank=True)
+
+    def clean(self):
+        if self.location_type == self.SEED_TRAY_CELL:
+            if self.seed_tray_cell is None:
+                raise ValidationError({'seed_tray_cell': 'Required when location_type is seed_tray_cell.'})
+            if self.garden_square is not None:
+                raise ValidationError({'garden_square': 'Must be blank when location_type is seed_tray_cell.'})
+        elif self.location_type == self.GARDEN_SQUARE:
+            if self.garden_square is None:
+                raise ValidationError({'garden_square': 'Required when location_type is garden_square.'})
+            if self.seed_tray_cell is not None:
+                raise ValidationError({'seed_tray_cell': 'Must be blank when location_type is garden_square.'})
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['specific_plant'],
+                condition=models.Q(ended__isnull=True),
+                name='unique_active_location_per_plant',
+            )
+        ]
+
+    def __str__(self):
+        loc = self.seed_tray_cell or self.garden_square
+        return f'Plant {self.specific_plant_id} @ {loc} from {self.started}'
 
 
 class GardenSquareTransplant(models.Model):

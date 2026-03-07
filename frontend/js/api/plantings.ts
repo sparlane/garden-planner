@@ -1,4 +1,4 @@
-import { fetchAsJson, csrfPost } from '../utils'
+import { fetchAsJson, csrfPost, csrfPatch } from '../utils'
 import {
   GardenRowDirectPlanting,
   GardenSquareDirectPlanting,
@@ -9,7 +9,10 @@ import {
   GardenSquareDirectPlantingCreate,
   GardenSquareTransplantingCreate,
   SeedTrayPlantingCreate,
-  SeedTrayPlantingDetails
+  SeedTrayPlantingDetails,
+  SpecificPlant,
+  SpecificPlantCreate,
+  SpecificPlantLocationCreate
 } from '../types/plantings'
 
 function getPlantingDirectSowGardenRows(): Promise<Array<GardenRowDirectPlanting>> {
@@ -74,6 +77,22 @@ function getPlantingGardenSquaresCurrent(): Promise<Array<GardenSquarePlanting>>
   return fetchAsJson<{ plantings: Array<GardenSquarePlanting> }>('/plantings/garden/squares/current/').then((data) => data.plantings)
 }
 
+function getSpecificPlantsBySeedTray(seedTrayPk: number): Promise<Array<SpecificPlant>> {
+  return fetchAsJson<Array<SpecificPlant>>(`/plantings/seedtray-data/${seedTrayPk}/specificplants/`)
+}
+
+function addSpecificPlant(data: SpecificPlantCreate): Promise<SpecificPlant> {
+  return csrfPost('/plantings/specificplants/', data).then((r) => r.json() as Promise<SpecificPlant>)
+}
+
+function addSpecificPlantLocation(data: SpecificPlantLocationCreate): Promise<Response> {
+  return csrfPost('/plantings/specificplantlocations/', data)
+}
+
+function endSpecificPlantLocation(locationPk: number, ended: string): Promise<Response> {
+  return csrfPatch(`/plantings/specificplantlocations/${locationPk}/`, { ended })
+}
+
 export {
   getPlantingDirectSowGardenRows,
   addPlantingDirectSowGardenRow,
@@ -88,5 +107,9 @@ export {
   addPlantingTransplantedGardenSquare,
   completePlantingTransplantedGardenSquare,
   getPlantingSeedTrayCurrent,
-  getPlantingGardenSquaresCurrent
+  getPlantingGardenSquaresCurrent,
+  getSpecificPlantsBySeedTray,
+  addSpecificPlant,
+  addSpecificPlantLocation,
+  endSpecificPlantLocation
 }

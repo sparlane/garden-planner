@@ -1,10 +1,11 @@
 """
 Rest for Plantings
 """
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import routers, serializers, viewsets
 
-from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting
+from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 
 
 class GardenRowDirectSowPlantingSerializer(serializers.ModelSerializer):
@@ -128,6 +129,51 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
         return instance
 
 
+class SpecificPlantLocationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for SpecificPlantLocation
+    """
+    class Meta:
+        model = SpecificPlantLocation
+        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'started', 'ended', 'notes']
+
+    def validate(self, data):  # pylint: disable=arguments-renamed
+        # Delegate to the model's clean() as the single source of truth for FK/location_type consistency.
+        tmp = SpecificPlantLocation(
+            location_type=data.get('location_type', getattr(self.instance, 'location_type', None)),
+            seed_tray_cell=data.get('seed_tray_cell', getattr(self.instance, 'seed_tray_cell', None)),
+            garden_square=data.get('garden_square', getattr(self.instance, 'garden_square', None)),
+        )
+        try:
+            tmp.clean()
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.message_dict) from exc
+        return data
+
+
+class SpecificPlantSerializer(serializers.ModelSerializer):
+    """
+    Serializer for SpecificPlant — includes nested location history.
+    On create, automatically records the initial seed tray cell location.
+    """
+    locations = SpecificPlantLocationSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SpecificPlant
+        fields = ['pk', 'cell_planting', 'germinated', 'notes', 'locations']
+
+    def create(self, validated_data):
+        with transaction.atomic():
+            plant = SpecificPlant.objects.create(**validated_data)
+            SpecificPlantLocation.objects.create(
+                specific_plant=plant,
+                location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+                seed_tray_cell=plant.cell_planting.cell,
+                started=plant.germinated,
+            )
+        return plant
+
+
 class GardenSquareTransplantSerializer(serializers.ModelSerializer):
     """
     Serializer for GardenSquareTransplant
@@ -180,10 +226,63 @@ class GardenSquareTransplantViewSet(viewsets.ModelViewSet):  # pylint: disable=t
     serializer_class = GardenSquareTransplantSerializer
 
 
+class SpecificPlantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of SpecificPlant
+    """
+    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square')
+    serializer_class = SpecificPlantSerializer
+
+
+class SpecificPlantBySeedTrayViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of SpecificPlant filtered by SeedTray
+    """
+    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square')
+    serializer_class = SpecificPlantSerializer
+
+    def get_queryset(self):
+        tray_pk = self.kwargs['seed_tray_pk']
+        currently_here = self.queryset.filter(
+            locations__seed_tray_cell__tray__pk=tray_pk,
+            locations__ended__isnull=True,
+        )
+        originated_here = self.queryset.filter(
+            cell_planting__seed_tray_planting__seed_tray__pk=tray_pk,
+        )
+        return (currently_here | originated_here).distinct()
+
+
+class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of SpecificPlantLocation
+
+    PUT and DELETE are disabled: locations are append-only; use PATCH to set `ended`.
+    """
+    queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
+    serializer_class = SpecificPlantLocationSerializer
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+
+class SpecificPlantLocationByPlantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
+    """
+    ViewSet of SpecificPlantLocation filtered by SpecificPlant
+    """
+    queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
+    serializer_class = SpecificPlantLocationSerializer
+
+    def get_queryset(self):
+        return self.queryset.filter(specific_plant__pk=self.kwargs['specific_plant_pk'])
+
+
 router = routers.SimpleRouter()
 router.register(r'directsowgardenrow', GardenRowDirectSowPlantingViewSet)
 router.register(r'directsowgardensquare', GardenSquareDirectSowPlantingViewSet)
 router.register(r'seedtray', SeedTrayPlantingViewSet)
 router.register(r'transplantedgardensquare', GardenSquareTransplantViewSet)
+router.register(r'specificplants', SpecificPlantViewSet)
+router.register(r'specificplantlocations', SpecificPlantLocationViewSet)
 
 router.register(r'seedtray-data/(?P<seed_tray_pk>[^/.]+)/plantings', SeedTrayPlantingViewSeedTraySet, basename='seedtray-plantings')
+router.register(r'seedtray-data/(?P<seed_tray_pk>[^/.]+)/specificplants', SpecificPlantBySeedTrayViewSet, basename='seedtray-specificplants')
+router.register(r'specificplants/(?P<specific_plant_pk>[^/.]+)/locations', SpecificPlantLocationByPlantViewSet, basename='specificplant-locations')
