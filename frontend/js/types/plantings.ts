@@ -88,6 +88,40 @@ interface GardenSquarePlanting {
   maturity_date_late?: string
 }
 
+interface SpecificPlantLocation {
+  pk: number
+  specific_plant: number
+  location_type: 'seed_tray_cell' | 'garden_square'
+  seed_tray_cell?: number
+  garden_square?: number
+  started: string
+  ended?: string
+  notes?: string
+}
+
+interface SpecificPlantLocationCreate {
+  specific_plant: number
+  location_type: 'seed_tray_cell' | 'garden_square'
+  seed_tray_cell?: number
+  garden_square?: number
+  started: string
+  notes?: string
+}
+
+interface SpecificPlant {
+  pk: number
+  cell_planting: number
+  germinated: string
+  notes?: string
+  locations: Array<SpecificPlantLocation>
+}
+
+interface SpecificPlantCreate {
+  cell_planting: number
+  germinated: string
+  notes?: string
+}
+
 export {
   Planting,
   GardenRowDirectPlanting,
@@ -99,5 +133,9 @@ export {
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
-  GardenSquareTransplantingCreate
+  GardenSquareTransplantingCreate,
+  SpecificPlant,
+  SpecificPlantCreate,
+  SpecificPlantLocation,
+  SpecificPlantLocationCreate
 }
