@@ -13,6 +13,7 @@ import { GardenSquarePlanting, SeedTrayPlantingCreate, SeedTrayPlantingDetails }
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
+import { formatDate, formatDateRange } from './utils'
 import {
   getPlantingSeedTrayCurrent,
   getPlantingGardenSquaresCurrent,
@@ -460,12 +461,10 @@ class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
         <td>
           {this.props.planting.quantity} (<span title="Number that have been transplanted to a garden square">Transplanted: {this.props.planting.transplanted_count}</span>)
         </td>
-        <td>{this.props.planting.planted}</td>
+        <td>{formatDate(this.props.planting.planted)}</td>
         <td>{this.props.planting.seed_tray}</td>
         <td>{this.props.planting.location}</td>
-        <td>
-          {this.props.planting.germination_date_early} - {this.props.planting.germination_date_late}
-        </td>
+        <td>{formatDateRange(this.props.planting.germination_date_early, this.props.planting.germination_date_late)}</td>
         <td>{this.props.planting.notes}</td>
         <td>
           <Button onClick={this.transplant}>Transplant</Button>
@@ -833,9 +832,9 @@ class GardenSquarePlantingRow extends React.Component<GardenSquarePlantingRowPro
   render() {
     let planted = ''
     if (this.props.planting.transplanted) {
-      planted = `${this.props.planting.transplanted} (S: ${this.props.planting.planted})`
+      planted = `${formatDate(this.props.planting.transplanted)} (S: ${formatDate(this.props.planting.planted)})`
     } else {
-      planted = this.props.planting.planted
+      planted = formatDate(this.props.planting.planted)
     }
     return (
       <tr>
@@ -847,12 +846,8 @@ class GardenSquarePlantingRow extends React.Component<GardenSquarePlantingRowPro
         <td>
           {this.props.planting.location.area} - {this.props.planting.location.bed} - {this.props.planting.location.name}
         </td>
-        <td>
-          {this.props.planting.germination_date_early} - {this.props.planting.germination_date_late}
-        </td>
-        <td>
-          {this.props.planting.maturity_date_early} - {this.props.planting.maturity_date_late}
-        </td>
+        <td>{formatDateRange(this.props.planting.germination_date_early, this.props.planting.germination_date_late)}</td>
+        <td>{formatDateRange(this.props.planting.maturity_date_early, this.props.planting.maturity_date_late)}</td>
         <td>{this.props.planting.notes}</td>
         <td>
           <Button onClick={this.empty}>Harvested</Button>
