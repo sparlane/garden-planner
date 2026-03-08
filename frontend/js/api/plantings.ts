@@ -89,8 +89,8 @@ function addSpecificPlantLocation(data: SpecificPlantLocationCreate): Promise<Re
   return csrfPost('/plantings/specificplantlocations/', data)
 }
 
-function endSpecificPlantLocation(locationPk: number, ended: string): Promise<Response> {
-  return csrfPatch(`/plantings/specificplantlocations/${locationPk}/`, { ended })
+function endSpecificPlantLocation(locationPk: number, ended?: string): Promise<Response> {
+  return csrfPatch(`/plantings/specificplantlocations/${locationPk}/`, ended ? { ended } : {})
 }
 
 export {

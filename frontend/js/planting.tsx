@@ -22,7 +22,8 @@ import {
   addPlantingTransplantedGardenSquare,
   completePlantingDirectSowGardenSquare,
   completePlantingTransplantedGardenSquare,
-  completePlantingSeedTray
+  completePlantingSeedTray,
+  endSpecificPlantLocation
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { getSeedPackets, getSeeds } from './api/seeds'
@@ -822,7 +823,9 @@ class GardenSquarePlantingRow extends React.Component<GardenSquarePlantingRowPro
   }
 
   empty() {
-    if (this.props.planting.transplanted && this.props.planting.transplanting_pk) {
+    if (this.props.planting.specific_plant_pk && this.props.planting.transplanting_pk) {
+      endSpecificPlantLocation(this.props.planting.transplanting_pk)
+    } else if (this.props.planting.transplanted && this.props.planting.transplanting_pk) {
       completePlantingTransplantedGardenSquare(this.props.planting.transplanting_pk)
     } else {
       completePlantingDirectSowGardenSquare(this.props.planting.planting_pk)

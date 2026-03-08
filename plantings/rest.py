@@ -3,6 +3,7 @@ Rest for Plantings
 """
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import routers, serializers, viewsets
 
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
@@ -262,6 +263,12 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
     queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
     serializer_class = SpecificPlantLocationSerializer
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+
+    def perform_update(self, serializer):
+        if 'ended' not in serializer.validated_data:
+            serializer.save(ended=timezone.now())
+        else:
+            serializer.save()
 
 
 class SpecificPlantLocationByPlantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors

@@ -6,11 +6,11 @@ import datetime
 import json
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Sum
+from django.db.models import Count, Sum
 from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
-from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant
+from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlantLocation
 
 
 def get_request_data(request):
@@ -30,11 +30,20 @@ def seedtray_current(request):
     List the seedtray plantings that are currently growing
     """
     plantings = SeedTrayPlanting.objects.filter(removed=False).order_by('planted')
+    garden_square_location_counts = dict(
+        SpecificPlantLocation.objects.filter(
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            specific_plant__cell_planting__seed_tray_planting__in=plantings,
+        )
+        .values_list('specific_plant__cell_planting__seed_tray_planting_id')
+        .annotate(total=Count('id'))
+    )
     planting_data = []
     for planting in plantings:
         transplanted_count = GardenSquareTransplant.objects.filter(
             original_planting=planting
         ).aggregate(total=Sum('quantity'))['total'] or 0
+        transplanted_count += garden_square_location_counts.get(planting.pk, 0)
         variety = planting.seeds_used.seeds.plant_variety
         germination_min = variety.plant.germination_days_min
         germination_max = variety.plant.germination_days_max
@@ -78,6 +87,15 @@ def seedtray_complete(request):
     return HttpResponse(status=204)
 
 
+def _get_variety_days(variety):
+    return (
+        variety.germination_days_min or variety.plant.germination_days_min,
+        variety.germination_days_max or variety.plant.germination_days_max,
+        variety.maturity_days_min or variety.plant.maturity_days_min,
+        variety.maturity_days_max or variety.plant.maturity_days_max,
+    )
+
+
 @login_required
 def gardensquare_current(request):
     """
@@ -87,18 +105,7 @@ def gardensquare_current(request):
     planting_data = []
     for planting in plantings:
         variety = planting.seeds_used.seeds.plant_variety
-        germination_min = variety.plant.germination_days_min
-        germination_max = variety.plant.germination_days_max
-        maturity_min = variety.plant.maturity_days_min
-        maturity_max = variety.plant.maturity_days_max
-        if variety.germination_days_min:
-            germination_min = variety.germination_days_min
-        if variety.germination_days_max:
-            germination_max = variety.germination_days_max
-        if variety.maturity_days_min:
-            maturity_min = variety.maturity_days_min
-        if variety.maturity_days_max:
-            maturity_max = variety.maturity_days_max
+        germination_min, germination_max, maturity_min, maturity_max = _get_variety_days(variety)
         planting_data.append({
             'planting_pk': planting.pk,
             'plant': planting.seeds_used.seeds.plant_variety.plant.name,
@@ -116,18 +123,7 @@ def gardensquare_current(request):
     for transplanting in transplantings:
         planting = transplanting.original_planting
         variety = planting.seeds_used.seeds.plant_variety
-        germination_min = variety.plant.germination_days_min
-        germination_max = variety.plant.germination_days_max
-        maturity_min = variety.plant.maturity_days_min
-        maturity_max = variety.plant.maturity_days_max
-        if variety.germination_days_min:
-            germination_min = variety.germination_days_min
-        if variety.germination_days_max:
-            germination_max = variety.germination_days_max
-        if variety.maturity_days_min:
-            maturity_min = variety.maturity_days_min
-        if variety.maturity_days_max:
-            maturity_max = variety.maturity_days_max
+        germination_min, germination_max, maturity_min, maturity_max = _get_variety_days(variety)
         planting_data.append({
             'transplanting_pk': transplanting.pk,
             'planting_pk': planting.pk,
@@ -142,6 +138,33 @@ def gardensquare_current(request):
             'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
             'maturity_date_early': transplanting.transplanted + datetime.timedelta(days=maturity_min),
             'maturity_date_late': transplanting.transplanted + datetime.timedelta(days=maturity_max)
+        })
+    specific_plant_locations = SpecificPlantLocation.objects.filter(
+        location_type=SpecificPlantLocation.GARDEN_SQUARE,
+        ended__isnull=True,
+    ).select_related(
+        'specific_plant__cell_planting__seed_tray_planting__seeds_used__seeds__plant_variety__plant',
+        'garden_square__bed__area',
+    )
+    for location in specific_plant_locations:
+        planting = location.specific_plant.cell_planting.seed_tray_planting
+        variety = planting.seeds_used.seeds.plant_variety
+        germination_min, germination_max, maturity_min, maturity_max = _get_variety_days(variety)
+        planting_data.append({
+            'specific_plant_pk': location.specific_plant.pk,
+            'transplanting_pk': location.pk,
+            'planting_pk': planting.pk,
+            'transplanted': location.started,
+            'plant': variety.plant.name,
+            'variety': variety.name,
+            'planted': planting.planted,
+            'quantity': 1,
+            'location': location.garden_square.as_json(),
+            'notes': location.notes or location.specific_plant.notes,
+            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
+            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
+            'maturity_date_early': location.started + datetime.timedelta(days=maturity_min),
+            'maturity_date_late': location.started + datetime.timedelta(days=maturity_max),
         })
     return JsonResponse({'plantings': planting_data})
 
