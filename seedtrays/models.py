@@ -29,7 +29,7 @@ class SeedTray(models.Model):
     A specific seed tray
     """
     model = models.ForeignKey(SeedTrayModel, on_delete=models.PROTECT)
-    created = models.DateField(auto_now_add=True)
+    created = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(null=True, blank=True)
 
     def __str__(self):

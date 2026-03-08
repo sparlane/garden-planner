@@ -7,6 +7,7 @@ import Select from 'react-select'
 
 import { SeedTrayModel, SeedTray, SeedTrayModelCreate, SeedTrayCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray } from './api/seedtrays'
+import { formatDate } from './utils'
 
 interface SeedTrayModelNewProps {
   done: () => void
@@ -246,7 +247,7 @@ class SeedTraysTable extends React.Component<undefined, SeedTraysTableState> {
                 <a href={`/seedtrays/seedtray/${tray.pk}/`}>{tray.pk}</a>
               </td>
               <td>{tray.model && this.state.seedTrayModels[tray.model]?.identifier}</td>
-              <td>{tray.created}</td>
+              <td>{formatDate(tray.created)}</td>
               <td>{tray.notes}</td>
             </tr>
           ))}

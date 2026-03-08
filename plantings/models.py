@@ -1,10 +1,9 @@
 """
 Models for Plantings
 """
-from datetime import date
-
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell
@@ -15,7 +14,7 @@ class Planting(models.Model):
     """
     An abstract class for planting of seeds
     """
-    planted = models.DateField(default=date.today)
+    planted = models.DateTimeField(default=timezone.now)
     seeds_used = models.ForeignKey(SeedPacket, on_delete=models.PROTECT)
     quantity = models.IntegerField()
     location = None
@@ -76,7 +75,7 @@ class SpecificPlant(models.Model):
     Created when germination is observed for a particular cell planting.
     """
     cell_planting = models.ForeignKey(SeedTrayCellPlanting, on_delete=models.PROTECT, related_name='specific_plants')
-    germinated = models.DateField(default=date.today)
+    germinated = models.DateTimeField(default=timezone.now)
     notes = models.TextField(null=True, blank=True)
 
     def __str__(self):
@@ -99,8 +98,8 @@ class SpecificPlantLocation(models.Model):
     location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES)
     seed_tray_cell = models.ForeignKey(SeedTrayCell, on_delete=models.PROTECT, null=True, blank=True)
     garden_square = models.ForeignKey(GardenSquare, on_delete=models.PROTECT, null=True, blank=True)
-    started = models.DateField(default=date.today)
-    ended = models.DateField(null=True, blank=True)
+    started = models.DateTimeField(default=timezone.now)
+    ended = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
 
     def clean(self):
@@ -134,7 +133,7 @@ class GardenSquareTransplant(models.Model):
     Transplant from a seedtray into a garden square
     """
     original_planting = models.ForeignKey(SeedTrayPlanting, on_delete=models.PROTECT)
-    transplanted = models.DateField(default=date.today)
+    transplanted = models.DateTimeField(default=timezone.now)
     quantity = models.IntegerField()
     location = models.ForeignKey(GardenSquare, on_delete=models.PROTECT)
     notes = models.TextField(null=True, blank=True)
