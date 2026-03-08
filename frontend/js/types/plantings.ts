@@ -68,6 +68,7 @@ interface SeedTrayPlantingDetails {
   notes: string
   germination_date_early?: string
   germination_date_late?: string
+  germinated_count: number
   transplanted_count: number
   cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
 }

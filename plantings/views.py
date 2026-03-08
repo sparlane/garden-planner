@@ -10,7 +10,7 @@ from django.db.models import Count, Sum
 from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
-from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlantLocation
+from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
 
 
 def get_request_data(request):
@@ -38,12 +38,20 @@ def seedtray_current(request):
         .values_list('specific_plant__cell_planting__seed_tray_planting_id')
         .annotate(total=Count('id'))
     )
+    germinated_counts = dict(
+        SpecificPlant.objects
+        .filter(cell_planting__seed_tray_planting__in=plantings)
+        .values('cell_planting__seed_tray_planting')
+        .annotate(total=Count('id'))
+        .values_list('cell_planting__seed_tray_planting', 'total')
+    )
     planting_data = []
     for planting in plantings:
         transplanted_count = GardenSquareTransplant.objects.filter(
             original_planting=planting
         ).aggregate(total=Sum('quantity'))['total'] or 0
         transplanted_count += garden_square_location_counts.get(planting.pk, 0)
+        germinated_count = germinated_counts.get(planting.pk, 0)
         variety = planting.seeds_used.seeds.plant_variety
         germination_min = variety.plant.germination_days_min
         germination_max = variety.plant.germination_days_max
@@ -62,6 +70,7 @@ def seedtray_current(request):
             'notes': planting.notes,
             'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
             'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
+            'germinated_count': germinated_count,
             'transplanted_count': transplanted_count,
             'cell_plantings': [
                 {'pk': cp.pk, 'cell': cp.cell.pk, 'quantity': cp.quantity}
