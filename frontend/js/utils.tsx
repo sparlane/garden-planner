@@ -42,4 +42,31 @@ function csrfPatch(url: string, data: object): Promise<Response> {
   })
 }
 
-export { csrfPost, csrfPatch, fetchAsJson }
+function localDatetimeInputValue(date: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function parseLocalDatetimeInput(value: string): Date | null {
+  if (!value) return null
+  const d = new Date(value)
+  return isNaN(d.getTime()) ? null : d
+}
+
+function formatDate(s: string): string {
+  if (!s) return ''
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString()
+}
+
+function formatDateTime(s: string): string {
+  if (!s) return ''
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatDateRange(start: string | null | undefined, end: string | null | undefined): string {
+  return `${formatDate(start ?? '')} - ${formatDate(end ?? '')}`
+}
+
+export { csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange }

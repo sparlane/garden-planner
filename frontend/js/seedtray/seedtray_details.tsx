@@ -2,6 +2,7 @@ import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 
 import { SeedTray, SeedTrayCell, SeedTrayModel } from '../types/seedtrays'
+import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
 import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from '../api/seedtrays'
 import { Button, Table } from 'react-bootstrap'
 import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation } from '../types/plantings'
@@ -164,7 +165,7 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
                 <summary style={{ cursor: 'pointer', fontSize: '0.8em' }}>History</summary>
                 {sortedLocations.map((l: SpecificPlantLocation) => (
                   <div key={l.pk} style={{ fontSize: '0.8em', color: '#444' }}>
-                    {locationLabel(l)} {l.started}→{l.ended ?? 'now'}
+                    {locationLabel(l)} {formatDateTime(l.started)}→{l.ended ? formatDateTime(l.ended) : 'now'}
                   </div>
                 ))}
               </details>
@@ -207,7 +208,7 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ cellPlantingPk, date,
     <h5>Record Germination (cell planting #{cellPlantingPk})</h5>
     <div>
       <label>
-        Date: <input type="date" value={date} onChange={(e) => onChangeDate(e.target.value)} />
+        Date: <input type="datetime-local" value={date} onChange={(e) => onChangeDate(e.target.value)} />
       </label>
     </div>
     <div style={{ marginTop: 8 }}>
@@ -216,7 +217,7 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ cellPlantingPk, date,
       </label>
     </div>
     <div style={{ marginTop: 8 }}>
-      <Button variant="success" onClick={onSave}>
+      <Button variant="success" onClick={onSave} disabled={!date}>
         Save
       </Button>{' '}
       <Button variant="secondary" onClick={onCancel}>
@@ -300,7 +301,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
               <option value="">— select tray —</option>
               {allSeedTrays?.map((t) => (
                 <option key={t.pk} value={t.pk}>
-                  Tray #{t.pk} ({t.created})
+                  Tray #{t.pk} ({formatDate(t.created)})
                 </option>
               ))}
             </select>
@@ -329,7 +330,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
     )}
     <div style={{ marginTop: 8 }}>
       <label>
-        Date: <input type="date" value={form.date} onChange={(e) => onChange({ ...form, date: e.target.value })} />
+        Date: <input type="datetime-local" value={form.date} onChange={(e) => onChange({ ...form, date: e.target.value })} />
       </label>
     </div>
     <div style={{ marginTop: 8 }}>
@@ -338,7 +339,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
       </label>
     </div>
     <div style={{ marginTop: 8 }}>
-      <Button variant="primary" onClick={onSave} disabled={form.locationType === 'garden_square' ? !form.gardenSquarePk : !form.seedTrayCellPk}>
+      <Button variant="primary" onClick={onSave} disabled={!form.date || (form.locationType === 'garden_square' ? !form.gardenSquarePk : !form.seedTrayCellPk)}>
         Save
       </Button>{' '}
       <Button variant="secondary" onClick={onCancel}>
@@ -354,7 +355,7 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
   constructor(props: SeedTrayDetailsProps) {
     super(props)
     this.state = {
-      germinationDate: new Date().toISOString().slice(0, 10),
+      germinationDate: localDatetimeInputValue(),
       germinationNotes: '',
       cellCurrentPlantMap: {},
       cellPlantingMap: {},
@@ -400,9 +401,11 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
   async handleRecordGermination() {
     const { germinatingCellPlantingPk, germinationDate, germinationNotes } = this.state
     if (!germinatingCellPlantingPk) return
+    const parsedDate = parseLocalDatetimeInput(germinationDate)
+    if (!parsedDate) return
     await addSpecificPlant({
       cell_planting: germinatingCellPlantingPk,
-      germinated: germinationDate,
+      germinated: parsedDate.toISOString(),
       notes: germinationNotes || undefined
     })
     await this.refreshPlants()
@@ -412,15 +415,18 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
   async handleRecordMove() {
     const { moveForm } = this.state
     if (!moveForm) return
+    const parsedMoveDate = parseLocalDatetimeInput(moveForm.date)
+    if (!parsedMoveDate) return
+    const moveIso = parsedMoveDate.toISOString()
     if (moveForm.currentLocationPk) {
-      await endSpecificPlantLocation(moveForm.currentLocationPk, moveForm.date)
+      await endSpecificPlantLocation(moveForm.currentLocationPk, moveIso)
     }
     await addSpecificPlantLocation({
       specific_plant: moveForm.plantPk,
       location_type: moveForm.locationType,
       seed_tray_cell: moveForm.locationType === 'seed_tray_cell' ? moveForm.seedTrayCellPk : undefined,
       garden_square: moveForm.locationType === 'garden_square' ? moveForm.gardenSquarePk : undefined,
-      started: moveForm.date,
+      started: moveIso,
       notes: moveForm.notes || undefined
     })
     await this.refreshPlants()
@@ -435,7 +441,7 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
         currentLocationPk: current?.pk,
         locationType: 'garden_square',
         gardenSquarePk: undefined,
-        date: new Date().toISOString().slice(0, 10),
+        date: localDatetimeInputValue(),
         notes: ''
       },
       moveCells: undefined,
@@ -485,7 +491,7 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
         <p>
           Model: {seedTrayModel?.identifier} ({seedTrayModel?.description})
         </p>
-        <p>Created: {seedTray.created}</p>
+        <p>Created: {formatDate(seedTray.created)}</p>
         <p>Notes: {seedTray.notes}</p>
         Plantings:
         <Table border={1} cellPadding={5} cellSpacing={0}>
@@ -505,7 +511,7 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
               return (
                 <tr key={planting.pk}>
                   <td>{planting.pk}</td>
-                  <td>{planting.planted}</td>
+                  <td>{formatDate(planting.planted)}</td>
                   <td>{planting.quantity}</td>
                   <td>
                     {seeds?.plant} - {seeds?.variety}
