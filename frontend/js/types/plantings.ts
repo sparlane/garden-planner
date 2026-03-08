@@ -73,6 +73,7 @@ interface SeedTrayPlantingDetails {
 }
 
 interface GardenSquarePlanting {
+  specific_plant_pk?: number
   transplanting_pk?: number
   transplanted?: string
   planting_pk: number
