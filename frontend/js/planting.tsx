@@ -460,7 +460,8 @@ class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
           {this.props.planting.plant} - {this.props.planting.variety}
         </td>
         <td>
-          {this.props.planting.quantity} (<span title="Number that have been transplanted to a garden square">Transplanted: {this.props.planting.transplanted_count}</span>)
+          {this.props.planting.quantity} (<span title="Number that have germinated">Germinated: {this.props.planting.germinated_count}</span>,{' '}
+          <span title="Number that have been transplanted to a garden square">Transplanted: {this.props.planting.transplanted_count}</span>)
         </td>
         <td>{formatDate(this.props.planting.planted)}</td>
         <td>{this.props.planting.seed_tray}</td>
