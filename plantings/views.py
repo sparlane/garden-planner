@@ -3,25 +3,14 @@ Planting views
 """
 
 import datetime
-import json
 
 from django.contrib.auth.decorators import login_required
 from django.db.models import Count, Sum
 from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
+from gp.utils import get_request_data
 from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
-
-
-def get_request_data(request):
-    """
-    Helper function to get data from request body or POST
-    """
-    try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError:
-        data = request.POST
-    return data
 
 
 @login_required
@@ -29,7 +18,13 @@ def seedtray_current(request):
     """
     List the seedtray plantings that are currently growing
     """
-    plantings = SeedTrayPlanting.objects.filter(removed=False).order_by('planted')
+    plantings = (
+        SeedTrayPlanting.objects
+        .filter(removed=False)
+        .order_by('planted')
+        .select_related('seeds_used__seeds__plant_variety__plant', 'seed_tray')
+        .prefetch_related('cell_plantings__cell')
+    )
     garden_square_location_counts = dict(
         SpecificPlantLocation.objects.filter(
             location_type=SpecificPlantLocation.GARDEN_SQUARE,
@@ -45,31 +40,30 @@ def seedtray_current(request):
         .annotate(total=Count('id'))
         .values_list('cell_planting__seed_tray_planting', 'total')
     )
+    transplanted_counts = dict(
+        GardenSquareTransplant.objects
+        .filter(original_planting__in=plantings)
+        .values('original_planting')
+        .annotate(total=Sum('quantity'))
+        .values_list('original_planting', 'total')
+    )
     planting_data = []
     for planting in plantings:
-        transplanted_count = GardenSquareTransplant.objects.filter(
-            original_planting=planting
-        ).aggregate(total=Sum('quantity'))['total'] or 0
-        transplanted_count += garden_square_location_counts.get(planting.pk, 0)
+        transplanted_count = transplanted_counts.get(planting.pk, 0) + garden_square_location_counts.get(planting.pk, 0)
         germinated_count = germinated_counts.get(planting.pk, 0)
         variety = planting.seeds_used.seeds.plant_variety
-        germination_min = variety.plant.germination_days_min
-        germination_max = variety.plant.germination_days_max
-        if variety.germination_days_min:
-            germination_min = variety.germination_days_min
-        if variety.germination_days_max:
-            germination_max = variety.germination_days_max
+        germination_min, germination_max, _, _ = _get_variety_days(variety)
         planting_data.append({
             'pk': planting.pk,
-            'plant': planting.seeds_used.seeds.plant_variety.plant.name,
-            'variety': planting.seeds_used.seeds.plant_variety.name,
+            'plant': variety.plant.name,
+            'variety': variety.name,
             'planted': planting.planted,
             'quantity': planting.quantity,
             'seed_tray': planting.seed_tray.pk if planting.seed_tray else None,
             'location': planting.location,
             'notes': planting.notes,
-            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
-            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
+            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min) if germination_min is not None else None,
+            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max) if germination_max is not None else None,
             'germinated_count': germinated_count,
             'transplanted_count': transplanted_count,
             'cell_plantings': [
@@ -110,7 +104,12 @@ def gardensquare_current(request):
     """
     List the GardenSquare plantings that are currently growing
     """
-    plantings = GardenSquareDirectSowPlanting.objects.filter(removed=False).order_by('planted')
+    plantings = (
+        GardenSquareDirectSowPlanting.objects
+        .filter(removed=False)
+        .order_by('planted')
+        .select_related('seeds_used__seeds__plant_variety__plant', 'location__bed__area')
+    )
     planting_data = []
     for planting in plantings:
         variety = planting.seeds_used.seeds.plant_variety
@@ -128,7 +127,11 @@ def gardensquare_current(request):
             'maturity_date_early': planting.planted + datetime.timedelta(days=maturity_min),
             'maturity_date_late': planting.planted + datetime.timedelta(days=maturity_max)
         })
-    transplantings = GardenSquareTransplant.objects.filter(removed=False)
+    transplantings = (
+        GardenSquareTransplant.objects
+        .filter(removed=False)
+        .select_related('original_planting__seeds_used__seeds__plant_variety__plant', 'location__bed__area')
+    )
     for transplanting in transplantings:
         planting = transplanting.original_planting
         variety = planting.seeds_used.seeds.plant_variety

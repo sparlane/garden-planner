@@ -3,9 +3,9 @@ Urls for the frontend
 
 These are linked at /
 """
-from django.urls import re_path
+from django.urls import path
 from . import views
 
 urlpatterns = [
-    re_path('^$', views.main, name='main'),
+    path('', views.main, name='main'),
 ]
