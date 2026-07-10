@@ -12,7 +12,8 @@ import {
   SeedTrayPlantingDetails,
   SpecificPlant,
   SpecificPlantCreate,
-  SpecificPlantLocationCreate
+  SpecificPlantLocationCreate,
+  SpecificPlantMove
 } from '../types/plantings'
 
 function getPlantingDirectSowGardenRows(): Promise<Array<GardenRowDirectPlanting>> {
@@ -93,6 +94,10 @@ function endSpecificPlantLocation(locationPk: number, ended?: string): Promise<R
   return csrfPatch(`/plantings/specificplantlocations/${locationPk}/`, ended ? { ended } : {})
 }
 
+function moveSpecificPlant(plantPk: number, data: SpecificPlantMove): Promise<Response> {
+  return csrfPost(`/plantings/specificplants/${plantPk}/move/`, data)
+}
+
 export {
   getPlantingDirectSowGardenRows,
   addPlantingDirectSowGardenRow,
@@ -111,5 +116,6 @@ export {
   getSpecificPlantsBySeedTray,
   addSpecificPlant,
   addSpecificPlantLocation,
-  endSpecificPlantLocation
+  endSpecificPlantLocation,
+  moveSpecificPlant
 }
