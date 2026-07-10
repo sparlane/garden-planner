@@ -110,6 +110,14 @@ interface SpecificPlantLocationCreate {
   notes?: string
 }
 
+interface SpecificPlantMove {
+  location_type: 'seed_tray_cell' | 'garden_square'
+  seed_tray_cell?: number
+  garden_square?: number
+  started: string
+  notes?: string
+}
+
 interface SpecificPlant {
   pk: number
   cell_planting: number
@@ -139,5 +147,6 @@ export {
   SpecificPlant,
   SpecificPlantCreate,
   SpecificPlantLocation,
-  SpecificPlantLocationCreate
+  SpecificPlantLocationCreate,
+  SpecificPlantMove
 }

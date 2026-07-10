@@ -6,7 +6,7 @@ import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDat
 import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from '../api/seedtrays'
 import { Button, Table } from 'react-bootstrap'
 import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation } from '../types/plantings'
-import { getPlantingSeedTray, getSpecificPlantsBySeedTray, addSpecificPlant, addSpecificPlantLocation, endSpecificPlantLocation } from '../api/plantings'
+import { getPlantingSeedTray, getSpecificPlantsBySeedTray, addSpecificPlant, moveSpecificPlant } from '../api/plantings'
 import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
@@ -418,11 +418,7 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
     const parsedMoveDate = parseLocalDatetimeInput(moveForm.date)
     if (!parsedMoveDate) return
     const moveIso = parsedMoveDate.toISOString()
-    if (moveForm.currentLocationPk) {
-      await endSpecificPlantLocation(moveForm.currentLocationPk, moveIso)
-    }
-    await addSpecificPlantLocation({
-      specific_plant: moveForm.plantPk,
+    await moveSpecificPlant(moveForm.plantPk, {
       location_type: moveForm.locationType,
       seed_tray_cell: moveForm.locationType === 'seed_tray_cell' ? moveForm.seedTrayCellPk : undefined,
       garden_square: moveForm.locationType === 'garden_square' ? moveForm.gardenSquarePk : undefined,
