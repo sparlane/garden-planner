@@ -114,7 +114,7 @@ interface SpecificPlantMove {
   location_type: 'seed_tray_cell' | 'garden_square'
   seed_tray_cell?: number
   garden_square?: number
-  started: string
+  started?: string
   notes?: string
 }
 
