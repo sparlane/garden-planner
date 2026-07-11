@@ -14,7 +14,14 @@ from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
-from .models import SeedTrayCellPlanting, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation
+from .models import (
+    GardenSquareDirectSowPlanting,
+    GardenSquareTransplant,
+    SeedTrayCellPlanting,
+    SeedTrayPlanting,
+    SpecificPlant,
+    SpecificPlantLocation,
+)
 
 
 class SpecificPlantMoveTests(TestCase):
@@ -278,3 +285,123 @@ class SpecificPlantMoveTests(TestCase):
             ).count(),
             2,
         )
+
+
+class GardenSquareCurrentMissingMetadataTests(TestCase):
+    """
+    Tests for garden square current summaries with missing date metadata.
+    """
+
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_user(username='tester'))
+        variety = PlantVariety.objects.create(
+            plant=Plant.objects.create(
+                family=PlantFamily.objects.create(name='Nightshade'),
+                name='Tomato',
+            ),
+            name='Roma',
+        )
+        self.packet = SeedPacket.objects.create(
+            seeds=Seeds.objects.create(
+                supplier=Supplier.objects.create(name='Test Supplier'),
+                plant_variety=variety,
+            ),
+        )
+        area = GardenArea.objects.create(name='Back garden', size_x=10, size_y=10)
+        bed = GardenBed.objects.create(
+            area=area,
+            name='Bed 1',
+            placement_x=0,
+            placement_y=0,
+            size_x=10,
+            size_y=10,
+        )
+        self.square = GardenSquare.objects.create(
+            bed=bed,
+            name='A1',
+            placement_x=0,
+            placement_y=0,
+            size_x=1,
+            size_y=1,
+        )
+        self.tray_model = SeedTrayModel.objects.create(
+            identifier='missing-metadata-tray',
+            height=10,
+            x_size=20,
+            y_size=30,
+            x_cells=2,
+            y_cells=2,
+            cell_size_ml=40,
+        )
+
+    def _create_seed_tray_cell_planting(self):
+        tray = SeedTray.objects.create(model=self.tray_model)
+        cell = SeedTrayCell.objects.create(tray=tray, x_position=0, y_position=0)
+        planting = SeedTrayPlanting.objects.create(
+            seeds_used=self.packet,
+            quantity=1,
+            seed_tray=tray,
+        )
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=planting,
+            cell=cell,
+            quantity=1,
+        )
+        return planting, cell_planting
+
+    def _assert_missing_metadata_dates(self, planting):
+        self.assertIsNone(planting['germination_date_early'])
+        self.assertIsNone(planting['germination_date_late'])
+        self.assertIsNone(planting['maturity_date_early'])
+        self.assertIsNone(planting['maturity_date_late'])
+
+    def test_direct_sow_with_missing_metadata_returns_null_computed_dates(self):
+        """
+        Direct sow rows tolerate missing germination and maturity offsets.
+        """
+        GardenSquareDirectSowPlanting.objects.create(
+            seeds_used=self.packet,
+            quantity=1,
+            location=self.square,
+        )
+
+        response = self.client.get('/plantings/garden/squares/current/')
+
+        self.assertEqual(response.status_code, 200)
+        planting = response.json()['plantings'][0]
+        self._assert_missing_metadata_dates(planting)
+
+    def test_transplant_with_missing_metadata_returns_null_computed_dates(self):
+        """
+        Aggregate transplant rows tolerate missing germination and maturity offsets.
+        """
+        planting, _ = self._create_seed_tray_cell_planting()
+        GardenSquareTransplant.objects.create(
+            original_planting=planting,
+            quantity=1,
+            location=self.square,
+        )
+
+        response = self.client.get('/plantings/garden/squares/current/')
+
+        self.assertEqual(response.status_code, 200)
+        planting = response.json()['plantings'][0]
+        self._assert_missing_metadata_dates(planting)
+
+    def test_specific_plant_location_with_missing_metadata_returns_null_computed_dates(self):
+        """
+        Specific plant location rows tolerate missing germination and maturity offsets.
+        """
+        _, cell_planting = self._create_seed_tray_cell_planting()
+        plant = SpecificPlant.objects.create(cell_planting=cell_planting)
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=self.square,
+        )
+
+        response = self.client.get('/plantings/garden/squares/current/')
+
+        self.assertEqual(response.status_code, 200)
+        planting = response.json()['plantings'][0]
+        self._assert_missing_metadata_dates(planting)
