@@ -2,11 +2,11 @@
 Tests for plantings
 """
 import json
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.test import TestCase
 
 from garden.models import GardenArea, GardenBed, GardenSquare
@@ -91,6 +91,20 @@ class SpecificPlantMoveTests(TestCase):
             started=datetime(2026, 1, 1, 8, 0, tzinfo=datetime_timezone.utc),
         )
 
+    def _drop_active_location_index(self):
+        with connection.cursor() as cursor:
+            cursor.execute('DROP INDEX IF EXISTS unique_active_location_per_plant')
+        self.addCleanup(self._restore_active_location_index)
+
+    def _restore_active_location_index(self):
+        SpecificPlantLocation.objects.filter(specific_plant=self.plant, seed_tray_cell=self.other_cell).delete()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'CREATE UNIQUE INDEX IF NOT EXISTS "unique_active_location_per_plant" '
+                'ON "plantings_specificplantlocation" ("specific_plant_id") '
+                'WHERE "ended" IS NULL'
+            )
+
     def test_move_ends_current_location_and_creates_new_active_location(self):
         """
         Moving a plant is persisted as one ended location and one active location.
@@ -148,7 +162,8 @@ class SpecificPlantMoveTests(TestCase):
         """
         If the destination creation violates the active-location invariant, the previous location remains active.
         """
-        with mock.patch('plantings.rest.SpecificPlantLocation.objects.create', side_effect=IntegrityError('create failed')):
+        error = IntegrityError('UNIQUE constraint failed: plantings_specificplantlocation.specific_plant_id')
+        with mock.patch('plantings.rest.SpecificPlantLocation.objects.create', side_effect=error):
             response = self.client.post(
                 f'/plantings/specificplants/{self.plant.pk}/move/',
                 data=json.dumps({
@@ -168,6 +183,37 @@ class SpecificPlantMoveTests(TestCase):
         )
         self.assertEqual(active_locations.count(), 1)
         self.assertEqual(active_locations.get(), self.active_location)
+
+    def test_move_without_active_location_creates_new_active_location(self):
+        """
+        A plant with no active location can still be moved to a new active location.
+        """
+        ended = datetime(2026, 1, 1, 12, 0, tzinfo=datetime_timezone.utc)
+        self.active_location.ended = ended
+        self.active_location.save(update_fields=['ended'])
+
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': '2026-01-02T09:30:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, ended)
+        active_location = SpecificPlantLocation.objects.get(
+            specific_plant=self.plant,
+            ended__isnull=True,
+        )
+        self.assertEqual(active_location.garden_square, self.square)
+        self.assertEqual(
+            SpecificPlantLocation.objects.filter(specific_plant=self.plant).count(),
+            2,
+        )
 
     def test_move_rejects_invalid_destination_without_ending_current_location(self):
         """
@@ -192,4 +238,43 @@ class SpecificPlantMoveTests(TestCase):
                 ended__isnull=True,
             ).count(),
             1,
+        )
+
+    def test_move_rejects_multiple_active_locations_without_ending_any_location(self):
+        """
+        A move is rejected when existing data already has multiple active locations.
+        """
+        self._drop_active_location_index()
+        second_active_location = SpecificPlantLocation.objects.create(
+            specific_plant=self.plant,
+            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+            seed_tray_cell=self.other_cell,
+            started=self.active_location.started + timedelta(hours=1),
+        )
+
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': '2026-01-02T09:30:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'specific_plant': 'Plant has multiple active locations.'},
+        )
+        self.active_location.refresh_from_db()
+        second_active_location.refresh_from_db()
+        self.assertIsNone(self.active_location.ended)
+        self.assertIsNone(second_active_location.ended)
+        self.assertEqual(
+            SpecificPlantLocation.objects.filter(
+                specific_plant=self.plant,
+                ended__isnull=True,
+            ).count(),
+            2,
         )

@@ -1,8 +1,6 @@
 """
 Rest for Plantings
 """
-from functools import partial
-
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404
@@ -145,7 +143,12 @@ class SpecificPlantLocationSerializer(serializers.ModelSerializer):
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         # Delegate to the model's clean() as the single source of truth for FK/location_type consistency.
-        validate_specific_plant_location_for_instance(self.instance, data)
+        validate_specific_plant_location(
+            location_type=data.get('location_type', _FIELD_MISSING),
+            seed_tray_cell=data.get('seed_tray_cell', _FIELD_MISSING),
+            garden_square=data.get('garden_square', _FIELD_MISSING),
+            instance=self.instance,
+        )
         return data
 
 
@@ -161,7 +164,11 @@ class SpecificPlantMoveSerializer(serializers.ModelSerializer):
         }
 
     def validate(self, data):  # pylint: disable=arguments-renamed
-        validate_specific_plant_location_data(data)
+        validate_specific_plant_location(
+            location_type=data.get('location_type'),
+            seed_tray_cell=data.get('seed_tray_cell'),
+            garden_square=data.get('garden_square'),
+        )
         return data
 
 
@@ -197,37 +204,26 @@ class GardenSquareTransplantSerializer(serializers.ModelSerializer):
         fields = ['pk', 'transplanted', 'original_planting', 'quantity', 'location', 'removed', 'notes']
 
 
-def validate_specific_plant_location_for_instance(instance, data):
-    """
-    Validate location fields for a create or partial update.
-    """
-    if instance is None:
-        validate_specific_plant_location_data(data)
-        return
-
-    validate_specific_plant_location_fields({
-        'location_type': data.get('location_type', instance.location_type),
-        'seed_tray_cell': data.get('seed_tray_cell', instance.seed_tray_cell),
-        'garden_square': data.get('garden_square', instance.garden_square),
-    })
+_FIELD_MISSING = object()
 
 
-def validate_specific_plant_location_data(data):
+def validate_specific_plant_location(*, location_type=None, seed_tray_cell=None, garden_square=None, instance=None):
     """
-    Validate destination fields for a new SpecificPlantLocation.
+    Validate location fields, optionally defaulting omitted fields from an instance.
     """
-    validate_specific_plant_location_fields({
-        'location_type': data.get('location_type'),
-        'seed_tray_cell': data.get('seed_tray_cell'),
-        'garden_square': data.get('garden_square'),
-    })
+    if instance is not None:
+        if location_type is _FIELD_MISSING:
+            location_type = instance.location_type
+        if seed_tray_cell is _FIELD_MISSING:
+            seed_tray_cell = instance.seed_tray_cell
+        if garden_square is _FIELD_MISSING:
+            garden_square = instance.garden_square
 
-
-def validate_specific_plant_location_fields(fields):
-    """
-    Validate SpecificPlantLocation destination fields with model clean().
-    """
-    tmp = SpecificPlantLocation(**fields)
+    tmp = SpecificPlantLocation(
+        location_type=None if location_type is _FIELD_MISSING else location_type,
+        seed_tray_cell=None if seed_tray_cell is _FIELD_MISSING else seed_tray_cell,
+        garden_square=None if garden_square is _FIELD_MISSING else garden_square,
+    )
     try:
         tmp.clean()
     except DjangoValidationError as exc:
@@ -252,15 +248,29 @@ def get_single_active_location_for_update(plant):
     return None
 
 
-def move_specific_plant(plant_pk, move_data, check_permissions):
+def is_active_location_integrity_error(exc):
+    """
+    Return whether an integrity error came from the active-location constraint.
+    """
+    cause = getattr(exc, '__cause__', None)
+    diag = getattr(cause, 'diag', None)
+    if getattr(diag, 'constraint_name', None) == 'unique_active_location_per_plant':
+        return True
+
+    message = ' '.join(str(arg) for arg in exc.args)
+    names_constraint = 'unique_active_location_per_plant' in message
+    names_sqlite_column = 'plantings_specificplantlocation.specific_plant_id' in message
+    return names_constraint or names_sqlite_column
+
+
+def move_specific_plant(plant, move_data):
     """
     Move a plant by ending its active location and creating the new one atomically.
     """
     started = move_data.get('started') or timezone.now()
-    move_data['started'] = started
+    move_payload = {**move_data, 'started': started}
     with transaction.atomic():
-        plant = get_object_or_404(SpecificPlant.objects.select_for_update(), pk=plant_pk)
-        check_permissions(plant)
+        plant = get_object_or_404(SpecificPlant.objects.select_for_update(), pk=plant.pk)
         active_location = get_single_active_location_for_update(plant)
 
         if active_location:
@@ -270,9 +280,11 @@ def move_specific_plant(plant_pk, move_data, check_permissions):
         try:
             return SpecificPlantLocation.objects.create(
                 specific_plant=plant,
-                **move_data,
+                **move_payload,
             )
         except IntegrityError as exc:
+            if not is_active_location_integrity_error(exc):
+                raise
             raise serializers.ValidationError({
                 'specific_plant': 'Move must leave exactly one active location.'
             }) from exc
@@ -329,17 +341,17 @@ class SpecificPlantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-a
     serializer_class = SpecificPlantSerializer
 
     @action(detail=True, methods=['post'])
-    def move(self, request, pk=None):
+    def move(self, request, pk=None):  # pylint: disable=unused-argument
         """
         Move a plant by ending its active location and creating the new one atomically.
         """
         serializer = SpecificPlantMoveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        plant = self.get_object()
         location = move_specific_plant(
-            pk,
+            plant,
             dict(serializer.validated_data),
-            partial(self.check_object_permissions, request),
         )
         return Response(SpecificPlantLocationSerializer(location).data, status=status.HTTP_201_CREATED)
 
