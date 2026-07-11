@@ -6,6 +6,7 @@ from datetime import datetime, timezone as datetime_timezone
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from django.test import TestCase
 
 from garden.models import GardenArea, GardenBed, GardenSquare
@@ -119,12 +120,35 @@ class SpecificPlantMoveTests(TestCase):
         self.assertEqual(active_location.garden_square, self.square)
         self.assertEqual(active_location.notes, 'Moved outside')
 
-    def test_move_rolls_back_current_location_when_create_fails(self):
+    def test_move_without_started_defaults_to_current_time(self):
         """
-        If the destination creation fails, the previous active location remains active.
+        Moves without an explicit start time use the backend current time.
         """
-        self.client.raise_request_exception = False
-        with mock.patch('plantings.rest.SpecificPlantLocation.objects.create', side_effect=RuntimeError('create failed')):
+        move_time = datetime(2026, 1, 2, 9, 30, tzinfo=datetime_timezone.utc)
+        with mock.patch('plantings.rest.timezone.now', return_value=move_time):
+            response = self.client.post(
+                f'/plantings/specificplants/{self.plant.pk}/move/',
+                data=json.dumps({
+                    'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                    'garden_square': self.square.pk,
+                }),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, move_time)
+        active_location = SpecificPlantLocation.objects.get(
+            specific_plant=self.plant,
+            ended__isnull=True,
+        )
+        self.assertEqual(active_location.started, move_time)
+
+    def test_move_rolls_back_current_location_when_create_violates_invariant(self):
+        """
+        If the destination creation violates the active-location invariant, the previous location remains active.
+        """
+        with mock.patch('plantings.rest.SpecificPlantLocation.objects.create', side_effect=IntegrityError('create failed')):
             response = self.client.post(
                 f'/plantings/specificplants/{self.plant.pk}/move/',
                 data=json.dumps({
@@ -134,9 +158,8 @@ class SpecificPlantMoveTests(TestCase):
                 }),
                 content_type='application/json',
             )
-        self.client.raise_request_exception = True
 
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 400)
         self.active_location.refresh_from_db()
         self.assertIsNone(self.active_location.ended)
         active_locations = SpecificPlantLocation.objects.filter(
