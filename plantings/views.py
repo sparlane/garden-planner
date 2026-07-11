@@ -62,8 +62,8 @@ def seedtray_current(request):
             'seed_tray': planting.seed_tray.pk if planting.seed_tray else None,
             'location': planting.location,
             'notes': planting.notes,
-            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min) if germination_min is not None else None,
-            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max) if germination_max is not None else None,
+            'germination_date_early': _add_nullable_days(planting.planted, germination_min),
+            'germination_date_late': _add_nullable_days(planting.planted, germination_max),
             'germinated_count': germinated_count,
             'transplanted_count': transplanted_count,
             'cell_plantings': [
@@ -99,6 +99,15 @@ def _get_variety_days(variety):
     )
 
 
+def _add_nullable_days(value, days):
+    """
+    Add a nullable day offset to a date/datetime value.
+    """
+    if days is None:
+        return None
+    return value + datetime.timedelta(days=days)
+
+
 @login_required
 def gardensquare_current(request):
     """
@@ -122,10 +131,10 @@ def gardensquare_current(request):
             'quantity': planting.quantity,
             'location': planting.location.as_json(),
             'notes': planting.notes,
-            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
-            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
-            'maturity_date_early': planting.planted + datetime.timedelta(days=maturity_min),
-            'maturity_date_late': planting.planted + datetime.timedelta(days=maturity_max)
+            'germination_date_early': _add_nullable_days(planting.planted, germination_min),
+            'germination_date_late': _add_nullable_days(planting.planted, germination_max),
+            'maturity_date_early': _add_nullable_days(planting.planted, maturity_min),
+            'maturity_date_late': _add_nullable_days(planting.planted, maturity_max)
         })
     transplantings = (
         GardenSquareTransplant.objects
@@ -146,10 +155,10 @@ def gardensquare_current(request):
             'quantity': transplanting.quantity,
             'location': transplanting.location.as_json(),
             'notes': planting.notes,
-            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
-            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
-            'maturity_date_early': transplanting.transplanted + datetime.timedelta(days=maturity_min),
-            'maturity_date_late': transplanting.transplanted + datetime.timedelta(days=maturity_max)
+            'germination_date_early': _add_nullable_days(planting.planted, germination_min),
+            'germination_date_late': _add_nullable_days(planting.planted, germination_max),
+            'maturity_date_early': _add_nullable_days(transplanting.transplanted, maturity_min),
+            'maturity_date_late': _add_nullable_days(transplanting.transplanted, maturity_max)
         })
     specific_plant_locations = SpecificPlantLocation.objects.filter(
         location_type=SpecificPlantLocation.GARDEN_SQUARE,
@@ -173,10 +182,10 @@ def gardensquare_current(request):
             'quantity': 1,
             'location': location.garden_square.as_json(),
             'notes': location.notes or location.specific_plant.notes,
-            'germination_date_early': planting.planted + datetime.timedelta(days=germination_min),
-            'germination_date_late': planting.planted + datetime.timedelta(days=germination_max),
-            'maturity_date_early': location.started + datetime.timedelta(days=maturity_min),
-            'maturity_date_late': location.started + datetime.timedelta(days=maturity_max),
+            'germination_date_early': _add_nullable_days(planting.planted, germination_min),
+            'germination_date_late': _add_nullable_days(planting.planted, germination_max),
+            'maturity_date_early': _add_nullable_days(location.started, maturity_min),
+            'maturity_date_late': _add_nullable_days(location.started, maturity_max),
         })
     return JsonResponse({'plantings': planting_data})
 
