@@ -2,6 +2,7 @@
 Models for Plantings
 """
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -16,7 +17,7 @@ class Planting(models.Model):
     """
     planted = models.DateTimeField(default=timezone.now)
     seeds_used = models.ForeignKey(SeedPacket, on_delete=models.PROTECT)
-    quantity = models.IntegerField()
+    quantity = models.IntegerField(validators=[MinValueValidator(1)])
     location = None
     notes = models.TextField(null=True, blank=True)
     removed = models.BooleanField(default=False)
@@ -58,7 +59,7 @@ class SeedTrayCellPlanting(models.Model):
     """
     seed_tray_planting = models.ForeignKey(SeedTrayPlanting, on_delete=models.CASCADE, related_name='cell_plantings')
     cell = models.ForeignKey(SeedTrayCell, on_delete=models.PROTECT)
-    quantity = models.PositiveIntegerField()
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
 
     class Meta:
         constraints = [
@@ -142,7 +143,7 @@ class GardenSquareTransplant(models.Model):
     """
     original_planting = models.ForeignKey(SeedTrayPlanting, on_delete=models.PROTECT)
     transplanted = models.DateTimeField(default=timezone.now)
-    quantity = models.IntegerField()
+    quantity = models.IntegerField(validators=[MinValueValidator(1)])
     location = models.ForeignKey(GardenSquare, on_delete=models.PROTECT)
     notes = models.TextField(null=True, blank=True)
     removed = models.BooleanField(default=False)
