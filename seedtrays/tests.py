@@ -73,6 +73,29 @@ class SeedTrayCellIntegrityTests(TestCase):
         self.assertEqual(response.json(), {'x_position': ['Must be less than 2.']})
         self.assertFalse(SeedTrayCell.objects.exists())
 
+    def test_nested_update_rejects_positions_outside_url_tray(self):
+        """
+        Partial updates validate both coordinates without changing the existing cell.
+        """
+        cell = SeedTrayCell.objects.create(
+            tray=self.tray,
+            x_position=0,
+            y_position=0,
+        )
+
+        for field in ('x_position', 'y_position'):
+            with self.subTest(field=field):
+                response = self.client.patch(
+                    f'/seedtrays/seedtrays/{self.tray.pk}/cells/{cell.pk}/',
+                    data=json.dumps({field: 2}),
+                    content_type='application/json',
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.json(), {field: ['Must be less than 2.']})
+                cell.refresh_from_db()
+                self.assertEqual((cell.x_position, cell.y_position), (0, 0))
+
     def test_global_create_rejects_position_outside_payload_tray(self):
         """
         Non-nested cell writes enforce the same coordinate bounds.
@@ -89,6 +112,31 @@ class SeedTrayCellIntegrityTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json(), {'y_position': ['Must be less than 2.']})
+
+    def test_global_create_rejects_negative_positions(self):
+        """
+        PositiveIntegerField validation enforces the lower coordinate bounds.
+        """
+        for field in ('x_position', 'y_position'):
+            with self.subTest(field=field):
+                payload = {
+                    'tray': self.tray.pk,
+                    'x_position': 0,
+                    'y_position': 0,
+                    field: -1,
+                }
+                response = self.client.post(
+                    '/seedtrays/seedtraycells/',
+                    data=json.dumps(payload),
+                    content_type='application/json',
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    response.json(),
+                    {field: ['Ensure this value is greater than or equal to 0.']},
+                )
+                self.assertFalse(SeedTrayCell.objects.exists())
 
     def test_existing_cell_cannot_be_moved_to_another_tray(self):
         """
