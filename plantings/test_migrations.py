@@ -3,6 +3,7 @@ Tests for plantings data migrations
 """
 from datetime import datetime, timezone as datetime_timezone
 from importlib import import_module
+from unittest import mock
 
 from django.apps import apps as django_apps
 from django.test import SimpleTestCase, TestCase
@@ -76,6 +77,45 @@ class PlantingsDataMigrationTests(TestCase):
     def test_audit_accepts_consistent_rows(self):
         """Valid parent membership and coordinates do not block deployment."""
         self.audit(django_apps, None)
+
+    def test_quantity_audit_accepts_positive_rows(self):
+        """Existing positive quantities do not block the database constraints."""
+        migration = import_module(
+            'plantings.migrations.0014_constrain_positive_quantities'
+        )
+        migration.audit_positive_quantities(django_apps, None)
+
+    def test_quantity_audit_reports_model_and_row_ids(self):
+        """Deployment failures identify the kind and IDs of corrupt rows."""
+        migration = import_module(
+            'plantings.migrations.0014_constrain_positive_quantities'
+        )
+        invalid_rows = mock.MagicMock()
+        invalid_rows.count.return_value = 1
+        values = invalid_rows.order_by.return_value.values_list.return_value
+        values.__getitem__.return_value = [7]
+        invalid_model = mock.MagicMock()
+        invalid_model.objects.filter.return_value = invalid_rows
+
+        valid_rows = mock.MagicMock()
+        valid_rows.count.return_value = 0
+        valid_model = mock.MagicMock()
+        valid_model.objects.filter.return_value = valid_rows
+
+        historical_apps = mock.MagicMock()
+        historical_apps.get_model.side_effect = [
+            invalid_model,
+            valid_model,
+            valid_model,
+            valid_model,
+            valid_model,
+        ]
+
+        with self.assertRaisesMessage(
+            RuntimeError,
+            'GardenRowDirectSowPlanting IDs: [7]',
+        ):
+            migration.audit_positive_quantities(historical_apps, None)
 
     def test_audit_reports_cross_tray_cell_planting(self):
         """The failure identifies a cell planting whose parent tray differs."""

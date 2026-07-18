@@ -35,12 +35,28 @@ class GardenRowDirectSowPlanting(Planting):
     """
     location = models.ForeignKey(GardenRow, on_delete=models.PROTECT)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1),
+                name='row_sow_quantity_gte_1',
+            ),
+        ]
+
 
 class GardenSquareDirectSowPlanting(Planting):
     """
     Planting via direct sow into a garden square
     """
     location = models.ForeignKey(GardenSquare, on_delete=models.PROTECT)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1),
+                name='square_sow_quantity_gte_1',
+            ),
+        ]
 
 
 class SeedTrayPlanting(Planting):
@@ -49,6 +65,14 @@ class SeedTrayPlanting(Planting):
     """
     location = models.CharField(max_length=1024, null=True, blank=True)
     seed_tray = models.ForeignKey(SeedTray, on_delete=models.PROTECT, null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1),
+                name='seed_tray_quantity_gte_1',
+            ),
+        ]
 
 
 class SeedTrayCellPlanting(models.Model):
@@ -63,7 +87,11 @@ class SeedTrayCellPlanting(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['seed_tray_planting', 'cell'], name='unique_cell_per_planting')
+            models.UniqueConstraint(fields=['seed_tray_planting', 'cell'], name='unique_cell_per_planting'),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1),
+                name='seed_tray_cell_quantity_gte_1',
+            ),
         ]
 
     def __str__(self):
@@ -147,6 +175,14 @@ class GardenSquareTransplant(models.Model):
     location = models.ForeignKey(GardenSquare, on_delete=models.PROTECT)
     notes = models.TextField(null=True, blank=True)
     removed = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1),
+                name='square_transplant_quantity_gte_1',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.quantity} {self.original_planting.seeds_used.seeds.plant_variety} planted {self.original_planting.planted} transplanted {self.transplanted} in {self.location}'
