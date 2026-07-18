@@ -24,6 +24,162 @@ from .models import (
 )
 
 
+class SeedTrayPlantingMembershipTests(TestCase):
+    """
+    Tests for keeping a seed tray planting's cells on its parent tray.
+    """
+
+    def setUp(self):
+        self.client.force_login(get_user_model().objects.create_user(username='planting-tester'))
+        variety = PlantVariety.objects.create(
+            plant=Plant.objects.create(
+                family=PlantFamily.objects.create(name='Brassicaceae'),
+                name='Broccoli',
+            ),
+            name='Calabrese',
+        )
+        self.packet = SeedPacket.objects.create(
+            seeds=Seeds.objects.create(
+                supplier=Supplier.objects.create(name='Membership Supplier'),
+                plant_variety=variety,
+            ),
+        )
+        tray_model = SeedTrayModel.objects.create(
+            identifier='membership-tray',
+            height=10,
+            x_size=20,
+            y_size=30,
+            x_cells=2,
+            y_cells=2,
+            cell_size_ml=40,
+        )
+        self.first_tray = SeedTray.objects.create(model=tray_model)
+        self.first_cell = SeedTrayCell.objects.create(
+            tray=self.first_tray,
+            x_position=0,
+            y_position=0,
+        )
+        self.second_tray = SeedTray.objects.create(model=tray_model)
+        self.second_cell = SeedTrayCell.objects.create(
+            tray=self.second_tray,
+            x_position=0,
+            y_position=0,
+        )
+        self.planting = SeedTrayPlanting.objects.create(
+            seeds_used=self.packet,
+            quantity=1,
+            seed_tray=self.first_tray,
+        )
+        self.cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.planting,
+            cell=self.first_cell,
+            quantity=1,
+        )
+
+    def _patch_planting(self, data):
+        return self.client.patch(
+            f'/plantings/seedtray/{self.planting.pk}/',
+            data=json.dumps(data),
+            content_type='application/json',
+        )
+
+    def test_changing_tray_without_replacing_cells_is_rejected(self):
+        """
+        Retained child rows prevent a partial update from changing their parent tray.
+        """
+        response = self._patch_planting({'seed_tray': self.second_tray.pk})
+
+        self.assertEqual(response.status_code, 400)
+        self.planting.refresh_from_db()
+        self.cell_planting.refresh_from_db()
+        self.assertEqual(self.planting.seed_tray, self.first_tray)
+        self.assertEqual(self.cell_planting.cell, self.first_cell)
+
+    def test_changing_tray_with_valid_replacement_cells_succeeds(self):
+        """
+        A complete replacement can move a planting when every new cell is valid.
+        """
+        response = self._patch_planting({
+            'seed_tray': self.second_tray.pk,
+            'cell_plantings': [{'cell': self.second_cell.pk, 'quantity': 1}],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.planting.refresh_from_db()
+        self.assertEqual(self.planting.seed_tray, self.second_tray)
+        replacement = self.planting.cell_plantings.get()
+        self.assertEqual(replacement.cell, self.second_cell)
+
+    def test_invalid_replacement_leaves_planting_unchanged(self):
+        """
+        Membership validation happens before either the parent or children are saved.
+        """
+        response = self._patch_planting({
+            'seed_tray': self.second_tray.pk,
+            'cell_plantings': [{'cell': self.first_cell.pk, 'quantity': 1}],
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.planting.refresh_from_db()
+        self.cell_planting.refresh_from_db()
+        self.assertEqual(self.planting.seed_tray, self.first_tray)
+        self.assertEqual(self.cell_planting.cell, self.first_cell)
+
+    def test_replacing_only_cells_with_another_trays_cell_is_rejected(self):
+        """
+        A replacement without seed_tray is checked against the retained parent tray.
+        """
+        response = self._patch_planting({
+            'cell_plantings': [{'cell': self.second_cell.pk, 'quantity': 1}],
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.planting.refresh_from_db()
+        self.cell_planting.refresh_from_db()
+        self.assertEqual(self.planting.seed_tray, self.first_tray)
+        self.assertEqual(self.cell_planting.cell, self.first_cell)
+
+    def test_partial_replacement_requires_a_cell(self):
+        """Malformed replacement entries return 400 instead of raising a KeyError."""
+        response = self._patch_planting({
+            'cell_plantings': [{'quantity': 1}],
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'cell_plantings': [{'cell': ['This field is required.']}]},
+        )
+        self.assertEqual(self.planting.cell_plantings.get(), self.cell_planting)
+
+    def test_partial_replacement_requires_a_quantity(self):
+        """Every replacement entry is complete even when its parent request is partial."""
+        response = self._patch_planting({
+            'cell_plantings': [{'cell': self.first_cell.pk}],
+        })
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'cell_plantings': [{'quantity': ['This field is required.']}]},
+        )
+        self.assertEqual(self.planting.cell_plantings.get(), self.cell_planting)
+
+    def test_explicitly_clearing_cells_allows_changing_tray(self):
+        """
+        An empty replacement list removes the old tray membership intentionally.
+        """
+        response = self._patch_planting({
+            'seed_tray': self.second_tray.pk,
+            'cell_plantings': [],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.planting.refresh_from_db()
+        self.assertEqual(self.planting.seed_tray, self.second_tray)
+        self.assertFalse(self.planting.cell_plantings.exists())
+
+
 class SpecificPlantMoveTests(TestCase):
     """
     Tests for moving a specific plant between tracked locations.

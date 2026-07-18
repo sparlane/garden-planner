@@ -36,6 +36,17 @@ class SeedTrayCellPlantingNestedSerializer(serializers.ModelSerializer):
         model = SeedTrayCellPlanting
         fields = ['pk', 'cell', 'quantity']
 
+    def validate(self, data):  # pylint: disable=arguments-renamed
+        """Require complete entries because the parent replaces rather than patches them."""
+        missing_fields = {
+            field: 'This field is required.'
+            for field in ('cell', 'quantity')
+            if field not in data
+        }
+        if missing_fields:
+            raise serializers.ValidationError(missing_fields)
+        return data
+
 
 class SeedTrayPlantingSerializer(serializers.ModelSerializer):
     """
@@ -50,43 +61,53 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
             'seed_tray', 'location', 'removed', 'notes', 'cell_plantings',
         ]
 
-    def validate(self, data):  # pylint: disable=arguments-renamed
-        """Validate that all cell plantings belong to the same seed tray.
+    def _get_effective_cells(self, data):
+        """Return submitted replacement cells or the retained instance cells."""
+        if 'cell_plantings' in data:
+            return [cell_planting['cell'] for cell_planting in data['cell_plantings']]
+        if self.instance is not None:
+            return [
+                cell_planting.cell
+                for cell_planting in self.instance.cell_plantings.select_related('cell__tray')
+            ]
+        return []
 
-        For partial updates the `seed_tray` may not be present in `data`,
-        so it is derived from the existing instance or from cells.
-        """
-        cell_plantings = data.get('cell_plantings', [])
-        if not cell_plantings:
-            return data
+    def _get_effective_seed_tray(self, data, cells):
+        """Return the effective tray and whether it was derived from a cell."""
+        if 'seed_tray' in data:
+            return data['seed_tray'], False
 
-        # 1. Determine effective seed_tray: payload → instance → first cell
-        seed_tray = data.get('seed_tray') or getattr(self.instance, 'seed_tray', None)
+        seed_tray = getattr(self.instance, 'seed_tray', None)
+        if seed_tray is None and cells:
+            return cells[0].tray, True
+        return seed_tray, False
 
-        if not seed_tray:
-            first_cell_entry = cell_plantings[0]
-            first_cell = first_cell_entry.get('cell')
-            if not first_cell:
-                raise serializers.ValidationError({
-                    'cell_plantings': 'Cannot derive seed_tray from empty cell entry'
-                })
-            seed_tray = first_cell.tray
-
-        # 2. Validate all cells belong to the determined tray
-        for cp in cell_plantings:
-            cell = cp.get('cell')
-            if not cell:
-                raise serializers.ValidationError({'cell_plantings': 'Invalid cell entry'})
-            if cell.tray_id != seed_tray.id:
+    @staticmethod
+    def _validate_cells_belong_to_tray(cells, seed_tray):
+        """Reject any cell outside the effective seed tray."""
+        for cell in cells:
+            if cell.tray_id != seed_tray.pk:
                 raise serializers.ValidationError({
                     'cell_plantings': (
-                        f'Cell {cell.pk} belongs to tray {cell.tray.pk}, '
-                        f'not tray {seed_tray.pk}'
+                        f'Cell {cell.pk} belongs to tray {cell.tray_id}, '
+                        f'not tray {seed_tray.pk}.'
                     )
                 })
 
-        # 3. Set derived seed_tray in data if not already present
-        if not data.get('seed_tray'):
+    def validate(self, data):  # pylint: disable=arguments-renamed
+        """Keep retained or replacement cells on the effective seed tray."""
+        cells = self._get_effective_cells(data)
+        if not cells:
+            return data
+
+        seed_tray, seed_tray_derived = self._get_effective_seed_tray(data, cells)
+        if seed_tray is None:
+            raise serializers.ValidationError({
+                'seed_tray': 'A planting with cell plantings must have a seed tray.'
+            })
+
+        self._validate_cells_belong_to_tray(cells, seed_tray)
+        if seed_tray_derived:
             data['seed_tray'] = seed_tray
 
         return data
