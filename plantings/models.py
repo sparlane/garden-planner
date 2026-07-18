@@ -103,6 +103,7 @@ class SpecificPlantLocation(models.Model):
     notes = models.TextField(null=True, blank=True)
 
     def clean(self):
+        super().clean()
         if self.location_type == self.SEED_TRAY_CELL:
             if self.seed_tray_cell is None:
                 raise ValidationError({'seed_tray_cell': 'Required when location_type is seed_tray_cell.'})
@@ -113,6 +114,9 @@ class SpecificPlantLocation(models.Model):
                 raise ValidationError({'garden_square': 'Required when location_type is garden_square.'})
             if self.seed_tray_cell is not None:
                 raise ValidationError({'seed_tray_cell': 'Must be blank when location_type is garden_square.'})
+
+        if self.ended is not None and self.ended < self.started:
+            raise ValidationError({'ended': 'Must be on or after started.'})
 
     class Meta:
         constraints = [

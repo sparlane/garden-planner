@@ -3,6 +3,7 @@ Rest for Plantings
 """
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import routers, serializers, status, viewsets
@@ -162,15 +163,72 @@ class SpecificPlantLocationSerializer(serializers.ModelSerializer):
         model = SpecificPlantLocation
         fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'started', 'ended', 'notes']
 
+    def _get_effective_history_fields(self, data):
+        """Resolve the interval and plant represented by create or partial update data."""
+        specific_plant = data.get(
+            'specific_plant',
+            getattr(self.instance, 'specific_plant', None),
+        )
+        started = data.get(
+            'started',
+            getattr(self.instance, 'started', None),
+        )
+        if started is None:
+            started = timezone.now()
+            data['started'] = started
+        ended = data.get('ended', getattr(self.instance, 'ended', None))
+        return specific_plant, started, ended
+
+    def _validate_history(self, data, *, append_only):
+        """Validate this interval against the other locations for its plant."""
+        specific_plant, started, ended = self._get_effective_history_fields(data)
+        validate_location_history(
+            specific_plant=specific_plant,
+            started=started,
+            ended=ended,
+            exclude_pk=getattr(self.instance, 'pk', None),
+            append_only=append_only,
+        )
+
     def validate(self, data):  # pylint: disable=arguments-renamed
-        # Delegate to the model's clean() as the single source of truth for FK/location_type consistency.
+        if self.instance is not None and 'specific_plant' in data:
+            if data['specific_plant'].pk != self.instance.specific_plant_id:
+                raise serializers.ValidationError({
+                    'specific_plant': 'Cannot reassign an existing location.'
+                })
+
+        specific_plant, started, ended = self._get_effective_history_fields(data)
         validate_specific_plant_location(
             location_type=data.get('location_type', _FIELD_MISSING),
             seed_tray_cell=data.get('seed_tray_cell', _FIELD_MISSING),
             garden_square=data.get('garden_square', _FIELD_MISSING),
+            interval=(started, ended),
             instance=self.instance,
         )
+        validate_location_history(
+            specific_plant=specific_plant,
+            started=started,
+            ended=ended,
+            exclude_pk=getattr(self.instance, 'pk', None),
+            append_only=self.instance is None,
+        )
         return data
+
+    def create(self, validated_data):
+        with transaction.atomic():
+            SpecificPlant.objects.select_for_update().get(
+                pk=validated_data['specific_plant'].pk,
+            )
+            self._validate_history(validated_data, append_only=True)
+            return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        with transaction.atomic():
+            SpecificPlant.objects.select_for_update().get(pk=instance.specific_plant_id)
+            instance = SpecificPlantLocation.objects.select_for_update().get(pk=instance.pk)
+            self.instance = instance
+            self._validate_history(validated_data, append_only=False)
+            return super().update(instance, validated_data)
 
 
 class SpecificPlantMoveSerializer(serializers.ModelSerializer):
@@ -228,7 +286,14 @@ class GardenSquareTransplantSerializer(serializers.ModelSerializer):
 _FIELD_MISSING = object()
 
 
-def validate_specific_plant_location(*, location_type=None, seed_tray_cell=None, garden_square=None, instance=None):
+def validate_specific_plant_location(
+    *,
+    location_type=None,
+    seed_tray_cell=None,
+    garden_square=None,
+    interval=None,
+    instance=None,
+):
     """
     Validate location fields, optionally defaulting omitted fields from an instance.
     """
@@ -239,16 +304,56 @@ def validate_specific_plant_location(*, location_type=None, seed_tray_cell=None,
             seed_tray_cell = instance.seed_tray_cell
         if garden_square is _FIELD_MISSING:
             garden_square = instance.garden_square
+        if interval is None:
+            interval = (instance.started, instance.ended)
+
+    location_data = {
+        'location_type': None if location_type is _FIELD_MISSING else location_type,
+        'seed_tray_cell': None if seed_tray_cell is _FIELD_MISSING else seed_tray_cell,
+        'garden_square': None if garden_square is _FIELD_MISSING else garden_square,
+    }
+    if interval is not None:
+        location_data['started'], location_data['ended'] = interval
 
     tmp = SpecificPlantLocation(
-        location_type=None if location_type is _FIELD_MISSING else location_type,
-        seed_tray_cell=None if seed_tray_cell is _FIELD_MISSING else seed_tray_cell,
-        garden_square=None if garden_square is _FIELD_MISSING else garden_square,
+        **location_data,
     )
     try:
         tmp.clean()
     except DjangoValidationError as exc:
         raise serializers.ValidationError(exc.message_dict) from exc
+
+
+def validate_location_history(
+    *,
+    specific_plant,
+    started,
+    ended,
+    exclude_pk=None,
+    append_only=False,
+):
+    """Reject location intervals that overlap or insert before existing history."""
+    locations = SpecificPlantLocation.objects.filter(specific_plant=specific_plant)
+    if exclude_pk is not None:
+        locations = locations.exclude(pk=exclude_pk)
+
+    if append_only:
+        latest_location = locations.order_by('-started', '-pk').first()
+        if latest_location is None:
+            return
+        if latest_location.ended is None or started < latest_location.ended:
+            raise serializers.ValidationError({
+                'started': 'New locations must start at or after existing history ends.'
+            })
+        return
+
+    overlapping = locations.filter(Q(ended__isnull=True) | Q(ended__gt=started))
+    if ended is not None:
+        overlapping = overlapping.filter(started__lt=ended)
+    if overlapping.exists():
+        raise serializers.ValidationError({
+            'started': 'Location interval overlaps another location.'
+        })
 
 
 def get_single_active_location_for_update(plant):
@@ -295,8 +400,19 @@ def move_specific_plant(plant, move_data):
         active_location = get_single_active_location_for_update(plant)
 
         if active_location:
+            if started < active_location.started:
+                raise serializers.ValidationError({
+                    'started': 'Move cannot start before the active location.'
+                })
             active_location.ended = started
             active_location.save(update_fields=['ended'])
+        else:
+            validate_location_history(
+                specific_plant=plant,
+                started=started,
+                ended=None,
+                append_only=True,
+            )
 
         try:
             return SpecificPlantLocation.objects.create(
@@ -416,7 +532,14 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
             )
             self.check_object_permissions(request, location)
             if location.ended is None:
-                location.ended = timezone.now()
+                ended = timezone.now()
+                validate_specific_plant_location(
+                    location_type=location.location_type,
+                    seed_tray_cell=location.seed_tray_cell,
+                    garden_square=location.garden_square,
+                    interval=(location.started, ended),
+                )
+                location.ended = ended
                 location.save(update_fields=['ended'])
 
         return Response(self.get_serializer(location).data)
