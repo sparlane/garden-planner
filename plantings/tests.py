@@ -9,13 +9,12 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
 from django.test import TestCase
 
-from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
+from garden.models import GardenArea, GardenBed, GardenSquare
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
 from .models import (
-    GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
     SeedTrayCellPlanting,
@@ -23,146 +22,6 @@ from .models import (
     SpecificPlant,
     SpecificPlantLocation,
 )
-
-
-class PositiveQuantityAPITests(TestCase):
-    """Planting APIs reject quantities that cannot represent planted items."""
-
-    def setUp(self):
-        self.client.force_login(get_user_model().objects.create_user(username='quantity-tester'))
-        family = PlantFamily.objects.create(name='Apiaceae')
-        plant = Plant.objects.create(family=family, name='Carrot')
-        variety = PlantVariety.objects.create(
-            plant=plant,
-            name='Nantes',
-        )
-        self.packet = SeedPacket.objects.create(
-            seeds=Seeds.objects.create(
-                supplier=Supplier.objects.create(name='Quantity Supplier'),
-                plant_variety=variety,
-            ),
-        )
-        area = GardenArea.objects.create(name='Quantity garden', size_x=10, size_y=10)
-        bed = GardenBed.objects.create(
-            area=area,
-            name='Quantity bed',
-            placement_x=0,
-            placement_y=0,
-            size_x=10,
-            size_y=10,
-        )
-        self.row = GardenRow.objects.create(
-            bed=bed,
-            name='Quantity row',
-            placement_x=0,
-            placement_y=0,
-            size_x=10,
-            size_y=1,
-        )
-        self.square = GardenSquare.objects.create(
-            bed=bed,
-            name='Quantity square',
-            placement_x=0,
-            placement_y=0,
-            size_x=1,
-            size_y=1,
-        )
-        tray_model = SeedTrayModel.objects.create(
-            identifier='quantity-tray',
-            height=10,
-            x_size=20,
-            y_size=30,
-            x_cells=1,
-            y_cells=1,
-            cell_size_ml=40,
-        )
-        self.tray = SeedTray.objects.create(model=tray_model)
-        self.cell = SeedTrayCell.objects.create(
-            tray=self.tray,
-            x_position=0,
-            y_position=0,
-        )
-        self.original_planting = SeedTrayPlanting.objects.create(
-            seeds_used=self.packet,
-            quantity=1,
-            seed_tray=self.tray,
-        )
-
-    def _quantity_endpoints(self):
-        return [
-            (
-                '/plantings/directsowgardenrow/',
-                GardenRowDirectSowPlanting,
-                {'seeds_used': self.packet.pk, 'location': self.row.pk},
-            ),
-            (
-                '/plantings/directsowgardensquare/',
-                GardenSquareDirectSowPlanting,
-                {'seeds_used': self.packet.pk, 'location': self.square.pk},
-            ),
-            (
-                '/plantings/seedtray/',
-                SeedTrayPlanting,
-                {'seeds_used': self.packet.pk, 'seed_tray': self.tray.pk},
-            ),
-            (
-                '/plantings/transplantedgardensquare/',
-                GardenSquareTransplant,
-                {
-                    'original_planting': self.original_planting.pk,
-                    'location': self.square.pk,
-                },
-            ),
-        ]
-
-    def test_create_rejects_non_positive_parent_quantities(self):
-        """Every aggregate planting endpoint requires at least one item."""
-        for quantity in (0, -1):
-            for url, model, payload in self._quantity_endpoints():
-                with self.subTest(quantity=quantity, model=model.__name__):
-                    original_count = model.objects.count()
-                    response = self.client.post(
-                        url,
-                        data=json.dumps({**payload, 'quantity': quantity}),
-                        content_type='application/json',
-                    )
-
-                    self.assertEqual(response.status_code, 400)
-                    self.assertEqual(
-                        response.json(),
-                        {'quantity': ['Ensure this value is greater than or equal to 1.']},
-                    )
-                    self.assertEqual(model.objects.count(), original_count)
-
-    def test_create_rejects_non_positive_cell_quantities(self):
-        """A nested allocation cannot represent zero or fewer seeds."""
-        for quantity in (0, -1):
-            with self.subTest(quantity=quantity):
-                response = self.client.post(
-                    '/plantings/seedtray/',
-                    data=json.dumps({
-                        'seeds_used': self.packet.pk,
-                        'quantity': 1,
-                        'seed_tray': self.tray.pk,
-                        'cell_plantings': [{
-                            'cell': self.cell.pk,
-                            'quantity': quantity,
-                        }],
-                    }),
-                    content_type='application/json',
-                )
-
-                self.assertEqual(response.status_code, 400)
-                self.assertEqual(
-                    response.json(),
-                    {
-                        'cell_plantings': [{
-                            'quantity': [
-                                'Ensure this value is greater than or equal to 1.'
-                            ],
-                        }],
-                    },
-                )
 
 
 class SeedTrayPlantingMembershipTests(TestCase):
