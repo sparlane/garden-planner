@@ -400,17 +400,26 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
     """
     ViewSet of SpecificPlantLocation
 
-    PUT and DELETE are disabled: locations are append-only; use PATCH to set `ended`.
+    PUT and DELETE are disabled: PATCH edits fields and the end action closes a location.
     """
     queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
     serializer_class = SpecificPlantLocationSerializer
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
-    def perform_update(self, serializer):
-        if 'ended' not in serializer.validated_data:
-            serializer.save(ended=timezone.now())
-        else:
-            serializer.save()
+    @action(detail=True, methods=['post'])
+    def end(self, request, pk=None):  # pylint: disable=unused-argument
+        """End an active location once without replacing an existing end time."""
+        with transaction.atomic():
+            location = get_object_or_404(
+                self.get_queryset().select_for_update(),
+                pk=pk,
+            )
+            self.check_object_permissions(request, location)
+            if location.ended is None:
+                location.ended = timezone.now()
+                location.save(update_fields=['ended'])
+
+        return Response(self.get_serializer(location).data)
 
 
 class SpecificPlantLocationByPlantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors

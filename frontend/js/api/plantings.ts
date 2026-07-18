@@ -1,4 +1,4 @@
-import { fetchAsJson, csrfPost, csrfPatch } from '../utils'
+import { fetchAsJson, csrfPost } from '../utils'
 import {
   GardenRowDirectPlanting,
   GardenSquareDirectPlanting,
@@ -90,8 +90,8 @@ function addSpecificPlantLocation(data: SpecificPlantLocationCreate): Promise<Re
   return csrfPost('/plantings/specificplantlocations/', data)
 }
 
-function endSpecificPlantLocation(locationPk: number, ended?: string): Promise<Response> {
-  return csrfPatch(`/plantings/specificplantlocations/${locationPk}/`, ended ? { ended } : {})
+function endSpecificPlantLocation(locationPk: number): Promise<Response> {
+  return csrfPost(`/plantings/specificplantlocations/${locationPk}/end/`, {})
 }
 
 function moveSpecificPlant(plantPk: number, data: SpecificPlantMove): Promise<Response> {

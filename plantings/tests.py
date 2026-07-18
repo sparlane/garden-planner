@@ -321,6 +321,58 @@ class SpecificPlantMoveTests(TestCase):
         )
         self.assertEqual(active_location.started, move_time)
 
+    def test_notes_only_patch_does_not_end_location(self):
+        """Editing location metadata does not silently change lifecycle state."""
+        response = self.client.patch(
+            f'/plantings/specificplantlocations/{self.active_location.pk}/',
+            data=json.dumps({'notes': 'Checked after rain'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.notes, 'Checked after rain')
+        self.assertIsNone(self.active_location.ended)
+
+    def test_empty_patch_preserves_existing_end_time(self):
+        """A no-op edit cannot replace a location's historical end timestamp."""
+        original_end = datetime(2026, 1, 1, 12, 0, tzinfo=datetime_timezone.utc)
+        self.active_location.ended = original_end
+        self.active_location.save(update_fields=['ended'])
+
+        response = self.client.patch(
+            f'/plantings/specificplantlocations/{self.active_location.pk}/',
+            data=json.dumps({}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, original_end)
+
+    def test_end_action_is_idempotent(self):
+        """Repeated explicit closes retain the timestamp from the first request."""
+        first_end = datetime(2026, 1, 1, 12, 0, tzinfo=datetime_timezone.utc)
+        later_end = first_end + timedelta(hours=1)
+
+        with mock.patch('plantings.rest.timezone.now', return_value=first_end):
+            first_response = self.client.post(
+                f'/plantings/specificplantlocations/{self.active_location.pk}/end/',
+                data=json.dumps({}),
+                content_type='application/json',
+            )
+        with mock.patch('plantings.rest.timezone.now', return_value=later_end):
+            second_response = self.client.post(
+                f'/plantings/specificplantlocations/{self.active_location.pk}/end/',
+                data=json.dumps({}),
+                content_type='application/json',
+            )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, first_end)
+
     def test_move_rolls_back_current_location_when_create_violates_invariant(self):
         """
         If the destination creation violates the active-location invariant, the previous location remains active.
