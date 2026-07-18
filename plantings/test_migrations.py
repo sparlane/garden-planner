@@ -102,20 +102,35 @@ class PlantingsDataMigrationTests(TestCase):
         valid_model = mock.MagicMock()
         valid_model.objects.filter.return_value = valid_rows
 
+        historical_models = dict.fromkeys(migration.QUANTITY_MODELS, valid_model)
+        historical_models['GardenRowDirectSowPlanting'] = invalid_model
         historical_apps = mock.MagicMock()
-        historical_apps.get_model.side_effect = [
-            invalid_model,
-            valid_model,
-            valid_model,
-            valid_model,
-            valid_model,
-        ]
+        historical_apps.get_model.side_effect = (
+            lambda _app, model_name: historical_models[model_name]
+        )
 
         with self.assertRaisesMessage(
             RuntimeError,
             'GardenRowDirectSowPlanting IDs: [7]',
         ):
             migration.audit_positive_quantities(historical_apps, None)
+
+        invalid_rows.count.assert_called_once_with()
+
+    def test_quantity_audit_describe_rows_truncates_with_total(self):
+        """Long audit reports show the first 20 IDs and the complete count."""
+        migration = import_module(
+            'plantings.migrations.0014_constrain_positive_quantities'
+        )
+        invalid_rows = mock.MagicMock()
+        first_ids = list(range(1, 21))
+        values = invalid_rows.order_by.return_value.values_list.return_value
+        values.__getitem__.return_value = first_ids
+
+        description = migration.describe_rows(invalid_rows, count=25)
+
+        self.assertEqual(description, f'{first_ids} (first 20 of 25)')
+        values.__getitem__.assert_called_once_with(slice(None, 20))
 
     def test_audit_reports_cross_tray_cell_planting(self):
         """The failure identifies a cell planting whose parent tray differs."""

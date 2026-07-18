@@ -12,9 +12,8 @@ QUANTITY_MODELS = (
 )
 
 
-def describe_rows(queryset):
+def describe_rows(queryset, count):
     """Return a bounded description of rows that failed the audit."""
-    count = queryset.count()
     row_ids = list(queryset.order_by('pk').values_list('pk', flat=True)[:20])
     suffix = '' if count <= len(row_ids) else f' (first 20 of {count})'
     return f'{row_ids}{suffix}'
@@ -26,8 +25,11 @@ def audit_positive_quantities(apps, _schema_editor):
     for model_name in QUANTITY_MODELS:
         model = apps.get_model('plantings', model_name)
         invalid_rows = model.objects.filter(quantity__lt=1)
-        if invalid_rows.count():
-            problems.append(f'{model_name} IDs: {describe_rows(invalid_rows)}')
+        invalid_count = invalid_rows.count()
+        if invalid_count:
+            problems.append(
+                f'{model_name} IDs: {describe_rows(invalid_rows, invalid_count)}'
+            )
 
     if problems:
         raise RuntimeError(
