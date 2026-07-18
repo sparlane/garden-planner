@@ -124,7 +124,11 @@ class SpecificPlantLocation(models.Model):
                 fields=['specific_plant'],
                 condition=models.Q(ended__isnull=True),
                 name='unique_active_location_per_plant',
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(ended__isnull=True) | models.Q(ended__gte=models.F('started')),
+                name='location_ended_not_before_started',
+            ),
         ]
 
     def __str__(self):
