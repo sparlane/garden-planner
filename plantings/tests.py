@@ -321,6 +321,91 @@ class SpecificPlantMoveTests(TestCase):
         )
         self.assertEqual(active_location.started, move_time)
 
+    def test_move_rejects_start_before_active_location(self):
+        """A move cannot give the active location a negative duration."""
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': '2025-12-31T08:00:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'started': 'Move cannot start before the active location.'},
+        )
+        self.active_location.refresh_from_db()
+        self.assertIsNone(self.active_location.ended)
+        self.assertEqual(self.plant.locations.count(), 1)
+
+    def test_move_at_active_start_allows_zero_duration_interval(self):
+        """A move at the current start is the documented inclusive boundary."""
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': self.active_location.started.isoformat(),
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, self.active_location.started)
+        new_location = self.plant.locations.get(ended__isnull=True)
+        self.assertEqual(new_location.started, self.active_location.started)
+
+    def test_move_without_active_location_rejects_history_insertion(self):
+        """Backdated moves cannot be inserted before the latest completed boundary."""
+        original_end = datetime(2026, 1, 2, 8, 0, tzinfo=datetime_timezone.utc)
+        self.active_location.ended = original_end
+        self.active_location.save(update_fields=['ended'])
+
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': '2026-01-01T12:00:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'started': 'New locations must start at or after existing history ends.'},
+        )
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, original_end)
+        self.assertEqual(self.plant.locations.count(), 1)
+
+    def test_move_without_active_location_allows_backdated_append(self):
+        """A historical move is valid when it appends after all existing history."""
+        original_end = datetime(2026, 1, 1, 12, 0, tzinfo=datetime_timezone.utc)
+        appended_start = original_end + timedelta(hours=1)
+        self.active_location.ended = original_end
+        self.active_location.save(update_fields=['ended'])
+
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': appended_start.isoformat(),
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        new_location = self.plant.locations.get(ended__isnull=True)
+        self.assertEqual(new_location.started, appended_start)
+
     def test_notes_only_patch_does_not_end_location(self):
         """Editing location metadata does not silently change lifecycle state."""
         response = self.client.patch(
@@ -372,6 +457,123 @@ class SpecificPlantMoveTests(TestCase):
         self.assertEqual(second_response.status_code, 200)
         self.active_location.refresh_from_db()
         self.assertEqual(self.active_location.ended, first_end)
+
+    def test_end_action_rejects_time_before_location_start(self):
+        """Explicit closure returns a field error rather than saving a reversed interval."""
+        end_time = self.active_location.started - timedelta(hours=1)
+        with mock.patch('plantings.rest.timezone.now', return_value=end_time):
+            response = self.client.post(
+                f'/plantings/specificplantlocations/{self.active_location.pk}/end/',
+                data=json.dumps({}),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {'ended': ['Must be on or after started.']})
+        self.active_location.refresh_from_db()
+        self.assertIsNone(self.active_location.ended)
+
+    def test_location_create_rejects_end_before_start(self):
+        """Generic creation applies the same interval ordering rule."""
+        response = self.client.post(
+            '/plantings/specificplantlocations/',
+            data=json.dumps({
+                'specific_plant': self.plant.pk,
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': '2026-01-03T08:00:00Z',
+                'ended': '2026-01-02T08:00:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {'ended': ['Must be on or after started.']})
+        self.assertEqual(self.plant.locations.count(), 1)
+
+    def test_location_patch_rejects_end_before_start(self):
+        """Generic partial updates cannot reverse an existing interval."""
+        response = self.client.patch(
+            f'/plantings/specificplantlocations/{self.active_location.pk}/',
+            data=json.dumps({'ended': '2025-12-31T08:00:00Z'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), {'ended': ['Must be on or after started.']})
+        self.active_location.refresh_from_db()
+        self.assertIsNone(self.active_location.ended)
+
+    def test_location_create_rejects_insertion_before_active_history(self):
+        """Generic creation follows the append-only history policy."""
+        response = self.client.post(
+            '/plantings/specificplantlocations/',
+            data=json.dumps({
+                'specific_plant': self.plant.pk,
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': '2025-12-30T08:00:00Z',
+                'ended': '2025-12-31T08:00:00Z',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'started': ['New locations must start at or after existing history ends.']},
+        )
+        self.assertEqual(self.plant.locations.count(), 1)
+
+    def test_location_create_allows_append_after_completed_history(self):
+        """Generic creation can append a new active interval after the latest end."""
+        original_end = datetime(2026, 1, 1, 12, 0, tzinfo=datetime_timezone.utc)
+        appended_start = original_end + timedelta(hours=1)
+        self.active_location.ended = original_end
+        self.active_location.save(update_fields=['ended'])
+
+        response = self.client.post(
+            '/plantings/specificplantlocations/',
+            data=json.dumps({
+                'specific_plant': self.plant.pk,
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': appended_start.isoformat(),
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        appended_location = self.plant.locations.get(ended__isnull=True)
+        self.assertEqual(appended_location.started, appended_start)
+
+    def test_location_patch_rejects_overlap_with_next_location(self):
+        """Editing a completed interval cannot extend it across the next location."""
+        move_start = datetime(2026, 1, 2, 8, 0, tzinfo=datetime_timezone.utc)
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            data=json.dumps({
+                'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                'garden_square': self.square.pk,
+                'started': move_start.isoformat(),
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201)
+
+        overlap_response = self.client.patch(
+            f'/plantings/specificplantlocations/{self.active_location.pk}/',
+            data=json.dumps({'ended': (move_start + timedelta(hours=1)).isoformat()}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(overlap_response.status_code, 400)
+        self.assertEqual(
+            overlap_response.json(),
+            {'started': ['Location interval overlaps another location.']},
+        )
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, move_start)
 
     def test_move_rolls_back_current_location_when_create_violates_invariant(self):
         """
