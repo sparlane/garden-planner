@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone as datetime_timezone
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection
+from django.db import IntegrityError, connection, transaction
 from django.test import TestCase
 
 from garden.models import GardenArea, GardenBed, GardenSquare
@@ -180,7 +180,7 @@ class SeedTrayPlantingMembershipTests(TestCase):
         self.assertFalse(self.planting.cell_plantings.exists())
 
 
-class SpecificPlantMoveTests(TestCase):
+class SpecificPlantMoveTests(TestCase):  # pylint: disable=too-many-public-methods
     """
     Tests for moving a specific plant between tracked locations.
     """
@@ -574,6 +574,18 @@ class SpecificPlantMoveTests(TestCase):
         )
         self.active_location.refresh_from_db()
         self.assertEqual(self.active_location.ended, move_start)
+
+    def test_database_rejects_end_before_start(self):
+        """The database protects chronology outside serializer-controlled writes."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                SpecificPlantLocation.objects.create(
+                    specific_plant=self.plant,
+                    location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+                    seed_tray_cell=self.other_cell,
+                    started=datetime(2026, 1, 2, 8, 0, tzinfo=datetime_timezone.utc),
+                    ended=datetime(2026, 1, 1, 8, 0, tzinfo=datetime_timezone.utc),
+                )
 
     def test_move_rolls_back_current_location_when_create_violates_invariant(self):
         """
