@@ -2,6 +2,7 @@
 Garden models
 """
 
+from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -10,8 +11,8 @@ class GardenArea(models.Model):
     An Area of garden
     """
     name = models.TextField(max_length=1024)
-    size_x = models.IntegerField()
-    size_y = models.IntegerField()
+    size_x = models.IntegerField(validators=[MinValueValidator(1)])
+    size_y = models.IntegerField(validators=[MinValueValidator(1)])
 
     def __str__(self):
         return self.name
@@ -23,10 +24,10 @@ class GardenBed(models.Model):
     """
     area = models.ForeignKey(GardenArea, on_delete=models.PROTECT)
     name = models.TextField(max_length=1024)
-    placement_x = models.IntegerField()
-    placement_y = models.IntegerField()
-    size_x = models.IntegerField()
-    size_y = models.IntegerField()
+    placement_x = models.IntegerField(validators=[MinValueValidator(0)])
+    placement_y = models.IntegerField(validators=[MinValueValidator(0)])
+    size_x = models.IntegerField(validators=[MinValueValidator(1)])
+    size_y = models.IntegerField(validators=[MinValueValidator(1)])
 
     def __str__(self):
         return self.name
@@ -38,10 +39,10 @@ class GardenRow(models.Model):
     """
     bed = models.ForeignKey(GardenBed, on_delete=models.PROTECT)
     name = models.TextField(max_length=1024)
-    placement_x = models.IntegerField()
-    placement_y = models.IntegerField()
-    size_x = models.IntegerField()
-    size_y = models.IntegerField()
+    placement_x = models.IntegerField(validators=[MinValueValidator(0)])
+    placement_y = models.IntegerField(validators=[MinValueValidator(0)])
+    size_x = models.IntegerField(validators=[MinValueValidator(1)])
+    size_y = models.IntegerField(validators=[MinValueValidator(1)])
 
     def __str__(self):
         return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
@@ -53,10 +54,10 @@ class GardenSquare(models.Model):
     """
     bed = models.ForeignKey(GardenBed, on_delete=models.PROTECT)
     name = models.TextField(max_length=1024)
-    placement_x = models.IntegerField()
-    placement_y = models.IntegerField()
-    size_x = models.IntegerField()
-    size_y = models.IntegerField()
+    placement_x = models.IntegerField(validators=[MinValueValidator(0)])
+    placement_y = models.IntegerField(validators=[MinValueValidator(0)])
+    size_x = models.IntegerField(validators=[MinValueValidator(1)])
+    size_y = models.IntegerField(validators=[MinValueValidator(1)])
 
     def __str__(self):
         return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
