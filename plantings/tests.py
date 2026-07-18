@@ -458,6 +458,26 @@ class SpecificPlantMoveTests(TestCase):  # pylint: disable=too-many-public-metho
         self.active_location.refresh_from_db()
         self.assertEqual(self.active_location.ended, first_end)
 
+    def test_end_action_preserves_preexisting_end_time(self):
+        """Explicit closure preserves an end time recorded before the request."""
+        original_end = datetime(2026, 1, 1, 12, 0, tzinfo=datetime_timezone.utc)
+        self.active_location.ended = original_end
+        self.active_location.save(update_fields=['ended'])
+
+        with mock.patch(
+            'plantings.rest.timezone.now',
+            return_value=original_end + timedelta(days=1),
+        ):
+            response = self.client.post(
+                f'/plantings/specificplantlocations/{self.active_location.pk}/end/',
+                data=json.dumps({}),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.active_location.refresh_from_db()
+        self.assertEqual(self.active_location.ended, original_end)
+
     def test_end_action_rejects_time_before_location_start(self):
         """Explicit closure returns a field error rather than saving a reversed interval."""
         end_time = self.active_location.started - timedelta(hours=1)
