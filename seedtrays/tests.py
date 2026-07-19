@@ -37,6 +37,17 @@ class SeedTrayCellIntegrityTests(TestCase):
         self.tray = SeedTray.objects.create(model=self.tray_model)
         self.other_tray = SeedTray.objects.create(model=self.other_model)
 
+    def test_detail_view_requires_login(self):
+        """Anonymous visitors cannot discover seed tray detail pages."""
+        self.client.logout()
+
+        response = self.client.get(f'/seedtrays/seedtray/{self.tray.pk}/')
+
+        self.assertRedirects(
+            response,
+            f'/accounts/login/?next=/seedtrays/seedtray/{self.tray.pk}/',
+        )
+
     def test_nested_create_uses_url_tray_instead_of_payload_tray(self):
         """
         The nested resource parent is authoritative when the payload conflicts.
