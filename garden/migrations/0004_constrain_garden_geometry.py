@@ -11,9 +11,8 @@ GEOMETRY_MODELS = (
 )
 
 
-def describe_rows(queryset):
+def describe_rows(queryset, count):
     """Return a bounded description of rows that failed the audit."""
-    count = queryset.count()
     row_ids = list(queryset.order_by('pk').values_list('pk', flat=True)[:20])
     suffix = '' if count <= len(row_ids) else f' (first 20 of {count})'
     return f'{row_ids}{suffix}'
@@ -27,19 +26,22 @@ def audit_garden_geometry(apps, _schema_editor):
         invalid_sizes = model.objects.filter(
             models.Q(size_x__lt=1) | models.Q(size_y__lt=1)
         )
-        if invalid_sizes.count():
+        invalid_size_count = invalid_sizes.count()
+        if invalid_size_count:
             problems.append(
-                f'{model_name} size IDs: {describe_rows(invalid_sizes)}'
+                f'{model_name} size IDs: '
+                f'{describe_rows(invalid_sizes, invalid_size_count)}'
             )
 
         if has_placement:
             invalid_placements = model.objects.filter(
                 models.Q(placement_x__lt=0) | models.Q(placement_y__lt=0)
             )
-            if invalid_placements.count():
+            invalid_placement_count = invalid_placements.count()
+            if invalid_placement_count:
                 problems.append(
                     f'{model_name} placement IDs: '
-                    f'{describe_rows(invalid_placements)}'
+                    f'{describe_rows(invalid_placements, invalid_placement_count)}'
                 )
 
     if problems:
