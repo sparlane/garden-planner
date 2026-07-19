@@ -202,26 +202,38 @@ class GardenGeometryAPITests(TestCase):
     def test_geometry_audit_reports_model_field_and_row_ids(self):
         """Deployment failures identify invalid geometry precisely."""
         migration = import_module('garden.migrations.0004_constrain_garden_geometry')
-        invalid_rows = mock.MagicMock()
-        invalid_rows.count.return_value = 1
-        values = invalid_rows.order_by.return_value.values_list.return_value
-        values.__getitem__.return_value = [9]
+        invalid_sizes = mock.MagicMock()
+        invalid_sizes.count.return_value = 1
+        size_values = invalid_sizes.order_by.return_value.values_list.return_value
+        size_values.__getitem__.return_value = [9]
+
+        invalid_placements = mock.MagicMock()
+        invalid_placements.count.return_value = 1
+        placement_values = (
+            invalid_placements.order_by.return_value.values_list.return_value
+        )
+        placement_values.__getitem__.return_value = [10]
 
         empty_rows = mock.MagicMock()
         empty_rows.count.return_value = 0
 
-        def model_returning(rows):
+        def model_returning(*rows):
             historical_model = mock.MagicMock()
-            historical_model.objects.filter.return_value = rows
+            historical_model.objects.filter.side_effect = rows
             return historical_model
 
         historical_apps = mock.MagicMock()
         historical_apps.get_model.side_effect = [
-            model_returning(invalid_rows),
-            model_returning(empty_rows),
-            model_returning(empty_rows),
-            model_returning(empty_rows),
+            model_returning(invalid_sizes),
+            model_returning(empty_rows, invalid_placements),
+            model_returning(empty_rows, empty_rows),
+            model_returning(empty_rows, empty_rows),
         ]
 
-        with self.assertRaisesMessage(RuntimeError, 'GardenArea size IDs: [9]'):
+        with self.assertRaises(RuntimeError) as raised:
             migration.audit_garden_geometry(historical_apps, None)
+
+        self.assertIn('GardenArea size IDs: [9]', str(raised.exception))
+        self.assertIn('GardenBed placement IDs: [10]', str(raised.exception))
+        invalid_sizes.count.assert_called_once_with()
+        invalid_placements.count.assert_called_once_with()
