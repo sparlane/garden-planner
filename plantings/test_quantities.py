@@ -327,6 +327,48 @@ class PositiveQuantityAPITests(TestCase):
         )
         self.assertEqual(cell_planting.specific_plants.count(), 1)
 
+    def test_specific_plant_creation_uses_full_larger_capacity(self):
+        """Every slot above one is usable, and the next germination is rejected."""
+        self.original_planting.quantity = 3
+        self.original_planting.save(update_fields=['quantity'])
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=3,
+        )
+        payload = json.dumps({'cell_planting': cell_planting.pk})
+
+        for expected_count in range(1, 4):
+            with self.subTest(expected_count=expected_count):
+                response = self.client.post(
+                    '/plantings/specificplants/',
+                    data=payload,
+                    content_type='application/json',
+                )
+
+                self.assertEqual(response.status_code, 201)
+                self.assertEqual(
+                    cell_planting.specific_plants.count(),
+                    expected_count,
+                )
+
+        response = self.client.post(
+            '/plantings/specificplants/',
+            data=payload,
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'cell_planting': [
+                    'Germination count cannot exceed this cell allocation.'
+                ],
+            },
+        )
+        self.assertEqual(cell_planting.specific_plants.count(), 3)
+
     def test_specific_plant_cannot_be_reassigned(self):
         """Changing a plant's origin cannot bypass another cell's capacity."""
         first_cell_planting = SeedTrayCellPlanting.objects.create(
