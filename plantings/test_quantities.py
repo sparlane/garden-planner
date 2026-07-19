@@ -6,6 +6,7 @@ import json
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, close_old_connections, transaction
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
+from rest_framework import serializers
 from rest_framework.test import APIClient
 
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
@@ -21,6 +22,7 @@ from .models import (
     SeedTrayPlanting,
     SpecificPlant,
 )
+from .rest import SpecificPlantSerializer
 
 
 class PositiveQuantityAPITests(TestCase):
@@ -579,6 +581,31 @@ class PositiveQuantityAPITests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertTrue(SeedTrayCellPlanting.objects.filter(pk=cell_planting.pk).exists())
+
+    def test_specific_plant_creation_rejects_deleted_validated_allocation(self):
+        """A deleted allocation is reported when it disappears after validation."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        stale_id = cell_planting.pk
+        serializer = SpecificPlantSerializer(data={
+            'cell_planting': stale_id,
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        SeedTrayCellPlanting.objects.filter(pk=stale_id).delete()
+
+        with self.assertRaises(serializers.ValidationError) as context:
+            serializer.save()
+
+        self.assertEqual(
+            context.exception.detail,
+            {'cell_planting': ['This cell allocation no longer exists.']},
+        )
+        self.assertFalse(
+            SpecificPlant.objects.filter(cell_planting_id=stale_id).exists()
+        )
 
     def test_parent_delete_with_germination_returns_domain_error(self):
         """Protected germination data produces a client error rather than a 500."""
