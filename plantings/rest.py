@@ -3,6 +3,7 @@ Rest for Plantings
 """
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
+from django.db.models.deletion import ProtectedError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -96,6 +97,69 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
             return cells[0].tray, True
         return seed_tray, False
 
+    def _validate_cell_allocations(self, data, cell_plantings):
+        """Validate uniqueness, parent capacity, and tray membership."""
+        cells = [
+            self._get_cell(cell_planting)
+            for cell_planting in cell_plantings
+        ]
+        cell_ids = [cell.pk for cell in cells]
+        if len(cell_ids) != len(set(cell_ids)):
+            raise serializers.ValidationError({
+                'cell_plantings': ['Each cell may only be allocated once.']
+            })
+
+        quantity = data.get('quantity', getattr(self.instance, 'quantity', None))
+        allocated_quantity = sum(
+            self._get_cell_quantity(cell_planting)
+            for cell_planting in cell_plantings
+        )
+        if quantity is not None and allocated_quantity > quantity:
+            raise serializers.ValidationError({
+                'cell_plantings': [
+                    'Cell allocation total cannot exceed planting quantity.'
+                ]
+            })
+
+        if not cells:
+            return
+
+        seed_tray, seed_tray_derived = self._get_effective_seed_tray(data, cells)
+        if seed_tray is None:
+            raise serializers.ValidationError({
+                'seed_tray': ['A planting with cell plantings must have a seed tray.']
+            })
+
+        self._validate_cells_belong_to_tray(cells, seed_tray)
+        if seed_tray_derived:
+            data['seed_tray'] = seed_tray
+
+    def _validate_replacement_germination_capacity(
+        self,
+        replacements,
+        existing_cell_plantings=None,
+    ):
+        """Do not remove capacity already used by germinated plants."""
+        if self.instance is None:
+            return
+
+        replacement_quantities = {
+            self._get_cell(cell_planting).pk: self._get_cell_quantity(cell_planting)
+            for cell_planting in replacements
+        }
+        existing_cell_plantings = existing_cell_plantings or list(
+            self.instance.cell_plantings.all()
+        )
+        for existing in existing_cell_plantings:
+            germinated_count = existing.specific_plants.count()
+            if replacement_quantities.get(existing.cell_id, 0) < germinated_count:
+                raise serializers.ValidationError({
+                    'cell_plantings': [
+                        f'Cell {existing.cell_id} allocation cannot be less than '
+                        f'its germinated plant count ({germinated_count}).'
+                    ]
+                })
+
     @staticmethod
     def _validate_cells_belong_to_tray(cells, seed_tray):
         """Reject any cell outside the effective seed tray."""
@@ -111,55 +175,62 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep retained or replacement cells on the effective seed tray."""
         cell_plantings = self._get_effective_cell_plantings(data)
-        quantity = data.get('quantity', getattr(self.instance, 'quantity', None))
-        allocated_quantity = sum(
-            self._get_cell_quantity(cell_planting)
-            for cell_planting in cell_plantings
-        )
-        if quantity is not None and allocated_quantity > quantity:
-            raise serializers.ValidationError({
-                'cell_plantings': 'Cell allocation total cannot exceed planting quantity.'
-            })
-
-        cells = [
-            self._get_cell(cell_planting)
-            for cell_planting in cell_plantings
-        ]
-        if not cells:
-            return data
-
-        seed_tray, seed_tray_derived = self._get_effective_seed_tray(data, cells)
-        if seed_tray is None:
-            raise serializers.ValidationError({
-                'seed_tray': 'A planting with cell plantings must have a seed tray.'
-            })
-
-        self._validate_cells_belong_to_tray(cells, seed_tray)
-        if seed_tray_derived:
-            data['seed_tray'] = seed_tray
+        self._validate_cell_allocations(data, cell_plantings)
+        if 'cell_plantings' in data:
+            self._validate_replacement_germination_capacity(cell_plantings)
 
         return data
 
-    def _save_cell_plantings(self, planting, cell_data):
-        """Replace all cell plantings for a planting using bulk_create.
-
-        This simplifies the logic: delete existing entries and bulk-create
-        the provided list. Must be called inside a transaction.atomic() block.
+    def _save_cell_plantings(
+        self,
+        planting,
+        cell_data,
+        existing_cell_plantings=None,
+    ):
+        """Apply replacement data while preserving referenced allocation rows.
 
         Semantics: omitted field -> no change; empty list -> cleared.
+        Must be called inside a transaction.atomic() block.
         """
-        # Remove existing child rows
-        planting.cell_plantings.all().delete()
+        existing_cell_plantings = existing_cell_plantings or list(
+            planting.cell_plantings.all()
+        )
+        existing_by_cell = {
+            cell_planting.cell_id: cell_planting
+            for cell_planting in existing_cell_plantings
+        }
+        new_cell_plantings = []
+        updated_cell_plantings = []
+        for replacement in cell_data:
+            cell = replacement['cell']
+            if existing := existing_by_cell.pop(cell.pk, None):
+                if existing.quantity != replacement['quantity']:
+                    existing.quantity = replacement['quantity']
+                    updated_cell_plantings.append(existing)
+            else:
+                new_cell_plantings.append(SeedTrayCellPlanting(
+                    seed_tray_planting=planting,
+                    cell=cell,
+                    quantity=replacement['quantity'],
+                ))
 
-        if objs := [
-            SeedTrayCellPlanting(
-                seed_tray_planting=planting,
-                cell=cp['cell'],
-                quantity=cp['quantity'],
+        try:
+            for obsolete in existing_by_cell.values():
+                obsolete.delete()
+        except ProtectedError as exc:
+            raise serializers.ValidationError({
+                'cell_plantings': [
+                    'Cannot remove a cell allocation after germination is recorded.'
+                ]
+            }) from exc
+
+        if updated_cell_plantings:
+            SeedTrayCellPlanting.objects.bulk_update(
+                updated_cell_plantings,
+                ['quantity'],
             )
-            for cp in cell_data
-        ]:
-            SeedTrayCellPlanting.objects.bulk_create(objs)
+        if new_cell_plantings:
+            SeedTrayCellPlanting.objects.bulk_create(new_cell_plantings)
 
     def create(self, validated_data):
         cell_data = validated_data.pop('cell_plantings', [])
@@ -172,12 +243,34 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         cell_data = validated_data.pop('cell_plantings', None)
         with transaction.atomic():
+            instance = SeedTrayPlanting.objects.select_for_update().get(pk=instance.pk)
+            self.instance = instance
+            existing_cell_plantings = list(
+                instance.cell_plantings.select_for_update().select_related('cell__tray')
+            )
+            effective_cell_plantings = (
+                existing_cell_plantings if cell_data is None else cell_data
+            )
+            self._validate_cell_allocations(
+                validated_data,
+                effective_cell_plantings,
+            )
+            if cell_data is not None:
+                self._validate_replacement_germination_capacity(
+                    cell_data,
+                    existing_cell_plantings,
+                )
+
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)
             instance.save()
 
             if cell_data is not None:
-                self._save_cell_plantings(instance, cell_data)
+                self._save_cell_plantings(
+                    instance,
+                    cell_data,
+                    existing_cell_plantings,
+                )
 
         return instance
 
@@ -300,9 +393,16 @@ class SpecificPlantSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         with transaction.atomic():
-            cell_planting = SeedTrayCellPlanting.objects.select_for_update().get(
-                pk=validated_data['cell_planting'].pk,
-            )
+            try:
+                cell_planting = SeedTrayCellPlanting.objects.select_for_update().get(
+                    pk=validated_data['cell_planting'].pk,
+                )
+            except SeedTrayCellPlanting.DoesNotExist as exc:
+                raise serializers.ValidationError({
+                    'cell_planting': [
+                        'This cell allocation no longer exists.'
+                    ]
+                }) from exc
             if cell_planting.specific_plants.count() >= cell_planting.quantity:
                 raise serializers.ValidationError({
                     'cell_planting': [
