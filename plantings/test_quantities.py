@@ -223,7 +223,7 @@ class PositiveQuantityAPITests(TestCase):
         """Reducing a parent cannot strand a larger retained allocation."""
         self.original_planting.quantity = 2
         self.original_planting.save(update_fields=['quantity'])
-        SeedTrayCellPlanting.objects.create(
+        cell_planting = SeedTrayCellPlanting.objects.create(
             seed_tray_planting=self.original_planting,
             cell=self.cell,
             quantity=2,
@@ -236,8 +236,19 @@ class PositiveQuantityAPITests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'cell_plantings': [
+                    'Cell allocation total cannot exceed planting quantity.'
+                ],
+            },
+        )
         self.original_planting.refresh_from_db()
+        cell_planting.refresh_from_db()
         self.assertEqual(self.original_planting.quantity, 2)
+        self.assertEqual(cell_planting.seed_tray_planting, self.original_planting)
+        self.assertEqual(cell_planting.quantity, 2)
 
     def test_partial_cell_allocation_is_allowed(self):
         """A planting may leave some seeds unassigned to individual cells."""
