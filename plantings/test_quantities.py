@@ -67,7 +67,7 @@ class PositiveQuantityAPITests(TestCase):
             height=10,
             x_size=20,
             y_size=30,
-            x_cells=1,
+            x_cells=2,
             y_cells=1,
             cell_size_ml=40,
         )
@@ -75,6 +75,11 @@ class PositiveQuantityAPITests(TestCase):
         self.cell = SeedTrayCell.objects.create(
             tray=self.tray,
             x_position=0,
+            y_position=0,
+        )
+        self.other_cell = SeedTrayCell.objects.create(
+            tray=self.tray,
+            x_position=1,
             y_position=0,
         )
         self.original_planting = SeedTrayPlanting.objects.create(
@@ -184,6 +189,35 @@ class PositiveQuantityAPITests(TestCase):
                 ],
             },
         )
+
+    def test_create_rejects_collective_cell_over_allocation(self):
+        """Valid individual allocations cannot collectively exceed the parent."""
+        original_count = SeedTrayPlanting.objects.count()
+
+        response = self.client.post(
+            '/plantings/seedtray/',
+            data=json.dumps({
+                'seeds_used': self.packet.pk,
+                'quantity': 3,
+                'seed_tray': self.tray.pk,
+                'cell_plantings': [
+                    {'cell': self.cell.pk, 'quantity': 2},
+                    {'cell': self.other_cell.pk, 'quantity': 2},
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'cell_plantings': [
+                    'Cell allocation total cannot exceed planting quantity.'
+                ],
+            },
+        )
+        self.assertEqual(SeedTrayPlanting.objects.count(), original_count)
 
     def test_update_rejects_parent_quantity_below_retained_allocation(self):
         """Reducing a parent cannot strand a larger retained allocation."""
