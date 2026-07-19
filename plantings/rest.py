@@ -166,10 +166,10 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
         for cell in cells:
             if cell.tray_id != seed_tray.pk:
                 raise serializers.ValidationError({
-                    'cell_plantings': (
+                    'cell_plantings': [
                         f'Cell {cell.pk} belongs to tray {cell.tray_id}, '
                         f'not tray {seed_tray.pk}.'
-                    )
+                    ]
                 })
 
     def validate(self, data):  # pylint: disable=arguments-renamed
