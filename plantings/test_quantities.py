@@ -287,6 +287,90 @@ class PositiveQuantityAPITests(TestCase):
         plant.refresh_from_db()
         self.assertEqual(plant.cell_planting, first_cell_planting)
 
+    def test_allocation_cannot_drop_below_germination_count(self):
+        """Replacement cannot remove capacity already used by plants."""
+        self.original_planting.quantity = 2
+        self.original_planting.save(update_fields=['quantity'])
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=2,
+        )
+        SpecificPlant.objects.bulk_create([
+            SpecificPlant(cell_planting=cell_planting),
+            SpecificPlant(cell_planting=cell_planting),
+        ])
+
+        response = self.client.patch(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+            data=json.dumps({
+                'cell_plantings': [{
+                    'cell': self.cell.pk,
+                    'quantity': 1,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'cell_plantings': [
+                    f'Cell {self.cell.pk} allocation cannot be less than '
+                    'its germinated plant count (2).'
+                ],
+            },
+        )
+        cell_planting.refresh_from_db()
+        self.assertEqual(cell_planting.quantity, 2)
+
+    def test_safe_allocation_reduction_preserves_germinated_plant(self):
+        """A valid replacement updates the referenced row rather than deleting it."""
+        self.original_planting.quantity = 2
+        self.original_planting.save(update_fields=['quantity'])
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=2,
+        )
+        plant = SpecificPlant.objects.create(cell_planting=cell_planting)
+
+        response = self.client.patch(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+            data=json.dumps({
+                'cell_plantings': [{
+                    'cell': self.cell.pk,
+                    'quantity': 1,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        cell_planting.refresh_from_db()
+        plant.refresh_from_db()
+        self.assertEqual(cell_planting.quantity, 1)
+        self.assertEqual(plant.cell_planting, cell_planting)
+
+    def test_allocation_with_germination_cannot_be_removed(self):
+        """Clearing allocations cannot orphan an already germinated plant."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        SpecificPlant.objects.create(cell_planting=cell_planting)
+
+        response = self.client.patch(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+            data=json.dumps({'cell_plantings': []}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(SeedTrayCellPlanting.objects.filter(pk=cell_planting.pk).exists())
+
     def test_database_rejects_non_positive_quantities(self):
         """Direct writes cannot bypass the minimum-one quantity invariant."""
         planting_rows = [
