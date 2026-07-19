@@ -614,7 +614,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             cell=self.cell,
             quantity=1,
         )
-        SpecificPlant.objects.create(cell_planting=cell_planting)
+        plant = SpecificPlant.objects.create(cell_planting=cell_planting)
 
         response = self.client.delete(
             f'/plantings/seedtray/{self.original_planting.pk}/',
@@ -632,6 +632,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         self.assertTrue(
             SeedTrayPlanting.objects.filter(pk=self.original_planting.pk).exists()
         )
+        self.assertTrue(SpecificPlant.objects.filter(pk=plant.pk).exists())
 
     def test_filtered_parent_delete_with_germination_returns_domain_error(self):
         """The tray-filtered endpoint also reports protected germination data."""
@@ -640,7 +641,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             cell=self.cell,
             quantity=1,
         )
-        SpecificPlant.objects.create(cell_planting=cell_planting)
+        plant = SpecificPlant.objects.create(cell_planting=cell_planting)
 
         response = self.client.delete(
             f'/plantings/seedtray-data/{self.tray.pk}/plantings/'
@@ -659,6 +660,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         self.assertTrue(
             SeedTrayPlanting.objects.filter(pk=self.original_planting.pk).exists()
         )
+        self.assertTrue(SpecificPlant.objects.filter(pk=plant.pk).exists())
 
     def test_database_rejects_non_positive_quantities(self):
         """Direct writes cannot bypass the minimum-one quantity invariant."""
