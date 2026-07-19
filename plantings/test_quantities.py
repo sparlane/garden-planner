@@ -369,6 +369,36 @@ class PositiveQuantityAPITests(TestCase):
         )
         self.assertEqual(cell_planting.specific_plants.count(), 3)
 
+    def test_specific_plant_patch_allows_mutable_fields(self):
+        """Notes can change without altering the plant's origin allocation."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        create_response = self.client.post(
+            '/plantings/specificplants/',
+            data=json.dumps({
+                'cell_planting': cell_planting.pk,
+                'notes': 'Initial notes',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(create_response.status_code, 201)
+        plant = SpecificPlant.objects.get(pk=create_response.json()['pk'])
+
+        response = self.client.patch(
+            f'/plantings/specificplants/{plant.pk}/',
+            data=json.dumps({'notes': 'Updated notes'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['notes'], 'Updated notes')
+        plant.refresh_from_db()
+        self.assertEqual(plant.notes, 'Updated notes')
+        self.assertEqual(plant.cell_planting, cell_planting)
+
     def test_specific_plant_cannot_be_reassigned(self):
         """Changing a plant's origin cannot bypass another cell's capacity."""
         first_cell_planting = SeedTrayCellPlanting.objects.create(
