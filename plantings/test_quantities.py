@@ -1,9 +1,12 @@
 """Tests for planting quantity invariants."""
+# pylint: disable=duplicate-code
+from concurrent.futures import ThreadPoolExecutor
 import json
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.db import IntegrityError, close_old_connections, transaction
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
+from rest_framework.test import APIClient
 
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
 from plants.models import Plant, PlantFamily, PlantVariety
@@ -16,6 +19,7 @@ from .models import (
     GardenSquareTransplant,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
+    SpecificPlant,
 )
 
 
@@ -222,6 +226,67 @@ class PositiveQuantityAPITests(TestCase):
         self.assertEqual(planting.quantity, 2)
         self.assertEqual(planting.cell_plantings.get().quantity, 1)
 
+    def test_specific_plant_creation_stops_at_cell_capacity(self):
+        """Only allocated seeds can become specific germinated plants."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        payload = json.dumps({'cell_planting': cell_planting.pk})
+
+        first_response = self.client.post(
+            '/plantings/specificplants/',
+            data=payload,
+            content_type='application/json',
+        )
+        second_response = self.client.post(
+            '/plantings/specificplants/',
+            data=payload,
+            content_type='application/json',
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 400)
+        self.assertEqual(
+            second_response.json(),
+            {
+                'cell_planting': [
+                    'Germination count cannot exceed this cell allocation.'
+                ],
+            },
+        )
+        self.assertEqual(cell_planting.specific_plants.count(), 1)
+
+    def test_specific_plant_cannot_be_reassigned(self):
+        """Changing a plant's origin cannot bypass another cell's capacity."""
+        first_cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        other_planting = SeedTrayPlanting.objects.create(
+            seeds_used=self.packet,
+            quantity=1,
+            seed_tray=self.tray,
+        )
+        second_cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=other_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        plant = SpecificPlant.objects.create(cell_planting=first_cell_planting)
+
+        response = self.client.patch(
+            f'/plantings/specificplants/{plant.pk}/',
+            data=json.dumps({'cell_planting': second_cell_planting.pk}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        plant.refresh_from_db()
+        self.assertEqual(plant.cell_planting, first_cell_planting)
+
     def test_database_rejects_non_positive_quantities(self):
         """Direct writes cannot bypass the minimum-one quantity invariant."""
         planting_rows = [
@@ -255,3 +320,68 @@ class PositiveQuantityAPITests(TestCase):
                         type(planting).objects.filter(pk=planting.pk).update(quantity=0)
                 planting.refresh_from_db()
                 self.assertEqual(planting.quantity, 1)
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentGerminationCapacityTests(TransactionTestCase):
+    """Real row locks serialize simultaneous final-capacity requests."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='concurrency-tester')
+        family = PlantFamily.objects.create(name='Lamiaceae')
+        plant = Plant.objects.create(family=family, name='Basil')
+        variety = PlantVariety.objects.create(plant=plant, name='Genovese')
+        packet = SeedPacket.objects.create(
+            seeds=Seeds.objects.create(
+                supplier=Supplier.objects.create(name='Concurrency Supplier'),
+                plant_variety=variety,
+            ),
+        )
+        tray_model = SeedTrayModel.objects.create(
+            identifier='concurrency-tray',
+            height=10,
+            x_size=20,
+            y_size=30,
+            x_cells=1,
+            y_cells=1,
+            cell_size_ml=40,
+        )
+        tray = SeedTray.objects.create(model=tray_model)
+        cell = SeedTrayCell.objects.create(
+            tray=tray,
+            x_position=0,
+            y_position=0,
+        )
+        planting = SeedTrayPlanting.objects.create(
+            seeds_used=packet,
+            quantity=1,
+            seed_tray=tray,
+        )
+        self.cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=planting,
+            cell=cell,
+            quantity=1,
+        )
+
+    def _record_germination(self):
+        close_old_connections()
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        response = client.post(
+            '/plantings/specificplants/',
+            {'cell_planting': self.cell_planting.pk},
+            format='json',
+        )
+        close_old_connections()
+        return response.status_code
+
+    def test_only_one_simultaneous_final_capacity_request_succeeds(self):
+        """The allocation lock prevents concurrent over-germination."""
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(
+                lambda _index: self._record_germination(),
+                range(2),
+            ))
+
+        self.assertEqual(sorted(statuses), [400, 201])
+        self.assertEqual(self.cell_planting.specific_plants.count(), 1)
