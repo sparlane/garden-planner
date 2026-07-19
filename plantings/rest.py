@@ -694,7 +694,7 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
         """End an active location once without replacing an existing end time."""
         with transaction.atomic():
             location = get_object_or_404(
-                self.get_queryset().select_for_update(),
+                SpecificPlantLocation.objects.select_for_update(),
                 pk=pk,
             )
             self.check_object_permissions(request, location)
