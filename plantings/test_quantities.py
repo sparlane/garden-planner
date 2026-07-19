@@ -260,6 +260,30 @@ class PositiveQuantityAPITests(TestCase):
         self.assertEqual(planting.quantity, 2)
         self.assertEqual(planting.cell_plantings.get().quantity, 1)
 
+    def test_exact_cell_allocation_is_allowed(self):
+        """Allocations may collectively use the planting's full capacity."""
+        response = self.client.post(
+            '/plantings/seedtray/',
+            data=json.dumps({
+                'seeds_used': self.packet.pk,
+                'quantity': 2,
+                'seed_tray': self.tray.pk,
+                'cell_plantings': [
+                    {'cell': self.cell.pk, 'quantity': 1},
+                    {'cell': self.other_cell.pk, 'quantity': 1},
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        planting = SeedTrayPlanting.objects.get(pk=response.json()['pk'])
+        self.assertEqual(planting.quantity, 2)
+        self.assertEqual(
+            dict(planting.cell_plantings.values_list('cell_id', 'quantity')),
+            {self.cell.pk: 1, self.other_cell.pk: 1},
+        )
+
     def test_specific_plant_creation_stops_at_cell_capacity(self):
         """Only allocated seeds can become specific germinated plants."""
         cell_planting = SeedTrayCellPlanting.objects.create(
