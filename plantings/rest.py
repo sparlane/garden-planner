@@ -62,16 +62,29 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
             'seed_tray', 'location', 'removed', 'notes', 'cell_plantings',
         ]
 
-    def _get_effective_cells(self, data):
-        """Return submitted replacement cells or the retained instance cells."""
+    def _get_effective_cell_plantings(self, data):
+        """Return submitted replacements or the retained cell plantings."""
         if 'cell_plantings' in data:
-            return [cell_planting['cell'] for cell_planting in data['cell_plantings']]
+            return data['cell_plantings']
         if self.instance is not None:
-            return [
-                cell_planting.cell
-                for cell_planting in self.instance.cell_plantings.select_related('cell__tray')
-            ]
+            return list(
+                self.instance.cell_plantings.select_related('cell__tray')
+            )
         return []
+
+    @staticmethod
+    def _get_cell(cell_planting):
+        """Return the cell from submitted data or an existing model instance."""
+        if isinstance(cell_planting, dict):
+            return cell_planting['cell']
+        return cell_planting.cell
+
+    @staticmethod
+    def _get_cell_quantity(cell_planting):
+        """Return quantity from submitted data or an existing model instance."""
+        if isinstance(cell_planting, dict):
+            return cell_planting['quantity']
+        return cell_planting.quantity
 
     def _get_effective_seed_tray(self, data, cells):
         """Return the effective tray and whether it was derived from a cell."""
@@ -97,7 +110,21 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep retained or replacement cells on the effective seed tray."""
-        cells = self._get_effective_cells(data)
+        cell_plantings = self._get_effective_cell_plantings(data)
+        quantity = data.get('quantity', getattr(self.instance, 'quantity', None))
+        allocated_quantity = sum(
+            self._get_cell_quantity(cell_planting)
+            for cell_planting in cell_plantings
+        )
+        if quantity is not None and allocated_quantity > quantity:
+            raise serializers.ValidationError({
+                'cell_plantings': 'Cell allocation total cannot exceed planting quantity.'
+            })
+
+        cells = [
+            self._get_cell(cell_planting)
+            for cell_planting in cell_plantings
+        ]
         if not cells:
             return data
 

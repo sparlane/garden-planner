@@ -155,6 +155,73 @@ class PositiveQuantityAPITests(TestCase):
                     },
                 )
 
+    def test_create_rejects_cell_allocation_above_parent_quantity(self):
+        """Cell allocations cannot account for more seeds than were planted."""
+        response = self.client.post(
+            '/plantings/seedtray/',
+            data=json.dumps({
+                'seeds_used': self.packet.pk,
+                'quantity': 1,
+                'seed_tray': self.tray.pk,
+                'cell_plantings': [{
+                    'cell': self.cell.pk,
+                    'quantity': 2,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'cell_plantings': [
+                    'Cell allocation total cannot exceed planting quantity.'
+                ],
+            },
+        )
+
+    def test_update_rejects_parent_quantity_below_retained_allocation(self):
+        """Reducing a parent cannot strand a larger retained allocation."""
+        self.original_planting.quantity = 2
+        self.original_planting.save(update_fields=['quantity'])
+        SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=2,
+        )
+
+        response = self.client.patch(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+            data=json.dumps({'quantity': 1}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.original_planting.refresh_from_db()
+        self.assertEqual(self.original_planting.quantity, 2)
+
+    def test_partial_cell_allocation_is_allowed(self):
+        """A planting may leave some seeds unassigned to individual cells."""
+        response = self.client.post(
+            '/plantings/seedtray/',
+            data=json.dumps({
+                'seeds_used': self.packet.pk,
+                'quantity': 2,
+                'seed_tray': self.tray.pk,
+                'cell_plantings': [{
+                    'cell': self.cell.pk,
+                    'quantity': 1,
+                }],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        planting = SeedTrayPlanting.objects.get(pk=response.json()['pk'])
+        self.assertEqual(planting.quantity, 2)
+        self.assertEqual(planting.cell_plantings.get().quantity, 1)
+
     def test_database_rejects_non_positive_quantities(self):
         """Direct writes cannot bypass the minimum-one quantity invariant."""
         planting_rows = [
