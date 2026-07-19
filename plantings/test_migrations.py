@@ -132,6 +132,36 @@ class PlantingsDataMigrationTests(TestCase):
         self.assertEqual(description, f'{first_ids} (first 20 of 25)')
         values.__getitem__.assert_called_once_with(slice(None, 20))
 
+    def test_capacity_audit_accepts_consistent_rows(self):
+        """Allocation and germination counts within capacity allow deployment."""
+        migration = import_module(
+            'plantings.migrations.0015_audit_seed_allocation_capacity'
+        )
+
+        migration.audit_seed_allocation_capacity(django_apps, None)
+
+    def test_capacity_audit_reports_parent_and_cell_row_ids(self):
+        """Deployment failures identify both kinds of capacity violation."""
+        migration = import_module(
+            'plantings.migrations.0015_audit_seed_allocation_capacity'
+        )
+        SeedTrayCellPlanting.objects.filter(pk=self.cell_planting.pk).update(
+            quantity=2,
+        )
+        SpecificPlant.objects.bulk_create([
+            SpecificPlant(cell_planting=self.cell_planting),
+            SpecificPlant(cell_planting=self.cell_planting),
+        ])
+
+        with self.assertRaisesMessage(
+            RuntimeError,
+            'over-allocated SeedTrayPlanting IDs: '
+            f'[{self.cell_planting.seed_tray_planting_id}]; '
+            'over-germinated SeedTrayCellPlanting IDs: '
+            f'[{self.cell_planting.pk}]',
+        ):
+            migration.audit_seed_allocation_capacity(django_apps, None)
+
     def test_audit_reports_cross_tray_cell_planting(self):
         """The failure identifies a cell planting whose parent tray differs."""
         other_tray = SeedTray.objects.create(model=self.tray_model)
