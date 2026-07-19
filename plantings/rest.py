@@ -589,7 +589,25 @@ class GardenSquareDirectSowPlantingViewSet(viewsets.ModelViewSet):  # pylint: di
     serializer_class = GardenSquareDirectSowSerializer
 
 
-class SeedTrayPlantingViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class ProtectedSeedTrayPlantingDestroyMixin:  # pylint: disable=too-few-public-methods
+    """Return a domain error when dependent records protect a planting."""
+
+    def perform_destroy(self, instance):
+        """Delete a planting unless protected dependents still refer to it."""
+        try:
+            instance.delete()
+        except ProtectedError as exc:
+            raise serializers.ValidationError({
+                'detail': [
+                    'Cannot delete a seed tray planting while dependent records exist.'
+                ]
+            }) from exc
+
+
+class SeedTrayPlantingViewSet(
+    ProtectedSeedTrayPlantingDestroyMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayPlanting
     """
@@ -597,7 +615,10 @@ class SeedTrayPlantingViewSet(viewsets.ModelViewSet):  # pylint: disable=too-man
     serializer_class = SeedTrayPlantingSerializer
 
 
-class SeedTrayPlantingViewSeedTraySet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayPlantingViewSeedTraySet(
+    ProtectedSeedTrayPlantingDestroyMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayPlanting filtered by SeedTray
     """

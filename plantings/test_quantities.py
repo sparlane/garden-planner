@@ -371,6 +371,32 @@ class PositiveQuantityAPITests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertTrue(SeedTrayCellPlanting.objects.filter(pk=cell_planting.pk).exists())
 
+    def test_parent_delete_with_germination_returns_domain_error(self):
+        """Protected germination data produces a client error rather than a 500."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        SpecificPlant.objects.create(cell_planting=cell_planting)
+
+        response = self.client.delete(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'detail': [
+                    'Cannot delete a seed tray planting while dependent records exist.'
+                ],
+            },
+        )
+        self.assertTrue(
+            SeedTrayPlanting.objects.filter(pk=self.original_planting.pk).exists()
+        )
+
     def test_database_rejects_non_positive_quantities(self):
         """Direct writes cannot bypass the minimum-one quantity invariant."""
         planting_rows = [
