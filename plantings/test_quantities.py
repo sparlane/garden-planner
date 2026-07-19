@@ -493,5 +493,5 @@ class ConcurrentGerminationCapacityTests(TransactionTestCase):
                 range(2),
             ))
 
-        self.assertEqual(sorted(statuses), [400, 201])
+        self.assertEqual(sorted(statuses), [201, 400])
         self.assertEqual(self.cell_planting.specific_plants.count(), 1)
