@@ -25,7 +25,7 @@ from .models import (
 from .rest import SpecificPlantSerializer
 
 
-class PositiveQuantityAPITests(TestCase):
+class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-methods
     """Planting APIs reject quantities that cannot represent planted items."""
 
     def setUp(self):
@@ -618,6 +618,33 @@ class PositiveQuantityAPITests(TestCase):
 
         response = self.client.delete(
             f'/plantings/seedtray/{self.original_planting.pk}/',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {
+                'detail': [
+                    'Cannot delete a seed tray planting while dependent records exist.'
+                ],
+            },
+        )
+        self.assertTrue(
+            SeedTrayPlanting.objects.filter(pk=self.original_planting.pk).exists()
+        )
+
+    def test_filtered_parent_delete_with_germination_returns_domain_error(self):
+        """The tray-filtered endpoint also reports protected germination data."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        SpecificPlant.objects.create(cell_planting=cell_planting)
+
+        response = self.client.delete(
+            f'/plantings/seedtray-data/{self.tray.pk}/plantings/'
+            f'{self.original_planting.pk}/',
         )
 
         self.assertEqual(response.status_code, 400)
