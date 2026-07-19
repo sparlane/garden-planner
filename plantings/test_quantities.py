@@ -219,6 +219,29 @@ class PositiveQuantityAPITests(TestCase):
         )
         self.assertEqual(SeedTrayPlanting.objects.count(), original_count)
 
+    def test_update_rejects_duplicate_cell_allocations(self):
+        """One request cannot allocate the same tray cell more than once."""
+        self.original_planting.quantity = 2
+        self.original_planting.save(update_fields=['quantity'])
+
+        response = self.client.patch(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+            data=json.dumps({
+                'cell_plantings': [
+                    {'cell': self.cell.pk, 'quantity': 1},
+                    {'cell': self.cell.pk, 'quantity': 1},
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json(),
+            {'cell_plantings': ['Each cell may only be allocated once.']},
+        )
+        self.assertFalse(self.original_planting.cell_plantings.exists())
+
     def test_update_rejects_parent_quantity_below_retained_allocation(self):
         """Reducing a parent cannot strand a larger retained allocation."""
         self.original_planting.quantity = 2
