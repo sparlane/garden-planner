@@ -289,8 +289,27 @@ class SpecificPlantSerializer(serializers.ModelSerializer):
         model = SpecificPlant
         fields = ['pk', 'cell_planting', 'germinated', 'notes', 'locations']
 
+    def validate(self, data):  # pylint: disable=arguments-renamed
+        """Keep a plant attached to the cell allocation it germinated from."""
+        if self.instance is not None and 'cell_planting' in data:
+            if data['cell_planting'].pk != self.instance.cell_planting_id:
+                raise serializers.ValidationError({
+                    'cell_planting': 'Cannot reassign an existing plant.'
+                })
+        return data
+
     def create(self, validated_data):
         with transaction.atomic():
+            cell_planting = SeedTrayCellPlanting.objects.select_for_update().get(
+                pk=validated_data['cell_planting'].pk,
+            )
+            if cell_planting.specific_plants.count() >= cell_planting.quantity:
+                raise serializers.ValidationError({
+                    'cell_planting': [
+                        'Germination count cannot exceed this cell allocation.'
+                    ]
+                })
+            validated_data['cell_planting'] = cell_planting
             plant = SpecificPlant.objects.create(**validated_data)
             SpecificPlantLocation.objects.create(
                 specific_plant=plant,
