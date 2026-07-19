@@ -517,6 +517,51 @@ class PositiveQuantityAPITests(TestCase):
         self.assertEqual(cell_planting.quantity, 1)
         self.assertEqual(plant.cell_planting, cell_planting)
 
+    def test_multi_cell_update_preserves_existing_allocations(self):
+        """A mixed allocation update keeps both existing rows and plant origins."""
+        self.original_planting.quantity = 4
+        self.original_planting.save(update_fields=['quantity'])
+        germinated_allocation = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=2,
+        )
+        plant = SpecificPlant.objects.create(
+            cell_planting=germinated_allocation,
+        )
+        other_allocation = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.other_cell,
+            quantity=2,
+        )
+        original_ids = {
+            self.cell.pk: germinated_allocation.pk,
+            self.other_cell.pk: other_allocation.pk,
+        }
+
+        response = self.client.patch(
+            f'/plantings/seedtray/{self.original_planting.pk}/',
+            data=json.dumps({
+                'cell_plantings': [
+                    {'cell': self.cell.pk, 'quantity': 3},
+                    {'cell': self.other_cell.pk, 'quantity': 1},
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        germinated_allocation.refresh_from_db()
+        other_allocation.refresh_from_db()
+        plant.refresh_from_db()
+        self.assertEqual(germinated_allocation.quantity, 3)
+        self.assertEqual(other_allocation.quantity, 1)
+        self.assertEqual(plant.cell_planting, germinated_allocation)
+        self.assertEqual(
+            dict(self.original_planting.cell_plantings.values_list('cell_id', 'pk')),
+            original_ids,
+        )
+
     def test_allocation_with_germination_cannot_be_removed(self):
         """Clearing allocations cannot orphan an already germinated plant."""
         cell_planting = SeedTrayCellPlanting.objects.create(
