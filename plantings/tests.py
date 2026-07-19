@@ -257,16 +257,6 @@ class SpecificPlantMoveTests(TestCase):  # pylint: disable=too-many-public-metho
     def _drop_active_location_index(self):
         with connection.cursor() as cursor:
             cursor.execute('DROP INDEX IF EXISTS unique_active_location_per_plant')
-        self.addCleanup(self._restore_active_location_index)
-
-    def _restore_active_location_index(self):
-        SpecificPlantLocation.objects.filter(specific_plant=self.plant, seed_tray_cell=self.other_cell).delete()
-        with connection.cursor() as cursor:
-            cursor.execute(
-                'CREATE UNIQUE INDEX IF NOT EXISTS "unique_active_location_per_plant" '
-                'ON "plantings_specificplantlocation" ("specific_plant_id") '
-                'WHERE "ended" IS NULL'
-            )
 
     def test_move_ends_current_location_and_creates_new_active_location(self):
         """
