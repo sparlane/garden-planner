@@ -7,6 +7,25 @@ on: pull_request
 jobs:
   build:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: garden_tracker
+          POSTGRES_USER: garden_tracker
+          POSTGRES_PASSWORD: garden_tracker
+        options: >-
+          --health-cmd "pg_isready -U garden_tracker -d garden_tracker"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DB_HOST: 127.0.0.1
+      DB_NAME: garden_tracker
+      DB_USER: garden_tracker
+      DB_PASS: garden_tracker
     steps:
       - uses: actions/checkout@v7
       - name: Update apt database
@@ -19,9 +38,15 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: 3.13
+      - name: Configure CI settings
+        run:
+          cp gp/ci_settings.py gp/local_settings.py
       - name: Setup venv
         run:
           ./setup-venv.sh
+      - name: Test
+        run:
+          ./manage.py test
       - name: check-code
         run:
           ./check-code.sh
