@@ -1,6 +1,7 @@
 """
 Tests for seed trays
 """
+# pylint: disable=duplicate-code
 import json
 
 from django.contrib.auth import get_user_model
@@ -46,6 +47,29 @@ class SeedTrayCellIntegrityTests(TestCase):
         self.assertRedirects(
             response,
             f'/accounts/login/?next=/seedtrays/seedtray/{self.tray.pk}/',
+        )
+
+    def test_create_tray_generates_complete_cell_grid(self):
+        """Creating a tray through the API generates every model cell once."""
+        response = self.client.post(
+            '/seedtrays/seedtrays/',
+            data=json.dumps({
+                'model': self.other_model.pk,
+                'notes': 'Propagation tray',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        tray = SeedTray.objects.get(pk=response.json()['pk'])
+        self.assertEqual(tray.notes, 'Propagation tray')
+        self.assertEqual(
+            set(tray.seedtraycell_set.values_list('x_position', 'y_position')),
+            {
+                (x_position, y_position)
+                for x_position in range(self.other_model.x_cells)
+                for y_position in range(self.other_model.y_cells)
+            },
         )
 
     def test_nested_create_uses_url_tray_instead_of_payload_tray(self):
