@@ -1,5 +1,51 @@
 import Cookies from 'js-cookie'
 
+const LOGIN_PATH = '/accounts/login/'
+const NOT_AUTHENTICATED_DETAIL = 'Authentication credentials were not provided.'
+
+function responseStatus(response: Response): string {
+  return `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
+}
+
+function isJsonResponse(response: Response): boolean {
+  const contentType = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase()
+  return contentType === 'application/json' || contentType?.endsWith('+json') === true
+}
+
+function isLoginRedirect(response: Response): boolean {
+  if (!response.redirected) {
+    return false
+  }
+
+  try {
+    return new URL(response.url, window.location.origin).pathname === LOGIN_PATH
+  } catch {
+    return false
+  }
+}
+
+async function isAuthenticationFailure(response: Response): Promise<boolean> {
+  if (response.status === 401 || isLoginRedirect(response)) {
+    return true
+  }
+  if (response.status !== 403 || !isJsonResponse(response)) {
+    return false
+  }
+
+  try {
+    const data: unknown = await response.clone().json()
+    return typeof data === 'object' && data !== null && 'detail' in data && data.detail === NOT_AUTHENTICATED_DETAIL
+  } catch {
+    return false
+  }
+}
+
+function redirectToLogin(url: string, response: Response): never {
+  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  window.location.assign(`${LOGIN_PATH}?next=${encodeURIComponent(next)}`)
+  throw new Error(`Authentication required while fetching ${url}; redirecting to login (${responseStatus(response)})`)
+}
+
 function csrfPost(url: string, data: object): Promise<Response> {
   return fetch(url, {
     method: 'POST',
@@ -17,13 +63,31 @@ function csrfPost(url: string, data: object): Promise<Response> {
 }
 
 async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
-  return fetch(url, {
+  const response = await fetch(url, {
     method: 'GET',
     headers: {
       Accept: 'application/json'
     },
     signal
-  }).then((response) => response.json() as Promise<T>)
+  })
+
+  if (await isAuthenticationFailure(response)) {
+    redirectToLogin(url, response)
+  }
+  if (!response.ok) {
+    throw new Error(`Failed to fetch JSON from ${url}: ${responseStatus(response)}`)
+  }
+  if (!isJsonResponse(response)) {
+    const contentType = response.headers.get('Content-Type') || 'no Content-Type'
+    throw new Error(`Failed to fetch JSON from ${url}: expected JSON but received ${contentType} (${responseStatus(response)})`)
+  }
+
+  try {
+    return (await response.json()) as T
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : ''
+    throw new Error(`Failed to parse JSON from ${url} (${responseStatus(response)})${detail}`)
+  }
 }
 
 function csrfPatch(url: string, data: object): Promise<Response> {
