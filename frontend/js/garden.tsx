@@ -17,6 +17,10 @@ interface GardenAreaDisplayProps {
   plantings: Array<GardenSquarePlanting>
 }
 
+function haveSameItems<T>(previousItems: Array<T>, currentItems: Array<T>): boolean {
+  return previousItems.length === currentItems.length && previousItems.every((item, index) => item === currentItems[index])
+}
+
 class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
   canvasRef: React.RefObject<HTMLCanvasElement>
   outlineWidth: number
@@ -89,8 +93,11 @@ class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
     if (ctx === null) {
       return
     }
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.scale(scale, scale)
     ctx.lineWidth = this.outlineWidth
+    ctx.strokeStyle = 'black'
     ctx.beginPath()
     ctx.moveTo(0 + this.outlineWidth / 2, 0 + this.outlineWidth / 2)
     ctx.lineTo(0 + this.outlineWidth / 2, area.size_y + this.outlineWidth * 1.5)
@@ -105,6 +112,22 @@ class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
   }
 
   componentDidMount() {
+    this.redrawGarden()
+  }
+
+  componentDidUpdate(previousProps: GardenAreaDisplayProps) {
+    if (
+      previousProps.area === this.props.area &&
+      haveSameItems(previousProps.gardenBeds, this.props.gardenBeds) &&
+      haveSameItems(previousProps.squares, this.props.squares) &&
+      haveSameItems(previousProps.plantings, this.props.plantings)
+    ) {
+      return
+    }
+    this.redrawGarden()
+  }
+
+  redrawGarden() {
     const canvas = this.canvasRef.current
     if (canvas === null) {
       return
