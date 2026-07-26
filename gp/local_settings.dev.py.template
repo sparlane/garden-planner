@@ -1,0 +1,26 @@
+"""Local development settings using SQLite."""
+from pathlib import Path
+
+
+DEBUG = True
+
+ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+
+# Database
+# https://docs.djangoproject.com/en/stable/ref/settings/#databases
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    },
+}

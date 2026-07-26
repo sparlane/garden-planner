@@ -15,17 +15,15 @@ fi
 
 echo ""
 
-# Create the local settings file from the template
+# Create local development settings unless the user selected another template.
 if [ ! -f gp/local_settings.py ]
 then
 	(
 		umask 077
-		cp gp/local_settings.py.template gp/local_settings.py
+		cp gp/local_settings.dev.py.template gp/local_settings.py
 	)
 	echo ""
-	echo "Create gp/local_settings.py from template"
-	echo "You should check this reflects your required settings"
-        echo "At a minimum you will need to set your database parameters"
+	echo "Created gp/local_settings.py with the SQLite development settings"
 fi
 chmod 600 gp/local_settings.py
 
@@ -42,4 +40,5 @@ then
 fi
 chmod 600 gp/secretkey.txt
 
+./manage.py migrate
 ./manage.py collectstatic --no-input
