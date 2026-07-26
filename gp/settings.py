@@ -10,9 +10,10 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
-import os
 from datetime import timedelta
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Import other settings
 from gp.local_settings import *
@@ -21,8 +22,21 @@ from gp.local_settings import *
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-with open(os.path.join(BASE_DIR, 'gp', 'secretkey.txt')) as f:
-    SECRET_KEY = f.read().strip()
+SECRET_KEY_PATH = BASE_DIR / "gp" / "secretkey.txt"
+
+try:
+    SECRET_KEY = SECRET_KEY_PATH.read_text(encoding="utf-8").strip()
+except OSError as error:
+    raise ImproperlyConfigured(
+        f"Unable to read Django secret key from {SECRET_KEY_PATH}. "
+        "Run setup-venv.sh or provide a readable key file."
+    ) from error
+
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        f"Django secret key file {SECRET_KEY_PATH} is empty. "
+        "Populate it with a securely generated key before starting the application."
+    )
 
 # Application definition
 
