@@ -4,6 +4,6 @@ source venv/bin/activate
 
 pycodestyle --ignore=E501 */*.py
 
-pylint frontend/ garden/ plantings/ plants/ seeds/
+pylint frontend/ garden/ plantings/ plants/ seeds/ seedtrays/ supplies/
 
 deactivate

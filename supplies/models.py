@@ -1,3 +1,4 @@
+"""Database models for garden supplies."""
 from django.db import models
 
 
