@@ -113,8 +113,25 @@ Development notes
 
 - Do not commit secrets: `gp/local_settings.py` is produced by the template; keep secrets out of source control.
 
+- Secret-key management:
+  - `setup-venv.sh` creates `gp/local_settings.py` and `gp/secretkey.txt` with mode `0600`. Rerunning setup preserves the existing secret key while repairing its permissions.
+  - To rotate the key, stop the application and run:
+    ```bash
+    (
+      umask 077
+      venv/bin/python -c 'import sys; from django.core.management.utils import get_random_secret_key; open(sys.argv[1], "x", encoding="utf-8").write(get_random_secret_key() + "\n")' gp/secretkey.txt.new
+    )
+    mv gp/secretkey.txt.new gp/secretkey.txt
+    ```
+    Restart the application afterward. Rotation invalidates existing sessions, password-reset links, and other values signed with the old key.
+
 - Linting and checks:
   - `./check-code.sh` runs pycodestyle and pylint (uses `venv`).
+
+Account and site boundaries
+- The application currently supports a single trusted account boundary. Authenticated accounts are not isolated from one another, so do not create secondary accounts for untrusted users.
+- Future multi-account support will make a site the data-ownership boundary. Accounts will receive access through site membership so one account can use multiple sites and a site can be shared deliberately.
+- Multi-account deployments are not supported until every queryset and cross-resource reference is scoped to an accessible site.
 
 API endpoints (examples)
 - Plantings views:
