@@ -1,0 +1,40 @@
+"""Deployment settings template using PostgreSQL."""
+
+
+# SECURITY WARNING: don't run with debug turned on in production!
+DEBUG = False
+
+# REQUIRED: list the hostnames this site will be served as, for example
+# ["garden.example.com"]. Leaving this empty rejects all requests.
+ALLOWED_HOSTS = []
+
+# REQUIRED for production: list the public origins, including their schemes,
+# for example ["https://garden.example.com"].
+CSRF_TRUSTED_ORIGINS = []
+
+LANGUAGE_CODE = "en-us"
+TIME_ZONE = "UTC"
+
+# Database
+# https://docs.djangoproject.com/en/stable/ref/settings/#databases
+#
+# Replace these placeholders directly or set DB_HOST, DB_NAME, DB_USER, and
+# DB_PASS before running setup-venv.sh.
+
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "HOST": "POSTGRES_SERVER",
+        "NAME": "POSTGRES_DBNAME",
+        "USER": "POSTGRES_USER",
+        "PASSWORD": "POSTGRES_PASSWORD",
+        "OPTIONS": {
+            "pool": True,
+        },
+    },
+}
+
+# Recommended when TLS is terminated by a trusted reverse proxy:
+# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# SESSION_COOKIE_SECURE = True
+# CSRF_COOKIE_SECURE = True
