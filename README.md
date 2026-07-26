@@ -7,6 +7,7 @@ Table of contents
 - Tech stack
 - Prerequisites
 - Quick start (recommended)
+- PostgreSQL setup
 - Development notes
 - API endpoints (important)
 - Project layout (high level)
@@ -48,24 +49,25 @@ Features
   - Frontend build is wired up via the repository `package.json` and build scripts.
 
 - Dev / helper scripts
-  - `setup-venv.sh` creates a Python virtual environment, installs Python dependencies, builds the frontend (npm), creates `gp/local_settings.py` from `gp/local_settings.py.template`, runs `setup-db.sh`, generates a secret key file `gp/secretkey.txt` if needed, and runs `manage.py collectstatic`.
-  - `setup-db.sh` and `start-wsgi.sh` are included to help bootstrap DB and serve app in deployments.
+  - `setup-venv.sh` creates a Python virtual environment, installs Python dependencies, builds the frontend (npm), creates SQLite development settings when needed, generates a secret key, applies migrations, and collects static files.
+  - `setup-db.sh` applies `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` to explicitly selected PostgreSQL settings. `start-wsgi.sh` serves the app in deployments.
   - `check-code.sh` for style/lint checks (pycodestyle, pylint).
 
 - Local-first defaults
-  - The project includes a `gp/local_settings.py.template` used by the setup script to generate local settings for development; by default the app is set up to use local DB (SQLite) unless changed.
+  - `gp/local_settings.dev.py.template` is the canonical local configuration and uses `db.sqlite3`.
+  - `gp/local_settings.postgresql.py.template` is available for deployments that use PostgreSQL.
 
 Tech stack
 - Django (Python) backend, Django REST Framework for APIs
 - React + Bootstrap (JavaScript) frontend components
-- SQLite for local development; Postgres or other DBs can be configured in local settings
+- SQLite for local development; PostgreSQL for deployment
 - Node/npm for frontend build; esbuild configuration present
 - Shell scripts for environment setup and build automation
 
 Prerequisites
 - Git
-- Python 3.8+
-- Node.js (>=16) and npm (or yarn)
+- Python 3.12+ (required by Django 6)
+- Node.js 18+ (required by esbuild) and npm
 - Bash-compatible shell for `setup-venv.sh`
 
 Quick start (recommended)
@@ -75,9 +77,8 @@ Quick start (recommended)
    cd garden-planner
    ```
 
-2. Run the setup script (creates venv, installs deps, builds frontend, creates local settings, initialises DB, collects static):
+2. Run the setup script. It creates `venv`, installs the dependencies declared in `requirements.txt`, builds the frontend, creates SQLite settings and a secret key when absent, applies migrations, and collects static files:
    ```bash
-   chmod +x setup-venv.sh
    ./setup-venv.sh
    ```
 
@@ -91,9 +92,9 @@ Quick start (recommended)
      .\venv\Scripts\Activate.ps1
      ```
 
-4. Create a Django superuser and run migrations if not covered by setup:
+4. Confirm the installation and optionally create a Django superuser:
    ```bash
-   python manage.py migrate
+   python manage.py check
    python manage.py createsuperuser
    ```
 
@@ -103,7 +104,19 @@ Quick start (recommended)
    ```
    Open http://127.0.0.1:8000
 
+PostgreSQL setup
+- Install and initialise PostgreSQL before running the project setup.
+- Copy the deployment template before running `setup-venv.sh`; the setup script preserves an existing `gp/local_settings.py`:
+  ```bash
+  cp gp/local_settings.postgresql.py.template gp/local_settings.py
+  chmod 600 gp/local_settings.py
+  ```
+- Set `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `gp/local_settings.py`. Configure the four database placeholders directly, or provide `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` in the deployment environment.
+- Run `./setup-venv.sh`. It substitutes any provided database variables and applies migrations to the configured PostgreSQL database.
+
 Development notes
+- Python dependencies are defined by `requirements.txt`. Recreate a stale local `venv` before setup when it contains older or untracked dependency versions.
+
 - Frontend: if you modify frontend code, rebuild with:
   ```bash
   npm ci
@@ -111,10 +124,10 @@ Development notes
   ```
   The `setup-venv.sh` already runs the build unless `NODE_DONE=yes` is set in the environment.
 
-- Do not commit secrets: `gp/local_settings.py` is produced by the template; keep secrets out of source control.
+- Do not commit secrets: `gp/local_settings.py` is produced from a selected template; keep secrets out of source control.
 
 - Secret-key management:
-  - `setup-venv.sh` creates `gp/local_settings.py` and `gp/secretkey.txt` with mode `0600`. Rerunning setup preserves the existing secret key while repairing its permissions.
+  - `setup-venv.sh` creates `gp/local_settings.py` and `gp/secretkey.txt` with mode `0600`. Rerunning setup preserves both files while repairing their permissions.
   - To rotate the key, stop the application and run:
     ```bash
     (
