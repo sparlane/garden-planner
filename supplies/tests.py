@@ -1,43 +1,29 @@
 """
 Tests for supplies
 """
-import json
-
-from django.contrib.auth import get_user_model
-from django.test import TestCase
-
-from .models import Supplier
+from tests.api import RESTContractTestCase
 
 
-class SupplierAPITests(TestCase):
+class SupplierAPITests(RESTContractTestCase):
     """Tests for the supplier REST resource."""
 
-    def setUp(self):
-        self.client.force_login(
-            get_user_model().objects.create_user(username='supplier-tester')
-        )
+    LIST_URLS = ('/supplies/supplier/',)
 
-    def test_create_and_retrieve_supplier(self):
+    def test_list_route_requires_authentication(self):
+        """Anonymous requests cannot list suppliers."""
+        self.assert_authentication_required(self.LIST_URLS)
+
+    def test_list_route_returns_a_list(self):
+        """Authenticated supplier collections use the common list contract."""
+        self.assert_list_contract(self.LIST_URLS)
+
+    def test_supplier_round_trip(self):
         """An authenticated supplier write round-trips through the API."""
-        response = self.client.post(
+        self.assert_create_retrieve(
             '/supplies/supplier/',
-            data=json.dumps({
+            {
                 'name': 'Local Seed Company',
                 'website': 'https://seeds.example.com',
                 'notes': 'Open-pollinated varieties',
-            }),
-            content_type='application/json',
+            },
         )
-
-        self.assertEqual(response.status_code, 201)
-        supplier = Supplier.objects.get(pk=response.json()['pk'])
-
-        response = self.client.get(f'/supplies/supplier/{supplier.pk}/')
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {
-            'pk': supplier.pk,
-            'name': 'Local Seed Company',
-            'website': 'https://seeds.example.com',
-            'notes': 'Open-pollinated varieties',
-        })

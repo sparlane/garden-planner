@@ -10,7 +10,71 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
+from tests.api import RESTContractTestCase
+from tests.factories import make_garden_area, make_garden_bed
+
 from .models import GardenArea, GardenBed, GardenRow, GardenSquare
+
+
+class GardenRESTContractTests(RESTContractTestCase):
+    """Smoke tests for the garden REST resources."""
+
+    LIST_URLS = (
+        '/garden/areas/',
+        '/garden/beds/',
+        '/garden/rows/',
+        '/garden/squares/',
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.area = make_garden_area()
+        self.bed = make_garden_bed(area=self.area)
+
+    def test_list_routes_require_authentication(self):
+        """Anonymous requests cannot list garden resources."""
+        self.assert_authentication_required(self.LIST_URLS)
+
+    def test_list_routes_return_lists(self):
+        """Authenticated garden collections use the common list contract."""
+        self.assert_list_contract(self.LIST_URLS)
+
+    def test_resources_round_trip(self):
+        """Each garden resource can be created and retrieved."""
+        area = self.assert_create_retrieve(
+            '/garden/areas/',
+            {
+                'name': 'Kitchen garden',
+                'size_x': 80,
+                'size_y': 60,
+            },
+        )
+        bed = self.assert_create_retrieve(
+            '/garden/beds/',
+            {
+                'area': area['pk'],
+                'name': 'North bed',
+                'placement_x': 2,
+                'placement_y': 3,
+                'size_x': 20,
+                'size_y': 10,
+            },
+        )
+        child_geometry = {
+            'bed': bed['pk'],
+            'placement_x': 1,
+            'placement_y': 1,
+            'size_x': 4,
+            'size_y': 1,
+        }
+        self.assert_create_retrieve(
+            '/garden/rows/',
+            {**child_geometry, 'name': 'Carrot row'},
+        )
+        self.assert_create_retrieve(
+            '/garden/squares/',
+            {**child_geometry, 'name': 'Square A1'},
+        )
 
 
 class GardenGeometryAPITests(TestCase):

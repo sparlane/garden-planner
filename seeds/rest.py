@@ -50,5 +50,5 @@ class SeedPacketAllViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-a
 
 router = routers.DefaultRouter()
 router.register(r'seeds', SeedsViewSet)
-router.register(r'packets', SeedPacketCurrentViewSet)
 router.register(r'packets/all', SeedPacketAllViewSet, 'AllSeedPackets')
+router.register(r'packets', SeedPacketCurrentViewSet)
