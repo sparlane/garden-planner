@@ -7,7 +7,100 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
+from tests.api import RESTContractTestCase
+from tests.factories import make_seed_tray, make_seed_tray_cell
+
 from .models import SeedTray, SeedTrayCell, SeedTrayModel
+
+
+class SeedTrayRESTContractTests(RESTContractTestCase):
+    """Smoke tests for seed-tray REST resources."""
+
+    def setUp(self):
+        super().setUp()
+        self.tray = make_seed_tray()
+        self.other_tray = make_seed_tray()
+
+    @property
+    def list_urls(self):
+        """Return global and nested seed-tray collection routes."""
+        return (
+            '/seedtrays/seedtraymodels/',
+            '/seedtrays/seedtrays/',
+            '/seedtrays/seedtraycells/',
+            f'/seedtrays/seedtrays/{self.tray.pk}/cells/',
+        )
+
+    def test_list_routes_require_authentication(self):
+        """Anonymous requests cannot list seed-tray resources."""
+        self.assert_authentication_required(self.list_urls)
+
+    def test_list_routes_return_lists(self):
+        """Authenticated seed-tray collections use the common list contract."""
+        self.assert_list_contract(self.list_urls)
+
+    def test_resources_round_trip(self):
+        """Tray models, trays, and global cells survive create and retrieve."""
+        tray_model = self.assert_create_retrieve(
+            '/seedtrays/seedtraymodels/',
+            {
+                'identifier': 'propagation-6',
+                'description': 'Six-cell propagation tray',
+                'height': 6,
+                'x_size': 30,
+                'y_size': 20,
+                'x_cells': 3,
+                'y_cells': 2,
+                'cell_size_ml': 45,
+            },
+        )
+        tray = self.assert_create_retrieve(
+            '/seedtrays/seedtrays/',
+            {
+                'model': tray_model['pk'],
+                'notes': 'Spring sowing',
+            },
+        )
+        cell = SeedTrayCell.objects.get(
+            tray_id=tray['pk'],
+            x_position=2,
+            y_position=1,
+        )
+        response = self.client.get(f'/seedtrays/seedtraycells/{cell.pk}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {
+            'pk': cell.pk,
+            'tray': tray['pk'],
+            'x_position': 2,
+            'y_position': 1,
+        })
+
+        self.assert_create_retrieve(
+            '/seedtrays/seedtraycells/',
+            {
+                'tray': self.tray.pk,
+                'x_position': 1,
+                'y_position': 1,
+            },
+        )
+
+    def test_nested_cell_routes_are_scoped_to_url_tray(self):
+        """Nested list and detail routes cannot expose another tray's cells."""
+        own_cell = make_seed_tray_cell(tray=self.tray)
+        other_cell = make_seed_tray_cell(tray=self.other_tray)
+        nested_url = f'/seedtrays/seedtrays/{self.tray.pk}/cells/'
+
+        response = self.client.get(nested_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {cell['pk'] for cell in response.data},
+            {own_cell.pk},
+        )
+        response = self.client.get(f'{nested_url}{own_cell.pk}/')
+        self.assertEqual(response.status_code, 200)
+        response = self.client.get(f'{nested_url}{other_cell.pk}/')
+        self.assertEqual(response.status_code, 404)
 
 
 class SeedTrayCellIntegrityTests(TestCase):
