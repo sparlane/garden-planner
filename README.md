@@ -7,7 +7,7 @@ Table of contents
 - Tech stack
 - Prerequisites
 - Quick start (recommended)
-- PostgreSQL setup
+- Production deploy (PostgreSQL)
 - Development notes
 - API endpoints (important)
 - Project layout (high level)
@@ -104,15 +104,23 @@ Quick start (recommended)
    ```
    Open http://127.0.0.1:8000
 
-PostgreSQL setup
-- Install and initialise PostgreSQL before running the project setup.
-- Copy the deployment template before running `setup-venv.sh`; the setup script preserves an existing `gp/local_settings.py`:
+Production deploy (PostgreSQL)
+
+Install and initialise PostgreSQL, then copy the deployment template before running `setup-venv.sh`; the setup script preserves an existing `gp/local_settings.py`:
+
   ```bash
   cp gp/local_settings.postgresql.py.template gp/local_settings.py
   chmod 600 gp/local_settings.py
   ```
-- Set `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `gp/local_settings.py`. Configure the four database placeholders directly, or provide `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` in the deployment environment.
-- Run `./setup-venv.sh`. It substitutes any provided database variables and applies migrations to the configured PostgreSQL database.
+
+Before setup:
+
+- Set `ALLOWED_HOSTS` to every hostname that serves the site.
+- Set `CSRF_TRUSTED_ORIGINS` to every public origin, including its scheme.
+- Fill in all four database values directly, or provide `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` in the deployment environment.
+- For HTTPS behind a trusted reverse proxy, review and enable the commented proxy and secure-cookie settings.
+
+Run `./setup-venv.sh`; it substitutes any provided database variables and applies migrations to the configured PostgreSQL database.
 
 Development notes
 - Python dependencies are defined by `requirements.txt`. Recreate a stale local `venv` before setup when it contains older or untracked dependency versions.
