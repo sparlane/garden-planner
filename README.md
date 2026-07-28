@@ -35,13 +35,15 @@ Features
     - SeedTrayPlanting (seed trays)
     - GardenRowDirectSowPlanting (direct-sow into rows)
     - GardenSquareDirectSowPlanting (direct-sow into squares)
-    - GardenSquareTransplant (transplants from seed trays into garden squares)
+    - SpecificPlant and SpecificPlantLocation (germination and individual location history)
+    - GardenSquareTransplant (read-only legacy aggregate transplants)
   - Planting attributes include dates, quantity, location, notes and a `removed` flag to mark completed/removed plantings.
-  - Views that compute germination/maturity dates (using variety/plant metadata) and return JSON summaries for current plantings.
+  - Individual plant locations are the source of truth for new transplant workflows. Legacy aggregate rows remain visible and completable but cannot be created through the REST API.
+  - Views compute germination/maturity dates (using variety/plant metadata) and return JSON summaries without double-counting legacy and individual transplant representations.
 
 - REST API (Django REST Framework)
   - REST viewsets / routers for seeds, seed packets, plantings and varieties.
-  - Plantings router exposes: `directsowgardenrow`, `directsowgardensquare`, `seedtray`, and `transplantedgardensquare`.
+  - Plantings router exposes direct-sow, seed-tray, read-only legacy transplant, specific-plant, and specific-plant-location resources.
   - Seeds router exposes: `seeds`, `packets` and `packets/all`.
 
 - React-based frontend components
@@ -160,7 +162,9 @@ API endpoints (examples)
   - POST /plantings/seedtray/ — create seedtray planting (used by frontend)
   - POST /plantings/seedtray/complete/ — mark seedtray planting removed
   - GET /plantings/garden/squares/current/ — list current garden-square plantings
-  - POST /plantings/garden/squares/transplant/complete/ — complete transplant operations
+  - POST /plantings/specificplants/{id}/move/ — atomically move an individual plant
+  - GET /plantings/transplantedgardensquare/ — list read-only legacy aggregate transplants
+  - POST /plantings/garden/squares/transplant/complete/ — complete a legacy aggregate transplant
 - Seeds:
   - GET /seeds/seeds/ — list Seeds entries
   - GET /seeds/packets/ — list non-empty SeedPacket (current stock)
