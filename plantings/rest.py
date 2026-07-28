@@ -629,9 +629,11 @@ class SeedTrayPlantingViewSeedTraySet(
         return self.queryset.filter(seed_tray__pk=self.kwargs['seed_tray_pk'])
 
 
-class GardenSquareTransplantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenSquareTransplantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
     """
-    ViewSet of GardenSquareTransplant
+    Read-only access to legacy aggregate transplant records.
+
+    New transplant workflows move individual SpecificPlant records instead.
     """
     queryset = GardenSquareTransplant.objects.all()
     serializer_class = GardenSquareTransplantSerializer

@@ -167,7 +167,9 @@ class SpecificPlantLocation(models.Model):
 
 class GardenSquareTransplant(models.Model):
     """
-    Transplant from a seedtray into a garden square
+    Legacy aggregate transplant from a seed tray into a garden square.
+
+    New transplant workflows use SpecificPlantLocation as their source of truth.
     """
     original_planting = models.ForeignKey(SeedTrayPlanting, on_delete=models.PROTECT)
     transplanted = models.DateTimeField(default=timezone.now)

@@ -14,6 +14,15 @@ from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
+from tests.factories import (
+    make_garden_square,
+    make_seed_packet,
+    make_seed_tray,
+    make_seed_tray_cell,
+    make_seed_tray_cell_planting,
+    make_seed_tray_planting,
+    make_specific_plant,
+)
 from .models import (
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
@@ -22,6 +31,95 @@ from .models import (
     SpecificPlant,
     SpecificPlantLocation,
 )
+
+
+class TransplantOwnershipCurrentViewTests(TestCase):
+    """Current summaries prefer individual plants over legacy aggregates."""
+
+    def setUp(self):
+        self.client.force_login(
+            get_user_model().objects.create_user(username='ownership-tester')
+        )
+        self.square = make_garden_square()
+        self.tray = make_seed_tray()
+        self.cell = make_seed_tray_cell(tray=self.tray)
+        self.planting = make_seed_tray_planting(
+            seeds_used=make_seed_packet(),
+            quantity=3,
+            seed_tray=self.tray,
+        )
+
+    def _make_legacy_transplant(self):
+        return GardenSquareTransplant.objects.create(
+            original_planting=self.planting,
+            quantity=2,
+            location=self.square,
+        )
+
+    def _make_specific_garden_plant(self):
+        cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=self.planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        plant = make_specific_plant(cell_planting=cell_planting)
+        location = SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=self.square,
+        )
+        return plant, location
+
+    def test_legacy_aggregate_contributes_to_current_summaries(self):
+        """Aggregate-only history remains visible and counted."""
+        transplant = self._make_legacy_transplant()
+
+        response = self.client.get('/plantings/seedtray/current/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()['plantings'][0]['transplanted_count'],
+            transplant.quantity,
+        )
+
+        response = self.client.get('/plantings/garden/squares/current/')
+        self.assertEqual(response.status_code, 200)
+        garden_plantings = response.json()['plantings']
+        self.assertEqual(len(garden_plantings), 1)
+        self.assertEqual(garden_plantings[0]['transplanting_pk'], transplant.pk)
+        self.assertEqual(garden_plantings[0]['quantity'], transplant.quantity)
+
+    def test_individual_representation_wins_over_aggregate(self):
+        """Defensive reads never add or display both representations."""
+        self._make_legacy_transplant()
+        plant, location = self._make_specific_garden_plant()
+
+        response = self.client.get('/plantings/seedtray/current/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()['plantings'][0]['transplanted_count'],
+            1,
+        )
+
+        response = self.client.get('/plantings/garden/squares/current/')
+        self.assertEqual(response.status_code, 200)
+        garden_plantings = response.json()['plantings']
+        self.assertEqual(len(garden_plantings), 1)
+        self.assertEqual(garden_plantings[0]['specific_plant_pk'], plant.pk)
+        self.assertEqual(garden_plantings[0]['transplanting_pk'], location.pk)
+
+    def test_legacy_aggregate_can_still_be_completed(self):
+        """The compatibility action can retire a legacy aggregate row."""
+        transplant = self._make_legacy_transplant()
+
+        response = self.client.post(
+            '/plantings/garden/squares/transplant/complete/',
+            data=json.dumps({'planting': transplant.pk}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        transplant.refresh_from_db()
+        self.assertTrue(transplant.removed)
 
 
 class SeedTrayPlantingMembershipTests(TestCase):
