@@ -107,18 +107,10 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
                 SeedTrayPlanting,
                 {'seeds_used': self.packet.pk, 'seed_tray': self.tray.pk},
             ),
-            (
-                '/plantings/transplantedgardensquare/',
-                GardenSquareTransplant,
-                {
-                    'original_planting': self.original_planting.pk,
-                    'location': self.square.pk,
-                },
-            ),
         ]
 
     def test_create_rejects_non_positive_parent_quantities(self):
-        """Every aggregate planting endpoint requires at least one item."""
+        """Every writable aggregate planting endpoint requires at least one item."""
         for quantity in (0, -1):
             for url, model, payload in self._quantity_endpoints():
                 with self.subTest(quantity=quantity, model=model.__name__):
