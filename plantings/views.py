@@ -5,7 +5,7 @@ Planting views
 import datetime
 
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count, Sum
+from django.db.models import Count, Exists, OuterRef, Sum
 from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
@@ -49,7 +49,10 @@ def seedtray_current(request):
     )
     planting_data = []
     for planting in plantings:
-        transplanted_count = transplanted_counts.get(planting.pk, 0) + garden_square_location_counts.get(planting.pk, 0)
+        if planting.pk in garden_square_location_counts:
+            transplanted_count = garden_square_location_counts[planting.pk]
+        else:
+            transplanted_count = transplanted_counts.get(planting.pk, 0)
         germinated_count = germinated_counts.get(planting.pk, 0)
         variety = planting.seeds_used.seeds.plant_variety
         germination_min, germination_max, _, _ = _get_variety_days(variety)
@@ -136,9 +139,19 @@ def gardensquare_current(request):
             'maturity_date_early': _add_nullable_days(planting.planted, maturity_min),
             'maturity_date_late': _add_nullable_days(planting.planted, maturity_max)
         })
+    specific_garden_locations = SpecificPlantLocation.objects.filter(
+        location_type=SpecificPlantLocation.GARDEN_SQUARE,
+        specific_plant__cell_planting__seed_tray_planting_id=OuterRef(
+            'original_planting_id'
+        ),
+    )
     transplantings = (
         GardenSquareTransplant.objects
         .filter(removed=False)
+        .annotate(
+            has_specific_representation=Exists(specific_garden_locations),
+        )
+        .filter(has_specific_representation=False)
         .select_related('original_planting__seeds_used__seeds__plant_variety__plant', 'location__bed__area')
     )
     for transplanting in transplantings:

@@ -12,7 +12,7 @@ from tests.factories import (
     make_specific_plant_location,
 )
 
-from .models import SpecificPlantLocation
+from .models import GardenSquareTransplant, SpecificPlantLocation
 
 
 class PlantingRESTContractTests(RESTContractTestCase):
@@ -66,8 +66,8 @@ class PlantingRESTContractTests(RESTContractTestCase):
         """Authenticated planting collections use the common list contract."""
         self.assert_list_contract(self.list_urls)
 
-    def test_aggregate_planting_resources_round_trip(self):
-        """Each aggregate planting representation survives create and retrieve."""
+    def test_writable_planting_resources_round_trip(self):
+        """Each current aggregate planting resource survives create and retrieve."""
         common_fields = {
             'seeds_used': self.packet.pk,
             'quantity': 3,
@@ -116,16 +116,45 @@ class PlantingRESTContractTests(RESTContractTestCase):
                 'quantity': 3,
             }],
         )
-        self.assert_create_retrieve(
-            '/plantings/transplantedgardensquare/',
-            {
-                'original_planting': self.tray_planting.pk,
-                'quantity': 2,
-                'location': self.square.pk,
-                'removed': False,
-                'notes': 'Transplanted outside',
-            },
+
+    def test_legacy_transplants_are_read_only(self):
+        """The REST API exposes legacy transplants without accepting mutations."""
+        transplant = GardenSquareTransplant.objects.create(
+            original_planting=self.tray_planting,
+            quantity=2,
+            location=self.square,
+            notes='Transplanted outside',
         )
+
+        response = self.client.get(
+            f'/plantings/transplantedgardensquare/{transplant.pk}/'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['pk'], transplant.pk)
+
+        collection_url = '/plantings/transplantedgardensquare/'
+        mutation_cases = (
+            ('post', collection_url, {
+                'original_planting': self.tray_planting.pk,
+                'quantity': 1,
+                'location': self.square.pk,
+            }),
+            ('put', f'{collection_url}{transplant.pk}/', {
+                'original_planting': self.tray_planting.pk,
+                'quantity': 1,
+                'location': self.square.pk,
+            }),
+            ('patch', f'{collection_url}{transplant.pk}/', {'notes': 'Changed'}),
+            ('delete', f'{collection_url}{transplant.pk}/', None),
+        )
+        for method, url, data in mutation_cases:
+            with self.subTest(method=method):
+                response = getattr(self.client, method)(url, data, format='json')
+                self.assertEqual(response.status_code, 405)
+
+        transplant.refresh_from_db()
+        self.assertEqual(transplant.quantity, 2)
+        self.assertEqual(transplant.notes, 'Transplanted outside')
 
     def test_specific_plant_and_location_resources_round_trip(self):
         """Specific plants and location history survive create and retrieve."""

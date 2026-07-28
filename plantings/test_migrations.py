@@ -12,7 +12,9 @@ from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
+from tests.factories import make_garden_square
 from .models import (
+    GardenSquareTransplant,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
     SpecificPlant,
@@ -20,7 +22,7 @@ from .models import (
 )
 
 
-class PlantingsDataMigrationTests(TestCase):
+class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instance-attributes
     """
     Tests for deployment-time planting integrity audits.
     """
@@ -73,6 +75,10 @@ class PlantingsDataMigrationTests(TestCase):
             'plantings.migrations.0012_specificplantlocation_chronology'
         )
         self.chronology_audit = chronology_migration.audit_location_chronology
+        transplant_migration = import_module(
+            'plantings.migrations.0016_audit_transplant_ownership'
+        )
+        self.transplant_audit = transplant_migration.audit_transplant_ownership
 
     def test_audit_accepts_consistent_rows(self):
         """Valid parent membership and coordinates do not block deployment."""
@@ -139,6 +145,46 @@ class PlantingsDataMigrationTests(TestCase):
         )
 
         migration.audit_seed_allocation_capacity(django_apps, None)
+
+    def test_transplant_audit_accepts_separate_representations(self):
+        """Aggregate and individual transplants may belong to different plantings."""
+        square = make_garden_square()
+        legacy_planting = SeedTrayPlanting.objects.create(
+            seeds_used=self.cell_planting.seed_tray_planting.seeds_used,
+            quantity=1,
+        )
+        GardenSquareTransplant.objects.create(
+            original_planting=legacy_planting,
+            quantity=1,
+            location=square,
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=self.plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=square,
+        )
+
+        self.transplant_audit(django_apps, None)
+
+    def test_transplant_audit_reports_conflicting_aggregate_rows(self):
+        """Deployment failures identify aggregate rows with individual overlap."""
+        square = make_garden_square()
+        transplant = GardenSquareTransplant.objects.create(
+            original_planting=self.cell_planting.seed_tray_planting,
+            quantity=1,
+            location=square,
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=self.plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=square,
+        )
+
+        with self.assertRaisesMessage(
+            RuntimeError,
+            f'Conflicting GardenSquareTransplant IDs: [{transplant.pk}]',
+        ):
+            self.transplant_audit(django_apps, None)
 
     def test_capacity_audit_reports_parent_and_cell_row_ids(self):
         """Deployment failures identify both kinds of capacity violation."""
