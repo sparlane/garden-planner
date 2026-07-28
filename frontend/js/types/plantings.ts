@@ -19,13 +19,6 @@ interface SeedTrayPlantingCreate extends PlantingCreate {
   location?: string
 }
 
-interface GardenSquareTransplantingCreate {
-  quantity: number
-  location: number
-  original_planting: number
-  notes?: string
-}
-
 interface Planting {
   pk: number
   seeds_used: number
@@ -143,7 +136,6 @@ export {
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
-  GardenSquareTransplantingCreate,
   SpecificPlant,
   SpecificPlantCreate,
   SpecificPlantLocation,
