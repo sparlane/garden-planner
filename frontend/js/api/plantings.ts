@@ -7,7 +7,6 @@ import {
   GardenSquarePlanting,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
-  GardenSquareTransplantingCreate,
   SeedTrayPlantingCreate,
   SeedTrayPlantingDetails,
   SpecificPlant,
@@ -60,10 +59,6 @@ function getPlantingTransplantedGardenSquares(): Promise<Array<GardenSquareTrans
   return fetchAsJson<Array<GardenSquareTransplanting>>('/plantings/transplantedgardensquare/')
 }
 
-function addPlantingTransplantedGardenSquare(data: GardenSquareTransplantingCreate) {
-  return csrfPost('/plantings/transplantedgardensquare/', data)
-}
-
 function completePlantingTransplantedGardenSquare(plantingPk: number) {
   return csrfPost('/plantings/garden/squares/transplant/complete/', {
     planting: plantingPk
@@ -109,7 +104,6 @@ export {
   addPlantingSeedTray,
   completePlantingSeedTray,
   getPlantingTransplantedGardenSquares,
-  addPlantingTransplantedGardenSquare,
   completePlantingTransplantedGardenSquare,
   getPlantingSeedTrayCurrent,
   getPlantingGardenSquaresCurrent,
