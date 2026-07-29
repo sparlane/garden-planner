@@ -17,10 +17,9 @@ interface SeedTrayCreate {
   notes?: string
 }
 
-interface SeedTray {
+type SeedTray = SeedTrayCreate & {
   pk: number
   model: number
-  notes?: string
   created: string
 }
 
