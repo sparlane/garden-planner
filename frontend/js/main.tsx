@@ -10,57 +10,39 @@ import { SeedStockTable, SeedSuppliersTable, SeedTable } from './seeds.js'
 import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
-import { NoProps } from './types/others.js'
+import { ApiErrorAlert } from './api_error_alert.js'
 
-interface FrontEndPageState {
-  selectedView: string
-}
+function FrontEndPage() {
+  const [selectedView, setSelectedView] = React.useState('gardens')
 
-class FrontEndPage extends React.Component<NoProps, FrontEndPageState> {
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      selectedView: 'gardens'
-    }
-
-    this.updateSelectedView = this.updateSelectedView.bind(this)
+  let view = <></>
+  if (selectedView === 'plants') {
+    view = <PlantsView />
+  } else if (selectedView === 'seeds-supplier') {
+    view = <SeedSuppliersTable />
+  } else if (selectedView === 'seeds-seed') {
+    view = <SeedTable />
+  } else if (selectedView === 'seeds-stock') {
+    view = <SeedStockTable />
+  } else if (selectedView === 'seedtrays-models') {
+    view = <SeedTrayModelsTable />
+  } else if (selectedView === 'seedtrays') {
+    view = <SeedTraysTable />
+  } else if (selectedView === 'planting-seedtrays') {
+    view = <SeedTrayPlantingTable />
+  } else if (selectedView === 'planting-gardensquare') {
+    view = <GardenSquarePlantingTable />
+  } else {
+    view = <GardenDisplay />
   }
 
-  updateSelectedView(view: string) {
-    this.setState({
-      selectedView: view
-    })
-  }
-
-  render() {
-    let view = <></>
-    if (this.state.selectedView === 'plants') {
-      view = <PlantsView />
-    } else if (this.state.selectedView === 'seeds-supplier') {
-      view = <SeedSuppliersTable />
-    } else if (this.state.selectedView === 'seeds-seed') {
-      view = <SeedTable />
-    } else if (this.state.selectedView === 'seeds-stock') {
-      view = <SeedStockTable />
-    } else if (this.state.selectedView === 'seedtrays-models') {
-      view = <SeedTrayModelsTable />
-    } else if (this.state.selectedView === 'seedtrays') {
-      view = <SeedTraysTable />
-    } else if (this.state.selectedView === 'planting-seedtrays') {
-      view = <SeedTrayPlantingTable />
-    } else if (this.state.selectedView === 'planting-gardensquare') {
-      view = <GardenSquarePlantingTable />
-    } else {
-      view = <GardenDisplay />
-    }
-    return (
-      <>
-        <GPTopBar setView={this.updateSelectedView} />
-        {view}
-      </>
-    )
-  }
+  return (
+    <>
+      <GPTopBar setView={setSelectedView} />
+      <ApiErrorAlert />
+      {view}
+    </>
+  )
 }
 
 function createFrontEnd(elementId: string) {

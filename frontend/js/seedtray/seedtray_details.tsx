@@ -7,6 +7,7 @@ import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from '../api/seedtr
 import { Button, Table } from 'react-bootstrap'
 import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation } from '../types/plantings'
 import { getPlantingSeedTray, getSpecificPlantsBySeedTray, addSpecificPlant, moveSpecificPlant } from '../api/plantings'
+import { ApiErrorAlert } from '../api_error_alert'
 import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
@@ -581,7 +582,12 @@ function showSeedTrayDetails(elem: string, seedTrayPk: number) {
     throw new Error(`Cannot show seed tray details: element #${elem} was not found`)
   }
   const root = ReactDOM.createRoot(element)
-  root.render(<SeedTrayDetails seedTrayPk={seedTrayPk} />)
+  root.render(
+    <>
+      <ApiErrorAlert />
+      <SeedTrayDetails seedTrayPk={seedTrayPk} />
+    </>
+  )
 }
 
 ;(globalThis as Record<string, unknown>).showSeedTrayDetails = showSeedTrayDetails

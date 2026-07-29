@@ -1,5 +1,7 @@
 import Cookies from 'js-cookie'
 
+import { ApiError, reportApiError, type ApiRequestMethod } from './api/errors'
+
 const LOGIN_PATH = '/accounts/login/'
 const NOT_AUTHENTICATED_DETAIL = 'Authentication credentials were not provided.'
 
@@ -40,30 +42,108 @@ async function isAuthenticationFailure(response: Response): Promise<boolean> {
   }
 }
 
-function redirectToLogin(url: string, response: Response): never {
+function redirectToLogin(method: ApiRequestMethod, url: string, response: Response): never {
   const next = `${window.location.pathname}${window.location.search}${window.location.hash}`
   window.location.assign(`${LOGIN_PATH}?next=${encodeURIComponent(next)}`)
-  throw new Error(`Authentication required while fetching ${url}; redirecting to login (${responseStatus(response)})`)
+  throw new Error(`Authentication required for ${method} ${url}; redirecting to login (${responseStatus(response)})`)
 }
 
-function csrfPost(url: string, data: object): Promise<Response> {
-  return fetch(url, {
-    method: 'POST',
+function isAbortError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError'
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error)
+}
+
+function raiseApiError(error: ApiError): never {
+  reportApiError(error)
+  throw error
+}
+
+function raiseNetworkError(method: ApiRequestMethod, url: string, cause: unknown): never {
+  raiseApiError(
+    new ApiError(`${method} ${url} failed before receiving a response: ${errorMessage(cause)}`, {
+      method,
+      url,
+      status: null,
+      statusText: null,
+      body: null,
+      cause
+    })
+  )
+}
+
+async function fetchResponse(method: ApiRequestMethod, url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init)
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error
+    }
+    raiseNetworkError(method, url, error)
+  }
+}
+
+async function parseResponseBody(response: Response): Promise<unknown> {
+  const body = await response.text()
+  if (!body) {
+    return null
+  }
+  try {
+    return JSON.parse(body) as unknown
+  } catch {
+    return body
+  }
+}
+
+async function raiseResponseError(method: ApiRequestMethod, url: string, response: Response, message: string): Promise<never> {
+  let body: unknown = null
+  try {
+    body = await parseResponseBody(response)
+  } catch (error) {
+    body = `The response body could not be read: ${errorMessage(error)}`
+  }
+  raiseApiError(
+    new ApiError(message, {
+      method,
+      url,
+      status: response.status,
+      statusText: response.statusText || null,
+      body
+    })
+  )
+}
+
+async function checkResponse(method: ApiRequestMethod, url: string, response: Response): Promise<void> {
+  if (await isAuthenticationFailure(response)) {
+    redirectToLogin(method, url, response)
+  }
+  if (!response.ok) {
+    await raiseResponseError(method, url, response, `${method} ${url} failed: ${responseStatus(response)}`)
+  }
+}
+
+async function csrfRequest(method: 'POST' | 'PATCH', url: string, data: object): Promise<Response> {
+  const response = await fetchResponse(method, url, {
+    method,
     headers: {
       'Content-Type': 'application/json',
       'X-CSRFToken': Cookies.get('csrftoken') || ''
     },
     body: JSON.stringify(data)
-  }).then((response) => {
-    if (!response.ok) {
-      throw new Error(`Failed to post data to ${url} ${response.status}: ${response.statusText}`)
-    }
-    return response
   })
+  await checkResponse(method, url, response)
+  return response
+}
+
+function csrfPost(url: string, data: object): Promise<Response> {
+  return csrfRequest('POST', url, data)
 }
 
 async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(url, {
+  const method = 'GET'
+  const response = await fetchResponse(method, url, {
     method: 'GET',
     headers: {
       Accept: 'application/json'
@@ -71,39 +151,46 @@ async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Prom
     signal
   })
 
-  if (await isAuthenticationFailure(response)) {
-    redirectToLogin(url, response)
-  }
-  if (!response.ok) {
-    throw new Error(`Failed to fetch JSON from ${url}: ${responseStatus(response)}`)
-  }
+  await checkResponse(method, url, response)
   if (!isJsonResponse(response)) {
     const contentType = response.headers.get('Content-Type') || 'no Content-Type'
-    throw new Error(`Failed to fetch JSON from ${url}: expected JSON but received ${contentType} (${responseStatus(response)})`)
+    await raiseResponseError(method, url, response, `${method} ${url} failed: expected JSON but received ${contentType} (${responseStatus(response)})`)
+  }
+
+  let body: string
+  try {
+    body = await response.text()
+  } catch (error) {
+    raiseApiError(
+      new ApiError(`${method} ${url} failed while reading JSON (${responseStatus(response)}): ${errorMessage(error)}`, {
+        method,
+        url,
+        status: response.status,
+        statusText: response.statusText || null,
+        body: null,
+        cause: error
+      })
+    )
   }
 
   try {
-    return (await response.json()) as T
+    return JSON.parse(body) as T
   } catch (error) {
-    const detail = error instanceof Error ? `: ${error.message}` : ''
-    throw new Error(`Failed to parse JSON from ${url} (${responseStatus(response)})${detail}`)
+    raiseApiError(
+      new ApiError(`${method} ${url} returned malformed JSON (${responseStatus(response)}): ${errorMessage(error)}`, {
+        method,
+        url,
+        status: response.status,
+        statusText: response.statusText || null,
+        body,
+        cause: error
+      })
+    )
   }
 }
 
 function csrfPatch(url: string, data: object): Promise<Response> {
-  return fetch(url, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-CSRFToken': Cookies.get('csrftoken') || ''
-    },
-    body: JSON.stringify(data)
-  }).then((response) => {
-    if (!response.ok) {
-      throw new Error(`Failed to patch data to ${url} ${response.status}: ${response.statusText}`)
-    }
-    return response
-  })
+  return csrfRequest('PATCH', url, data)
 }
 
 function localDatetimeInputValue(date: Date = new Date()): string {
@@ -133,4 +220,4 @@ function formatDateRange(start: string | null | undefined, end: string | null | 
   return `${formatDate(start ?? '')} - ${formatDate(end ?? '')}`
 }
 
-export { csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange }
+export { ApiError, csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange }
