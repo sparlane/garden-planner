@@ -6,6 +6,7 @@ import { Table, Button } from 'react-bootstrap'
 
 import { Plant, PlantCreate, PlantFamily, PlantVariety, PlantVarietyCreate } from './types/plants'
 import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties } from './api/plants'
+import { NoProps } from './types/others'
 
 interface NewPlantFamilyRowProps {
   done: () => void
@@ -504,10 +505,10 @@ interface PlantsViewState {
   varieties: Array<PlantVariety>
 }
 
-class PlantsView extends React.Component<undefined, PlantsViewState> {
+class PlantsView extends React.Component<NoProps, PlantsViewState> {
   timer?: number
 
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {

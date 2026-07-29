@@ -4,6 +4,7 @@
   "main": "frontend/main.js",
   "scripts": {
     "check": "eslint frontend/js/ && prettier -c frontend/js/",
+    "typecheck": "tsc --noEmit",
     "build-only": "esbuild $(esbuild-config)",
     "build": "esbuild $(esbuild-config) && cp -dpR dist/* frontend/static/",
     "test": "echo \"Error: no test specified\" && exit 1"

@@ -8,6 +8,7 @@ import Select from 'react-select'
 import { SeedTrayModel, SeedTray, SeedTrayModelCreate, SeedTrayCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray } from './api/seedtrays'
 import { formatDate } from './utils'
+import { NoProps } from './types/others'
 
 interface SeedTrayModelNewProps {
   done: () => void
@@ -76,8 +77,8 @@ interface SeedTrayModelsTableState {
   seedTrayModels: Array<SeedTrayModel>
 }
 
-class SeedTrayModelsTable extends React.Component<undefined, SeedTrayModelsTableState> {
-  constructor(props: undefined) {
+class SeedTrayModelsTable extends React.Component<NoProps, SeedTrayModelsTableState> {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {
@@ -192,8 +193,8 @@ interface SeedTraysTableState {
   seedTrayModels: { [key: number]: SeedTrayModel }
 }
 
-class SeedTraysTable extends React.Component<undefined, SeedTraysTableState> {
-  constructor(props: undefined) {
+class SeedTraysTable extends React.Component<NoProps, SeedTraysTableState> {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {

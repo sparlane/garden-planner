@@ -8,7 +8,7 @@ import Select from 'react-select'
 import { Supplier, SupplierCreate } from './types/suppliers'
 import { Seed, SeedCreate, SeedPacketCreate, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
-import { SelectOption } from './types/others'
+import { NoProps, SelectOption } from './types/others'
 import { getPlantVarieties } from './api/plants'
 import { addSeed, addSeedPacket, emptySeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
 import { addSupplier, getSuppliers } from './api/supplies'
@@ -113,10 +113,10 @@ interface SeedSuppliersTableState {
   suppliers: Array<Supplier>
 }
 
-class SeedSuppliersTable extends React.Component<undefined, SeedSuppliersTableState> {
+class SeedSuppliersTable extends React.Component<NoProps, SeedSuppliersTableState> {
   timer?: number
 
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {
@@ -355,9 +355,9 @@ interface SeedTableState {
   seeds: Array<Seed>
 }
 
-class SeedTable extends React.Component<undefined, SeedTableState> {
+class SeedTable extends React.Component<NoProps, SeedTableState> {
   timer?: number
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {
@@ -608,10 +608,10 @@ interface SeedStockTableState {
   seedPackets: Array<SeedPacketDetails>
 }
 
-class SeedStockTable extends React.Component<undefined, SeedStockTableState> {
+class SeedStockTable extends React.Component<NoProps, SeedStockTableState> {
   timer?: number
 
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {

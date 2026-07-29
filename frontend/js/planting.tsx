@@ -11,7 +11,7 @@ import { Seed, SeedPacket } from './types/seeds'
 import { GardenArea, GardenBed, GardenSquare } from './types/garden'
 import { GardenSquarePlanting, SeedTrayPlantingCreate, SeedTrayPlantingDetails } from './types/plantings'
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
-import { SelectOption } from './types/others'
+import { NoProps, SelectOption } from './types/others'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
 import { formatDate, formatDateRange } from './utils'
 import {
@@ -382,10 +382,10 @@ interface SeedTrayPlantingTableState {
   plantings: Array<SeedTrayPlantingDetails>
 }
 
-class SeedTrayPlantingTable extends React.Component<undefined, SeedTrayPlantingTableState> {
+class SeedTrayPlantingTable extends React.Component<NoProps, SeedTrayPlantingTableState> {
   timer?: number
 
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {
@@ -721,10 +721,10 @@ interface GardenSquarePlantingTableState {
   filterGardenBed?: string
 }
 
-class GardenSquarePlantingTable extends React.Component<undefined, GardenSquarePlantingTableState> {
+class GardenSquarePlantingTable extends React.Component<NoProps, GardenSquarePlantingTableState> {
   timer?: number
 
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {

@@ -3,4 +3,6 @@ type SelectOption = {
   label: string
 }
 
-export { SelectOption }
+type NoProps = Record<string, never>
+
+export { NoProps, SelectOption }

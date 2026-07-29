@@ -8,7 +8,7 @@ import { GardenArea, GardenBed, GardenSquare, GardenRow } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
 import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
 import { getPlantingGardenSquaresCurrent } from './api/plantings'
-import { SelectOption } from './types/others'
+import { NoProps, SelectOption } from './types/others'
 
 interface GardenAreaDisplayProps {
   area: GardenArea
@@ -149,9 +149,9 @@ interface GardenDisplayState {
   plantings: Array<GardenSquarePlanting>
 }
 
-class GardenDisplay extends React.Component<undefined, GardenDisplayState> {
+class GardenDisplay extends React.Component<NoProps, GardenDisplayState> {
   timer?: number
-  constructor(props: undefined) {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {
