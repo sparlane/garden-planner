@@ -17,8 +17,10 @@ interface SeedTrayCreate {
   notes?: string
 }
 
-interface SeedTray extends SeedTrayCreate {
+interface SeedTray {
   pk: number
+  model: number
+  notes?: string
   created: string
 }
 

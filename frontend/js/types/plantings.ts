@@ -17,6 +17,7 @@ interface GardenSquareDirectPlantingCreate extends PlantingCreate {
 interface SeedTrayPlantingCreate extends PlantingCreate {
   seed_tray?: number
   location?: string
+  cell_plantings?: Array<{ cell: number; quantity: number }>
 }
 
 interface Planting {
@@ -66,16 +67,21 @@ interface SeedTrayPlantingDetails {
   cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
 }
 
+interface GardenSquarePlantingLocation extends Omit<GardenSquare, 'area' | 'bed'> {
+  area: string
+  bed: string
+}
+
 interface GardenSquarePlanting {
   specific_plant_pk?: number
   transplanting_pk?: number
   transplanted?: string
   planting_pk: number
-  plant: number
-  variety: number
+  plant: string
+  variety: string
   quantity: number
   planted: string
-  location: GardenSquare
+  location: GardenSquarePlantingLocation
   notes: string
   germination_date_early?: string
   germination_date_late?: string

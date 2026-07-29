@@ -10,13 +10,14 @@ import { SeedStockTable, SeedSuppliersTable, SeedTable } from './seeds.js'
 import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
+import { NoProps } from './types/others.js'
 
 interface FrontEndPageState {
   selectedView: string
 }
 
-class FrontEndPage extends React.Component<undefined, FrontEndPageState> {
-  constructor(props: undefined) {
+class FrontEndPage extends React.Component<NoProps, FrontEndPageState> {
+  constructor(props: NoProps) {
     super(props)
 
     this.state = {
@@ -63,8 +64,12 @@ class FrontEndPage extends React.Component<undefined, FrontEndPageState> {
 }
 
 function createFrontEnd(elementId: string) {
-  const div = ReactDOM.createRoot(document.getElementById(elementId))
+  const element = document.getElementById(elementId)
+  if (!element) {
+    throw new Error(`Cannot create frontend: element #${elementId} was not found`)
+  }
+  const div = ReactDOM.createRoot(element)
   div.render(<FrontEndPage />)
 }
 
-globalThis.createFrontEnd = createFrontEnd
+;(globalThis as Record<string, unknown>).createFrontEnd = createFrontEnd

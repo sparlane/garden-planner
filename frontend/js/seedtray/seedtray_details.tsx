@@ -576,7 +576,11 @@ class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDeta
 }
 
 function showSeedTrayDetails(elem: string, seedTrayPk: number) {
-  const root = ReactDOM.createRoot(document.getElementById(elem) as HTMLElement)
+  const element = document.getElementById(elem)
+  if (!element) {
+    throw new Error(`Cannot show seed tray details: element #${elem} was not found`)
+  }
+  const root = ReactDOM.createRoot(element)
   root.render(<SeedTrayDetails seedTrayPk={seedTrayPk} />)
 }
 
