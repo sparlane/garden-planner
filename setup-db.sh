@@ -1,6 +1,6 @@
 #!/bin/bash -e
 
-if grep -Eq 'django\.(contrib\.gis\.)?db\.backends\.(postgresql|postgis)' gp/local_settings.py
+if grep -Eq 'django\.db\.backends\.postgresql' gp/local_settings.py
 then
     [ -n "$DB_HOST" ] && sed -Ei "s|(['\"]HOST['\"]: ).*|\\1\"$DB_HOST\",|" gp/local_settings.py || true
     [ -n "$DB_USER" ] && sed -Ei "s|(['\"]USER['\"]: ).*|\\1\"$DB_USER\",|" gp/local_settings.py || true

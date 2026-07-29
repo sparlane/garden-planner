@@ -28,12 +28,6 @@ jobs:
       DB_PASS: garden_tracker
     steps:
       - uses: actions/checkout@v7
-      - name: Update apt database
-        run: |
-          sudo apt update
-      - name: Install apt depends
-        run: |
-          sudo apt install -y gdal-bin libgdal-dev
       - name: Setup python
         uses: actions/setup-python@v7
         with:
