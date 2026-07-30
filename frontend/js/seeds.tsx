@@ -4,17 +4,20 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { Supplier, SupplierCreate } from './types/suppliers'
 import { Seed, SeedCreate, SeedPacketCreate, SeedPacketDetails } from './types/seeds'
 import { PlantVariety } from './types/plants'
-import { NoProps, SelectOption } from './types/others'
+import { SelectOption } from './types/others'
 import { getPlantVarieties } from './api/plants'
 import { addSeed, addSeedPacket, emptySeedPacket, getSeedPacketsCurrent, getSeeds } from './api/seeds'
 import { addSupplier, getSuppliers } from './api/supplies'
+import { queryKeys } from './query'
 
 interface NewSeedSupplierRowProps {
   done: () => void
+  createSupplier: (data: SupplierCreate) => Promise<void>
 }
 
 interface NewSeedSupplierRowState {
@@ -58,7 +61,7 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
     this.setState({ notes: value })
   }
 
-  add() {
+  async add() {
     const data: SupplierCreate = {
       name: this.state.name,
       notes: this.state.notes
@@ -66,7 +69,8 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
     if (this.state.website && this.state.website !== '') {
       data.website = this.state.website
     }
-    addSupplier(data).then(this.props.done)
+    await this.props.createSupplier(data)
+    this.props.done()
   }
 
   render() {
@@ -108,93 +112,53 @@ class SeedSupplierRow extends React.Component<SeedSupplierRowProps> {
   }
 }
 
-interface SeedSuppliersTableState {
-  showSupplierAdd: boolean
-  suppliers: Array<Supplier>
-}
+function SeedSuppliersTable() {
+  const queryClient = useQueryClient()
+  const [showSupplierAdd, setShowSupplierAdd] = React.useState(false)
+  const { data: suppliers = [] } = useQuery({
+    queryKey: queryKeys.suppliers.all,
+    queryFn: ({ signal }) => getSuppliers(signal)
+  })
+  const supplierMutation = useMutation({
+    mutationFn: addSupplier,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all })
+  })
 
-class SeedSuppliersTable extends React.Component<NoProps, SeedSuppliersTableState> {
-  timer?: number
-
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      showSupplierAdd: false,
-      suppliers: []
-    }
-
-    this.showNewSupplierAdd = this.showNewSupplierAdd.bind(this)
-    this.hideNewSupplierAdd = this.hideNewSupplierAdd.bind(this)
-
-    this.updateSupplierList = this.updateSupplierList.bind(this)
+  async function createSupplier(data: SupplierCreate) {
+    await supplierMutation.mutateAsync(data)
   }
 
-  showNewSupplierAdd() {
-    this.setState({
-      showSupplierAdd: true
-    })
+  const rows = []
+  if (showSupplierAdd) {
+    rows.push(<NewSeedSupplierRow key="new" createSupplier={createSupplier} done={() => setShowSupplierAdd(false)} />)
   }
-
-  hideNewSupplierAdd() {
-    this.setState({
-      showSupplierAdd: false
-    })
+  for (const supplier of suppliers) {
+    rows.push(<SeedSupplierRow key={supplier.pk} supplier={supplier} />)
   }
-
-  componentDidMount() {
-    this.updateData()
-    this.timer = setInterval(() => this.updateData(), 10000)
-  }
-
-  componentWillUnmount() {
-    clearInterval(this.timer)
-    this.timer = undefined
-  }
-
-  updateSupplierList(data: Array<Supplier>) {
-    this.setState({
-      suppliers: data
-    })
-  }
-
-  async updateData() {
-    this.updateSupplierList(await getSuppliers())
-  }
-
-  render() {
-    const rows = []
-    if (this.state.showSupplierAdd) {
-      rows.push(<NewSeedSupplierRow key="new" done={this.hideNewSupplierAdd} />)
-    }
-    for (const s in this.state.suppliers) {
-      const supplierData = this.state.suppliers[s]
-      rows.push(<SeedSupplierRow key={supplierData.pk} supplier={supplierData} />)
-    }
-    return (
-      <Table>
-        <thead>
-          <tr>
-            <td>
-              Name{' '}
-              <a href="#" onClick={this.showNewSupplierAdd}>
-                +
-              </a>
-            </td>
-            <td>Website</td>
-            <td>Notes</td>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </Table>
-    )
-  }
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <td>
+            Name{' '}
+            <a href="#" onClick={() => setShowSupplierAdd(true)}>
+              +
+            </a>
+          </td>
+          <td>Website</td>
+          <td>Notes</td>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </Table>
+  )
 }
 
 interface NewSeedRowProps {
   suppliers: Array<Supplier>
   varieties: Array<PlantVariety>
   done: () => void
+  createSeed: (data: SeedCreate) => Promise<void>
 }
 
 interface NewSeedRowState {
@@ -264,7 +228,7 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     this.setState({ notes: value })
   }
 
-  add() {
+  async add() {
     let { supplier } = this.state
     if (!supplier) {
       supplier = this.props.suppliers[0].pk
@@ -284,7 +248,8 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
     if (this.state.website !== undefined && this.state.website !== '') {
       data.url = this.state.website
     }
-    addSeed(data).then(this.props.done)
+    await this.props.createSeed(data)
+    this.props.done()
   }
 
   render() {
@@ -348,109 +313,56 @@ class SeedRow extends React.Component<SeedRowProps> {
   }
 }
 
-interface SeedTableState {
-  showSeedAdd: boolean
-  suppliers: Array<Supplier>
-  varieties: Array<PlantVariety>
-  seeds: Array<Seed>
-}
+function SeedTable() {
+  const queryClient = useQueryClient()
+  const [showSeedAdd, setShowSeedAdd] = React.useState(false)
+  const { data: suppliers = [] } = useQuery({
+    queryKey: queryKeys.suppliers.all,
+    queryFn: ({ signal }) => getSuppliers(signal)
+  })
+  const { data: varieties = [] } = useQuery({
+    queryKey: queryKeys.plants.varieties,
+    queryFn: ({ signal }) => getPlantVarieties(signal)
+  })
+  const { data: seeds = [] } = useQuery({
+    queryKey: queryKeys.seeds.catalog,
+    queryFn: ({ signal }) => getSeeds(signal)
+  })
+  const seedMutation = useMutation({
+    mutationFn: addSeed,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seeds.catalog })
+  })
 
-class SeedTable extends React.Component<NoProps, SeedTableState> {
-  timer?: number
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      showSeedAdd: false,
-      suppliers: [],
-      varieties: [],
-      seeds: []
-    }
-
-    this.showNewSeedAdd = this.showNewSeedAdd.bind(this)
-    this.hideNewSeedAdd = this.hideNewSeedAdd.bind(this)
-
-    this.updateData = this.updateData.bind(this)
-    this.updateSupplierList = this.updateSupplierList.bind(this)
-    this.updateVarietiesList = this.updateVarietiesList.bind(this)
-    this.updateSeedList = this.updateSeedList.bind(this)
+  async function createSeed(data: SeedCreate) {
+    await seedMutation.mutateAsync(data)
   }
 
-  showNewSeedAdd() {
-    this.setState({
-      showSeedAdd: true
-    })
+  const rows = []
+  if (showSeedAdd) {
+    rows.push(<NewSeedRow key="new" suppliers={suppliers} varieties={varieties} createSeed={createSeed} done={() => setShowSeedAdd(false)} />)
   }
-
-  hideNewSeedAdd() {
-    this.setState({
-      showSeedAdd: false
-    })
+  for (const seed of seeds) {
+    rows.push(<SeedRow key={seed.pk} suppliers={suppliers} varieties={varieties} seed={seed} />)
   }
-
-  componentDidMount() {
-    this.updateData()
-    this.timer = setInterval(() => this.updateData(), 10000)
-  }
-
-  componentWillUnmount() {
-    clearInterval(this.timer)
-    this.timer = undefined
-  }
-
-  updateSupplierList(data: Array<Supplier>) {
-    this.setState({
-      suppliers: data
-    })
-  }
-
-  updateVarietiesList(data: Array<PlantVariety>) {
-    this.setState({
-      varieties: data
-    })
-  }
-
-  updateSeedList(data: Array<Seed>) {
-    this.setState({
-      seeds: data
-    })
-  }
-
-  async updateData() {
-    this.updateSupplierList(await getSuppliers())
-    this.updateVarietiesList(await getPlantVarieties())
-    this.updateSeedList(await getSeeds())
-  }
-
-  render() {
-    const rows = []
-    if (this.state.showSeedAdd) {
-      rows.push(<NewSeedRow key="new" suppliers={this.state.suppliers} varieties={this.state.varieties} done={this.hideNewSeedAdd} />)
-    }
-    for (const s in this.state.seeds) {
-      const seedData = this.state.seeds[s]
-      rows.push(<SeedRow key={seedData.pk} suppliers={this.state.suppliers} varieties={this.state.varieties} seed={seedData} />)
-    }
-    return (
-      <Table>
-        <thead>
-          <tr>
-            <td>Supplier</td>
-            <td>Variety</td>
-            <td>Supplier Code</td>
-            <td>Link</td>
-            <td>Notes</td>
-            <td>
-              <a href="#" onClick={this.showNewSeedAdd}>
-                +
-              </a>
-            </td>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </Table>
-    )
-  }
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <td>Supplier</td>
+          <td>Variety</td>
+          <td>Supplier Code</td>
+          <td>Link</td>
+          <td>Notes</td>
+          <td>
+            <a href="#" onClick={() => setShowSeedAdd(true)}>
+              +
+            </a>
+          </td>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </Table>
+  )
 }
 
 interface NewSeedPacketRowProps {
@@ -458,6 +370,7 @@ interface NewSeedPacketRowProps {
   varieties: Array<PlantVariety>
   seeds: Array<Seed>
   done: () => void
+  createPacket: (data: SeedPacketCreate) => Promise<void>
 }
 
 interface NewSeedPacketRowState {
@@ -515,7 +428,7 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     this.setState({ notes: value })
   }
 
-  add() {
+  async add() {
     let { seeds } = this.state
     if (!seeds) {
       seeds = this.props.seeds[0].pk
@@ -530,7 +443,8 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
     if (this.state.sowBy !== undefined && this.state.sowBy !== '') {
       data.sow_by = this.state.sowBy
     }
-    addSeedPacket(data).then(this.props.done)
+    await this.props.createPacket(data)
+    this.props.done()
   }
 
   render() {
@@ -566,6 +480,7 @@ class NewSeedPacketRow extends React.Component<NewSeedPacketRowProps, NewSeedPac
 
 interface SeedPacketRowProps {
   seedPacket: SeedPacketDetails
+  emptyPacket: (packetPk: number) => Promise<void>
 }
 
 class SeedPacketRow extends React.Component<SeedPacketRowProps> {
@@ -575,8 +490,8 @@ class SeedPacketRow extends React.Component<SeedPacketRowProps> {
     this.empty = this.empty.bind(this)
   }
 
-  empty() {
-    emptySeedPacket(this.props.seedPacket.pk)
+  async empty() {
+    await this.props.emptyPacket(this.props.seedPacket.pk)
   }
 
   render() {
@@ -600,121 +515,69 @@ class SeedPacketRow extends React.Component<SeedPacketRowProps> {
   }
 }
 
-interface SeedStockTableState {
-  showSeedPacketAdd: boolean
-  suppliers: Array<Supplier>
-  varieties: Array<PlantVariety>
-  seeds: Array<Seed>
-  seedPackets: Array<SeedPacketDetails>
-}
+function SeedStockTable() {
+  const queryClient = useQueryClient()
+  const [showSeedPacketAdd, setShowSeedPacketAdd] = React.useState(false)
+  const { data: suppliers = [] } = useQuery({
+    queryKey: queryKeys.suppliers.all,
+    queryFn: ({ signal }) => getSuppliers(signal)
+  })
+  const { data: varieties = [] } = useQuery({
+    queryKey: queryKeys.plants.varieties,
+    queryFn: ({ signal }) => getPlantVarieties(signal)
+  })
+  const { data: seeds = [] } = useQuery({
+    queryKey: queryKeys.seeds.catalog,
+    queryFn: ({ signal }) => getSeeds(signal)
+  })
+  const { data: seedPackets = [] } = useQuery({
+    queryKey: queryKeys.seeds.packets.current,
+    queryFn: ({ signal }) => getSeedPacketsCurrent(signal)
+  })
+  const packetMutation = useMutation({
+    mutationFn: addSeedPacket,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
+  })
+  const emptyPacketMutation = useMutation({
+    mutationFn: emptySeedPacket,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
+  })
 
-class SeedStockTable extends React.Component<NoProps, SeedStockTableState> {
-  timer?: number
-
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      showSeedPacketAdd: false,
-      suppliers: [],
-      varieties: [],
-      seeds: [],
-      seedPackets: []
-    }
-
-    this.showNewSeedPacketAdd = this.showNewSeedPacketAdd.bind(this)
-    this.hideNewSeedPacketAdd = this.hideNewSeedPacketAdd.bind(this)
-
-    this.updateData = this.updateData.bind(this)
-    this.updateSupplierList = this.updateSupplierList.bind(this)
-    this.updateVarietiesList = this.updateVarietiesList.bind(this)
-    this.updateSeedList = this.updateSeedList.bind(this)
-    this.updateSeedPacketList = this.updateSeedPacketList.bind(this)
+  async function createPacket(data: SeedPacketCreate) {
+    await packetMutation.mutateAsync(data)
   }
 
-  showNewSeedPacketAdd() {
-    this.setState({
-      showSeedPacketAdd: true
-    })
+  async function emptyPacket(packetPk: number) {
+    await emptyPacketMutation.mutateAsync(packetPk)
   }
 
-  hideNewSeedPacketAdd() {
-    this.setState({
-      showSeedPacketAdd: false
-    })
+  const rows = []
+  if (showSeedPacketAdd) {
+    rows.push(<NewSeedPacketRow key="new" suppliers={suppliers} varieties={varieties} seeds={seeds} createPacket={createPacket} done={() => setShowSeedPacketAdd(false)} />)
   }
-
-  componentDidMount() {
-    this.updateData()
-    this.timer = setInterval(() => this.updateData(), 10000)
+  for (const seedPacket of seedPackets) {
+    rows.push(<SeedPacketRow key={seedPacket.pk} seedPacket={seedPacket} emptyPacket={emptyPacket} />)
   }
-
-  componentWillUnmount() {
-    clearInterval(this.timer)
-    this.timer = undefined
-  }
-
-  updateSupplierList(data: Array<Supplier>) {
-    this.setState({
-      suppliers: data
-    })
-  }
-
-  updateVarietiesList(data: Array<PlantVariety>) {
-    this.setState({
-      varieties: data
-    })
-  }
-
-  updateSeedList(data: Array<Seed>) {
-    this.setState({
-      seeds: data
-    })
-  }
-
-  updateSeedPacketList(seedPackets: Array<SeedPacketDetails>) {
-    this.setState({
-      seedPackets
-    })
-  }
-
-  async updateData() {
-    this.updateSupplierList(await getSuppliers())
-    this.updateVarietiesList(await getPlantVarieties())
-    this.updateSeedList(await getSeeds())
-    this.updateSeedPacketList(await getSeedPacketsCurrent())
-  }
-
-  render() {
-    const rows = []
-    if (this.state.showSeedPacketAdd) {
-      rows.push(<NewSeedPacketRow key="new" suppliers={this.state.suppliers} varieties={this.state.varieties} seeds={this.state.seeds} done={this.hideNewSeedPacketAdd} />)
-    }
-    for (const s in this.state.seedPackets) {
-      const seedPacketData = this.state.seedPackets[s]
-      rows.push(<SeedPacketRow key={seedPacketData.pk} seedPacket={seedPacketData} />)
-    }
-    return (
-      <Table>
-        <thead>
-          <tr>
-            <td>Seeds</td>
-            <td>Purchase Date</td>
-            <td>Sow By</td>
-            <td>Direct Planted</td>
-            <td>Transplanted/Seed Tray</td>
-            <td>Notes</td>
-            <td>
-              <a href="#" onClick={this.showNewSeedPacketAdd}>
-                +
-              </a>
-            </td>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </Table>
-    )
-  }
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <td>Seeds</td>
+          <td>Purchase Date</td>
+          <td>Sow By</td>
+          <td>Direct Planted</td>
+          <td>Transplanted/Seed Tray</td>
+          <td>Notes</td>
+          <td>
+            <a href="#" onClick={() => setShowSeedPacketAdd(true)}>
+              +
+            </a>
+          </td>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </Table>
+  )
 }
 
 export { SeedSuppliersTable, SeedTable, SeedStockTable }
