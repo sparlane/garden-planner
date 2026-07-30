@@ -1,19 +1,19 @@
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { SeedTray, SeedTrayCell, SeedTrayModel } from '../types/seedtrays'
 import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
 import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from '../api/seedtrays'
 import { Button, Table } from 'react-bootstrap'
-import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation } from '../types/plantings'
+import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
 import { getPlantingSeedTray, getSpecificPlantsBySeedTray, addSpecificPlant, moveSpecificPlant } from '../api/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
 import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
 import { getGardenSquares } from '../api/garden'
-import { queryClient } from '../query'
+import { queryClient, queryKeys } from '../query'
 
 interface SeedTrayDetailsProps {
   seedTrayPk: number
@@ -40,29 +40,6 @@ type SeedTrayMove = {
 type MoveForm = BaseMoveForm & (GardenSquareMove | SeedTrayMove)
 
 type CellPlantingEntry = { cellPlantingPk: number; quantity: number; plantingPk: number }
-
-interface SeedTrayDetailsState {
-  seedTray?: SeedTray
-  seedTrayModel?: SeedTrayModel
-  seedTrayCells?: (SeedTrayCell | undefined)[][]
-  allCells?: Array<SeedTrayCell>
-  allSeedTrays?: Array<SeedTray>
-  plantings?: Array<SeedTrayPlanting>
-  seeds?: { [key: number]: SeedPacketDetails }
-  specificPlants?: Array<SpecificPlant>
-  gardenSquares?: Array<GardenSquare>
-  germinatingCellPlantingPk?: number
-  germinationDate: string
-  germinationNotes: string
-  moveForm?: MoveForm
-  moveCells?: Array<SeedTrayCell>
-  moveCellsLoading?: boolean
-  // derived from specificPlants + plantings
-  cellCurrentPlantMap: { [cellPk: number]: Array<SpecificPlant> }
-  cellPlantingMap: { [cellPk: number]: Array<CellPlantingEntry> }
-  germinatedByCellPlanting: { [cellPlantingPk: number]: number }
-  cellTotals: { [cellPk: number]: number }
-}
 
 function computeCellData(specificPlants: Array<SpecificPlant> | undefined, plantings: Array<SeedTrayPlanting> | undefined) {
   const { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting } = buildCellMaps(specificPlants, plantings)
@@ -352,230 +329,237 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
   </div>
 )
 
-class SeedTrayDetails extends React.Component<SeedTrayDetailsProps, SeedTrayDetailsState> {
-  private _latestMoveTrayRequestPk: number | undefined = undefined
+function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
+  const cache = useQueryClient()
+  const [germinatingCellPlantingPk, setGerminatingCellPlantingPk] = React.useState<number>()
+  const [germinationDate, setGerminationDate] = React.useState(localDatetimeInputValue())
+  const [germinationNotes, setGerminationNotes] = React.useState('')
+  const [moveForm, setMoveForm] = React.useState<MoveForm>()
+  const seedTrayModelsQuery = useQuery({
+    queryKey: queryKeys.seedTrays.models,
+    queryFn: ({ signal }) => getSeedTrayModels(signal)
+  })
+  const seedTraysQuery = useQuery({
+    queryKey: queryKeys.seedTrays.trays,
+    queryFn: ({ signal }) => getSeedTrays(signal)
+  })
+  const seedTrayCellsQuery = useQuery({
+    queryKey: queryKeys.seedTrays.cells(seedTrayPk),
+    queryFn: ({ signal }) => getSeedTrayCells(seedTrayPk, signal)
+  })
+  const plantingsQuery = useQuery({
+    queryKey: queryKeys.plantings.seedTray(seedTrayPk),
+    queryFn: ({ signal }) => getPlantingSeedTray(seedTrayPk, signal)
+  })
+  const seedPacketsQuery = useQuery({
+    queryKey: queryKeys.seeds.packets.current,
+    queryFn: ({ signal }) => getSeedPacketsCurrent(signal)
+  })
+  const specificPlantsQuery = useQuery({
+    queryKey: queryKeys.plantings.specificPlants(seedTrayPk),
+    queryFn: ({ signal }) => getSpecificPlantsBySeedTray(seedTrayPk, signal)
+  })
+  const gardenSquaresQuery = useQuery({
+    queryKey: queryKeys.garden.squares,
+    queryFn: ({ signal }) => getGardenSquares(signal)
+  })
+  const moveTrayPk = moveForm?.locationType === 'seed_tray_cell' ? moveForm.moveSeedTrayPk : undefined
+  const moveCellsQuery = useQuery({
+    queryKey: queryKeys.seedTrays.cells(moveTrayPk ?? 0),
+    queryFn: ({ signal }) => getSeedTrayCells(moveTrayPk as number, signal),
+    enabled: Boolean(moveTrayPk)
+  })
+  const germinationMutation = useMutation({
+    mutationFn: addSpecificPlant,
+    onSuccess: () =>
+      Promise.all([
+        cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlants(seedTrayPk) }),
+        cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays })
+      ])
+  })
+  const moveMutation = useMutation({
+    mutationFn: ({ plantPk, move }: { plantPk: number; move: SpecificPlantMove }) => moveSpecificPlant(plantPk, move),
+    onSuccess: () =>
+      Promise.all([
+        cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+        cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
+        cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
+        cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
+      ])
+  })
 
-  constructor(props: SeedTrayDetailsProps) {
-    super(props)
-    this.state = {
-      germinationDate: localDatetimeInputValue(),
-      germinationNotes: '',
-      cellCurrentPlantMap: {},
-      cellPlantingMap: {},
-      germinatedByCellPlanting: {},
-      cellTotals: {}
-    }
-  }
+  const seedTrayModels = seedTrayModelsQuery.data ?? []
+  const seedTrays = seedTraysQuery.data ?? []
+  const allCells = seedTrayCellsQuery.data ?? []
+  const plantings = plantingsQuery.data ?? []
+  const seedPacketDetails = seedPacketsQuery.data ?? []
+  const specificPlants = specificPlantsQuery.data ?? []
+  const gardenSquares = gardenSquaresQuery.data ?? []
+  const seedTray = seedTrays.find((tray) => tray.pk === seedTrayPk)
+  const seedTrayModel = seedTrayModels.find((model) => model.pk === seedTray?.model)
+  const seedTrayCells = buildCellGrid(seedTrayModel, allCells)
+  const seeds = seedPacketDetails.reduce<Record<number, SeedPacketDetails>>((packets, packet) => {
+    packets[packet.pk] = packet
+    return packets
+  }, {})
+  const { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting, cellTotals } = computeCellData(specificPlants, plantings)
+  const isLoading = [seedTrayModelsQuery, seedTraysQuery, seedTrayCellsQuery, plantingsQuery, seedPacketsQuery, specificPlantsQuery, gardenSquaresQuery].some(
+    (query) => query.isPending
+  )
 
-  async componentDidMount() {
-    const [seedTrayModels, seedTrays, seedTrayCells, seedTrayPlantings, seedPacketDetails, specificPlants, gardenSquares] = await Promise.all([
-      getSeedTrayModels(),
-      getSeedTrays(),
-      getSeedTrayCells(this.props.seedTrayPk),
-      getPlantingSeedTray(this.props.seedTrayPk),
-      getSeedPacketsCurrent(),
-      getSpecificPlantsBySeedTray(this.props.seedTrayPk),
-      getGardenSquares()
-    ])
-    const seedTray = seedTrays.find((t) => t.pk === this.props.seedTrayPk)
-    const seedTrayModel = seedTrayModels.find((m) => m.pk === seedTray?.model)
-    this.setState({
-      seedTray,
-      seedTrayModel,
-      plantings: seedTrayPlantings,
-      seedTrayCells: buildCellGrid(seedTrayModel, seedTrayCells),
-      allCells: seedTrayCells,
-      seeds: seedPacketDetails.reduce((acc: { [key: number]: SeedPacketDetails }, seed) => {
-        acc[seed.pk] = seed
-        return acc
-      }, {}),
-      specificPlants,
-      gardenSquares,
-      allSeedTrays: seedTrays,
-      ...computeCellData(specificPlants, seedTrayPlantings)
-    })
-  }
-
-  async refreshPlants() {
-    const specificPlants = await getSpecificPlantsBySeedTray(this.props.seedTrayPk)
-    this.setState((prev) => ({ specificPlants, ...computeCellData(specificPlants, prev.plantings) }))
-  }
-
-  async handleRecordGermination() {
-    const { germinatingCellPlantingPk, germinationDate, germinationNotes } = this.state
+  async function handleRecordGermination() {
     if (!germinatingCellPlantingPk) return
     const parsedDate = parseLocalDatetimeInput(germinationDate)
     if (!parsedDate) return
-    await addSpecificPlant({
+    await germinationMutation.mutateAsync({
       cell_planting: germinatingCellPlantingPk,
       germinated: parsedDate.toISOString(),
       notes: germinationNotes || undefined
     })
-    await this.refreshPlants()
-    this.setState({ germinatingCellPlantingPk: undefined, germinationNotes: '' })
+    setGerminatingCellPlantingPk(undefined)
+    setGerminationNotes('')
   }
 
-  async handleRecordMove() {
-    const { moveForm } = this.state
+  async function handleRecordMove() {
     if (!moveForm) return
     const parsedMoveDate = parseLocalDatetimeInput(moveForm.date)
     if (!parsedMoveDate) return
-    const moveIso = parsedMoveDate.toISOString()
-    await moveSpecificPlant(moveForm.plantPk, {
-      location_type: moveForm.locationType,
-      seed_tray_cell: moveForm.locationType === 'seed_tray_cell' ? moveForm.seedTrayCellPk : undefined,
-      garden_square: moveForm.locationType === 'garden_square' ? moveForm.gardenSquarePk : undefined,
-      started: moveIso,
-      notes: moveForm.notes || undefined
+    await moveMutation.mutateAsync({
+      plantPk: moveForm.plantPk,
+      move: {
+        location_type: moveForm.locationType,
+        seed_tray_cell: moveForm.locationType === 'seed_tray_cell' ? moveForm.seedTrayCellPk : undefined,
+        garden_square: moveForm.locationType === 'garden_square' ? moveForm.gardenSquarePk : undefined,
+        started: parsedMoveDate.toISOString(),
+        notes: moveForm.notes || undefined
+      }
     })
-    await this.refreshPlants()
-    this.setState({ moveForm: undefined })
+    setMoveForm(undefined)
   }
 
-  openMoveForm(plant: SpecificPlant) {
+  function openMoveForm(plant: SpecificPlant) {
     const current = currentLocation(plant)
-    this.setState({
-      moveForm: {
-        plantPk: plant.pk,
-        currentLocationPk: current?.pk,
-        locationType: 'garden_square',
-        gardenSquarePk: undefined,
-        date: localDatetimeInputValue(),
-        notes: ''
-      },
-      moveCells: undefined,
-      moveCellsLoading: false
+    setMoveForm({
+      plantPk: plant.pk,
+      currentLocationPk: current?.pk,
+      locationType: 'garden_square',
+      gardenSquarePk: undefined,
+      date: localDatetimeInputValue(),
+      notes: ''
     })
   }
 
-  async handleMoveTrayChange(rawValue: string) {
-    if (!rawValue) {
-      this._latestMoveTrayRequestPk = undefined
-      this.setState((prev) => {
-        if (!prev.moveForm || prev.moveForm.locationType !== 'seed_tray_cell') return null
-        return { moveForm: { ...prev.moveForm, moveSeedTrayPk: undefined, seedTrayCellPk: undefined }, moveCells: undefined, moveCellsLoading: false }
-      })
-      return
-    }
-    const trayPk = Number(rawValue)
-    this._latestMoveTrayRequestPk = trayPk
-    this.setState((prev) => {
-      if (!prev.moveForm || prev.moveForm.locationType !== 'seed_tray_cell') return null
-      return { moveForm: { ...prev.moveForm, moveSeedTrayPk: trayPk, seedTrayCellPk: undefined }, moveCells: undefined, moveCellsLoading: true }
+  function handleMoveTrayChange(rawValue: string) {
+    setMoveForm((currentForm) => {
+      if (!currentForm || currentForm.locationType !== 'seed_tray_cell') return currentForm
+      return {
+        ...currentForm,
+        moveSeedTrayPk: rawValue ? Number(rawValue) : undefined,
+        seedTrayCellPk: undefined
+      }
     })
-    const cells = await getSeedTrayCells(trayPk)
-    if (this._latestMoveTrayRequestPk === trayPk) {
-      this.setState({ moveCells: cells, moveCellsLoading: false })
-    }
   }
 
-  locationLabel(loc: SpecificPlantLocation): string {
-    if (loc.location_type === 'seed_tray_cell') {
-      const cell = this.state.allCells?.find((c) => c.pk === loc.seed_tray_cell)
-      return cell ? `Cell (${cell.x_position},${cell.y_position})` : `Cell #${loc.seed_tray_cell}`
+  function locationLabel(location: SpecificPlantLocation): string {
+    if (location.location_type === 'seed_tray_cell') {
+      const cell = allCells.find((candidate) => candidate.pk === location.seed_tray_cell)
+      return cell ? `Cell (${cell.x_position},${cell.y_position})` : `Cell #${location.seed_tray_cell}`
     }
-    const sq = this.state.gardenSquares?.find((s) => s.pk === loc.garden_square)
-    return sq ? sq.name : `Square #${loc.garden_square}`
+    const square = gardenSquares.find((candidate) => candidate.pk === location.garden_square)
+    return square ? square.name : `Square #${location.garden_square}`
   }
 
-  render() {
-    const { seedTray, seedTrayModel, seedTrayCells, germinatingCellPlantingPk, moveForm, cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting, cellTotals } = this.state
-    if (!seedTray) {
-      return <div>Loading...</div>
-    }
-
-    return (
-      <div>
-        <h1>Seed Tray Details (ID: {seedTray.pk})</h1>
-        <p>
-          Model: {seedTrayModel?.identifier} ({seedTrayModel?.description})
-        </p>
-        <p>Created: {formatDate(seedTray.created)}</p>
-        <p>Notes: {seedTray.notes}</p>
-        Plantings:
-        <Table border={1} cellPadding={5} cellSpacing={0}>
-          <thead>
-            <tr>
-              <th>Planting ID</th>
-              <th>Planted On</th>
-              <th>Quantity</th>
-              <th>Seeds Used</th>
-              <th>Notes</th>
-              <th>Removed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {this.state.plantings?.map((planting) => {
-              const seeds = this.state.seeds?.[planting.seeds_used]
-              return (
-                <tr key={planting.pk}>
-                  <td>{planting.pk}</td>
-                  <td>{formatDate(planting.planted)}</td>
-                  <td>{planting.quantity}</td>
-                  <td>
-                    {seeds?.plant} - {seeds?.variety}
-                  </td>
-                  <td>{planting.notes}</td>
-                  <td>{planting.removed ? 'Yes' : ''}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </Table>
-        <Table border={2} cellPadding={5} cellSpacing={0}>
-          <tbody>
-            {seedTrayModel &&
-              seedTrayCells?.map((row, r) => (
-                <tr key={r}>
-                  {row.map((cell, c) => (
-                    <SeedTrayCellView
-                      key={c}
-                      cell={cell}
-                      total={cell ? cellTotals[cell.pk] || 0 : 0}
-                      entries={cell ? (cellPlantingMap[cell.pk] ?? []) : []}
-                      plants={cell ? (cellCurrentPlantMap[cell.pk] ?? []) : []}
-                      germinatedByCellPlanting={germinatedByCellPlanting}
-                      germinatingCellPlantingPk={germinatingCellPlantingPk}
-                      onToggleGermination={(pk) =>
-                        this.setState((prev) => ({
-                          germinatingCellPlantingPk: prev.germinatingCellPlantingPk === pk ? undefined : pk
-                        }))
-                      }
-                      onOpenMove={(plant) => this.openMoveForm(plant)}
-                      locationLabel={(loc) => this.locationLabel(loc)}
-                    />
-                  ))}
-                </tr>
-              ))}
-          </tbody>
-        </Table>
-        {germinatingCellPlantingPk && (
-          <GerminationForm
-            cellPlantingPk={germinatingCellPlantingPk}
-            date={this.state.germinationDate}
-            notes={this.state.germinationNotes}
-            onChangeDate={(value) => this.setState({ germinationDate: value })}
-            onChangeNotes={(value) => this.setState({ germinationNotes: value })}
-            onSave={() => this.handleRecordGermination()}
-            onCancel={() => this.setState({ germinatingCellPlantingPk: undefined })}
-          />
-        )}
-        {moveForm && (
-          <MovePlantForm
-            form={moveForm}
-            gardenSquares={this.state.gardenSquares}
-            allSeedTrays={this.state.allSeedTrays}
-            moveCells={this.state.moveCells}
-            moveCellsLoading={this.state.moveCellsLoading}
-            onChange={(form) => this.setState({ moveForm: form })}
-            onChangeTray={(value) => this.handleMoveTrayChange(value)}
-            onSave={() => this.handleRecordMove()}
-            onCancel={() => this.setState({ moveForm: undefined })}
-          />
-        )}
-      </div>
-    )
+  if (isLoading || !seedTray) {
+    return <div>Loading...</div>
   }
+
+  return (
+    <div>
+      <h1>Seed Tray Details (ID: {seedTray.pk})</h1>
+      <p>
+        Model: {seedTrayModel?.identifier} ({seedTrayModel?.description})
+      </p>
+      <p>Created: {formatDate(seedTray.created)}</p>
+      <p>Notes: {seedTray.notes}</p>
+      Plantings:
+      <Table border={1} cellPadding={5} cellSpacing={0}>
+        <thead>
+          <tr>
+            <th>Planting ID</th>
+            <th>Planted On</th>
+            <th>Quantity</th>
+            <th>Seeds Used</th>
+            <th>Notes</th>
+            <th>Removed</th>
+          </tr>
+        </thead>
+        <tbody>
+          {plantings.map((planting) => {
+            const packet = seeds[planting.seeds_used]
+            return (
+              <tr key={planting.pk}>
+                <td>{planting.pk}</td>
+                <td>{formatDate(planting.planted)}</td>
+                <td>{planting.quantity}</td>
+                <td>
+                  {packet?.plant} - {packet?.variety}
+                </td>
+                <td>{planting.notes}</td>
+                <td>{planting.removed ? 'Yes' : ''}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </Table>
+      <Table border={2} cellPadding={5} cellSpacing={0}>
+        <tbody>
+          {seedTrayModel &&
+            seedTrayCells.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {row.map((cell, cellIndex) => (
+                  <SeedTrayCellView
+                    key={cellIndex}
+                    cell={cell}
+                    total={cell ? cellTotals[cell.pk] || 0 : 0}
+                    entries={cell ? (cellPlantingMap[cell.pk] ?? []) : []}
+                    plants={cell ? (cellCurrentPlantMap[cell.pk] ?? []) : []}
+                    germinatedByCellPlanting={germinatedByCellPlanting}
+                    germinatingCellPlantingPk={germinatingCellPlantingPk}
+                    onToggleGermination={(cellPlantingPk) => setGerminatingCellPlantingPk((currentPk) => (currentPk === cellPlantingPk ? undefined : cellPlantingPk))}
+                    onOpenMove={openMoveForm}
+                    locationLabel={locationLabel}
+                  />
+                ))}
+              </tr>
+            ))}
+        </tbody>
+      </Table>
+      {germinatingCellPlantingPk && (
+        <GerminationForm
+          cellPlantingPk={germinatingCellPlantingPk}
+          date={germinationDate}
+          notes={germinationNotes}
+          onChangeDate={setGerminationDate}
+          onChangeNotes={setGerminationNotes}
+          onSave={handleRecordGermination}
+          onCancel={() => setGerminatingCellPlantingPk(undefined)}
+        />
+      )}
+      {moveForm && (
+        <MovePlantForm
+          form={moveForm}
+          gardenSquares={gardenSquares}
+          allSeedTrays={seedTrays}
+          moveCells={moveCellsQuery.data}
+          moveCellsLoading={moveCellsQuery.isPending}
+          onChange={setMoveForm}
+          onChangeTray={handleMoveTrayChange}
+          onSave={handleRecordMove}
+          onCancel={() => setMoveForm(undefined)}
+        />
+      )}
+    </div>
+  )
 }
 
 function showSeedTrayDetails(elem: string, seedTrayPk: number) {
