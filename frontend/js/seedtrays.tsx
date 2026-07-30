@@ -4,14 +4,16 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import { Table } from 'react-bootstrap'
 import Select from 'react-select'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { SeedTrayModel, SeedTray, SeedTrayModelCreate, SeedTrayCreate } from './types/seedtrays'
+import { SeedTrayModel, SeedTrayModelCreate, SeedTrayCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray } from './api/seedtrays'
 import { formatDate } from './utils'
-import { NoProps } from './types/others'
+import { queryKeys } from './query'
 
 interface SeedTrayModelNewProps {
   done: () => void
+  createModel: (data: SeedTrayModelCreate) => Promise<void>
 }
 
 class SeedTrayModelNew extends React.Component<SeedTrayModelNewProps, SeedTrayModelCreate> {
@@ -38,8 +40,9 @@ class SeedTrayModelNew extends React.Component<SeedTrayModelNewProps, SeedTrayMo
     this.setState({ [field]: parseInt(event.target.value, 10) || 0 } as Pick<SeedTrayModelCreate, typeof field>)
   }
 
-  private createSeedTrayModel = () => {
-    addSeedTrayModel(this.state).then((response) => response.ok && this.props.done())
+  private createSeedTrayModel = async () => {
+    await this.props.createModel(this.state)
+    this.props.done()
   }
 
   render() {
@@ -72,72 +75,57 @@ class SeedTrayModelNew extends React.Component<SeedTrayModelNewProps, SeedTrayMo
   }
 }
 
-interface SeedTrayModelsTableState {
-  showAddRow: boolean
-  seedTrayModels: Array<SeedTrayModel>
-}
+function SeedTrayModelsTable() {
+  const queryClient = useQueryClient()
+  const [showAddRow, setShowAddRow] = React.useState(false)
+  const { data: seedTrayModels = [] } = useQuery({
+    queryKey: queryKeys.seedTrays.models,
+    queryFn: ({ signal }) => getSeedTrayModels(signal)
+  })
+  const modelMutation = useMutation({
+    mutationFn: addSeedTrayModel,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.models })
+  })
 
-class SeedTrayModelsTable extends React.Component<NoProps, SeedTrayModelsTableState> {
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      showAddRow: false,
-      seedTrayModels: []
-    }
+  async function createModel(data: SeedTrayModelCreate) {
+    await modelMutation.mutateAsync(data)
   }
 
-  componentDidMount() {
-    this.fetchSeedTrayModels()
-  }
-
-  private hideAddRow = () => {
-    this.setState({ showAddRow: false })
-    this.fetchSeedTrayModels()
-  }
-
-  private showAddRow = () => this.setState({ showAddRow: true })
-
-  private fetchSeedTrayModels = async () => {
-    this.setState({ seedTrayModels: await getSeedTrayModels() })
-  }
-
-  render() {
-    return (
-      <Table>
-        <thead>
-          <tr>
-            <th>
-              ID<button onClick={this.showAddRow}>+</button>
-            </th>
-            <th>Name</th>
-            <th>Description</th>
-            <th>Size mm (cells)</th>
-            <th>Cell Size (ml)</th>
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <th>
+            ID<button onClick={() => setShowAddRow(true)}>+</button>
+          </th>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Size mm (cells)</th>
+          <th>Cell Size (ml)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {showAddRow && <SeedTrayModelNew key="add" createModel={createModel} done={() => setShowAddRow(false)} />}
+        {seedTrayModels.map((model) => (
+          <tr key={model.pk}>
+            <td>{model.pk}</td>
+            <td>{model.identifier}</td>
+            <td>{model.description}</td>
+            <td>
+              {model.x_size}x{model.y_size}x{model.height} ({model.x_cells}x{model.y_cells})
+            </td>
+            <td>{model.cell_size_ml}</td>
           </tr>
-        </thead>
-        <tbody>
-          {this.state.showAddRow && <SeedTrayModelNew key="add" done={this.hideAddRow} />}
-          {this.state.seedTrayModels.map((model) => (
-            <tr key={model.pk}>
-              <td>{model.pk}</td>
-              <td>{model.identifier}</td>
-              <td>{model.description}</td>
-              <td>
-                {model.x_size}x{model.y_size}x{model.height} ({model.x_cells}x{model.y_cells})
-              </td>
-              <td>{model.cell_size_ml}</td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-    )
-  }
+        ))}
+      </tbody>
+    </Table>
+  )
 }
 
 interface SeedTrayAddProps {
   done: () => void
   models: Array<SeedTrayModel>
+  createTray: (data: SeedTrayCreate) => Promise<void>
 }
 
 class SeedTrayAdd extends React.Component<SeedTrayAddProps, SeedTrayCreate> {
@@ -158,11 +146,12 @@ class SeedTrayAdd extends React.Component<SeedTrayAddProps, SeedTrayCreate> {
     this.setState({ notes: event.target.value })
   }
 
-  private createSeedTray = () => {
+  private createSeedTray = async () => {
     if (!this.state.model) {
       return
     }
-    addSeedTray(this.state).then((response) => response.ok && this.props.done())
+    await this.props.createTray(this.state)
+    this.props.done()
   }
 
   render() {
@@ -186,76 +175,57 @@ class SeedTrayAdd extends React.Component<SeedTrayAddProps, SeedTrayCreate> {
   }
 }
 
-interface SeedTraysTableState {
-  showAddRow: boolean
-  seedTrays: Array<SeedTray>
-  seedTrayModelList: Array<SeedTrayModel>
-  seedTrayModels: { [key: number]: SeedTrayModel }
-}
+function SeedTraysTable() {
+  const queryClient = useQueryClient()
+  const [showAddRow, setShowAddRow] = React.useState(false)
+  const { data: seedTrays = [] } = useQuery({
+    queryKey: queryKeys.seedTrays.trays,
+    queryFn: ({ signal }) => getSeedTrays(signal)
+  })
+  const { data: seedTrayModels = [] } = useQuery({
+    queryKey: queryKeys.seedTrays.models,
+    queryFn: ({ signal }) => getSeedTrayModels(signal)
+  })
+  const trayMutation = useMutation({
+    mutationFn: addSeedTray,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.trays })
+  })
+  const seedTrayModelsMap = seedTrayModels.reduce<Record<number, SeedTrayModel>>((models, model) => {
+    models[model.pk] = model
+    return models
+  }, {})
 
-class SeedTraysTable extends React.Component<NoProps, SeedTraysTableState> {
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      showAddRow: false,
-      seedTrays: [],
-      seedTrayModelList: [],
-      seedTrayModels: {}
-    }
+  async function createTray(data: SeedTrayCreate) {
+    await trayMutation.mutateAsync(data)
   }
 
-  componentDidMount() {
-    this.fetchSeedTrays()
-  }
-
-  private showAddRow = () => this.setState({ showAddRow: true })
-
-  private hideAddRow = () => {
-    this.setState({ showAddRow: false })
-    this.fetchSeedTrays()
-  }
-
-  private fetchSeedTrays = async () => {
-    const [seedTraysData, seedTrayModelsData] = (await Promise.all([getSeedTrays(), getSeedTrayModels()])) as [Array<SeedTray>, Array<SeedTrayModel>]
-
-    const seedTrayModelsMap: { [key: number]: SeedTrayModel } = seedTrayModelsData.reduce((acc: { [key: number]: SeedTrayModel }, model: SeedTrayModel) => {
-      acc[model.pk] = model
-      return acc
-    }, {})
-
-    this.setState({ seedTrays: seedTraysData, seedTrayModels: seedTrayModelsMap, seedTrayModelList: seedTrayModelsData })
-  }
-
-  render() {
-    return (
-      <Table>
-        <thead>
-          <tr>
-            <th>
-              ID<button onClick={this.showAddRow}>+</button>
-            </th>
-            <th>Model</th>
-            <th>Created</th>
-            <th>Notes</th>
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <th>
+            ID<button onClick={() => setShowAddRow(true)}>+</button>
+          </th>
+          <th>Model</th>
+          <th>Created</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {showAddRow && <SeedTrayAdd key="add" createTray={createTray} done={() => setShowAddRow(false)} models={seedTrayModels} />}
+        {seedTrays.map((tray) => (
+          <tr key={tray.pk}>
+            <td>
+              <a href={`/seedtrays/seedtray/${tray.pk}/`}>{tray.pk}</a>
+            </td>
+            <td>{tray.model && seedTrayModelsMap[tray.model]?.identifier}</td>
+            <td>{formatDate(tray.created)}</td>
+            <td>{tray.notes}</td>
           </tr>
-        </thead>
-        <tbody>
-          {this.state.showAddRow && <SeedTrayAdd key="add" done={this.hideAddRow} models={this.state.seedTrayModelList} />}
-          {this.state.seedTrays.map((tray) => (
-            <tr key={tray.pk}>
-              <td>
-                <a href={`/seedtrays/seedtray/${tray.pk}/`}>{tray.pk}</a>
-              </td>
-              <td>{tray.model && this.state.seedTrayModels[tray.model]?.identifier}</td>
-              <td>{formatDate(tray.created)}</td>
-              <td>{tray.notes}</td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-    )
-  }
+        ))}
+      </tbody>
+    </Table>
+  )
 }
 
 export { SeedTrayModelsTable, SeedTraysTable }
