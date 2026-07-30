@@ -1,8 +1,8 @@
 import { Supplier, SupplierCreate } from '../types/suppliers'
 import { csrfPost, fetchAsJson } from '../utils'
 
-function getSuppliers(): Promise<Array<Supplier>> {
-  return fetchAsJson<Array<Supplier>>('/supplies/supplier/')
+function getSuppliers(signal?: AbortSignal): Promise<Array<Supplier>> {
+  return fetchAsJson<Array<Supplier>>('/supplies/supplier/', signal)
 }
 
 function addSupplier(supplier: SupplierCreate) {

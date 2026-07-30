@@ -17,6 +17,7 @@
   "license": "",
   "description": "",
   "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
     "bootstrap": "^5.3.3",
     "esbuild": "^0.28.0",
     "esbuild-config": "^1.0.1",

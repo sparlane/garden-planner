@@ -1,20 +1,20 @@
 import { GardenArea, GardenBed, GardenRow, GardenSquare } from '../types/garden'
 import { fetchAsJson } from '../utils'
 
-async function getGardenAreas(): Promise<Array<GardenArea>> {
-  return fetchAsJson<Array<GardenArea>>('/garden/areas/')
+async function getGardenAreas(signal?: AbortSignal): Promise<Array<GardenArea>> {
+  return fetchAsJson<Array<GardenArea>>('/garden/areas/', signal)
 }
 
-async function getGardenBeds(): Promise<Array<GardenBed>> {
-  return fetchAsJson<Array<GardenBed>>('/garden/beds/')
+async function getGardenBeds(signal?: AbortSignal): Promise<Array<GardenBed>> {
+  return fetchAsJson<Array<GardenBed>>('/garden/beds/', signal)
 }
 
-async function getGardenRows(): Promise<Array<GardenRow>> {
-  return fetchAsJson<Array<GardenRow>>('/garden/rows/')
+async function getGardenRows(signal?: AbortSignal): Promise<Array<GardenRow>> {
+  return fetchAsJson<Array<GardenRow>>('/garden/rows/', signal)
 }
 
-async function getGardenSquares(): Promise<Array<GardenSquare>> {
-  return fetchAsJson<Array<GardenSquare>>('/garden/squares/')
+async function getGardenSquares(signal?: AbortSignal): Promise<Array<GardenSquare>> {
+  return fetchAsJson<Array<GardenSquare>>('/garden/squares/', signal)
 }
 
 export { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares }
