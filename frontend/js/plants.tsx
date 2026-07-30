@@ -3,13 +3,15 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
 import { Table, Button } from 'react-bootstrap'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { Plant, PlantCreate, PlantFamily, PlantVariety, PlantVarietyCreate } from './types/plants'
+import { Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
 import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties } from './api/plants'
-import { NoProps } from './types/others'
+import { queryKeys } from './query'
 
 interface NewPlantFamilyRowProps {
   done: () => void
+  createFamily: (data: PlantFamilyCreate) => Promise<void>
 }
 
 interface NewPlantFamilyRowState {
@@ -43,11 +45,12 @@ class NewPlantFamilyRow extends React.Component<NewPlantFamilyRowProps, NewPlant
     this.setState({ notes: value })
   }
 
-  add() {
-    addPlantFamily({
+  async add() {
+    await this.props.createFamily({
       name: this.state.name,
       notes: this.state.notes
-    }).then(this.props.done)
+    })
+    this.props.done()
   }
 
   render() {
@@ -111,6 +114,7 @@ class PlantFamilyRow extends React.Component<PlantFamilyRowProps> {
 
 interface NewPlantRowProps {
   done: () => void
+  createPlant: (data: PlantCreate) => Promise<void>
   familyName: string
   familyId: number
 }
@@ -186,7 +190,7 @@ class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
     this.setState({ notes: value })
   }
 
-  add() {
+  async add() {
     const data: PlantCreate = {
       family: this.props.familyId,
       name: this.state.name,
@@ -201,7 +205,8 @@ class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
     if (this.state.per_square_foot !== undefined) {
       data.plants_per_square_foot = this.state.per_square_foot
     }
-    addPlant(data).then(this.props.done)
+    await this.props.createPlant(data)
+    this.props.done()
   }
 
   render() {
@@ -271,6 +276,7 @@ class PlantRow extends React.Component<PlantRowProps> {
 
 interface NewPlantVarietyRowProps {
   done: () => void
+  createVariety: (data: PlantVarietyCreate) => Promise<void>
   familyName: string
   plantName: string
   plantId: number
@@ -403,7 +409,7 @@ class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPla
     this.setState({ notes: value })
   }
 
-  add() {
+  async add() {
     const data: PlantVarietyCreate = {
       plant: this.props.plantId,
       name: this.state.name,
@@ -430,7 +436,8 @@ class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPla
     if (this.state.maturity_days_max !== undefined) {
       data.maturity_days_max = this.state.maturity_days_max
     }
-    addPlantVariety(data).then(this.props.done)
+    await this.props.createVariety(data)
+    this.props.done()
   }
 
   render() {
@@ -496,163 +503,101 @@ class PlantVarietyRow extends React.Component<PlantVarietyRowProps> {
   }
 }
 
-interface PlantsViewState {
-  showFamilyAdd: boolean
-  showPlantAdd?: number
-  showVarietyAdd?: number
-  families: Array<PlantFamily>
-  plants: Array<Plant>
-  varieties: Array<PlantVariety>
-}
+function PlantsView() {
+  const queryClient = useQueryClient()
+  const [showFamilyAdd, setShowFamilyAdd] = React.useState(false)
+  const [showPlantAdd, setShowPlantAdd] = React.useState<number>()
+  const [showVarietyAdd, setShowVarietyAdd] = React.useState<number>()
+  const { data: families = [] } = useQuery({
+    queryKey: queryKeys.plants.families,
+    queryFn: ({ signal }) => getPlantFamilies(signal)
+  })
+  const { data: plants = [] } = useQuery({
+    queryKey: queryKeys.plants.plants,
+    queryFn: ({ signal }) => getPlants(signal)
+  })
+  const { data: varieties = [] } = useQuery({
+    queryKey: queryKeys.plants.varieties,
+    queryFn: ({ signal }) => getPlantVarieties(signal)
+  })
+  const familyMutation = useMutation({
+    mutationFn: addPlantFamily,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.families })
+  })
+  const plantMutation = useMutation({
+    mutationFn: addPlant,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.plants })
+  })
+  const varietyMutation = useMutation({
+    mutationFn: addPlantVariety,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.varieties })
+  })
 
-class PlantsView extends React.Component<NoProps, PlantsViewState> {
-  timer?: number
+  async function createFamily(data: PlantFamilyCreate) {
+    await familyMutation.mutateAsync(data)
+  }
 
-  constructor(props: NoProps) {
-    super(props)
+  async function createPlant(data: PlantCreate) {
+    await plantMutation.mutateAsync(data)
+  }
 
-    this.state = {
-      showFamilyAdd: false,
-      showPlantAdd: undefined,
-      showVarietyAdd: undefined,
-      families: [],
-      plants: [],
-      varieties: []
+  async function createVariety(data: PlantVarietyCreate) {
+    await varietyMutation.mutateAsync(data)
+  }
+
+  const rows = []
+  if (showFamilyAdd) {
+    rows.push(<NewPlantFamilyRow createFamily={createFamily} done={() => setShowFamilyAdd(false)} key="family-add" />)
+  }
+  for (const familyData of families) {
+    rows.push(<PlantFamilyRow family={familyData} key={'family-' + familyData.pk} addNewPlant={setShowPlantAdd} />)
+    if (showPlantAdd === familyData.pk) {
+      rows.push(<NewPlantRow createPlant={createPlant} done={() => setShowPlantAdd(undefined)} familyId={familyData.pk} familyName={familyData.name} key="plant-add" />)
     }
-
-    this.showNewFamilyAdd = this.showNewFamilyAdd.bind(this)
-    this.hideNewFamilyAdd = this.hideNewFamilyAdd.bind(this)
-
-    this.showNewPlantAdd = this.showNewPlantAdd.bind(this)
-    this.hideNewPlantAdd = this.hideNewPlantAdd.bind(this)
-
-    this.showNewVarietyAdd = this.showNewVarietyAdd.bind(this)
-    this.hideNewVarietyAdd = this.hideNewVarietyAdd.bind(this)
-
-    this.updatePlantFamilyResponse = this.updatePlantFamilyResponse.bind(this)
-    this.updatePlantResponse = this.updatePlantResponse.bind(this)
-    this.updatePlantVarietiesResponse = this.updatePlantVarietiesResponse.bind(this)
-  }
-
-  componentDidMount() {
-    this.updateData()
-    this.timer = setInterval(() => this.updateData(), 10000)
-  }
-
-  componentWillUnmount() {
-    clearInterval(this.timer)
-    this.timer = undefined
-  }
-
-  showNewFamilyAdd() {
-    this.setState({
-      showFamilyAdd: true
-    })
-  }
-
-  hideNewFamilyAdd() {
-    this.setState({
-      showFamilyAdd: false
-    })
-  }
-
-  showNewPlantAdd(familyId: number) {
-    this.setState({
-      showPlantAdd: familyId
-    })
-  }
-
-  hideNewPlantAdd() {
-    this.setState({
-      showPlantAdd: undefined
-    })
-  }
-
-  showNewVarietyAdd(plantId: number) {
-    this.setState({
-      showVarietyAdd: plantId
-    })
-  }
-
-  hideNewVarietyAdd() {
-    this.setState({
-      showVarietyAdd: undefined
-    })
-  }
-
-  updatePlantFamilyResponse(data: Array<PlantFamily>) {
-    this.setState({
-      families: data
-    })
-  }
-
-  updatePlantResponse(data: Array<Plant>) {
-    this.setState({
-      plants: data
-    })
-  }
-
-  updatePlantVarietiesResponse(data: Array<PlantVariety>) {
-    this.setState({
-      varieties: data
-    })
-  }
-
-  async updateData() {
-    this.updatePlantFamilyResponse(await getPlantFamilies())
-    this.updatePlantVarietiesResponse(await getPlantVarieties())
-    this.updatePlantResponse(await getPlants())
-  }
-
-  render() {
-    const rows = []
-    if (this.state.showFamilyAdd) {
-      rows.push(<NewPlantFamilyRow done={this.hideNewFamilyAdd} key="family-add" />)
-    }
-    for (const f in this.state.families) {
-      const familyData = this.state.families[f]
-      rows.push(<PlantFamilyRow family={familyData} key={'family-' + familyData.pk} addNewPlant={this.showNewPlantAdd} />)
-      if (this.state.showPlantAdd === familyData.pk) {
-        rows.push(<NewPlantRow done={this.hideNewPlantAdd} familyId={familyData.pk} familyName={familyData.name} key="plant-add" />)
+    const familyPlants = plants.filter((plant) => plant.family === familyData.pk)
+    for (const plantData of familyPlants) {
+      rows.push(<PlantRow familyName={familyData.name} plant={plantData} key={'plant-' + plantData.pk} addNewPlantVariety={setShowVarietyAdd} />)
+      if (showVarietyAdd === plantData.pk) {
+        rows.push(
+          <NewPlantVarietyRow
+            createVariety={createVariety}
+            done={() => setShowVarietyAdd(undefined)}
+            plantId={plantData.pk}
+            familyName={familyData.name}
+            plantName={plantData.name}
+            key="variety-add"
+          />
+        )
       }
-      const plants = this.state.plants.filter((plant) => plant.family === familyData.pk)
-      for (const p in plants) {
-        const plantData = plants[p]
-        rows.push(<PlantRow familyName={familyData.name} plant={plantData} key={'plant-' + plantData.pk} addNewPlantVariety={this.showNewVarietyAdd} />)
-        if (this.state.showVarietyAdd === plantData.pk) {
-          rows.push(<NewPlantVarietyRow done={this.hideNewVarietyAdd} plantId={plantData.pk} familyName={familyData.name} plantName={plantData.name} key="variety-add" />)
-        }
-        const varieties = this.state.varieties.filter((variety) => variety.plant === plantData.pk)
-        for (const v in varieties) {
-          const varietyData = varieties[v]
-          rows.push(<PlantVarietyRow variety={varietyData} familyName={familyData.name} plantName={plantData.name} key={'variety-' + varietyData.pk} />)
-        }
+      const plantVarieties = varieties.filter((variety) => variety.plant === plantData.pk)
+      for (const varietyData of plantVarieties) {
+        rows.push(<PlantVarietyRow variety={varietyData} familyName={familyData.name} plantName={plantData.name} key={'variety-' + varietyData.pk} />)
       }
     }
-    return (
-      <Table>
-        <thead>
-          <tr>
-            <td>
-              Family{' '}
-              <a href="#" onClick={this.showNewFamilyAdd}>
-                +
-              </a>
-            </td>
-            <td>Plant</td>
-            <td>Variety</td>
-            <td>Spacing (mm)</td>
-            <td>Row Spacing (mm)</td>
-            <td>per sq/ft</td>
-            <td>Germination (days)</td>
-            <td>Maturity (days)</td>
-            <td>Notes</td>
-          </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-      </Table>
-    )
   }
+  return (
+    <Table>
+      <thead>
+        <tr>
+          <td>
+            Family{' '}
+            <a href="#" onClick={() => setShowFamilyAdd(true)}>
+              +
+            </a>
+          </td>
+          <td>Plant</td>
+          <td>Variety</td>
+          <td>Spacing (mm)</td>
+          <td>Row Spacing (mm)</td>
+          <td>per sq/ft</td>
+          <td>Germination (days)</td>
+          <td>Maturity (days)</td>
+          <td>Notes</td>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </Table>
+  )
 }
 
 export { PlantsView }

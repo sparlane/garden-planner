@@ -3,12 +3,14 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
 import Select from 'react-select'
+import { useQuery } from '@tanstack/react-query'
 
-import { GardenArea, GardenBed, GardenSquare, GardenRow } from './types/garden'
+import { GardenArea, GardenBed, GardenSquare } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
-import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
+import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
 import { getPlantingGardenSquaresCurrent } from './api/plantings'
-import { NoProps, SelectOption } from './types/others'
+import { SelectOption } from './types/others'
+import { queryKeys } from './query'
 
 interface GardenAreaDisplayProps {
   area: GardenArea
@@ -140,116 +142,50 @@ class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
   }
 }
 
-interface GardenDisplayState {
-  selectedArea?: number
-  areas: Array<GardenArea>
-  beds: Array<GardenBed>
-  rows: Array<GardenRow>
-  squares: Array<GardenSquare>
-  plantings: Array<GardenSquarePlanting>
-}
+function GardenDisplay() {
+  const [selectedArea, setSelectedArea] = React.useState<number>()
+  const { data: areas = [] } = useQuery({
+    queryKey: queryKeys.garden.areas,
+    queryFn: ({ signal }) => getGardenAreas(signal)
+  })
+  const { data: beds = [] } = useQuery({
+    queryKey: queryKeys.garden.beds,
+    queryFn: ({ signal }) => getGardenBeds(signal)
+  })
+  const { data: squares = [] } = useQuery({
+    queryKey: queryKeys.garden.squares,
+    queryFn: ({ signal }) => getGardenSquares(signal)
+  })
+  const { data: plantings = [] } = useQuery({
+    queryKey: queryKeys.plantings.currentGardenSquares,
+    queryFn: ({ signal }) => getPlantingGardenSquaresCurrent(signal)
+  })
 
-class GardenDisplay extends React.Component<NoProps, GardenDisplayState> {
-  timer?: number
-  constructor(props: NoProps) {
-    super(props)
-
-    this.state = {
-      selectedArea: undefined,
-      areas: [],
-      beds: [],
-      rows: [],
-      squares: [],
-      plantings: []
-    }
-
-    this.updateSelectedGardenArea = this.updateSelectedGardenArea.bind(this)
-    this.updateGardenAreas = this.updateGardenAreas.bind(this)
-    this.updateGardenBeds = this.updateGardenBeds.bind(this)
-    this.updateGardenRows = this.updateGardenRows.bind(this)
-    this.updateGardenSquares = this.updateGardenSquares.bind(this)
-    this.updateGardenSquaresPlanting = this.updateGardenSquaresPlanting.bind(this)
-  }
-
-  componentDidMount() {
-    this.updateData()
-    this.timer = setInterval(() => this.updateData(), 10000)
-  }
-
-  componentWillUnmount() {
-    clearInterval(this.timer)
-    this.timer = undefined
-  }
-
-  updateSelectedGardenArea(selectedGardenArea: SelectOption | null) {
+  function updateSelectedGardenArea(selectedGardenArea: SelectOption | null) {
     const value = selectedGardenArea?.value
 
     if (value === undefined || value === null) {
-      this.setState({ selectedArea: undefined })
+      setSelectedArea(undefined)
     } else {
-      this.setState({ selectedArea: Number(value) })
+      setSelectedArea(Number(value))
     }
   }
 
-  updateGardenAreas(data: Array<GardenArea>) {
-    this.setState({
-      areas: data
-    })
-  }
-
-  updateGardenBeds(data: Array<GardenBed>) {
-    this.setState({
-      beds: data
-    })
-  }
-
-  updateGardenRows(data: Array<GardenRow>) {
-    this.setState({
-      rows: data
-    })
-  }
-
-  updateGardenSquares(data: Array<GardenSquare>) {
-    this.setState({
-      squares: data
-    })
-  }
-
-  updateGardenSquaresPlanting(plantings: Array<GardenSquarePlanting>) {
-    this.setState({
-      plantings
-    })
-  }
-
-  async updateData() {
-    this.updateGardenAreas(await getGardenAreas())
-    this.updateGardenBeds(await getGardenBeds())
-    this.updateGardenRows(await getGardenRows())
-    this.updateGardenSquares(await getGardenSquares())
-    this.updateGardenSquaresPlanting(await getPlantingGardenSquaresCurrent())
-  }
-
-  render() {
-    const areas = []
-    for (const idx in this.state.areas) {
-      const area = this.state.areas[idx]
-      areas.push({ value: area.pk, label: area.name })
+  const areaOptions = areas.map((area) => ({ value: area.pk, label: area.name }))
+  let areaView
+  if (selectedArea !== undefined) {
+    const area = areas.find((candidate) => candidate.pk === selectedArea)
+    if (area) {
+      areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds.filter((bed) => bed.area === area.pk)} squares={squares} plantings={plantings} />
     }
-    let areaView = undefined
-    if (this.state.selectedArea !== undefined) {
-      const area = this.state.areas.find((a) => a.pk === this.state.selectedArea)
-      if (area) {
-        const beds = this.state.beds.filter((b) => b.area === area?.pk)
-        areaView = <GardenAreaDisplay key={area?.pk} area={area} gardenBeds={beds} squares={this.state.squares} plantings={this.state.plantings} />
-      }
-    }
-    return (
-      <>
-        <Select onChange={this.updateSelectedGardenArea} options={areas} value={areas.find((o) => o.value === this.state.selectedArea)} />
-        <div>{areaView}</div>
-      </>
-    )
   }
+
+  return (
+    <>
+      <Select onChange={updateSelectedGardenArea} options={areaOptions} value={areaOptions.find((option) => option.value === selectedArea)} />
+      <div>{areaView}</div>
+    </>
+  )
 }
 
 export { GardenDisplay }
