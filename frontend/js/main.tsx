@@ -3,6 +3,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
+import { QueryClientProvider } from '@tanstack/react-query'
 
 import { GPTopBar } from './menu.js'
 import { PlantsView } from './plants.js'
@@ -11,6 +12,7 @@ import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
 import { ApiErrorAlert } from './api_error_alert.js'
+import { queryClient } from './query.js'
 
 function FrontEndPage() {
   const [selectedView, setSelectedView] = React.useState('gardens')
@@ -51,7 +53,11 @@ function createFrontEnd(elementId: string) {
     throw new Error(`Cannot create frontend: element #${elementId} was not found`)
   }
   const div = ReactDOM.createRoot(element)
-  div.render(<FrontEndPage />)
+  div.render(
+    <QueryClientProvider client={queryClient}>
+      <FrontEndPage />
+    </QueryClientProvider>
+  )
 }
 
 ;(globalThis as Record<string, unknown>).createFrontEnd = createFrontEnd

@@ -15,16 +15,16 @@ import {
   SpecificPlantMove
 } from '../types/plantings'
 
-function getPlantingDirectSowGardenRows(): Promise<Array<GardenRowDirectPlanting>> {
-  return fetchAsJson<Array<GardenRowDirectPlanting>>('/plantings/directsowgardenrow/')
+function getPlantingDirectSowGardenRows(signal?: AbortSignal): Promise<Array<GardenRowDirectPlanting>> {
+  return fetchAsJson<Array<GardenRowDirectPlanting>>('/plantings/directsowgardenrow/', signal)
 }
 
 function addPlantingDirectSowGardenRow(data: GardenRowDirectPlantingCreate) {
   return csrfPost('/plantings/directsowgardenrow/', data)
 }
 
-function getPlantingDirectSowGardenSquares(): Promise<Array<GardenSquareDirectPlanting>> {
-  return fetchAsJson<Array<GardenSquareDirectPlanting>>('/plantings/directsowgardensquare/')
+function getPlantingDirectSowGardenSquares(signal?: AbortSignal): Promise<Array<GardenSquareDirectPlanting>> {
+  return fetchAsJson<Array<GardenSquareDirectPlanting>>('/plantings/directsowgardensquare/', signal)
 }
 
 function addPlantingDirectSowGardenSquare(data: GardenSquareDirectPlantingCreate) {
@@ -37,12 +37,12 @@ function completePlantingDirectSowGardenSquare(plantingPk: number) {
   })
 }
 
-function getPlantingSeedTrays(): Promise<Array<SeedTrayPlanting>> {
-  return fetchAsJson<Array<SeedTrayPlanting>>('/plantings/seedtray/')
+function getPlantingSeedTrays(signal?: AbortSignal): Promise<Array<SeedTrayPlanting>> {
+  return fetchAsJson<Array<SeedTrayPlanting>>('/plantings/seedtray/', signal)
 }
 
-function getPlantingSeedTray(seedTrayPk: number): Promise<Array<SeedTrayPlanting>> {
-  return fetchAsJson<Array<SeedTrayPlanting>>(`/plantings/seedtray-data/${seedTrayPk}/plantings/`)
+function getPlantingSeedTray(seedTrayPk: number, signal?: AbortSignal): Promise<Array<SeedTrayPlanting>> {
+  return fetchAsJson<Array<SeedTrayPlanting>>(`/plantings/seedtray-data/${seedTrayPk}/plantings/`, signal)
 }
 
 function addPlantingSeedTray(data: SeedTrayPlantingCreate) {
@@ -55,8 +55,8 @@ function completePlantingSeedTray(plantingPk: number) {
   })
 }
 
-function getPlantingTransplantedGardenSquares(): Promise<Array<GardenSquareTransplanting>> {
-  return fetchAsJson<Array<GardenSquareTransplanting>>('/plantings/transplantedgardensquare/')
+function getPlantingTransplantedGardenSquares(signal?: AbortSignal): Promise<Array<GardenSquareTransplanting>> {
+  return fetchAsJson<Array<GardenSquareTransplanting>>('/plantings/transplantedgardensquare/', signal)
 }
 
 function completePlantingTransplantedGardenSquare(plantingPk: number) {
@@ -65,16 +65,16 @@ function completePlantingTransplantedGardenSquare(plantingPk: number) {
   })
 }
 
-function getPlantingSeedTrayCurrent(): Promise<Array<SeedTrayPlantingDetails>> {
-  return fetchAsJson<{ plantings: Array<SeedTrayPlantingDetails> }>('/plantings/seedtray/current/').then((data) => data.plantings)
+function getPlantingSeedTrayCurrent(signal?: AbortSignal): Promise<Array<SeedTrayPlantingDetails>> {
+  return fetchAsJson<{ plantings: Array<SeedTrayPlantingDetails> }>('/plantings/seedtray/current/', signal).then((data) => data.plantings)
 }
 
-function getPlantingGardenSquaresCurrent(): Promise<Array<GardenSquarePlanting>> {
-  return fetchAsJson<{ plantings: Array<GardenSquarePlanting> }>('/plantings/garden/squares/current/').then((data) => data.plantings)
+function getPlantingGardenSquaresCurrent(signal?: AbortSignal): Promise<Array<GardenSquarePlanting>> {
+  return fetchAsJson<{ plantings: Array<GardenSquarePlanting> }>('/plantings/garden/squares/current/', signal).then((data) => data.plantings)
 }
 
-function getSpecificPlantsBySeedTray(seedTrayPk: number): Promise<Array<SpecificPlant>> {
-  return fetchAsJson<Array<SpecificPlant>>(`/plantings/seedtray-data/${seedTrayPk}/specificplants/`)
+function getSpecificPlantsBySeedTray(seedTrayPk: number, signal?: AbortSignal): Promise<Array<SpecificPlant>> {
+  return fetchAsJson<Array<SpecificPlant>>(`/plantings/seedtray-data/${seedTrayPk}/specificplants/`, signal)
 }
 
 function addSpecificPlant(data: SpecificPlantCreate): Promise<SpecificPlant> {

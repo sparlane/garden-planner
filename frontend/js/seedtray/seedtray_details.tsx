@@ -1,5 +1,6 @@
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
+import { QueryClientProvider } from '@tanstack/react-query'
 
 import { SeedTray, SeedTrayCell, SeedTrayModel } from '../types/seedtrays'
 import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
@@ -12,6 +13,7 @@ import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
 import { getGardenSquares } from '../api/garden'
+import { queryClient } from '../query'
 
 interface SeedTrayDetailsProps {
   seedTrayPk: number
@@ -583,10 +585,10 @@ function showSeedTrayDetails(elem: string, seedTrayPk: number) {
   }
   const root = ReactDOM.createRoot(element)
   root.render(
-    <>
+    <QueryClientProvider client={queryClient}>
       <ApiErrorAlert />
       <SeedTrayDetails seedTrayPk={seedTrayPk} />
-    </>
+    </QueryClientProvider>
   )
 }
 
