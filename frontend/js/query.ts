@@ -41,6 +41,7 @@ const queryKeys = {
     seedTray: (trayPk: number) => ['plantings', 'seedTrays', trayPk] as const,
     currentSeedTrays: ['plantings', 'currentSeedTrays'] as const,
     currentGardenSquares: ['plantings', 'currentGardenSquares'] as const,
+    specificPlantsAll: ['plantings', 'specificPlants'] as const,
     specificPlants: (trayPk: number) => ['plantings', 'specificPlants', trayPk] as const
   }
 }
