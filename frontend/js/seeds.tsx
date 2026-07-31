@@ -504,7 +504,7 @@ class SeedPacketRow extends React.Component<SeedPacketRowProps> {
         <td>{this.props.seedPacket.sow_by}</td>
         <td>{this.props.seedPacket.seeds_planted_direct}</td>
         <td>
-          {this.props.seedPacket.transplanted_count}/{this.props.seedPacket.seeds_planted_trays}
+          {this.props.seedPacket.transplanted_count} plants / {this.props.seedPacket.seeds_planted_trays} sown
         </td>
         <td>{this.props.seedPacket.notes}</td>
         <td>
@@ -566,7 +566,7 @@ function SeedStockTable() {
           <td>Purchase Date</td>
           <td>Sow By</td>
           <td>Direct Planted</td>
-          <td>Transplanted/Seed Tray</td>
+          <td>Transplanted plants / seeds or clusters sown in trays</td>
           <td>Notes</td>
           <td>
             <a href="#" onClick={() => setShowSeedPacketAdd(true)}>
