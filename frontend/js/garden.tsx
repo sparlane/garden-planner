@@ -24,7 +24,7 @@ function haveSameItems<T>(previousItems: Array<T>, currentItems: Array<T>): bool
 }
 
 class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
-  canvasRef: React.RefObject<HTMLCanvasElement>
+  canvasRef: React.RefObject<HTMLCanvasElement | null>
   outlineWidth: number
 
   constructor(props: GardenAreaDisplayProps) {

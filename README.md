@@ -69,7 +69,7 @@ Tech stack
 Prerequisites
 - Git
 - Python 3.12+ (required by Django 6)
-- Node.js 18+ (required by esbuild) and npm
+- Node.js 22.22+ and npm (required by React Router)
 - Bash-compatible shell for `setup-venv.sh`
 
 Quick start (recommended)

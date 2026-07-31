@@ -4,7 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { HashRouter, Navigate, Route, Routes } from 'react-router'
 
 import { GPTopBar } from './menu.js'
 import { PlantsView } from './plants.js'

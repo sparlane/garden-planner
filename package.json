@@ -13,6 +13,9 @@
     "type": "git",
     "url": "https://github.com/sparlane/garden-planner.git"
   },
+  "engines": {
+    "node": ">=22.22.0"
+  },
   "author": "",
   "license": "",
   "description": "",
@@ -22,19 +25,19 @@
     "esbuild": "^0.28.0",
     "esbuild-config": "^1.0.1",
     "js-cookie": "^3.0.5",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "react-bootstrap": "^2.10.4",
     "react-datetime-picker": "^7.0.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^7.18.2",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.0",
     "react-select": "^5.10.2",
     "typescript-eslint": "^8.50.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.12.0",
     "@types/js-cookie": "^3.0.6",
-    "@types/react": "^18.3.31",
-    "@types/react-dom": "^18.3.7",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "eslint": "^9.12.0",
     "eslint-plugin-react": "^7.37.1",
     "globals": "^17.0.0",
