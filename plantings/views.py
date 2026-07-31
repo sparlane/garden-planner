@@ -31,7 +31,7 @@ def seedtray_current(request):
             specific_plant__cell_planting__seed_tray_planting__in=plantings,
         )
         .values_list('specific_plant__cell_planting__seed_tray_planting_id')
-        .annotate(total=Count('id'))
+        .annotate(total=Count('specific_plant_id', distinct=True))
     )
     germinated_counts = dict(
         SpecificPlant.objects

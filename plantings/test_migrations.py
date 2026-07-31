@@ -139,10 +139,22 @@ class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instanc
         values.__getitem__.assert_called_once_with(slice(None, 20))
 
     def test_capacity_audit_accepts_consistent_rows(self):
-        """Allocation and germination counts within capacity allow deployment."""
+        """Seed allocation totals within the parent sowing allow deployment."""
         migration = import_module(
             'plantings.migrations.0015_audit_seed_allocation_capacity'
         )
+
+        migration.audit_seed_allocation_capacity(django_apps, None)
+
+    def test_capacity_audit_accepts_multigerm_rows(self):
+        """Seedling counts may exceed a cell's sown seed quantity."""
+        migration = import_module(
+            'plantings.migrations.0015_audit_seed_allocation_capacity'
+        )
+        SpecificPlant.objects.bulk_create([
+            SpecificPlant(cell_planting=self.cell_planting),
+            SpecificPlant(cell_planting=self.cell_planting),
+        ])
 
         migration.audit_seed_allocation_capacity(django_apps, None)
 
@@ -186,25 +198,18 @@ class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instanc
         ):
             self.transplant_audit(django_apps, None)
 
-    def test_capacity_audit_reports_parent_and_cell_row_ids(self):
-        """Deployment failures identify both kinds of capacity violation."""
+    def test_capacity_audit_reports_parent_row_ids(self):
+        """Deployment failures identify over-allocated parent sowings."""
         migration = import_module(
             'plantings.migrations.0015_audit_seed_allocation_capacity'
         )
         SeedTrayCellPlanting.objects.filter(pk=self.cell_planting.pk).update(
             quantity=2,
         )
-        SpecificPlant.objects.bulk_create([
-            SpecificPlant(cell_planting=self.cell_planting),
-            SpecificPlant(cell_planting=self.cell_planting),
-        ])
-
         with self.assertRaisesMessage(
             RuntimeError,
             'over-allocated SeedTrayPlanting IDs: '
-            f'[{self.cell_planting.seed_tray_planting_id}]; '
-            'over-germinated SeedTrayCellPlanting IDs: '
-            f'[{self.cell_planting.pk}]',
+            f'[{self.cell_planting.seed_tray_planting_id}]',
         ):
             migration.audit_seed_allocation_capacity(django_apps, None)
 

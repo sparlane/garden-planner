@@ -312,8 +312,8 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             {self.cell.pk: 1, self.other_cell.pk: 1},
         )
 
-    def test_specific_plant_creation_stops_at_cell_capacity(self):
-        """Only allocated seeds can become specific germinated plants."""
+    def test_specific_plant_creation_can_exceed_sown_seed_quantity(self):
+        """A multigerm cluster can produce several specific plants."""
         cell_planting = SeedTrayCellPlanting.objects.create(
             seed_tray_planting=self.original_planting,
             cell=self.cell,
@@ -321,41 +321,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         )
         payload = json.dumps({'cell_planting': cell_planting.pk})
 
-        first_response = self.client.post(
-            '/plantings/specificplants/',
-            data=payload,
-            content_type='application/json',
-        )
-        second_response = self.client.post(
-            '/plantings/specificplants/',
-            data=payload,
-            content_type='application/json',
-        )
-
-        self.assertEqual(first_response.status_code, 201)
-        self.assertEqual(second_response.status_code, 400)
-        self.assertEqual(
-            second_response.json(),
-            {
-                'cell_planting': [
-                    'Germination count cannot exceed this cell allocation.'
-                ],
-            },
-        )
-        self.assertEqual(cell_planting.specific_plants.count(), 1)
-
-    def test_specific_plant_creation_uses_full_larger_capacity(self):
-        """Every slot above one is usable, and the next germination is rejected."""
-        self.original_planting.quantity = 3
-        self.original_planting.save(update_fields=['quantity'])
-        cell_planting = SeedTrayCellPlanting.objects.create(
-            seed_tray_planting=self.original_planting,
-            cell=self.cell,
-            quantity=3,
-        )
-        payload = json.dumps({'cell_planting': cell_planting.pk})
-
-        for expected_count in range(1, 4):
+        for expected_count in range(1, 6):
             with self.subTest(expected_count=expected_count):
                 response = self.client.post(
                     '/plantings/specificplants/',
@@ -369,22 +335,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
                     expected_count,
                 )
 
-        response = self.client.post(
-            '/plantings/specificplants/',
-            data=payload,
-            content_type='application/json',
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(
-            response.json(),
-            {
-                'cell_planting': [
-                    'Germination count cannot exceed this cell allocation.'
-                ],
-            },
-        )
-        self.assertEqual(cell_planting.specific_plants.count(), 3)
+        self.assertEqual(cell_planting.quantity, 1)
 
     def test_specific_plant_patch_allows_mutable_fields(self):
         """Notes can change without altering the plant's origin allocation."""
@@ -445,8 +396,8 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         plant.refresh_from_db()
         self.assertEqual(plant.cell_planting, first_cell_planting)
 
-    def test_allocation_cannot_drop_below_germination_count(self):
-        """Replacement cannot remove capacity already used by plants."""
+    def test_allocation_can_drop_below_germination_count(self):
+        """Allocation quantity remains a seed count, not seedling capacity."""
         self.original_planting.quantity = 2
         self.original_planting.save(update_fields=['quantity'])
         cell_planting = SeedTrayCellPlanting.objects.create(
@@ -470,18 +421,10 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             content_type='application/json',
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(
-            response.json(),
-            {
-                'cell_plantings': [
-                    f'Cell {self.cell.pk} allocation cannot be less than '
-                    'its germinated plant count (2).'
-                ],
-            },
-        )
+        self.assertEqual(response.status_code, 200)
         cell_planting.refresh_from_db()
-        self.assertEqual(cell_planting.quantity, 2)
+        self.assertEqual(cell_planting.quantity, 1)
+        self.assertEqual(cell_planting.specific_plants.count(), 2)
 
     def test_safe_allocation_reduction_preserves_germinated_plant(self):
         """A valid replacement updates the referenced row rather than deleting it."""
@@ -690,8 +633,8 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
 
 
 @skipUnlessDBFeature('has_select_for_update')
-class ConcurrentGerminationCapacityTests(TransactionTestCase):
-    """Real row locks serialize simultaneous final-capacity requests."""
+class ConcurrentGerminationTests(TransactionTestCase):
+    """Concurrent observations can record multiple multigerm seedlings."""
 
     def setUp(self):
         self.user = get_user_model().objects.create_user(username='concurrency-tester')
@@ -742,13 +685,13 @@ class ConcurrentGerminationCapacityTests(TransactionTestCase):
         close_old_connections()
         return response.status_code
 
-    def test_only_one_simultaneous_final_capacity_request_succeeds(self):
-        """The allocation lock prevents concurrent over-germination."""
+    def test_simultaneous_germination_requests_both_succeed(self):
+        """A seed count of one does not reject a second observed seedling."""
         with ThreadPoolExecutor(max_workers=2) as executor:
             statuses = list(executor.map(
                 lambda _index: self._record_germination(),
                 range(2),
             ))
 
-        self.assertEqual(sorted(statuses), [201, 400])
-        self.assertEqual(self.cell_planting.specific_plants.count(), 1)
+        self.assertEqual(statuses, [201, 201])
+        self.assertEqual(self.cell_planting.specific_plants.count(), 2)

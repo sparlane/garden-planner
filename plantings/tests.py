@@ -107,6 +107,43 @@ class TransplantOwnershipCurrentViewTests(TestCase):
         self.assertEqual(garden_plantings[0]['specific_plant_pk'], plant.pk)
         self.assertEqual(garden_plantings[0]['transplanting_pk'], location.pk)
 
+    def test_seed_tray_summary_counts_distinct_multigerm_plants(self):
+        """Repeated garden history does not inflate observed plant totals."""
+        self.planting.quantity = 2
+        self.planting.save(update_fields=['quantity'])
+        cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=self.planting,
+            cell=self.cell,
+            quantity=2,
+        )
+        plants = [
+            make_specific_plant(cell_planting=cell_planting)
+            for _index in range(5)
+        ]
+        for plant in plants:
+            SpecificPlantLocation.objects.create(
+                specific_plant=plant,
+                location_type=SpecificPlantLocation.GARDEN_SQUARE,
+                garden_square=self.square,
+                started=datetime(2026, 1, 1, tzinfo=datetime_timezone.utc),
+                ended=datetime(2026, 1, 2, tzinfo=datetime_timezone.utc),
+            )
+        SpecificPlantLocation.objects.create(
+            specific_plant=plants[0],
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=self.square,
+            started=datetime(2026, 1, 3, tzinfo=datetime_timezone.utc),
+        )
+        self._make_legacy_transplant()
+
+        response = self.client.get('/plantings/seedtray/current/')
+
+        self.assertEqual(response.status_code, 200)
+        summary = response.json()['plantings'][0]
+        self.assertEqual(summary['quantity'], 2)
+        self.assertEqual(summary['germinated_count'], 5)
+        self.assertEqual(summary['transplanted_count'], 5)
+
     def test_legacy_aggregate_can_still_be_completed(self):
         """The compatibility action can retire a legacy aggregate row."""
         transplant = self._make_legacy_transplant()
