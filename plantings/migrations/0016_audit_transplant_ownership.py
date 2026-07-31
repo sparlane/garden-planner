@@ -22,7 +22,10 @@ def audit_transplant_ownership(apps, _schema_editor):
         raise RuntimeError(
             'Transplant ownership audit failed. Repair aggregate '
             'GardenSquareTransplant rows that overlap individual garden '
-            'locations before retrying the migration. Conflicting '
+            'locations before retrying the migration. Inspect each row with '
+            '`python manage.py convert_legacy_transplant ID`, preview its '
+            'conversion with the requested source and history arguments, then '
+            'rerun with `--apply`. Conflicting '
             'GardenSquareTransplant IDs: '
             f'{describe_rows(conflicting_transplants)}'
         )
