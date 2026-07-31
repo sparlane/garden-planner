@@ -4,106 +4,56 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import { Nav, Navbar, NavDropdown } from 'react-bootstrap'
+import { NavLink, useLocation } from 'react-router-dom'
 
-interface GPTopBarProps {
-  setView: (view: string) => void
-}
+function GPTopBar() {
+  const { pathname } = useLocation()
+  const seedsActive = pathname === '/seeds' || pathname.startsWith('/seeds/')
+  const seedTraysActive = pathname === '/seedtrays' || pathname.startsWith('/seedtrays/')
+  const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/')
 
-class GPTopBar extends React.Component<GPTopBarProps> {
-  constructor(props: GPTopBarProps) {
-    super(props)
-
-    this.setGardensView = this.setGardensView.bind(this)
-    this.setPlantsView = this.setPlantsView.bind(this)
-    this.setSeedsSupplierView = this.setSeedsSupplierView.bind(this)
-    this.setSeedsView = this.setSeedsView.bind(this)
-    this.setSeedsStockView = this.setSeedsStockView.bind(this)
-    this.setSeedTrayModelView = this.setSeedTrayModelView.bind(this)
-    this.setSeedTrayView = this.setSeedTrayView.bind(this)
-    this.setPlantingSeedTrayView = this.setPlantingSeedTrayView.bind(this)
-    this.setPlantingGardenSquareView = this.setPlantingGardenSquareView.bind(this)
-  }
-
-  setGardensView() {
-    this.props.setView('gardens')
-  }
-
-  setPlantsView() {
-    this.props.setView('plants')
-  }
-
-  setSeedsSupplierView() {
-    this.props.setView('seeds-supplier')
-  }
-
-  setSeedsView() {
-    this.props.setView('seeds-seed')
-  }
-
-  setSeedsStockView() {
-    this.props.setView('seeds-stock')
-  }
-
-  setPlantingSeedTrayView() {
-    this.props.setView('planting-seedtrays')
-  }
-
-  setPlantingGardenSquareView() {
-    this.props.setView('planting-gardensquare')
-  }
-
-  setSeedTrayModelView() {
-    this.props.setView('seedtrays-models')
-  }
-
-  setSeedTrayView() {
-    this.props.setView('seedtrays')
-  }
-
-  render() {
-    return (
-      <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
-        <Navbar.Toggle aria-controls="responsive-navbar-nav" />
-        <Navbar.Collapse id="responsive-navbar-nav">
-          <Nav>
-            <Nav.Link href="#gardens" onClick={this.setGardensView}>
-              Gardens
-            </Nav.Link>
-            <Nav.Link href="#plants" onClick={this.setPlantsView}>
-              Plants
-            </Nav.Link>
-            <NavDropdown title="Seeds">
-              <Nav.Link href="#seeds-supplier" onClick={this.setSeedsSupplierView}>
-                Suppliers
-              </Nav.Link>
-              <Nav.Link href="#seeds" onClick={this.setSeedsView}>
-                Seeds
-              </Nav.Link>
-              <Nav.Link href="#seeds-stock" onClick={this.setSeedsStockView}>
-                Stock
-              </Nav.Link>
-            </NavDropdown>
-            <NavDropdown title="Seed Trays">
-              <Nav.Link href="#seedtrays-models" onClick={this.setSeedTrayModelView}>
-                Seed Tray Models
-              </Nav.Link>
-              <Nav.Link href="#seedtrays" onClick={this.setSeedTrayView}>
-                Seed Trays
-              </Nav.Link>
-            </NavDropdown>
-            <NavDropdown title="Planting">
-              <Nav.Link href="#planting-seedtray" onClick={this.setPlantingSeedTrayView}>
-                Seed Trays
-              </Nav.Link>
-              <Nav.Link href="#planting-gardensquare" onClick={this.setPlantingGardenSquareView}>
-                Garden Squares
-              </Nav.Link>
-            </NavDropdown>
-          </Nav>
-        </Navbar.Collapse>
-      </Navbar>
-    )
-  }
+  return (
+    <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
+      <Navbar.Toggle aria-controls="responsive-navbar-nav" />
+      <Navbar.Collapse id="responsive-navbar-nav">
+        <Nav>
+          <Nav.Link as={NavLink} to="/gardens">
+            Gardens
+          </Nav.Link>
+          <Nav.Link as={NavLink} to="/plants">
+            Plants
+          </Nav.Link>
+          <NavDropdown title="Seeds" active={seedsActive}>
+            <NavDropdown.Item as={NavLink} to="/seeds/suppliers">
+              Suppliers
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/seeds" end>
+              Seeds
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/seeds/stock">
+              Stock
+            </NavDropdown.Item>
+          </NavDropdown>
+          <NavDropdown title="Seed Trays" active={seedTraysActive}>
+            <NavDropdown.Item as={NavLink} to="/seedtrays/models">
+              Seed Tray Models
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/seedtrays" end>
+              Seed Trays
+            </NavDropdown.Item>
+          </NavDropdown>
+          <NavDropdown title="Planting" active={plantingActive}>
+            <NavDropdown.Item as={NavLink} to="/plantings/seedtrays">
+              Seed Trays
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/plantings/garden-squares">
+              Garden Squares
+            </NavDropdown.Item>
+          </NavDropdown>
+        </Nav>
+      </Navbar.Collapse>
+    </Navbar>
+  )
 }
 
 export { GPTopBar }

@@ -4,6 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
+import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import { GPTopBar } from './menu.js'
 import { PlantsView } from './plants.js'
@@ -15,34 +16,22 @@ import { ApiErrorAlert } from './api_error_alert.js'
 import { queryClient } from './query.js'
 
 function FrontEndPage() {
-  const [selectedView, setSelectedView] = React.useState('gardens')
-
-  let view = <></>
-  if (selectedView === 'plants') {
-    view = <PlantsView />
-  } else if (selectedView === 'seeds-supplier') {
-    view = <SeedSuppliersTable />
-  } else if (selectedView === 'seeds-seed') {
-    view = <SeedTable />
-  } else if (selectedView === 'seeds-stock') {
-    view = <SeedStockTable />
-  } else if (selectedView === 'seedtrays-models') {
-    view = <SeedTrayModelsTable />
-  } else if (selectedView === 'seedtrays') {
-    view = <SeedTraysTable />
-  } else if (selectedView === 'planting-seedtrays') {
-    view = <SeedTrayPlantingTable />
-  } else if (selectedView === 'planting-gardensquare') {
-    view = <GardenSquarePlantingTable />
-  } else {
-    view = <GardenDisplay />
-  }
-
   return (
     <>
-      <GPTopBar setView={setSelectedView} />
+      <GPTopBar />
       <ApiErrorAlert />
-      {view}
+      <Routes>
+        <Route path="/gardens" element={<GardenDisplay />} />
+        <Route path="/plants" element={<PlantsView />} />
+        <Route path="/seeds/suppliers" element={<SeedSuppliersTable />} />
+        <Route path="/seeds" element={<SeedTable />} />
+        <Route path="/seeds/stock" element={<SeedStockTable />} />
+        <Route path="/seedtrays/models" element={<SeedTrayModelsTable />} />
+        <Route path="/seedtrays" element={<SeedTraysTable />} />
+        <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
+        <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
+        <Route path="*" element={<Navigate to="/gardens" replace />} />
+      </Routes>
     </>
   )
 }
@@ -55,7 +44,9 @@ function createFrontEnd(elementId: string) {
   const div = ReactDOM.createRoot(element)
   div.render(
     <QueryClientProvider client={queryClient}>
-      <FrontEndPage />
+      <HashRouter>
+        <FrontEndPage />
+      </HashRouter>
     </QueryClientProvider>
   )
 }
