@@ -134,32 +134,6 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
         if seed_tray_derived:
             data['seed_tray'] = seed_tray
 
-    def _validate_replacement_germination_capacity(
-        self,
-        replacements,
-        existing_cell_plantings=None,
-    ):
-        """Do not remove capacity already used by germinated plants."""
-        if self.instance is None:
-            return
-
-        replacement_quantities = {
-            self._get_cell(cell_planting).pk: self._get_cell_quantity(cell_planting)
-            for cell_planting in replacements
-        }
-        existing_cell_plantings = existing_cell_plantings or list(
-            self.instance.cell_plantings.all()
-        )
-        for existing in existing_cell_plantings:
-            germinated_count = existing.specific_plants.count()
-            if replacement_quantities.get(existing.cell_id, 0) < germinated_count:
-                raise serializers.ValidationError({
-                    'cell_plantings': [
-                        f'Cell {existing.cell_id} allocation cannot be less than '
-                        f'its germinated plant count ({germinated_count}).'
-                    ]
-                })
-
     @staticmethod
     def _validate_cells_belong_to_tray(cells, seed_tray):
         """Reject any cell outside the effective seed tray."""
@@ -176,8 +150,6 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
         """Keep retained or replacement cells on the effective seed tray."""
         cell_plantings = self._get_effective_cell_plantings(data)
         self._validate_cell_allocations(data, cell_plantings)
-        if 'cell_plantings' in data:
-            self._validate_replacement_germination_capacity(cell_plantings)
 
         return data
 
@@ -255,12 +227,6 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
                 validated_data,
                 effective_cell_plantings,
             )
-            if cell_data is not None:
-                self._validate_replacement_germination_capacity(
-                    cell_data,
-                    existing_cell_plantings,
-                )
-
             for attr, value in validated_data.items():
                 setattr(instance, attr, value)
             instance.save()
@@ -403,12 +369,6 @@ class SpecificPlantSerializer(serializers.ModelSerializer):
                         'This cell allocation no longer exists.'
                     ]
                 }) from exc
-            if cell_planting.specific_plants.count() >= cell_planting.quantity:
-                raise serializers.ValidationError({
-                    'cell_planting': [
-                        'Germination count cannot exceed this cell allocation.'
-                    ]
-                })
             validated_data['cell_planting'] = cell_planting
             plant = SpecificPlant.objects.create(**validated_data)
             SpecificPlantLocation.objects.create(

@@ -4,13 +4,17 @@ Tests related to seeds
 from plantings.models import (
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
+    SeedTrayCellPlanting,
     SeedTrayPlanting,
+    SpecificPlant,
+    SpecificPlantLocation,
 )
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_garden_square,
     make_seed_packet,
     make_seed_tray,
+    make_seed_tray_cell,
 )
 
 
@@ -149,3 +153,50 @@ class SeedRESTContractTests(RESTContractTestCase):
                 'transplanted_count': 3,
             },
         )
+
+    def test_current_packet_summary_separates_multigerm_plants_from_seeds(self):
+        """Two sown clusters can yield five transplanted individual plants."""
+        packet = make_seed_packet(notes='Multigerm packet')
+        tray = make_seed_tray()
+        cell = make_seed_tray_cell(tray=tray)
+        square = make_garden_square()
+        planting = SeedTrayPlanting.objects.create(
+            seeds_used=packet,
+            quantity=2,
+            seed_tray=tray,
+        )
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=planting,
+            cell=cell,
+            quantity=2,
+        )
+        plants = SpecificPlant.objects.bulk_create([
+            SpecificPlant(cell_planting=cell_planting)
+            for _index in range(5)
+        ])
+        SpecificPlantLocation.objects.bulk_create([
+            SpecificPlantLocation(
+                specific_plant=plant,
+                location_type=SpecificPlantLocation.GARDEN_SQUARE,
+                garden_square=square,
+            )
+            for plant in plants
+        ])
+        legacy = GardenSquareTransplant.objects.create(
+            original_planting=planting,
+            quantity=5,
+            location=square,
+        )
+        self.client.force_login(self.user)
+
+        for delete_legacy in (False, True):
+            with self.subTest(legacy_present=not delete_legacy):
+                if delete_legacy:
+                    legacy.delete()
+                response = self.client.get('/seeds/packets/current/')
+                summary = next(
+                    item for item in response.json()['packets']
+                    if item['pk'] == packet.pk
+                )
+                self.assertEqual(summary['seeds_planted_trays'], 2)
+                self.assertEqual(summary['transplanted_count'], 5)
