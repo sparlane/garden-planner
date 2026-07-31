@@ -126,8 +126,8 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
   return (
     <td style={{ textAlign: 'center', minWidth: 70, verticalAlign: 'top' }}>
       <div>{cell?.pk ?? ''}</div>
-      <div style={{ fontWeight: 'bold' }}>{cell ? total || 0 : ''}</div>
-      {cell && totalGerminated > 0 && <div style={{ color: 'green', fontSize: '0.85em' }}>{totalGerminated} germinated</div>}
+      {cell && <div style={{ fontWeight: 'bold' }}>{total || 0} sown</div>}
+      {cell && <div style={{ color: 'green', fontSize: '0.85em' }}>{totalGerminated} germinated</div>}
       {plants.map((plant) => {
         const loc = currentLocation(plant)
         const sortedLocations = [...plant.locations].sort((a, b) => new Date(a.started).getTime() - new Date(b.started).getTime())
@@ -154,21 +154,17 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
         )
       })}
       {cell &&
-        entries.map((entry) => {
-          const germinated = germinatedByCellPlanting[entry.cellPlantingPk] ?? 0
-          if (germinated >= entry.quantity) return null
-          return (
-            <Button
-              key={entry.cellPlantingPk}
-              size="sm"
-              variant={germinatingCellPlantingPk === entry.cellPlantingPk ? 'success' : 'outline-success'}
-              style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 4 }}
-              onClick={() => onToggleGermination(entry.cellPlantingPk)}
-            >
-              + Germination{entries.length > 1 ? ` (#${entry.cellPlantingPk})` : ''}
-            </Button>
-          )
-        })}
+        entries.map((entry) => (
+          <Button
+            key={entry.cellPlantingPk}
+            size="sm"
+            variant={germinatingCellPlantingPk === entry.cellPlantingPk ? 'success' : 'outline-success'}
+            style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 4 }}
+            onClick={() => onToggleGermination(entry.cellPlantingPk)}
+          >
+            + Germination{entries.length > 1 ? ` (#${entry.cellPlantingPk})` : ''}
+          </Button>
+        ))}
     </td>
   )
 }
@@ -491,7 +487,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           <tr>
             <th>Planting ID</th>
             <th>Planted On</th>
-            <th>Quantity</th>
+            <th>Seeds / clusters sown</th>
             <th>Seeds Used</th>
             <th>Notes</th>
             <th>Removed</th>
@@ -504,7 +500,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
               <tr key={planting.pk}>
                 <td>{planting.pk}</td>
                 <td>{formatDate(planting.planted)}</td>
-                <td>{planting.quantity}</td>
+                <td>{planting.quantity} sown</td>
                 <td>
                   {packet?.plant} - {packet?.variety}
                 </td>
