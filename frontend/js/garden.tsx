@@ -4,6 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import Select from 'react-select'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useParams } from 'react-router'
 
 import { GardenArea, GardenBed, GardenSquare } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
@@ -143,8 +144,10 @@ class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
 }
 
 function GardenDisplay() {
-  const [selectedArea, setSelectedArea] = React.useState<number>()
-  const { data: areas = [] } = useQuery({
+  const navigate = useNavigate()
+  const { areaId } = useParams()
+  const selectedArea = areaId === undefined ? undefined : Number(areaId)
+  const { data: areas = [], isPending: areasPending } = useQuery({
     queryKey: queryKeys.garden.areas,
     queryFn: ({ signal }) => getGardenAreas(signal)
   })
@@ -165,18 +168,20 @@ function GardenDisplay() {
     const value = selectedGardenArea?.value
 
     if (value === undefined || value === null) {
-      setSelectedArea(undefined)
+      navigate('/gardens')
     } else {
-      setSelectedArea(Number(value))
+      navigate(`/gardens/${Number(value)}`)
     }
   }
 
   const areaOptions = areas.map((area) => ({ value: area.pk, label: area.name }))
   let areaView
-  if (selectedArea !== undefined) {
+  if (areaId !== undefined) {
     const area = areas.find((candidate) => candidate.pk === selectedArea)
     if (area) {
       areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds.filter((bed) => bed.area === area.pk)} squares={squares} plantings={plantings} />
+    } else if (!areasPending) {
+      areaView = <div>Garden area not found.</div>
     }
   }
 

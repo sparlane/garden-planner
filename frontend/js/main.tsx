@@ -4,7 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { HashRouter, Navigate, Route, Routes } from 'react-router'
+import { HashRouter, Navigate, Route, Routes, useParams } from 'react-router'
 
 import { GPTopBar } from './menu.js'
 import { PlantsView } from './plants.js'
@@ -14,6 +14,18 @@ import { GardenDisplay } from './garden.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
 import { ApiErrorAlert } from './api_error_alert.js'
 import { queryClient } from './query.js'
+import { SeedTrayDetails } from './seedtray/seedtray_details.js'
+
+function SeedTrayDetailsRoute() {
+  const { trayId } = useParams()
+  const seedTrayPk = Number(trayId)
+
+  if (!trayId || !Number.isInteger(seedTrayPk) || seedTrayPk <= 0) {
+    return <div>Seed tray not found.</div>
+  }
+
+  return <SeedTrayDetails seedTrayPk={seedTrayPk} />
+}
 
 function FrontEndPage() {
   return (
@@ -22,12 +34,14 @@ function FrontEndPage() {
       <ApiErrorAlert />
       <Routes>
         <Route path="/gardens" element={<GardenDisplay />} />
+        <Route path="/gardens/:areaId" element={<GardenDisplay />} />
         <Route path="/plants" element={<PlantsView />} />
         <Route path="/seeds/suppliers" element={<SeedSuppliersTable />} />
         <Route path="/seeds" element={<SeedTable />} />
         <Route path="/seeds/stock" element={<SeedStockTable />} />
         <Route path="/seedtrays/models" element={<SeedTrayModelsTable />} />
         <Route path="/seedtrays" element={<SeedTraysTable />} />
+        <Route path="/seedtrays/:trayId" element={<SeedTrayDetailsRoute />} />
         <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
         <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
         <Route path="*" element={<Navigate to="/gardens" replace />} />

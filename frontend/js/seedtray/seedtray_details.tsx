@@ -469,8 +469,12 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return square ? square.name : `Square #${location.garden_square}`
   }
 
-  if (isLoading || !seedTray) {
+  if (isLoading) {
     return <div>Loading...</div>
+  }
+
+  if (!seedTray) {
+    return <div>Seed tray not found.</div>
   }
 
   return (
@@ -577,3 +581,5 @@ function showSeedTrayDetails(elem: string, seedTrayPk: number) {
 }
 
 ;(globalThis as Record<string, unknown>).showSeedTrayDetails = showSeedTrayDetails
+
+export { SeedTrayDetails }
