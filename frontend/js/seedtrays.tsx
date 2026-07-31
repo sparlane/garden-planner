@@ -5,6 +5,7 @@ import React from 'react'
 import { Table } from 'react-bootstrap'
 import Select from 'react-select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 
 import { SeedTrayModel, SeedTrayModelCreate, SeedTrayCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, addSeedTray } from './api/seedtrays'
@@ -216,7 +217,7 @@ function SeedTraysTable() {
         {seedTrays.map((tray) => (
           <tr key={tray.pk}>
             <td>
-              <a href={`/seedtrays/seedtray/${tray.pk}/`}>{tray.pk}</a>
+              <Link to={`/seedtrays/${tray.pk}`}>{tray.pk}</Link>
             </td>
             <td>{tray.model && seedTrayModelsMap[tray.model]?.identifier}</td>
             <td>{formatDate(tray.created)}</td>

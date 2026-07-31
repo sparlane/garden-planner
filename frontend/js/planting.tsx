@@ -5,6 +5,7 @@ import React from 'react'
 import { Table, Button } from 'react-bootstrap'
 import Select from 'react-select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 
 import { Supplier } from './types/suppliers'
 import { PlantVariety } from './types/plants'
@@ -278,9 +279,9 @@ class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
         <td>{this.props.planting.notes}</td>
         <td>
           {this.props.planting.seed_tray && (
-            <a className="btn btn-primary" href={`/seedtrays/seedtray/${this.props.planting.seed_tray}/`}>
+            <Link className="btn btn-primary" to={`/seedtrays/${this.props.planting.seed_tray}`}>
               Manage Plants
-            </a>
+            </Link>
           )}
           <Button onClick={this.empty}>Empty</Button>
         </td>
