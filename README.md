@@ -38,6 +38,7 @@ Features
     - SpecificPlant and SpecificPlantLocation (germination and individual location history)
     - GardenSquareTransplant (read-only legacy aggregate transplants)
   - Planting attributes include dates, quantity, location, notes and a `removed` flag to mark completed/removed plantings.
+  - Seed-tray planting and cell quantities mean seeds or seed clusters sown. Observed `SpecificPlant` seedlings are counted separately and may exceed those quantities for multigerm crops.
   - Individual plant locations are the source of truth for new transplant workflows. Legacy aggregate rows remain visible and completable but cannot be created through the REST API.
   - Views compute germination/maturity dates (using variety/plant metadata) and return JSON summaries without double-counting legacy and individual transplant representations.
 
@@ -150,6 +151,21 @@ Development notes
 
 - Linting and checks:
   - `./check-code.sh` runs pycodestyle and pylint (uses `venv`).
+
+Multigerm seeds and legacy transplant recovery
+
+- Record the actual number of seeds or clusters sown. Do not inflate that quantity when one cluster produces multiple seedlings; record every observed seedling as its own specific plant.
+- Seed-tray and seed-packet summaries show seeds or clusters sown separately from distinct germinated and transplanted plants.
+- Migration `0015_audit_seed_allocation_capacity` is intentionally corrected in place because its old data-only germination audit could block a database before any later migration ran. Databases that already applied `0015` need no action; a database blocked by the old audit can rerun migrations with the corrected code.
+- If migration `0016_audit_transplant_ownership` reports a mixed legacy aggregate and individual history, inspect one reported row without changing it:
+  ```bash
+  python manage.py convert_legacy_transplant 12
+  ```
+- Preview a mapping by supplying a source cell allocation, timezone-aware germination time, and each existing individual plant already included in the aggregate total:
+  ```bash
+  python manage.py convert_legacy_transplant 12 --cell-planting 34 --germinated-at 2026-01-15T09:00:00+13:00 --existing-plant 56 --existing-plant 57
+  ```
+  The aggregate quantity is treated as the total target, so the command previews only the missing plants. After checking the labels and counts, repeat the command with `--apply`. Conversion creates complete tray-to-garden history and deletes the aggregate in one transaction. Already-removed aggregates are rejected because they contain no trustworthy location end time.
 
 Account and site boundaries
 - The application currently supports a single trusted account boundary. Authenticated accounts are not isolated from one another, so do not create secondary accounts for untrusted users.
