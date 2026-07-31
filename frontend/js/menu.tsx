@@ -4,7 +4,7 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import { Nav, Navbar, NavDropdown } from 'react-bootstrap'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router'
 
 function GPTopBar() {
   const { pathname } = useLocation()
