@@ -408,7 +408,7 @@ def _create_reversal(original, user, reason, occurred_at):
 def reverse_movement(original, user, reason, occurred_at=None):
     """Reverse one standalone movement while retaining the original row."""
     lot = lock_lots(original.workspace, [original.lot_id])[original.lot_id]
-    original = StockMovement.objects.select_for_update().select_related(
+    original = StockMovement.objects.select_for_update(of=('self',)).select_related(
         'workspace',
         'source',
         'destination',
@@ -456,7 +456,7 @@ def reverse_receipt(receipt, user, reason):
     if receipt.status != StockReceipt.Status.POSTED:
         raise ValidationError({'status': 'Only posted receipts can be reversed.'})
     movements = list(
-        StockMovement.objects.select_for_update()
+        StockMovement.objects.select_for_update(of=('self',))
         .select_related('lot__item', 'workspace', 'source', 'destination')
         .filter(receipt_line__receipt=receipt)
         .order_by('pk')
@@ -560,7 +560,7 @@ def reverse_stocktake(stocktake, user, reason):
     if stocktake.status != Stocktake.Status.POSTED:
         raise ValidationError({'status': 'Only posted stocktakes can be reversed.'})
     movements = list(
-        StockMovement.objects.select_for_update()
+        StockMovement.objects.select_for_update(of=('self',))
         .select_related('lot__item', 'workspace', 'source', 'destination')
         .filter(stocktake_line__stocktake=stocktake)
         .order_by('pk')
