@@ -76,7 +76,13 @@ def quantize_quantity(value):
     return Decimal(value).quantize(QUANTITY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
-def normalize_quantity(item, quantity, unit_code=None, unit_conversion=None):
+def normalize_quantity(
+    item,
+    quantity,
+    unit_code=None,
+    unit_conversion=None,
+    allow_zero=False,
+):
     """Normalize one controlled or item-package display quantity."""
     if bool(unit_code) == bool(unit_conversion):
         raise ValidationError(
@@ -91,7 +97,7 @@ def normalize_quantity(item, quantity, unit_code=None, unit_conversion=None):
     else:
         normalized = convert_standard_quantity(quantity, unit_code, item.base_unit)
     normalized = quantize_quantity(normalized)
-    if normalized <= 0:
+    if normalized < 0 or (not allow_zero and normalized == 0):
         raise ValidationError({'quantity': 'Quantity must be greater than zero.'})
     return normalized
 
@@ -499,6 +505,10 @@ def post_stocktake(stocktake, user):
     for line in lines:
         line.lot = locked_lots[line.lot_id]
         line.full_clean()
+        if not line.lot.item.active:
+            raise ValidationError(
+                {'lines': f'Item {line.lot.item_id} is inactive.'},
+            )
         _validate_location(line.location, stocktake.workspace, 'location')
         expected = quantize_quantity(physical_balance(line.lot, line.location))
         variance = quantize_quantity(line.counted_base_quantity - expected)
