@@ -4,12 +4,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
 
-from workspaces.models import get_current_workspace
+from workspaces.models import Workspace, get_current_workspace
 
 from .ledger import (
     MovementRequest,
@@ -24,6 +25,15 @@ from .units import UnitCode
 @skipUnlessDBFeature('has_select_for_update')
 class ConcurrentLedgerTests(TransactionTestCase):
     """A locked lot serializes competing final-quantity consumers."""
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
 
     def setUp(self):
         super().setUp()
