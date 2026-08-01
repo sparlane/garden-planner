@@ -208,6 +208,15 @@ function GardenAreaDisplay({ area, gardenBeds, squares, plantings }: GardenAreaD
     }
     return groupedPlantings
   }, [plantings])
+  const squaresByBed = useMemo(() => {
+    const groupedSquares = new Map<number, Array<GardenSquare>>()
+    for (const square of squares) {
+      const bedSquares = groupedSquares.get(square.bed) ?? []
+      bedSquares.push(square)
+      groupedSquares.set(square.bed, bedSquares)
+    }
+    return groupedSquares
+  }, [squares])
   const selectedSquare = squares.find((square) => square.pk === selectedSquarePk)
   const selectedBed = selectedSquare === undefined ? undefined : gardenBeds.find((bed) => bed.pk === selectedSquare.bed)
   const viewWidth = area.size_x + OUTLINE_WIDTH * 2
@@ -225,7 +234,7 @@ function GardenAreaDisplay({ area, gardenBeds, squares, plantings }: GardenAreaD
               key={bed.pk}
               area={area}
               bed={bed}
-              squares={squares.filter((square) => square.bed === bed.pk)}
+              squares={squaresByBed.get(bed.pk) ?? []}
               plantingsBySquare={plantingsBySquare}
               onSelectSquare={setSelectedSquarePk}
             />
