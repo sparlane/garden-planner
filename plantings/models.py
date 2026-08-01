@@ -9,9 +9,10 @@ from django.utils import timezone
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell
 from garden.models import GardenRow, GardenSquare
+from workspaces.models import WorkspaceOwnedModel
 
 
-class Planting(models.Model):
+class Planting(WorkspaceOwnedModel):
     """
     An abstract class for planting of seeds
     """
@@ -98,7 +99,7 @@ class SeedTrayCellPlanting(models.Model):
         return f'{self.quantity} in {self.cell} for planting {self.seed_tray_planting.pk}'
 
 
-class SpecificPlant(models.Model):
+class SpecificPlant(WorkspaceOwnedModel):
     """
     A specific individual plant that has germinated from a seed tray cell.
     Created when germination is observed for a particular cell planting.
@@ -165,7 +166,7 @@ class SpecificPlantLocation(models.Model):
         return f'Plant {self.specific_plant_id} @ {loc} from {self.started}'
 
 
-class GardenSquareTransplant(models.Model):
+class GardenSquareTransplant(WorkspaceOwnedModel):
     """
     Legacy aggregate transplant from a seed tray into a garden square.
 

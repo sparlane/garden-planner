@@ -1,8 +1,10 @@
 """Database models for garden supplies."""
 from django.db import models
 
+from workspaces.models import WorkspaceOwnedModel
 
-class Supplier(models.Model):
+
+class Supplier(WorkspaceOwnedModel):
     """
     A seed supplier
     """

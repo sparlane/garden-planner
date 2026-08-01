@@ -5,8 +5,10 @@ Garden models
 from django.core.validators import MinValueValidator
 from django.db import models
 
+from workspaces.models import WorkspaceOwnedModel
 
-class GardenArea(models.Model):
+
+class GardenArea(WorkspaceOwnedModel):
     """
     An Area of garden
     """
@@ -26,7 +28,7 @@ class GardenArea(models.Model):
         return self.name
 
 
-class GardenBed(models.Model):
+class GardenBed(WorkspaceOwnedModel):
     """
     A Garden bed
     """
@@ -53,7 +55,7 @@ class GardenBed(models.Model):
         return self.name
 
 
-class GardenRow(models.Model):
+class GardenRow(WorkspaceOwnedModel):
     """
     A Row in a garden bed
     """
@@ -80,7 +82,7 @@ class GardenRow(models.Model):
         return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
 
 
-class GardenSquare(models.Model):
+class GardenSquare(WorkspaceOwnedModel):
     """
     A square in a garden bed
     """

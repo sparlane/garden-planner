@@ -7,8 +7,11 @@ from decimal import Decimal
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
+from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from rest_framework.test import APITestCase
+from seedtrays.models import SeedTrayModel
+from supplies.models import Supplier
 
 from .admin import WorkspaceAdmin
 from .current import get_current_workspace
@@ -43,6 +46,35 @@ class WorkspaceAdminTests(TestCase):
         workspace_admin = WorkspaceAdmin(Workspace, AdminSite())
 
         self.assertFalse(workspace_admin.has_add_permission(request=None))
+
+
+class WorkspaceOwnershipModelTests(TestCase):
+    """Domain models receive a required workspace ownership root."""
+
+    def test_direct_orm_creates_default_to_current_workspace(self):
+        """Legacy and maintenance code receives the configured workspace."""
+        supplier = Supplier.objects.create(name='Defaulted supplier')
+
+        self.assertEqual(supplier.workspace, get_current_workspace())
+
+    def test_tray_model_identifier_is_unique_within_workspace(self):
+        """Identifiers can repeat across workspaces but not within one."""
+        current = get_current_workspace()
+        other = Workspace.objects.create(name='Other workspace')
+        values = {
+            'identifier': 'Shared identifier',
+            'height': 10,
+            'x_size': 20,
+            'y_size': 20,
+            'x_cells': 2,
+            'y_cells': 2,
+            'cell_size_ml': 40,
+        }
+        SeedTrayModel.objects.create(workspace=current, **values)
+        SeedTrayModel.objects.create(workspace=other, **values)
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            SeedTrayModel.objects.create(workspace=current, **values)
 
 
 class WorkspaceEndpointTests(APITestCase):

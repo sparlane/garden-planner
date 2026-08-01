@@ -3,12 +3,14 @@ Models for seed trays
 """
 from django.db import models
 
+from workspaces.models import WorkspaceOwnedModel
 
-class SeedTrayModel(models.Model):
+
+class SeedTrayModel(WorkspaceOwnedModel):
     """
     A seed tray model used for starting seeds
     """
-    identifier = models.CharField(max_length=256, unique=True)
+    identifier = models.CharField(max_length=256)
     description = models.TextField(null=True, blank=True)
 
     # Dimensions of the tray itself
@@ -23,8 +25,16 @@ class SeedTrayModel(models.Model):
     def __str__(self):
         return self.identifier
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'identifier'],
+                name='unique_tray_model_identifier_workspace',
+            ),
+        ]
 
-class SeedTray(models.Model):
+
+class SeedTray(WorkspaceOwnedModel):
     """
     A specific seed tray
     """

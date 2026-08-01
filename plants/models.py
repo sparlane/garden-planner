@@ -3,8 +3,10 @@ Models for plants
 """
 from django.db import models
 
+from workspaces.models import WorkspaceOwnedModel
 
-class PlantFamily(models.Model):
+
+class PlantFamily(WorkspaceOwnedModel):
     """
     Plant Family
     """
@@ -15,7 +17,7 @@ class PlantFamily(models.Model):
         return self.name
 
 
-class Plant(models.Model):
+class Plant(WorkspaceOwnedModel):
     """
     A Plant
     """
@@ -34,7 +36,7 @@ class Plant(models.Model):
         return self.name
 
 
-class PlantVariety(models.Model):
+class PlantVariety(WorkspaceOwnedModel):
     """
     A Specific Variety of a Plant
     """

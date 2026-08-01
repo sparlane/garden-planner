@@ -5,9 +5,10 @@ from django.db import models
 
 from plants.models import PlantVariety
 from supplies.models import Supplier
+from workspaces.models import WorkspaceOwnedModel
 
 
-class Seeds(models.Model):
+class Seeds(WorkspaceOwnedModel):
     """
     Seeds for a specific plant
     """
@@ -21,7 +22,7 @@ class Seeds(models.Model):
         return f"{self.plant_variety} from {self.supplier} ({self.supplier_code})"
 
 
-class SeedPacket(models.Model):
+class SeedPacket(WorkspaceOwnedModel):
     """
     Specific packet/store of seeds
     """
