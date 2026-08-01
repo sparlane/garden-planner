@@ -1,7 +1,10 @@
 import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
+import './garden.css'
 
-import React from 'react'
+import React, { useMemo, useState } from 'react'
+import type { KeyboardEvent } from 'react'
+import { Button, Modal } from 'react-bootstrap'
 import Select from 'react-select'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router'
@@ -13,6 +16,8 @@ import { getPlantingGardenSquaresCurrent } from './api/plantings'
 import { SelectOption } from './types/others'
 import { queryKeys } from './query'
 
+const OUTLINE_WIDTH = 100
+
 interface GardenAreaDisplayProps {
   area: GardenArea
   gardenBeds: Array<GardenBed>
@@ -20,127 +25,224 @@ interface GardenAreaDisplayProps {
   plantings: Array<GardenSquarePlanting>
 }
 
-function haveSameItems<T>(previousItems: Array<T>, currentItems: Array<T>): boolean {
-  return previousItems.length === currentItems.length && previousItems.every((item, index) => item === currentItems[index])
+interface GardenSquareElementProps {
+  area: GardenArea
+  bed: GardenBed
+  square: GardenSquare
+  plantings: Array<GardenSquarePlanting>
+  onSelect: (squarePk: number) => void
 }
 
-class GardenAreaDisplay extends React.Component<GardenAreaDisplayProps> {
-  canvasRef: React.RefObject<HTMLCanvasElement | null>
-  outlineWidth: number
+interface GardenBedElementProps {
+  area: GardenArea
+  bed: GardenBed
+  squares: Array<GardenSquare>
+  plantingsBySquare: Map<number, Array<GardenSquarePlanting>>
+  onSelectSquare: (squarePk: number) => void
+}
 
-  constructor(props: GardenAreaDisplayProps) {
-    super(props)
-    this.canvasRef = React.createRef()
-    this.outlineWidth = 100
+interface GardenSquareDetailsModalProps {
+  area: GardenArea
+  bed?: GardenBed
+  square: GardenSquare
+  plantings: Array<GardenSquarePlanting>
+  onClose: () => void
+}
+
+function calculateSvgY(area: GardenArea, offsetY: number, placementY: number, sizeY: number): number {
+  return OUTLINE_WIDTH + area.size_y - (offsetY + placementY + sizeY)
+}
+
+function plantingName(planting: GardenSquarePlanting): string {
+  return `${planting.plant} — ${planting.variety}`
+}
+
+function squareDescription(square: GardenSquare, plantings: Array<GardenSquarePlanting>): string {
+  if (plantings.length === 0) {
+    return `${square.name}: empty`
   }
 
-  calculateX(offsetX: number, X: number): number {
-    return this.outlineWidth + offsetX + X
-  }
+  const plantingDescriptions = plantings.map((planting) => `${plantingName(planting)} (${planting.quantity})`)
+  return `${square.name}: ${plantingDescriptions.join(', ')}`
+}
 
-  calculateY(offsetY: number, Y: number): number {
-    return this.outlineWidth + (this.props.area.size_y - (offsetY + Y))
+function formatDateRange(early?: string, late?: string): string | undefined {
+  if (early === undefined) {
+    return late
   }
-
-  drawBox(ctx: CanvasRenderingContext2D, line_width: number, offsetX: number, offsetY: number, startX: number, startY: number, sizeX: number, sizeY: number) {
-    ctx.lineWidth = line_width
-    const halfLineWidth = line_width / 2
-    // goto the bottom left (lowest x, y)
-    ctx.moveTo(this.calculateX(offsetX, startX - halfLineWidth), this.calculateY(offsetY, startY - halfLineWidth))
-    // draw the left line towards the top left (lowest x, highest y)
-    ctx.lineTo(this.calculateX(offsetX, startX - halfLineWidth), this.calculateY(offsetY, startY + sizeY + halfLineWidth))
-    // draw the top line towards the top right (highest x, highest y)
-    ctx.lineTo(this.calculateX(offsetX, startX + sizeX + halfLineWidth), this.calculateY(offsetY, startY + sizeY + halfLineWidth))
-    // draw the right line towards the bottom right (highest x, lowest y)
-    ctx.lineTo(this.calculateX(offsetX, startX + sizeX + halfLineWidth), this.calculateY(offsetY, startY - halfLineWidth))
-    // draw the bottom line towards the bottom left (lowest x, lowest y)
-    ctx.lineTo(this.calculateX(offsetX, startX - halfLineWidth), this.calculateY(offsetY, startY - halfLineWidth))
-    ctx.stroke()
+  if (late === undefined || early === late) {
+    return early
   }
+  return `${early} to ${late}`
+}
 
-  fillBox(ctx: CanvasRenderingContext2D, offsetX: number, offsetY: number, startX: number, startY: number, sizeX: number, sizeY: number) {
-    ctx.fillRect(this.calculateX(offsetX, startX), this.calculateY(offsetY, startY + sizeY), sizeX, sizeY)
-  }
+function GardenSquareElement({ area, bed, square, plantings, onSelect }: GardenSquareElementProps) {
+  const description = squareDescription(square, plantings)
+  const className = plantings.length > 0 ? 'garden-square garden-square--planted' : 'garden-square garden-square--empty'
 
-  drawSquare(ctx: CanvasRenderingContext2D, bed: GardenBed, square: GardenSquare) {
-    ctx.beginPath()
-    ctx.strokeStyle = 'lightblue'
-    this.drawBox(ctx, 10, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
-    const planting = this.props.plantings.find((p) => p.location.pk === square.pk)
-    if (planting) {
-      ctx.fillStyle = 'lightgreen'
-      this.fillBox(ctx, bed.placement_x, bed.placement_y, square.placement_x, square.placement_y, square.size_x, square.size_y)
-    }
-  }
-
-  drawBed(ctx: CanvasRenderingContext2D, bed: GardenBed) {
-    ctx.beginPath()
-    ctx.strokeStyle = 'grey'
-    this.drawBox(ctx, 50, 0, 0, bed.placement_x, bed.placement_y, bed.size_x, bed.size_y)
-    const squares = this.props.squares.filter((s) => s.bed === bed.pk)
-    for (const idx in squares) {
-      const square = squares[idx]
-      this.drawSquare(ctx, bed, square)
-    }
-  }
-
-  drawGarden(canvas: HTMLCanvasElement) {
-    const { area } = this.props
-    const ctx = canvas.getContext('2d')
-    const scaleX = canvas.width / (area.size_x + this.outlineWidth * 2)
-    const scaleY = canvas.height / (area.size_y + this.outlineWidth * 2)
-    let scale = scaleX
-    if (scaleY < scaleX) {
-      scale = scaleY
-    }
-    if (ctx === null) {
+  function handleKeyDown(event: KeyboardEvent<SVGGElement>) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
       return
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.scale(scale, scale)
-    ctx.lineWidth = this.outlineWidth
-    ctx.strokeStyle = 'black'
-    ctx.beginPath()
-    ctx.moveTo(0 + this.outlineWidth / 2, 0 + this.outlineWidth / 2)
-    ctx.lineTo(0 + this.outlineWidth / 2, area.size_y + this.outlineWidth * 1.5)
-    ctx.lineTo(area.size_x + this.outlineWidth * 1.5, area.size_y + this.outlineWidth * 1.5)
-    ctx.lineTo(area.size_x + this.outlineWidth * 1.5, 0 + this.outlineWidth / 2)
-    ctx.lineTo(0 + this.outlineWidth / 2, 0 + this.outlineWidth / 2)
-    ctx.stroke()
-    for (const idx in this.props.gardenBeds) {
-      const gardenBed = this.props.gardenBeds[idx]
-      this.drawBed(ctx, gardenBed)
+
+    event.preventDefault()
+    onSelect(square.pk)
+  }
+
+  return (
+    <g className="garden-square-control" role="button" tabIndex={0} aria-label={description} aria-haspopup="dialog" onClick={() => onSelect(square.pk)} onKeyDown={handleKeyDown}>
+      <title>{description}</title>
+      <rect
+        className={className}
+        x={OUTLINE_WIDTH + bed.placement_x + square.placement_x}
+        y={calculateSvgY(area, bed.placement_y, square.placement_y, square.size_y)}
+        width={square.size_x}
+        height={square.size_y}
+      />
+    </g>
+  )
+}
+
+function GardenBedElement({ area, bed, squares, plantingsBySquare, onSelectSquare }: GardenBedElementProps) {
+  return (
+    <g>
+      <rect className="garden-bed" x={OUTLINE_WIDTH + bed.placement_x} y={calculateSvgY(area, 0, bed.placement_y, bed.size_y)} width={bed.size_x} height={bed.size_y}>
+        <title>{bed.name}</title>
+      </rect>
+      {squares.map((square) => (
+        <GardenSquareElement key={square.pk} area={area} bed={bed} square={square} plantings={plantingsBySquare.get(square.pk) ?? []} onSelect={onSelectSquare} />
+      ))}
+    </g>
+  )
+}
+
+function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: GardenSquareDetailsModalProps) {
+  return (
+    <Modal show onHide={onClose} size="lg" aria-labelledby="garden-square-details-title">
+      <Modal.Header closeButton>
+        <Modal.Title id="garden-square-details-title">{square.name}</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        <dl className="row garden-square-metadata">
+          <dt className="col-sm-3">Garden area</dt>
+          <dd className="col-sm-9">{area.name}</dd>
+          <dt className="col-sm-3">Garden bed</dt>
+          <dd className="col-sm-9">{bed?.name ?? 'Unknown bed'}</dd>
+          <dt className="col-sm-3">Position</dt>
+          <dd className="col-sm-9">
+            {square.placement_x}, {square.placement_y}
+          </dd>
+          <dt className="col-sm-3">Size</dt>
+          <dd className="col-sm-9">
+            {square.size_x} × {square.size_y}
+          </dd>
+          <dt className="col-sm-3">Status</dt>
+          <dd className="col-sm-9">{plantings.length > 0 ? 'Planted' : 'Empty'}</dd>
+        </dl>
+
+        {plantings.length === 0 ? (
+          <p className="mb-0">This square has no current plantings.</p>
+        ) : (
+          plantings.map((planting, index) => {
+            const germinationDates = formatDateRange(planting.germination_date_early, planting.germination_date_late)
+            const maturityDates = formatDateRange(planting.maturity_date_early, planting.maturity_date_late)
+
+            return (
+              <section
+                className="garden-planting-detail"
+                key={`${planting.planting_pk}-${planting.transplanting_pk ?? 'direct'}-${planting.specific_plant_pk ?? 'aggregate'}-${index}`}
+              >
+                <h2 className="h5">{plantingName(planting)}</h2>
+                <dl className="row mb-0">
+                  <dt className="col-sm-3">Quantity</dt>
+                  <dd className="col-sm-9">{planting.quantity}</dd>
+                  <dt className="col-sm-3">Planted</dt>
+                  <dd className="col-sm-9">{planting.planted}</dd>
+                  {planting.transplanted !== undefined && (
+                    <>
+                      <dt className="col-sm-3">Transplanted</dt>
+                      <dd className="col-sm-9">{planting.transplanted}</dd>
+                    </>
+                  )}
+                  {germinationDates !== undefined && (
+                    <>
+                      <dt className="col-sm-3">Expected germination</dt>
+                      <dd className="col-sm-9">{germinationDates}</dd>
+                    </>
+                  )}
+                  {maturityDates !== undefined && (
+                    <>
+                      <dt className="col-sm-3">Expected maturity</dt>
+                      <dd className="col-sm-9">{maturityDates}</dd>
+                    </>
+                  )}
+                  {planting.notes && (
+                    <>
+                      <dt className="col-sm-3">Notes</dt>
+                      <dd className="col-sm-9">{planting.notes}</dd>
+                    </>
+                  )}
+                </dl>
+              </section>
+            )
+          })
+        )}
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+function GardenAreaDisplay({ area, gardenBeds, squares, plantings }: GardenAreaDisplayProps) {
+  const [selectedSquarePk, setSelectedSquarePk] = useState<number>()
+  const plantingsBySquare = useMemo(() => {
+    const groupedPlantings = new Map<number, Array<GardenSquarePlanting>>()
+    for (const planting of plantings) {
+      const squarePlantings = groupedPlantings.get(planting.location.pk) ?? []
+      squarePlantings.push(planting)
+      groupedPlantings.set(planting.location.pk, squarePlantings)
     }
-  }
+    return groupedPlantings
+  }, [plantings])
+  const selectedSquare = squares.find((square) => square.pk === selectedSquarePk)
+  const selectedBed = selectedSquare === undefined ? undefined : gardenBeds.find((bed) => bed.pk === selectedSquare.bed)
+  const viewWidth = area.size_x + OUTLINE_WIDTH * 2
+  const viewHeight = area.size_y + OUTLINE_WIDTH * 2
+  const titleId = `garden-area-${area.pk}-title`
 
-  componentDidMount() {
-    this.redrawGarden()
-  }
-
-  componentDidUpdate(previousProps: GardenAreaDisplayProps) {
-    if (
-      previousProps.area === this.props.area &&
-      haveSameItems(previousProps.gardenBeds, this.props.gardenBeds) &&
-      haveSameItems(previousProps.squares, this.props.squares) &&
-      haveSameItems(previousProps.plantings, this.props.plantings)
-    ) {
-      return
-    }
-    this.redrawGarden()
-  }
-
-  redrawGarden() {
-    const canvas = this.canvasRef.current
-    if (canvas === null) {
-      return
-    }
-    this.drawGarden(canvas)
-  }
-
-  render() {
-    return <canvas ref={this.canvasRef} width={(this.props.area.size_x + this.outlineWidth * 2) / 10} height={(this.props.area.size_y + this.outlineWidth * 2) / 10} />
-  }
+  return (
+    <>
+      <div className="garden-area-container">
+        <svg className="garden-area-display" viewBox={`0 0 ${viewWidth} ${viewHeight}`} role="group" aria-labelledby={titleId}>
+          <title id={titleId}>{area.name} garden layout</title>
+          <rect className="garden-area-outline" x={OUTLINE_WIDTH / 2} y={OUTLINE_WIDTH / 2} width={area.size_x + OUTLINE_WIDTH} height={area.size_y + OUTLINE_WIDTH} />
+          {gardenBeds.map((bed) => (
+            <GardenBedElement
+              key={bed.pk}
+              area={area}
+              bed={bed}
+              squares={squares.filter((square) => square.bed === bed.pk)}
+              plantingsBySquare={plantingsBySquare}
+              onSelectSquare={setSelectedSquarePk}
+            />
+          ))}
+        </svg>
+      </div>
+      {selectedSquare !== undefined && (
+        <GardenSquareDetailsModal
+          area={area}
+          bed={selectedBed}
+          square={selectedSquare}
+          plantings={plantingsBySquare.get(selectedSquare.pk) ?? []}
+          onClose={() => setSelectedSquarePk(undefined)}
+        />
+      )}
+    </>
+  )
 }
 
 function GardenDisplay() {

@@ -1,0 +1,68 @@
+.garden-area-container {
+  width: 100%;
+  overflow: auto;
+}
+
+.garden-area-display {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 75vh;
+}
+
+.garden-area-outline {
+  fill: #f8f4e8;
+  stroke: #212529;
+  stroke-width: 100;
+}
+
+.garden-bed {
+  fill: #8b6f47;
+  fill-opacity: 0.18;
+  stroke: #6c757d;
+  stroke-width: 50;
+}
+
+.garden-square-control {
+  cursor: pointer;
+  outline: none;
+}
+
+.garden-square {
+  stroke: #8ecae6;
+  stroke-width: 10;
+  transition:
+    fill 160ms ease,
+    stroke 160ms ease,
+    stroke-width 160ms ease;
+}
+
+.garden-square--empty {
+  fill: #d7b98e;
+}
+
+.garden-square--planted {
+  fill: #78c679;
+}
+
+.garden-square-control:hover .garden-square,
+.garden-square-control:focus-visible .garden-square {
+  stroke: #0d6efd;
+  stroke-width: 20;
+}
+
+.garden-planting-detail {
+  border-top: 1px solid #dee2e6;
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+.garden-square-metadata {
+  margin-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .garden-square {
+    transition: none;
+  }
+}
