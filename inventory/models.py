@@ -1,20 +1,37 @@
-"""Inventory catalog and item-specific measurement models."""
+"""Inventory catalog, purchasing, and append-only stock ledger models."""
 
 from decimal import Decimal
+from uuid import uuid4
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 from django.utils import timezone
 
 from workspaces.models import WorkspaceOwnedModel
 
-from .units import UnitCode, UnitDimension, get_unit_definition
+from .ledger_validation import movement_validation_errors
+from .units import (
+    UnitCode,
+    UnitDimension,
+    convert_standard_quantity,
+    get_unit_definition,
+)
 
 
 QUANTITY_MAX_DIGITS = 24
 QUANTITY_DECIMAL_PLACES = 9
 POSITIVE_DECIMAL = Decimal('0.000000001')
+MONEY_MAX_DIGITS = 18
+MONEY_DECIMAL_PLACES = 4
+COST_MAX_DIGITS = 30
+COST_DECIMAL_PLACES = 12
+
+
+def generate_lot_identifier():
+    """Return an opaque stable lot identifier suitable for offline creation."""
+    return f'LOT-{uuid4().hex.upper()}'
 
 
 class InventoryItem(WorkspaceOwnedModel):
@@ -93,6 +110,14 @@ class InventoryItem(WorkspaceOwnedModel):
         blank=True,
         editable=False,
     )
+    reorder_level = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text='Optional low-stock threshold in the item base unit.',
+    )
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 
@@ -111,6 +136,10 @@ class InventoryItem(WorkspaceOwnedModel):
             models.CheckConstraint(
                 condition=(models.Q(default_fixed_quantity__isnull=True) | models.Q(default_fixed_quantity__gt=0)),
                 name='inventory_item_positive_fixed_quantity',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(reorder_level__isnull=True) | models.Q(reorder_level__gte=0)),
+                name='inventory_item_nonnegative_reorder_level',
             ),
         ]
 
@@ -315,3 +344,641 @@ class ItemUnitConversion(WorkspaceOwnedModel):
         raise ValidationError(
             'Item unit conversions must be deactivated, not deleted.',
         )
+
+
+class InventoryLocation(WorkspaceOwnedModel):
+    """A physical or operational place that can hold stock."""
+
+    class LocationType(models.TextChoices):
+        """Controlled location roles used by stock workflows."""
+
+        RECEIVING = 'receiving', 'Receiving'
+        STORAGE = 'storage', 'Storage'
+        GROWING = 'growing', 'Nursery or growing area'
+        DISPATCH = 'dispatch', 'Customer dispatch'
+        QUARANTINE = 'quarantine', 'Quarantine'
+        ADJUSTMENT = 'adjustment', 'Adjustment'
+
+    name = models.CharField(max_length=255)
+    code = models.CharField(max_length=64)
+    location_type = models.CharField(max_length=16, choices=LocationType.choices)
+    active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, default='')
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'code'],
+                name='inventory_location_workspace_code_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class StockReceipt(WorkspaceOwnedModel):
+    """A supplier document whose lines create exact stock lots when posted."""
+
+    class Status(models.TextChoices):
+        """Receipt lifecycle states."""
+
+        DRAFT = 'draft', 'Draft'
+        POSTED = 'posted', 'Posted'
+        REVERSED = 'reversed', 'Reversed'
+
+    supplier = models.ForeignKey(
+        'supplies.Supplier',
+        on_delete=models.PROTECT,
+        related_name='stock_receipts',
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        editable=False,
+    )
+    received_date = models.DateField()
+    supplier_reference = models.CharField(max_length=255, blank=True, default='')
+    currency_code = models.CharField(
+        max_length=3,
+        validators=[
+            RegexValidator(
+                regex=r'^[A-Z]{3}$',
+                message='Enter a three-letter uppercase ISO 4217 currency code.',
+            ),
+        ],
+    )
+    tax_rate = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        default=Decimal('0'),
+        validators=(
+            MinValueValidator(Decimal('0')),
+            MaxValueValidator(Decimal('100')),
+        ),
+    )
+    tax_recoverable = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    posted_at = models.DateTimeField(null=True, blank=True, editable=False)
+    reversed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-received_date', '-pk']
+
+    def __str__(self):
+        return f'Receipt {self.pk or "draft"} from {self.supplier}'
+
+    def clean(self):
+        super().clean()
+        if self.supplier_id and self.workspace_id != self.supplier.workspace_id:
+            raise ValidationError(
+                {'supplier': 'The supplier belongs to a different workspace.'},
+            )
+
+    def save(self, *args, **kwargs):
+        if not self.pk and self.status != self.Status.DRAFT:
+            raise ValidationError('Receipts must be created as drafts.')
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).only('status').first()
+            if previous and previous.status != self.Status.DRAFT:
+                raise ValidationError('Posted receipts are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError('Only draft receipts can be deleted.')
+        return super().delete(*args, **kwargs)
+
+
+class StockReceiptLine(models.Model):
+    """A draft purchase line normalized into its item's base unit."""
+
+    receipt = models.ForeignKey(
+        StockReceipt,
+        on_delete=models.CASCADE,
+        related_name='lines',
+    )
+    item = models.ForeignKey(
+        InventoryItem,
+        on_delete=models.PROTECT,
+        related_name='receipt_lines',
+    )
+    supplier_lot_reference = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+    )
+    expires_on = models.DateField(null=True, blank=True)
+    quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    unit_code = models.CharField(
+        max_length=16,
+        choices=UnitCode.choices,
+        null=True,
+        blank=True,
+    )
+    unit_conversion = models.ForeignKey(
+        ItemUnitConversion,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='receipt_lines',
+    )
+    base_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    line_cost_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    destination = models.ForeignKey(
+        InventoryLocation,
+        on_delete=models.PROTECT,
+        related_name='receipt_lines',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='inventory_receipt_line_positive_quantity',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(base_quantity__gt=0),
+                name='inventory_receipt_line_positive_base_quantity',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(line_cost_ex_tax__gte=0),
+                name='inventory_receipt_line_nonnegative_cost',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.receipt_id and self.item_id:
+            if self.receipt.workspace_id != self.item.workspace_id:
+                errors['item'] = 'The item belongs to a different workspace.'
+        if self.receipt_id and self.destination_id:
+            if self.receipt.workspace_id != self.destination.workspace_id:
+                errors['destination'] = 'The location belongs to a different workspace.'
+        if bool(self.unit_code) == bool(self.unit_conversion_id):
+            errors['unit_code'] = (
+                'Select exactly one controlled unit or item conversion.'
+            )
+        if self.unit_conversion_id and self.unit_conversion.item_id != self.item_id:
+            errors['unit_conversion'] = 'The conversion does not belong to this item.'
+        if not errors and self.base_quantity != self.normalized_quantity():
+            errors['base_quantity'] = 'The normalized quantity is incorrect.'
+        if errors:
+            raise ValidationError(errors)
+
+    def normalized_quantity(self):
+        """Calculate the display quantity in the item's canonical unit."""
+        if self.unit_conversion_id:
+            return self.quantity * self.unit_conversion.multiplier
+        return convert_standard_quantity(
+            self.quantity,
+            self.unit_code,
+            self.item.base_unit,
+        )
+
+    def save(self, *args, **kwargs):
+        if self.receipt_id and self.receipt.status != StockReceipt.Status.DRAFT:
+            raise ValidationError('Posted receipt lines are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.receipt.status != StockReceipt.Status.DRAFT:
+            raise ValidationError('Posted receipt lines are immutable.')
+        return super().delete(*args, **kwargs)
+
+
+class StockLot(WorkspaceOwnedModel):
+    """An immutable exact purchase or opening-balance identity."""
+
+    class Origin(models.TextChoices):
+        """Ways a stock lot can enter the ledger."""
+
+        RECEIPT = 'receipt', 'Supplier receipt'
+        OPENING = 'opening', 'Opening balance'
+
+    item = models.ForeignKey(
+        InventoryItem,
+        on_delete=models.PROTECT,
+        related_name='stock_lots',
+    )
+    identifier = models.CharField(
+        max_length=64,
+        default=generate_lot_identifier,
+    )
+    origin = models.CharField(max_length=16, choices=Origin.choices)
+    receipt_line = models.OneToOneField(
+        StockReceiptLine,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stock_lot',
+    )
+    supplier_lot_reference = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+    )
+    received_on = models.DateField()
+    expires_on = models.DateField(null=True, blank=True)
+    initial_base_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    acquisition_total = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    base_unit_cost = models.DecimalField(
+        max_digits=COST_MAX_DIGITS,
+        decimal_places=COST_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    currency_code = models.CharField(max_length=3)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['item__name', 'identifier', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'item', 'identifier'],
+                name='inventory_lot_workspace_item_identifier_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(initial_base_quantity__gt=0),
+                name='inventory_lot_positive_initial_quantity',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(acquisition_total__isnull=True) | models.Q(acquisition_total__gte=0)),
+                name='inventory_lot_nonnegative_acquisition_total',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(base_unit_cost__isnull=True) | models.Q(base_unit_cost__gte=0)),
+                name='inventory_lot_nonnegative_unit_cost',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.item}: {self.identifier}'
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.item_id and self.workspace_id != self.item.workspace_id:
+            errors['item'] = 'The item belongs to a different workspace.'
+        if self.receipt_line_id:
+            if self.workspace_id != self.receipt_line.receipt.workspace_id:
+                errors['receipt_line'] = 'The receipt line belongs to a different workspace.'
+            if self.item_id != self.receipt_line.item_id:
+                errors['receipt_line'] = 'The receipt line belongs to a different item.'
+        if self.origin == self.Origin.RECEIPT and not self.receipt_line_id:
+            errors['receipt_line'] = 'Receipt lots require receipt-line provenance.'
+        if self.origin == self.Origin.OPENING and self.receipt_line_id:
+            errors['receipt_line'] = 'Opening lots cannot reference a receipt line.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Stock lots are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Stock lots cannot be deleted.')
+
+
+class Stocktake(WorkspaceOwnedModel):
+    """A counted stock document that posts explicit variance movements."""
+
+    class Status(models.TextChoices):
+        """Stocktake lifecycle states."""
+
+        DRAFT = 'draft', 'Draft'
+        POSTED = 'posted', 'Posted'
+        REVERSED = 'reversed', 'Reversed'
+
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        editable=False,
+    )
+    counted_at = models.DateTimeField()
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    posted_at = models.DateTimeField(null=True, blank=True, editable=False)
+    reversed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-counted_at', '-pk']
+
+    def __str__(self):
+        return f'Stocktake {self.pk or "draft"}'
+
+    def save(self, *args, **kwargs):
+        if not self.pk and self.status != self.Status.DRAFT:
+            raise ValidationError('Stocktakes must be created as drafts.')
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).only('status').first()
+            if previous and previous.status != self.Status.DRAFT:
+                raise ValidationError('Posted stocktakes are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.status != self.Status.DRAFT:
+            raise ValidationError('Only draft stocktakes can be deleted.')
+        return super().delete(*args, **kwargs)
+
+
+class StocktakeLine(models.Model):
+    """One exact lot/location count and its posted variance snapshot."""
+
+    stocktake = models.ForeignKey(
+        Stocktake,
+        on_delete=models.CASCADE,
+        related_name='lines',
+    )
+    lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='stocktake_lines',
+    )
+    location = models.ForeignKey(
+        InventoryLocation,
+        on_delete=models.PROTECT,
+        related_name='stocktake_lines',
+    )
+    counted_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    unit_code = models.CharField(
+        max_length=16,
+        choices=UnitCode.choices,
+        null=True,
+        blank=True,
+    )
+    unit_conversion = models.ForeignKey(
+        ItemUnitConversion,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stocktake_lines',
+    )
+    counted_base_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    expected_base_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+    )
+    variance_base_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+    )
+    reason = models.TextField(blank=True, default='')
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['stocktake', 'lot', 'location'],
+                name='inventory_stocktake_lot_location_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(counted_quantity__gte=0),
+                name='inventory_stocktake_nonnegative_counted_quantity',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(counted_base_quantity__gte=0),
+                name='inventory_stocktake_nonnegative_base_quantity',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.stocktake_id and self.lot_id:
+            if self.stocktake.workspace_id != self.lot.workspace_id:
+                errors['lot'] = 'The lot belongs to a different workspace.'
+        if self.stocktake_id and self.location_id:
+            if self.stocktake.workspace_id != self.location.workspace_id:
+                errors['location'] = 'The location belongs to a different workspace.'
+        if bool(self.unit_code) == bool(self.unit_conversion_id):
+            errors['unit_code'] = (
+                'Select exactly one controlled unit or item conversion.'
+            )
+        if self.unit_conversion_id and self.lot_id:
+            if self.unit_conversion.item_id != self.lot.item_id:
+                errors['unit_conversion'] = 'The conversion does not belong to the lot item.'
+        if not errors and self.counted_base_quantity != self.normalized_quantity():
+            errors['counted_base_quantity'] = 'The normalized count is incorrect.'
+        if errors:
+            raise ValidationError(errors)
+
+    def normalized_quantity(self):
+        """Calculate the count in the lot item's canonical unit."""
+        if self.unit_conversion_id:
+            return self.counted_quantity * self.unit_conversion.multiplier
+        return convert_standard_quantity(
+            self.counted_quantity,
+            self.unit_code,
+            self.lot.item.base_unit,
+        )
+
+    def save(self, *args, **kwargs):
+        if self.stocktake_id and self.stocktake.status != Stocktake.Status.DRAFT:
+            raise ValidationError('Posted stocktake lines are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.stocktake.status != Stocktake.Status.DRAFT:
+            raise ValidationError('Posted stocktake lines are immutable.')
+        return super().delete(*args, **kwargs)
+
+
+class StockMovement(WorkspaceOwnedModel):
+    """One immutable positive-quantity entry in the physical stock ledger."""
+
+    class MovementType(models.TextChoices):
+        """Supported inventory events."""
+
+        OPENING = 'opening', 'Opening balance'
+        RECEIPT = 'receipt', 'Receipt'
+        CONSUMPTION = 'consumption', 'Consumption'
+        TRANSFER = 'transfer', 'Transfer'
+        ADJUSTMENT_GAIN = 'adjustment_gain', 'Adjustment gain'
+        ADJUSTMENT_LOSS = 'adjustment_loss', 'Adjustment loss'
+        WASTE = 'waste', 'Waste'
+        SALE = 'sale', 'Sale'
+        CUSTOMER_RETURN = 'customer_return', 'Customer return'
+        REVERSAL = 'reversal', 'Reversal'
+
+    lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='movements',
+    )
+    movement_type = models.CharField(max_length=24, choices=MovementType.choices)
+    quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    source = models.ForeignKey(
+        InventoryLocation,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='outgoing_stock_movements',
+    )
+    destination = models.ForeignKey(
+        InventoryLocation,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='incoming_stock_movements',
+    )
+    occurred_at = models.DateTimeField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    reason = models.TextField(blank=True, default='')
+    reference = models.CharField(max_length=255, blank=True, default='')
+    reversal_of = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='reversal',
+    )
+    receipt_line = models.ForeignKey(
+        StockReceiptLine,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='movements',
+    )
+    stocktake_line = models.ForeignKey(
+        StocktakeLine,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='movements',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['occurred_at', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='inventory_movement_positive_quantity',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(source__isnull=True) | models.Q(destination__isnull=True) | ~models.Q(source=models.F('destination'))),
+                name='inventory_movement_distinct_locations',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.movement_type} {self.quantity} {self.lot.item.base_unit}'
+
+    def clean(self):
+        super().clean()
+        errors = self._workspace_errors()
+        errors.update(movement_validation_errors(self))
+        if errors:
+            raise ValidationError(errors)
+
+    def _workspace_errors(self):
+        related = {
+            'lot': self.lot if self.lot_id else None,
+            'source': self.source if self.source_id else None,
+            'destination': self.destination if self.destination_id else None,
+        }
+        errors = {
+            field: f'The {field} belongs to a different workspace.'
+            for field, value in related.items()
+            if value is not None and value.workspace_id != self.workspace_id
+        }
+        if self.receipt_line_id:
+            if self.receipt_line.receipt.workspace_id != self.workspace_id:
+                errors['receipt_line'] = 'The receipt line belongs to a different workspace.'
+        if self.stocktake_line_id:
+            if self.stocktake_line.stocktake.workspace_id != self.workspace_id:
+                errors['stocktake_line'] = 'The stocktake line belongs to a different workspace.'
+        return errors
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Stock movements are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Stock movements cannot be deleted.')
