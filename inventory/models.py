@@ -183,7 +183,7 @@ class InventoryItem(WorkspaceOwnedModel):
             return cls.TrackingMode.SERIALIZED
         return cls.TrackingMode.LOT
 
-    def clean(self):  # pylint: disable=too-many-branches
+    def clean(self):
         """Validate unit semantics and usage configuration as one whole."""
         super().clean()
         errors = {}
