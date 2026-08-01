@@ -12,7 +12,8 @@ class WorkspaceAdmin(admin.ModelAdmin):
     list_display = ('name', 'mode', 'currency_code', 'timezone', 'updated')
 
     def has_add_permission(self, request):
-        return not Workspace.objects.exists() and super().has_add_permission(request)
+        """Keep workspace provisioning outside concurrent admin requests."""
+        return False
 
     def has_delete_permission(self, request, obj=None):
         return False

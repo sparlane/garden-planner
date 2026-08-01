@@ -4,11 +4,13 @@
 
 from decimal import Decimal
 
+from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ImproperlyConfigured
 from django.test import TestCase, override_settings
 from rest_framework.test import APITestCase
 
+from .admin import WorkspaceAdmin
 from .current import get_current_workspace
 from .models import Workspace
 
@@ -31,6 +33,16 @@ class CurrentWorkspaceTests(TestCase):
             'CURRENT_WORKSPACE_ID=9999 does not identify a workspace.',
         ):
             get_current_workspace()
+
+
+class WorkspaceAdminTests(TestCase):
+    """Admin cannot provision additional workspace rows."""
+
+    def test_admin_never_provisions_additional_workspaces(self):
+        """Concurrent admin requests cannot race to create workspace rows."""
+        workspace_admin = WorkspaceAdmin(Workspace, AdminSite())
+
+        self.assertFalse(workspace_admin.has_add_permission(request=None))
 
 
 class WorkspaceEndpointTests(APITestCase):
