@@ -128,12 +128,25 @@ class InventoryItem(WorkspaceOwnedModel):
         """Validate unit semantics and usage configuration as one whole."""
         super().clean()
         errors = {}
+
+        base_unit = self._validate_base_unit(errors)
+        if base_unit is not None:
+            self._validate_item_unit_semantics(errors)
+        self._validate_usage_configuration(errors)
+
+        if errors:
+            raise ValidationError(errors)
+
+    def _validate_base_unit(self, errors):
+        """Resolve the base unit while retaining the registry's exact error."""
         try:
-            base_unit = get_unit_definition(self.base_unit)
+            return get_unit_definition(self.base_unit)
         except ValidationError as exc:
             errors['base_unit'] = exc.messages
-            base_unit = None
+            return None
 
+    def _validate_item_unit_semantics(self, errors):
+        """Match semantic count units to seed and serialized identities."""
         if self.category == self.Category.SEED and self.base_unit not in {
             UnitCode.SEED,
             UnitCode.SEED_CLUSTER,
@@ -142,81 +155,94 @@ class InventoryItem(WorkspaceOwnedModel):
         if self.tracking_mode == self.TrackingMode.SERIALIZED and self.base_unit != UnitCode.EACH:
             errors['base_unit'] = 'Serialized items must use each as their base unit.'
 
+    def _validate_usage_configuration(self, errors):
+        """Dispatch the selected usage basis to its configuration rules."""
+        validators = {
+            self.UsageBasis.CELL_VOLUME: self._validate_rate_based_usage,
+            self.UsageBasis.SURFACE_AREA: self._validate_rate_based_usage,
+            self.UsageBasis.PER_UNIT: self._validate_rate_based_usage,
+            self.UsageBasis.FIXED: self._validate_fixed_usage,
+            self.UsageBasis.MANUAL: self._validate_manual_usage,
+        }
+        validator = validators.get(self.default_usage_basis)
+        if validator:
+            validator(errors)
+
+    def _validate_rate_based_usage(self, errors):
+        """Require a positive rate with the correct denominator dimension."""
         rate_dimensions = {
             self.UsageBasis.CELL_VOLUME: UnitDimension.VOLUME,
             self.UsageBasis.SURFACE_AREA: UnitDimension.AREA,
             self.UsageBasis.PER_UNIT: UnitDimension.COUNT,
         }
-        if self.default_usage_basis in rate_dimensions:
-            if self.default_usage_rate is None:
-                errors['default_usage_rate'] = 'This usage basis requires a rate.'
-            if not self.usage_rate_unit:
-                errors['usage_rate_unit'] = 'This usage basis requires a rate unit.'
-            else:
-                try:
-                    rate_unit = get_unit_definition(self.usage_rate_unit)
-                except ValidationError as exc:
-                    errors['usage_rate_unit'] = exc.messages
-                else:
-                    if rate_unit.dimension != rate_dimensions[self.default_usage_basis]:
-                        errors['usage_rate_unit'] = (
-                            'The rate unit has an incompatible dimension.'
-                        )
-            if self.default_fixed_quantity is not None:
-                errors['default_fixed_quantity'] = (
-                    'Rate-based usage cannot also define a fixed quantity.'
-                )
-        elif self.default_usage_basis == self.UsageBasis.FIXED:
-            if self.default_fixed_quantity is None:
-                errors['default_fixed_quantity'] = (
-                    'Fixed usage requires a default quantity.'
-                )
-            if self.default_usage_rate is not None:
-                errors['default_usage_rate'] = (
-                    'Fixed usage does not accept a rate.'
-                )
-            if self.usage_rate_unit:
-                errors['usage_rate_unit'] = (
-                    'Fixed usage does not accept a rate unit.'
-                )
+        if self.default_usage_rate is None:
+            errors['default_usage_rate'] = 'This usage basis requires a rate.'
+        if not self.usage_rate_unit:
+            errors['usage_rate_unit'] = 'This usage basis requires a rate unit.'
         else:
-            if self.default_usage_rate is not None:
-                errors['default_usage_rate'] = 'Manual usage does not accept a rate.'
-            if self.usage_rate_unit:
-                errors['usage_rate_unit'] = (
-                    'Manual usage does not accept a rate unit.'
-                )
-            if self.default_fixed_quantity is not None:
-                errors['default_fixed_quantity'] = (
-                    'Manual usage does not accept a fixed quantity.'
-                )
+            try:
+                rate_unit = get_unit_definition(self.usage_rate_unit)
+            except ValidationError as exc:
+                errors['usage_rate_unit'] = exc.messages
+            else:
+                required_dimension = rate_dimensions[self.default_usage_basis]
+                if rate_unit.dimension != required_dimension:
+                    errors['usage_rate_unit'] = (
+                        'The rate unit has an incompatible dimension.'
+                    )
+        if self.default_fixed_quantity is not None:
+            errors['default_fixed_quantity'] = (
+                'Rate-based usage cannot also define a fixed quantity.'
+            )
 
-        if base_unit is None:
-            errors.setdefault('base_unit', 'Select a controlled inventory unit.')
-        if errors:
-            raise ValidationError(errors)
+    def _validate_fixed_usage(self, errors):
+        """Allow one fixed base-unit quantity without rate fields."""
+        if self.default_fixed_quantity is None:
+            errors['default_fixed_quantity'] = (
+                'Fixed usage requires a default quantity.'
+            )
+        if self.default_usage_rate is not None:
+            errors['default_usage_rate'] = 'Fixed usage does not accept a rate.'
+        if self.usage_rate_unit:
+            errors['usage_rate_unit'] = 'Fixed usage does not accept a rate unit.'
+
+    def _validate_manual_usage(self, errors):
+        """Keep manual usage free of an implied quantity or formula."""
+        if self.default_usage_rate is not None:
+            errors['default_usage_rate'] = 'Manual usage does not accept a rate.'
+        if self.usage_rate_unit:
+            errors['usage_rate_unit'] = 'Manual usage does not accept a rate unit.'
+        if self.default_fixed_quantity is not None:
+            errors['default_fixed_quantity'] = (
+                'Manual usage does not accept a fixed quantity.'
+            )
+
+    def _identity_lock_errors(self, previous):
+        """Return changes forbidden after the first stock movement."""
+        locked_fields = {
+            'base_unit': (previous.base_unit, self.base_unit),
+            'tracking_mode': (
+                previous.tracking_mode,
+                self.tracking_mode,
+            ),
+        }
+        errors = {
+            field: 'Create a new item instead of changing this after stock history exists.'
+            for field, values in locked_fields.items()
+            if values[0] != values[1]
+        }
+        if previous.stock_history_started_at != self.stock_history_started_at:
+            errors['stock_history_started_at'] = (
+                'Stock-history state cannot be changed.'
+            )
+        return errors
 
     def save(self, *args, **kwargs):
         """Enforce configuration validity and post-history immutability."""
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
             if previous and previous.stock_history_started_at:
-                locked_fields = {
-                    'base_unit': (previous.base_unit, self.base_unit),
-                    'tracking_mode': (
-                        previous.tracking_mode,
-                        self.tracking_mode,
-                    ),
-                }
-                errors = {
-                    field: 'Create a new item instead of changing this after stock history exists.'
-                    for field, values in locked_fields.items()
-                    if values[0] != values[1]
-                }
-                if previous.stock_history_started_at != self.stock_history_started_at:
-                    errors['stock_history_started_at'] = (
-                        'Stock-history state cannot be changed.'
-                    )
+                errors = self._identity_lock_errors(previous)
                 if errors:
                     raise ValidationError(errors)
         self.full_clean()

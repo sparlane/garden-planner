@@ -117,13 +117,33 @@ def get_unit_definition(code):
         raise ValidationError(f'Unknown inventory unit code: {code}.') from exc
 
 
-def convert_standard_quantity(quantity, from_unit, to_unit):
-    """Convert a Decimal quantity between compatible controlled units."""
+def convert_standard_quantity(
+    quantity: Decimal | str,
+    from_unit: str,
+    to_unit: str,
+) -> Decimal:
+    """Convert an exact Decimal or decimal string between compatible units."""
     source = get_unit_definition(from_unit)
     target = get_unit_definition(to_unit)
     if source.conversion_family != target.conversion_family:
         raise ValidationError(
             f'{source.code} cannot be converted to {target.code}.',
         )
-    value = Decimal(quantity)
+    if isinstance(quantity, Decimal):
+        value = quantity
+    elif isinstance(quantity, str):
+        try:
+            value = Decimal(quantity)
+        except (ArithmeticError, ValueError) as exc:
+            raise ValidationError(
+                f'Invalid quantity "{quantity}" for unit conversion.',
+            ) from exc
+    else:
+        raise ValidationError(
+            'Quantity must be a Decimal or string to preserve decimal precision.',
+        )
+    if not value.is_finite():
+        raise ValidationError(
+            f'Invalid quantity "{quantity}" for unit conversion.',
+        )
     return value * source.to_reference_multiplier / target.to_reference_multiplier

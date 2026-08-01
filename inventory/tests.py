@@ -8,7 +8,7 @@ from django.test import SimpleTestCase, TestCase
 from workspaces.models import Workspace, get_current_workspace
 
 from .models import InventoryItem, ItemUnitConversion
-from .units import UnitCode, UnitDimension, convert_standard_quantity
+from .units import UnitCode, convert_standard_quantity
 
 
 class UnitRegistryTests(SimpleTestCase):
@@ -28,6 +28,20 @@ class UnitRegistryTests(SimpleTestCase):
             convert_standard_quantity(Decimal('750'), UnitCode.MILLILITRE, UnitCode.LITRE),
             Decimal('0.75'),
         )
+        self.assertEqual(
+            convert_standard_quantity('0.1', UnitCode.LITRE, UnitCode.MILLILITRE),
+            Decimal('100.0'),
+        )
+
+    def test_inexact_or_invalid_quantity_inputs_are_rejected(self):
+        """Binary floats and non-finite decimal strings never enter calculations."""
+        for quantity in (0.1, 1, 'not-a-number', 'NaN', 'Infinity'):
+            with self.subTest(quantity=quantity), self.assertRaises(ValidationError):
+                convert_standard_quantity(
+                    quantity,
+                    UnitCode.LITRE,
+                    UnitCode.MILLILITRE,
+                )
 
     def test_incompatible_dimensions_and_count_semantics_are_rejected(self):
         """A shared count dimension does not equate seeds and clusters."""
@@ -101,6 +115,20 @@ class InventoryItemModelTests(TestCase):
                 tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
                 base_unit=UnitCode.MILLILITRE,
             )
+
+    def test_unknown_base_unit_error_is_not_replaced_by_semantic_rules(self):
+        """An invalid code reports the registry error before category semantics."""
+        item = InventoryItem(
+            category=InventoryItem.Category.SEED,
+            tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
+            base_unit='unknown',
+        )
+        with self.assertRaises(ValidationError) as context:
+            item.clean()
+        self.assertEqual(
+            context.exception.message_dict['base_unit'],
+            ['Unknown inventory unit code: unknown.'],
+        )
 
     def test_usage_basis_requires_matching_configuration(self):
         """Each automatic basis accepts only its meaningful denominator."""
