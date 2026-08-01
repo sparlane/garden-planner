@@ -41,6 +41,7 @@ if not SECRET_KEY:
 # Application definition
 
 INSTALLED_APPS = [
+    "workspaces",
     "plants",
     "seeds",
     "garden",
@@ -131,6 +132,10 @@ STATIC_ROOT = BASE_DIR / "static"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 LOGIN_REDIRECT_URL = "/"
+
+# The initial deployment deliberately exposes one shared workspace to every
+# authenticated user. Tests may create other workspaces to verify isolation.
+CURRENT_WORKSPACE_ID = globals().get("CURRENT_WORKSPACE_ID", 1)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
