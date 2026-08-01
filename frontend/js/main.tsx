@@ -17,6 +17,7 @@ import { queryClient, queryKeys } from './query.js'
 import { SeedTrayDetails } from './seedtray/seedtray_details.js'
 import { getWorkspace } from './api/workspace.js'
 import { WorkspaceModeRoute, WorkspaceSettings } from './workspace.js'
+import { InventoryCatalog } from './inventory.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -63,6 +64,7 @@ function FrontEndPage() {
         <Route path="/seedtrays/:trayId" element={<SeedTrayDetailsRoute />} />
         <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
         <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
+        <Route path="/inventory" element={<InventoryCatalog />} />
         <Route
           path="/settings"
           element={

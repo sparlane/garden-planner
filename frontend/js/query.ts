@@ -5,6 +5,12 @@ const queryKeys = {
     all: ['workspace'] as const,
     current: ['workspace', 'current'] as const
   },
+  inventory: {
+    all: ['inventory'] as const,
+    units: ['inventory', 'units'] as const,
+    items: (search: string, category: string, trackingMode: string, status: string) => ['inventory', 'items', search, category, trackingMode, status] as const,
+    conversions: (itemPk: number) => ['inventory', 'conversions', itemPk] as const
+  },
   garden: {
     all: ['garden'] as const,
     areas: ['garden', 'areas'] as const,

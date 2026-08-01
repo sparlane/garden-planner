@@ -58,6 +58,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               Garden Squares
             </NavDropdown.Item>
           </NavDropdown>
+          <Nav.Link as={NavLink} to="/inventory">
+            Inventory
+          </Nav.Link>
           <Nav.Link as={NavLink} to="/settings">
             Settings
           </Nav.Link>
