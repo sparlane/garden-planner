@@ -3,7 +3,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { HashRouter, Navigate, Route, Routes, useParams } from 'react-router'
 
 import { GPTopBar } from './menu.js'
@@ -13,8 +13,10 @@ import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
 import { ApiErrorAlert } from './api_error_alert.js'
-import { queryClient } from './query.js'
+import { queryClient, queryKeys } from './query.js'
 import { SeedTrayDetails } from './seedtray/seedtray_details.js'
+import { getWorkspace } from './api/workspace.js'
+import { WorkspaceModeRoute, WorkspaceSettings } from './workspace.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -28,9 +30,26 @@ function SeedTrayDetailsRoute() {
 }
 
 function FrontEndPage() {
+  const { data: workspace, isPending } = useQuery({
+    queryKey: queryKeys.workspace.current,
+    queryFn: ({ signal }) => getWorkspace(signal)
+  })
+
+  if (isPending) {
+    return <div className="container py-3">Loading workspace…</div>
+  }
+  if (!workspace) {
+    return (
+      <div className="container py-3">
+        <ApiErrorAlert />
+        <div>Workspace settings are unavailable.</div>
+      </div>
+    )
+  }
+
   return (
     <>
-      <GPTopBar />
+      <GPTopBar workspace={workspace} />
       <ApiErrorAlert />
       <Routes>
         <Route path="/gardens" element={<GardenDisplay />} />
@@ -44,6 +63,14 @@ function FrontEndPage() {
         <Route path="/seedtrays/:trayId" element={<SeedTrayDetailsRoute />} />
         <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
         <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
+        <Route
+          path="/settings"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['garden', 'nursery']}>
+              <WorkspaceSettings workspace={workspace} />
+            </WorkspaceModeRoute>
+          }
+        />
         <Route path="*" element={<Navigate to="/gardens" replace />} />
       </Routes>
     </>

@@ -1,6 +1,10 @@
 import { QueryClient } from '@tanstack/react-query'
 
 const queryKeys = {
+  workspace: {
+    all: ['workspace'] as const,
+    current: ['workspace', 'current'] as const
+  },
   garden: {
     all: ['garden'] as const,
     areas: ['garden', 'areas'] as const,

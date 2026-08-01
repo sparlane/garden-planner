@@ -156,6 +156,30 @@ class WorkspaceEndpointTests(APITestCase):
             },
         )
 
+    def test_two_users_share_mode_changes_without_data_loss(self):
+        """Profile switching is shared presentation state and retains records."""
+        supplier = Supplier.objects.create(name='Persistent supplier')
+        first_response = self.client.patch(
+            self.url,
+            {'mode': 'nursery'},
+            format='json',
+        )
+        second_user = get_user_model().objects.create_user(
+            username='second-workspace-user',
+        )
+        self.client.force_authenticate(second_user)
+        shared_response = self.client.get(self.url)
+        garden_response = self.client.patch(
+            self.url,
+            {'mode': 'garden'},
+            format='json',
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(shared_response.data['mode'], 'nursery')
+        self.assertEqual(garden_response.status_code, 200)
+        self.assertTrue(Supplier.objects.filter(pk=supplier.pk).exists())
+
     def test_put_post_and_delete_are_not_supported(self):
         """The singleton resource supports partial updates only."""
         for method in ('put', 'post', 'delete'):

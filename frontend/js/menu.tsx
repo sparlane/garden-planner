@@ -5,8 +5,13 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import { Nav, Navbar, NavDropdown } from 'react-bootstrap'
 import { NavLink, useLocation } from 'react-router'
+import { Workspace } from './types/workspace'
 
-function GPTopBar() {
+interface GPTopBarProps {
+  workspace: Workspace
+}
+
+function GPTopBar({ workspace }: GPTopBarProps) {
   const { pathname } = useLocation()
   const seedsActive = pathname === '/seeds' || pathname.startsWith('/seeds/')
   const seedTraysActive = pathname === '/seedtrays' || pathname.startsWith('/seedtrays/')
@@ -14,6 +19,9 @@ function GPTopBar() {
 
   return (
     <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
+      <Navbar.Brand as={NavLink} to="/gardens">
+        {workspace.name} · {workspace.mode === 'garden' ? 'Garden' : 'Nursery'}
+      </Navbar.Brand>
       <Navbar.Toggle aria-controls="responsive-navbar-nav" />
       <Navbar.Collapse id="responsive-navbar-nav">
         <Nav>
@@ -50,6 +58,9 @@ function GPTopBar() {
               Garden Squares
             </NavDropdown.Item>
           </NavDropdown>
+          <Nav.Link as={NavLink} to="/settings">
+            Settings
+          </Nav.Link>
         </Nav>
       </Navbar.Collapse>
     </Navbar>
