@@ -47,6 +47,11 @@ Features
   - Plantings router exposes direct-sow, seed-tray, read-only legacy transplant, specific-plant, and specific-plant-location resources.
   - Seeds router exposes: `seeds`, `packets` and `packets/all`.
 
+- Workspace profile and ownership
+  - One configured workspace owns every catalog, garden, tray, and planting record.
+  - The workspace can switch between Garden and Nursery presentation without converting or deleting data.
+  - Workspace settings include currency, default tax percentage, IANA timezone, and metric or imperial display preferences.
+
 - React-based frontend components
   - Frontend lives in `frontend/js/` (React components) and uses Bootstrap and jQuery for the UI; examples include `menu.js`, `planting.js`, `seeds.js`, and `plants.js`.
   - Frontend build is wired up via the repository `package.json` and build scripts.
@@ -121,6 +126,7 @@ Before setup:
 - Set `ALLOWED_HOSTS` to every hostname that serves the site.
 - Set `CSRF_TRUSTED_ORIGINS` to every public origin, including its scheme.
 - Fill in all four database values directly, or provide `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` in the deployment environment.
+- Leave `CURRENT_WORKSPACE_ID = 1` for an existing single-workspace installation. Selecting another ID does not move records between workspaces.
 - For HTTPS behind a trusted reverse proxy, review and enable the commented proxy and secure-cookie settings.
 
 Run `./setup-venv.sh`; it substitutes any provided database variables and applies migrations to the configured PostgreSQL database.
@@ -167,12 +173,16 @@ Multigerm seeds and legacy transplant recovery
   ```
   The aggregate quantity is treated as the total target, so the command previews only the missing plants. After checking the labels and counts, repeat the command with `--apply`. Conversion creates complete tray-to-garden history and deletes the aggregate in one transaction. Already-removed aggregates are rejected because they contain no trustworthy location end time.
 
-Account and site boundaries
-- The application currently supports a single trusted account boundary. Authenticated accounts are not isolated from one another, so do not create secondary accounts for untrusted users.
-- Future multi-account support will make a site the data-ownership boundary. Accounts will receive access through site membership so one account can use multiple sites and a site can be shared deliberately.
-- Multi-account deployments are not supported until every queryset and cross-resource reference is scoped to an accessible site.
+Workspace and account boundaries
+- Migration creates workspace `1` as `My Garden` with Garden mode, UTC, USD, 0% tax, and metric display. Correct these neutral defaults from the Settings screen before recording future financial transactions.
+- `CURRENT_WORKSPACE_ID` selects the one workspace served by the deployment. Existing endpoint payloads do not expose or accept workspace IDs; the server scopes reads and binds writes to the configured workspace.
+- Every authenticated account has the same access to that workspace. Memberships and roles are not implemented, so do not create accounts for mutually untrusted users.
+- Additional workspace rows are supported as an isolation boundary for future development, but serving unrelated tenants, selecting workspaces per user, and moving records between workspaces remain unsupported.
 
 API endpoints (examples)
+- Workspace settings:
+  - GET /settings/workspace/ — retrieve the current workspace profile without exposing its ID
+  - PATCH /settings/workspace/ — update profile, financial defaults, timezone, and display measurements
 - Plantings views:
   - GET /plantings/seedtray/current/ — list current seedtray plantings (with computed germination dates and transplanted counts)
   - POST /plantings/seedtray/ — create seedtray planting (used by frontend)
