@@ -44,6 +44,7 @@ class InventoryItemSerializer(serializers.ModelSerializer):
             'usage_rate_unit',
             'usage_rate_unit_dimension',
             'default_fixed_quantity',
+            'reorder_level',
             'stock_history_started_at',
             'created',
             'updated',
