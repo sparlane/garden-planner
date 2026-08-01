@@ -8,6 +8,8 @@ from django.shortcuts import get_object_or_404
 from rest_framework import serializers, viewsets
 from rest_framework_nested import routers
 
+from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
+
 from .models import SeedTrayModel, SeedTray, SeedTrayCell
 
 
@@ -31,13 +33,15 @@ class SeedTrayModelSerializer(serializers.ModelSerializer):
         return data
 
 
-class SeedTraySerializer(serializers.ModelSerializer):
+class SeedTraySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a Seed Tray
     """
     class Meta:
         model = SeedTray
         fields = ['pk', 'model', 'created', 'notes']
+
+    workspace_field_lookups = {'model': 'workspace'}
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """A created tray keeps the model that defined its generated cell grid."""
@@ -65,13 +69,15 @@ class SeedTraySerializer(serializers.ModelSerializer):
         return seed_tray
 
 
-class SeedTrayCellSerializer(serializers.ModelSerializer):
+class SeedTrayCellSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a Seed Tray Cell
     """
     class Meta:
         model = SeedTrayCell
         fields = ['pk', 'tray', 'x_position', 'y_position']
+
+    workspace_field_lookups = {'tray': 'workspace'}
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep a cell on its original tray and within that tray's grid."""
@@ -105,7 +111,7 @@ class NestedSeedTrayCellSerializer(SeedTrayCellSerializer):
         extra_kwargs = {'tray': {'read_only': True}}
 
 
-class SeedTrayModelsViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayModels
     """
@@ -113,7 +119,7 @@ class SeedTrayModelsViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-
     serializer_class = SeedTrayModelSerializer
 
 
-class SeedTrayAllViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayAllViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of all SeedTrays
     """
@@ -121,20 +127,24 @@ class SeedTrayAllViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-anc
     serializer_class = SeedTraySerializer
 
 
-class SeedTrayCellViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayCellViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of all SeedTrayCells
     """
     queryset = SeedTrayCell.objects.all()
     serializer_class = SeedTrayCellSerializer
+    workspace_lookup = 'tray__workspace'
+    bind_workspace_on_create = False
 
 
-class SeedTrayCellFilteredViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayCellFilteredViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayCells filtered by tray
     """
     queryset = SeedTrayCell.objects.all()
     serializer_class = NestedSeedTrayCellSerializer
+    workspace_lookup = 'tray__workspace'
+    bind_workspace_on_create = False
     _parent_tray = None
 
     def get_parent_tray(self):
@@ -143,11 +153,12 @@ class SeedTrayCellFilteredViewSet(viewsets.ModelViewSet):  # pylint: disable=too
             self._parent_tray = get_object_or_404(
                 SeedTray.objects.select_related('model'),
                 pk=self.kwargs['seedtray_pk'],
+                workspace=self.get_current_workspace(),
             )
         return self._parent_tray
 
     def get_queryset(self):
-        return self.queryset.filter(tray=self.get_parent_tray())
+        return super().get_queryset().filter(tray=self.get_parent_tray())
 
     def get_serializer_context(self):
         context = super().get_serializer_context()

@@ -3,10 +3,12 @@ Rest related classes for seeds
 """
 from rest_framework import routers, serializers, viewsets
 
+from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
+
 from .models import Seeds, SeedPacket
 
 
-class SeedsSerializer(serializers.ModelSerializer):
+class SeedsSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a Seeds Supply
     """
@@ -14,8 +16,13 @@ class SeedsSerializer(serializers.ModelSerializer):
         model = Seeds
         fields = ['pk', 'supplier', 'plant_variety', 'supplier_code', 'url', 'notes']
 
+    workspace_field_lookups = {
+        'supplier': 'workspace',
+        'plant_variety': 'workspace',
+    }
 
-class SeedPacketSerializer(serializers.ModelSerializer):
+
+class SeedPacketSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a Seed Packet
     """
@@ -23,8 +30,10 @@ class SeedPacketSerializer(serializers.ModelSerializer):
         model = SeedPacket
         fields = ['pk', 'seeds', 'purchase_date', 'sow_by', 'empty', 'notes']
 
+    workspace_field_lookups = {'seeds': 'workspace'}
 
-class SeedsViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+
+class SeedsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Seeds
     """
@@ -32,7 +41,7 @@ class SeedsViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     serializer_class = SeedsSerializer
 
 
-class SeedPacketCurrentViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedPacketCurrentViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of non-empty SeedPackets
     """
@@ -40,7 +49,7 @@ class SeedPacketCurrentViewSet(viewsets.ModelViewSet):  # pylint: disable=too-ma
     serializer_class = SeedPacketSerializer
 
 
-class SeedPacketAllViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedPacketAllViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of all SeedPackets
     """

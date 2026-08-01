@@ -3,6 +3,8 @@ Rest for Gardens
 """
 from rest_framework import routers, serializers, viewsets
 
+from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
+
 from .models import GardenArea, GardenBed, GardenRow, GardenSquare
 
 
@@ -15,7 +17,7 @@ class GardenAreaSerializer(serializers.ModelSerializer):
         fields = ['pk', 'name', 'size_x', 'size_y']
 
 
-class GardenBedSerializer(serializers.ModelSerializer):
+class GardenBedSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Garden Bed
     """
@@ -23,8 +25,10 @@ class GardenBedSerializer(serializers.ModelSerializer):
         model = GardenBed
         fields = ['pk', 'area', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
+    workspace_field_lookups = {'area': 'workspace'}
 
-class GardenRowSerializer(serializers.ModelSerializer):
+
+class GardenRowSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Garden Row
     """
@@ -32,8 +36,10 @@ class GardenRowSerializer(serializers.ModelSerializer):
         model = GardenRow
         fields = ['pk', 'bed', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
+    workspace_field_lookups = {'bed': 'workspace'}
 
-class GardenSquareSerializer(serializers.ModelSerializer):
+
+class GardenSquareSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Garden Square
     """
@@ -41,8 +47,10 @@ class GardenSquareSerializer(serializers.ModelSerializer):
         model = GardenSquare
         fields = ['pk', 'bed', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
+    workspace_field_lookups = {'bed': 'workspace'}
 
-class GardenAreaViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+
+class GardenAreaViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Area
     """
@@ -50,7 +58,7 @@ class GardenAreaViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ance
     serializer_class = GardenAreaSerializer
 
 
-class GardenBedViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenBedViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Bed
     """
@@ -58,7 +66,7 @@ class GardenBedViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ances
     serializer_class = GardenBedSerializer
 
 
-class GardenRowViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenRowViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Row
     """
@@ -66,7 +74,7 @@ class GardenRowViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ances
     serializer_class = GardenRowSerializer
 
 
-class GardenSquareViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenSquareViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Square
     """

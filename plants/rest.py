@@ -3,6 +3,8 @@ Rest access for plants
 """
 from rest_framework import routers, serializers, viewsets
 
+from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
+
 from .models import PlantFamily, Plant, PlantVariety
 
 
@@ -15,7 +17,7 @@ class PlantFamilySerializer(serializers.ModelSerializer):
         fields = ['pk', 'name', 'notes']
 
 
-class PlantSerializer(serializers.ModelSerializer):
+class PlantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Plant
     """
@@ -23,8 +25,10 @@ class PlantSerializer(serializers.ModelSerializer):
         model = Plant
         fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max']
 
+    workspace_field_lookups = {'family': 'workspace'}
 
-class PlantVarietySerializer(serializers.ModelSerializer):
+
+class PlantVarietySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Plant Variety
     """
@@ -32,8 +36,10 @@ class PlantVarietySerializer(serializers.ModelSerializer):
         model = PlantVariety
         fields = ['pk', 'plant', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max']
 
+    workspace_field_lookups = {'plant': 'workspace'}
 
-class PlantFamilyViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+
+class PlantFamilyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Family
     """
@@ -41,7 +47,7 @@ class PlantFamilyViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-anc
     serializer_class = PlantFamilySerializer
 
 
-class PlantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plants
     """
@@ -49,7 +55,7 @@ class PlantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     serializer_class = PlantSerializer
 
 
-class PlantVarietyViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantVarietyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Varieties
     """
