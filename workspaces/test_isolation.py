@@ -6,10 +6,20 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
+from plantings.models import (
+    GardenRowDirectSowPlanting,
+    GardenSquareDirectSowPlanting,
+    GardenSquareTransplant,
+    SeedTrayCellPlanting,
+    SeedTrayPlanting,
+    SpecificPlant,
+    SpecificPlantLocation,
+)
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
+from tests.factories import make_garden_square
 
 from .models import Workspace, get_current_workspace
 
@@ -103,6 +113,44 @@ class ResourceIsolationTests(APITestCase):
             tray=self.tray,
             x_position=0,
             y_position=0,
+        )
+        self.row_sowing = GardenRowDirectSowPlanting.objects.create(
+            workspace=self.other,
+            seeds_used=self.packet,
+            location=self.row,
+            quantity=2,
+        )
+        self.square_sowing = GardenSquareDirectSowPlanting.objects.create(
+            workspace=self.other,
+            seeds_used=self.packet,
+            location=self.square,
+            quantity=2,
+        )
+        self.tray_sowing = SeedTrayPlanting.objects.create(
+            workspace=self.other,
+            seeds_used=self.packet,
+            seed_tray=self.tray,
+            quantity=2,
+        )
+        self.cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.tray_sowing,
+            cell=self.cell,
+            quantity=2,
+        )
+        self.specific_plant = SpecificPlant.objects.create(
+            workspace=self.other,
+            cell_planting=self.cell_planting,
+        )
+        self.location = SpecificPlantLocation.objects.create(
+            specific_plant=self.specific_plant,
+            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+            seed_tray_cell=self.cell,
+        )
+        self.transplant = GardenSquareTransplant.objects.create(
+            workspace=self.other,
+            original_planting=self.tray_sowing,
+            location=self.square,
+            quantity=1,
         )
 
     def test_lists_and_details_hide_other_workspace_records(self):
@@ -223,3 +271,133 @@ class ResourceIsolationTests(APITestCase):
 
         self.assertEqual(nested.status_code, 404)
         self.assertEqual(detail.status_code, 404)
+
+    def test_planting_routes_and_summaries_hide_other_workspace(self):
+        """Cultivation records cannot enter direct, nested, or summary responses."""
+        resources = (
+            ('/plantings/directsowgardenrow/', self.row_sowing.pk),
+            ('/plantings/directsowgardensquare/', self.square_sowing.pk),
+            ('/plantings/seedtray/', self.tray_sowing.pk),
+            ('/plantings/transplantedgardensquare/', self.transplant.pk),
+            ('/plantings/specificplants/', self.specific_plant.pk),
+            ('/plantings/specificplantlocations/', self.location.pk),
+        )
+        for url, record_pk in resources:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).data, [])
+                self.assertEqual(
+                    self.client.get(f'{url}{record_pk}/').status_code,
+                    404,
+                )
+
+        nested_urls = (
+            f'/plantings/seedtray-data/{self.tray.pk}/plantings/',
+            f'/plantings/seedtray-data/{self.tray.pk}/specificplants/',
+            f'/plantings/specificplants/{self.specific_plant.pk}/locations/',
+        )
+        for url in nested_urls:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 404)
+
+        self.assertEqual(
+            self.client.get('/plantings/seedtray/current/').json(),
+            {'plantings': []},
+        )
+        self.assertEqual(
+            self.client.get('/plantings/garden/squares/current/').json(),
+            {'plantings': []},
+        )
+        self.assertEqual(
+            self.client.get('/seeds/packets/current/').json(),
+            {'packets': []},
+        )
+
+    def test_planting_foreign_keys_are_workspace_scoped(self):
+        """Sowing, allocation, germination, and location writes reject foreign IDs."""
+        requests = (
+            (
+                '/plantings/directsowgardenrow/',
+                {
+                    'seeds_used': self.packet.pk,
+                    'location': self.row.pk,
+                    'quantity': 1,
+                },
+            ),
+            (
+                '/plantings/directsowgardensquare/',
+                {
+                    'seeds_used': self.packet.pk,
+                    'location': self.square.pk,
+                    'quantity': 1,
+                },
+            ),
+            (
+                '/plantings/seedtray/',
+                {
+                    'seeds_used': self.packet.pk,
+                    'seed_tray': self.tray.pk,
+                    'quantity': 1,
+                    'cell_plantings': [
+                        {'cell': self.cell.pk, 'quantity': 1},
+                    ],
+                },
+            ),
+            (
+                '/plantings/specificplants/',
+                {'cell_planting': self.cell_planting.pk},
+            ),
+            (
+                '/plantings/specificplantlocations/',
+                {
+                    'specific_plant': self.specific_plant.pk,
+                    'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                    'garden_square': self.square.pk,
+                },
+            ),
+        )
+        for url, payload in requests:
+            with self.subTest(url=url):
+                response = self.client.post(url, payload, format='json')
+                self.assertEqual(response.status_code, 400, response.data)
+
+    def test_mutations_cannot_target_other_workspace(self):
+        """Completion, emptying, moving, and ending foreign records return 404."""
+        current_square = make_garden_square()
+        requests = (
+            ('/plantings/seedtray/complete/', {'planting': self.tray_sowing.pk}),
+            (
+                '/plantings/garden/squares/complete/',
+                {'planting': self.square_sowing.pk},
+            ),
+            (
+                '/plantings/garden/squares/transplant/complete/',
+                {'planting': self.transplant.pk},
+            ),
+            ('/seeds/packets/empty/', {'packet': self.packet.pk}),
+            (
+                f'/plantings/specificplants/{self.specific_plant.pk}/move/',
+                {
+                    'location_type': SpecificPlantLocation.GARDEN_SQUARE,
+                    'garden_square': current_square.pk,
+                },
+            ),
+            (
+                f'/plantings/specificplantlocations/{self.location.pk}/end/',
+                {},
+            ),
+        )
+        for url, payload in requests:
+            with self.subTest(url=url):
+                response = self.client.post(url, payload, format='json')
+                self.assertEqual(response.status_code, 404)
+
+        self.packet.refresh_from_db()
+        self.tray_sowing.refresh_from_db()
+        self.square_sowing.refresh_from_db()
+        self.transplant.refresh_from_db()
+        self.location.refresh_from_db()
+        self.assertFalse(self.packet.empty)
+        self.assertFalse(self.tray_sowing.removed)
+        self.assertFalse(self.square_sowing.removed)
+        self.assertFalse(self.transplant.removed)
+        self.assertIsNone(self.location.ended)

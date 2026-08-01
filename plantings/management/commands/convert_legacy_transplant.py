@@ -11,6 +11,7 @@ from plantings.models import (
     SpecificPlant,
     SpecificPlantLocation,
 )
+from workspaces.models import get_current_workspace
 
 
 class Command(BaseCommand):
@@ -108,7 +109,7 @@ class Command(BaseCommand):
         queryset = GardenSquareTransplant.objects.select_related(
             'original_planting__seeds_used__seeds__plant_variety__plant',
             'location__bed__area',
-        )
+        ).filter(workspace=get_current_workspace())
         if for_update:
             queryset = queryset.select_for_update()
         try:
@@ -158,7 +159,11 @@ class Command(BaseCommand):
 
     @staticmethod
     def _get_cell_planting(cell_planting_id, transplant, *, for_update):
-        queryset = SeedTrayCellPlanting.objects.select_related('cell__tray__model')
+        queryset = SeedTrayCellPlanting.objects.select_related(
+            'cell__tray__model',
+        ).filter(
+            seed_tray_planting__workspace=transplant.workspace,
+        )
         if for_update:
             queryset = queryset.select_for_update()
         try:
@@ -201,7 +206,10 @@ class Command(BaseCommand):
                 'Existing plant count cannot exceed the aggregate target quantity.'
             )
 
-        queryset = SpecificPlant.objects.filter(pk__in=plant_ids)
+        queryset = SpecificPlant.objects.filter(
+            pk__in=plant_ids,
+            workspace=transplant.workspace,
+        )
         if for_update:
             queryset = queryset.select_for_update()
         plants_by_id = {plant.pk: plant for plant in queryset}
@@ -266,6 +274,7 @@ class Command(BaseCommand):
         )
         for _index in range(new_plant_count):
             plant = SpecificPlant.objects.create(
+                workspace=transplant.workspace,
                 cell_planting=cell_planting,
                 germinated=germinated_at,
                 notes=recovery_note,

@@ -10,6 +10,7 @@ from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
 from gp.utils import get_request_data
+from workspaces.models import get_current_workspace
 from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
 
 
@@ -18,15 +19,17 @@ def seedtray_current(request):
     """
     List the seedtray plantings that are currently growing
     """
+    workspace = get_current_workspace()
     plantings = (
         SeedTrayPlanting.objects
-        .filter(removed=False)
+        .filter(removed=False, workspace=workspace)
         .order_by('planted')
         .select_related('seeds_used__seeds__plant_variety__plant', 'seed_tray')
         .prefetch_related('cell_plantings__cell')
     )
     garden_square_location_counts = dict(
         SpecificPlantLocation.objects.filter(
+            specific_plant__workspace=workspace,
             location_type=SpecificPlantLocation.GARDEN_SQUARE,
             specific_plant__cell_planting__seed_tray_planting__in=plantings,
         )
@@ -35,14 +38,17 @@ def seedtray_current(request):
     )
     germinated_counts = dict(
         SpecificPlant.objects
-        .filter(cell_planting__seed_tray_planting__in=plantings)
+        .filter(
+            workspace=workspace,
+            cell_planting__seed_tray_planting__in=plantings,
+        )
         .values('cell_planting__seed_tray_planting')
         .annotate(total=Count('id'))
         .values_list('cell_planting__seed_tray_planting', 'total')
     )
     transplanted_counts = dict(
         GardenSquareTransplant.objects
-        .filter(original_planting__in=plantings)
+        .filter(workspace=workspace, original_planting__in=plantings)
         .values('original_planting')
         .annotate(total=Sum('quantity'))
         .values_list('original_planting', 'total')
@@ -87,7 +93,11 @@ def seedtray_complete(request):
 
     data = get_request_data(request)
 
-    planting = get_object_or_404(SeedTrayPlanting, pk=data.get('planting'))
+    planting = get_object_or_404(
+        SeedTrayPlanting,
+        pk=data.get('planting'),
+        workspace=get_current_workspace(),
+    )
     planting.removed = True
     planting.save()
     return HttpResponse(status=204)
@@ -116,9 +126,10 @@ def gardensquare_current(request):
     """
     List the GardenSquare plantings that are currently growing
     """
+    workspace = get_current_workspace()
     plantings = (
         GardenSquareDirectSowPlanting.objects
-        .filter(removed=False)
+        .filter(removed=False, workspace=workspace)
         .order_by('planted')
         .select_related('seeds_used__seeds__plant_variety__plant', 'location__bed__area')
     )
@@ -140,6 +151,7 @@ def gardensquare_current(request):
             'maturity_date_late': _add_nullable_days(planting.planted, maturity_max)
         })
     specific_garden_locations = SpecificPlantLocation.objects.filter(
+        specific_plant__workspace=workspace,
         location_type=SpecificPlantLocation.GARDEN_SQUARE,
         specific_plant__cell_planting__seed_tray_planting_id=OuterRef(
             'original_planting_id'
@@ -147,7 +159,7 @@ def gardensquare_current(request):
     )
     transplantings = (
         GardenSquareTransplant.objects
-        .filter(removed=False)
+        .filter(removed=False, workspace=workspace)
         .annotate(
             has_specific_representation=Exists(specific_garden_locations),
         )
@@ -174,6 +186,7 @@ def gardensquare_current(request):
             'maturity_date_late': _add_nullable_days(transplanting.transplanted, maturity_max)
         })
     specific_plant_locations = SpecificPlantLocation.objects.filter(
+        specific_plant__workspace=workspace,
         location_type=SpecificPlantLocation.GARDEN_SQUARE,
         ended__isnull=True,
     ).select_related(
@@ -213,7 +226,11 @@ def gardensquare_complete(request):
 
     data = get_request_data(request)
 
-    planting = get_object_or_404(GardenSquareDirectSowPlanting, pk=data.get('planting'))
+    planting = get_object_or_404(
+        GardenSquareDirectSowPlanting,
+        pk=data.get('planting'),
+        workspace=get_current_workspace(),
+    )
     planting.removed = True
     planting.save()
     return HttpResponse(status=204)
@@ -229,7 +246,11 @@ def gardensquare_transplant_complete(request):
 
     data = get_request_data(request)
 
-    planting = get_object_or_404(GardenSquareTransplant, pk=data.get('planting'))
+    planting = get_object_or_404(
+        GardenSquareTransplant,
+        pk=data.get('planting'),
+        workspace=get_current_workspace(),
+    )
     planting.removed = True
     planting.save()
     return HttpResponse(status=204)
