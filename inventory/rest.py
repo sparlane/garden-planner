@@ -238,3 +238,9 @@ class ItemUnitConversionViewSet(
 router = routers.DefaultRouter()
 router.register(r'items', InventoryItemViewSet)
 router.register(r'conversions', ItemUnitConversionViewSet)
+
+
+from .ledger_rest import register_ledger_routes  # noqa: E402  pylint: disable=wrong-import-position
+
+
+register_ledger_routes(router)
