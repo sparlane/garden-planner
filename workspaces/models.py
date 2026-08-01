@@ -3,7 +3,8 @@
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from django.core.exceptions import ValidationError
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
@@ -72,3 +73,34 @@ class Workspace(models.Model):
 
     def __str__(self):
         return self.name
+
+
+def get_default_workspace_id():
+    """Return the configured workspace ID for direct ORM-created records."""
+    return get_current_workspace().pk
+
+
+def get_current_workspace():
+    """Return the single workspace configured for this deployment."""
+    workspace_id = settings.CURRENT_WORKSPACE_ID
+    try:
+        return Workspace.objects.get(pk=workspace_id)
+    except Workspace.DoesNotExist as exc:
+        raise ImproperlyConfigured(
+            f'CURRENT_WORKSPACE_ID={workspace_id} does not identify a workspace.'
+        ) from exc
+
+
+class WorkspaceOwnedModel(models.Model):
+    """Abstract base for independently addressable workspace data."""
+
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.PROTECT,
+        default=get_default_workspace_id,
+        editable=False,
+        related_name='+',
+    )
+
+    class Meta:
+        abstract = True
