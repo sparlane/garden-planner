@@ -1,0 +1,324 @@
+"""Transactional behavior tests for exact-lot inventory services."""
+
+from datetime import date
+from decimal import Decimal
+
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.test import TestCase
+from django.utils import timezone
+
+from supplies.models import Supplier
+from workspaces.models import get_current_workspace
+
+from .ledger import (
+    MovementRequest,
+    OpeningBalanceRequest,
+    physical_balance,
+    post_opening_balance,
+    post_receipt,
+    post_stock_movement,
+    post_stocktake,
+    reverse_movement,
+    reverse_receipt,
+    reverse_stocktake,
+)
+from .models import (
+    InventoryItem,
+    InventoryLocation,
+    StockLot,
+    StockMovement,
+    StockReceipt,
+    StockReceiptLine,
+    Stocktake,
+    StocktakeLine,
+)
+from .units import UnitCode
+
+
+class LedgerServiceTests(TestCase):
+    """Posting services maintain balances and document audit trails atomically."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.workspace.currency_code = 'NZD'
+        self.workspace.default_tax_rate = Decimal('15')
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='ledger-service-user')
+        self.supplier = Supplier.objects.create(
+            workspace=self.workspace,
+            name='Service Supplier',
+        )
+        self.item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Service media',
+            category=InventoryItem.Category.GROWING_MEDIA,
+            base_unit=UnitCode.MILLILITRE,
+        )
+        self.store = InventoryLocation.objects.create(
+            workspace=self.workspace,
+            name='Store',
+            code='STORE',
+            location_type=InventoryLocation.LocationType.STORAGE,
+        )
+        self.growing = InventoryLocation.objects.create(
+            workspace=self.workspace,
+            name='Propagation house',
+            code='PROP',
+            location_type=InventoryLocation.LocationType.GROWING,
+        )
+
+    def make_receipt(self, **overrides):
+        """Create a draft receipt with workspace financial defaults."""
+        values = {
+            'workspace': self.workspace,
+            'supplier': self.supplier,
+            'received_date': date(2026, 8, 1),
+            'currency_code': self.workspace.currency_code,
+            'tax_rate': self.workspace.default_tax_rate,
+            'created_by': self.user,
+        }
+        values.update(overrides)
+        return StockReceipt.objects.create(**values)
+
+    def add_receipt_line(self, receipt, **overrides):
+        """Add one normalized media line to a draft receipt."""
+        values = {
+            'receipt': receipt,
+            'item': self.item,
+            'quantity': Decimal('2'),
+            'unit_code': UnitCode.LITRE,
+            'base_quantity': Decimal('2000'),
+            'line_cost_ex_tax': Decimal('10'),
+            'destination': self.store,
+        }
+        values.update(overrides)
+        return StockReceiptLine.objects.create(**values)
+
+    def make_opening(self, quantity=Decimal('100')):
+        """Post a costed opening balance into the store."""
+        return post_opening_balance(
+            self.workspace,
+            self.user,
+            OpeningBalanceRequest(
+                item=self.item,
+                quantity=quantity,
+                destination=self.store,
+                acquisition_total=Decimal('25'),
+                received_on=date(2026, 8, 1),
+                reason='Audited opening balance',
+            ),
+        )
+
+    def test_post_receipt_creates_exact_lots_costs_and_balances(self):
+        """Every line becomes one immutable valued lot and receipt movement."""
+        receipt = self.make_receipt(
+            supplier_reference='INV-100',
+            tax_recoverable=False,
+        )
+        first_line = self.add_receipt_line(receipt)
+        second_item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Labels',
+            category=InventoryItem.Category.LABEL,
+            base_unit=UnitCode.EACH,
+        )
+        second_line = self.add_receipt_line(
+            receipt,
+            item=second_item,
+            quantity=Decimal('100'),
+            unit_code=UnitCode.EACH,
+            base_quantity=Decimal('100'),
+            line_cost_ex_tax=Decimal('20'),
+        )
+
+        posted, lots = post_receipt(receipt, self.user)
+
+        self.assertEqual(posted.status, StockReceipt.Status.POSTED)
+        self.assertEqual(len(lots), 2)
+        first_lot = StockLot.objects.get(receipt_line=first_line)
+        second_lot = StockLot.objects.get(receipt_line=second_line)
+        self.assertTrue(first_lot.identifier.startswith('LOT-'))
+        self.assertNotEqual(first_lot.identifier, second_lot.identifier)
+        self.assertEqual(first_lot.acquisition_total, Decimal('11.5000'))
+        self.assertEqual(first_lot.base_unit_cost, Decimal('0.005750000000'))
+        self.assertEqual(physical_balance(first_lot, self.store), Decimal('2000'))
+        self.assertEqual(physical_balance(second_lot, self.store), Decimal('100'))
+        self.assertIsNotNone(self.item.refresh_from_db() or self.item.stock_history_started_at)
+        self.assertEqual(
+            StockMovement.objects.filter(
+                receipt_line__receipt=receipt,
+                movement_type=StockMovement.MovementType.RECEIPT,
+            ).count(),
+            2,
+        )
+
+    def test_receipt_validation_rolls_back_every_line(self):
+        """An invalid later line prevents every lot and movement from posting."""
+        receipt = self.make_receipt()
+        self.add_receipt_line(receipt)
+        inactive = InventoryLocation.objects.create(
+            workspace=self.workspace,
+            name='Closed store',
+            code='CLOSED',
+            location_type=InventoryLocation.LocationType.STORAGE,
+            active=False,
+        )
+        self.add_receipt_line(receipt, destination=inactive)
+
+        with self.assertRaises(ValidationError):
+            post_receipt(receipt, self.user)
+
+        receipt.refresh_from_db()
+        self.assertEqual(receipt.status, StockReceipt.Status.DRAFT)
+        self.assertFalse(StockLot.objects.filter(receipt_line__receipt=receipt).exists())
+        self.assertFalse(StockMovement.objects.filter(receipt_line__receipt=receipt).exists())
+
+    def test_receipt_requires_current_workspace_currency(self):
+        """V1 does not silently treat a foreign-currency amount as local cost."""
+        receipt = self.make_receipt(currency_code='USD')
+        self.add_receipt_line(receipt)
+        with self.assertRaises(ValidationError) as context:
+            post_receipt(receipt, self.user)
+        self.assertIn('currency_code', context.exception.message_dict)
+
+    def test_transfer_consumption_and_reversal_reconcile_locations(self):
+        """Location effects remain explicit while total physical stock reconciles."""
+        lot, _opening = self.make_opening()
+        transfer = post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                quantity=Decimal('40'),
+                source=self.store,
+                destination=self.growing,
+            ),
+        )
+        consumption = post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('10'),
+                source=self.growing,
+                reference='Propagation batch 1',
+            ),
+        )
+
+        self.assertEqual(physical_balance(lot, self.store), Decimal('60'))
+        self.assertEqual(physical_balance(lot, self.growing), Decimal('30'))
+        reverse_movement(consumption, self.user, 'Consumption entered twice')
+        self.assertEqual(physical_balance(lot, self.growing), Decimal('40'))
+        reverse_movement(transfer, self.user, 'Wrong destination')
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+        self.assertEqual(physical_balance(lot, self.growing), Decimal('0'))
+
+    def test_outbound_and_inbound_reversals_cannot_create_negative_stock(self):
+        """Consumption and receipt reversals validate the currently affected place."""
+        lot, opening = self.make_opening(Decimal('10'))
+        post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('6'),
+                source=self.store,
+            ),
+        )
+        with self.assertRaises(ValidationError) as context:
+            post_stock_movement(
+                self.workspace,
+                self.user,
+                MovementRequest(
+                    lot=lot,
+                    movement_type=StockMovement.MovementType.WASTE,
+                    quantity=Decimal('5'),
+                    source=self.store,
+                    reason='Damaged',
+                ),
+            )
+        self.assertIn('quantity', context.exception.message_dict)
+        with self.assertRaises(ValidationError):
+            reverse_movement(opening, self.user, 'Opening was wrong')
+
+    def test_receipt_reversal_is_document_scoped_and_atomic(self):
+        """Receipt rows cannot diverge from their header reversal state."""
+        receipt = self.make_receipt()
+        self.add_receipt_line(receipt)
+        posted, lots = post_receipt(receipt, self.user)
+        original = StockMovement.objects.get(receipt_line__receipt=receipt)
+        with self.assertRaises(ValidationError):
+            reverse_movement(original, self.user, 'Wrong delivery')
+
+        reversed_receipt, reversals = reverse_receipt(
+            posted,
+            self.user,
+            'Supplier delivery cancelled',
+        )
+        self.assertEqual(reversed_receipt.status, StockReceipt.Status.REVERSED)
+        self.assertEqual(len(reversals), 1)
+        self.assertEqual(physical_balance(lots[0], self.store), Decimal('0'))
+
+    def test_stocktake_posts_and_reverses_explicit_variances(self):
+        """A count snapshots expected stock and keeps its adjustment linkage."""
+        lot, _opening = self.make_opening()
+        stocktake = Stocktake.objects.create(
+            workspace=self.workspace,
+            counted_at=timezone.now(),
+            notes='Weekly count',
+            created_by=self.user,
+        )
+        line = StocktakeLine.objects.create(
+            stocktake=stocktake,
+            lot=lot,
+            location=self.store,
+            counted_quantity=Decimal('90'),
+            unit_code=UnitCode.MILLILITRE,
+            counted_base_quantity=Decimal('90'),
+            reason='Container spill',
+        )
+
+        posted, movements = post_stocktake(stocktake, self.user)
+        line.refresh_from_db()
+        self.assertEqual(posted.status, Stocktake.Status.POSTED)
+        self.assertEqual(line.expected_base_quantity, Decimal('100'))
+        self.assertEqual(line.variance_base_quantity, Decimal('-10'))
+        self.assertEqual(movements[0].movement_type, StockMovement.MovementType.ADJUSTMENT_LOSS)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('90'))
+
+        reversed_stocktake, reversals = reverse_stocktake(
+            posted,
+            self.user,
+            'Count used the wrong container',
+        )
+        self.assertEqual(reversed_stocktake.status, Stocktake.Status.REVERSED)
+        self.assertEqual(len(reversals), 1)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+
+    def test_adjustment_and_waste_require_reasons(self):
+        """Unexplained corrections cannot enter the audit trail."""
+        lot, _opening = self.make_opening()
+        for movement_type, source, destination in (
+            (StockMovement.MovementType.ADJUSTMENT_GAIN, None, self.store),
+            (StockMovement.MovementType.ADJUSTMENT_LOSS, self.store, None),
+            (StockMovement.MovementType.WASTE, self.store, None),
+        ):
+            with self.subTest(movement_type=movement_type):
+                with self.assertRaises(ValidationError) as context:
+                    post_stock_movement(
+                        self.workspace,
+                        self.user,
+                        MovementRequest(
+                            lot=lot,
+                            movement_type=movement_type,
+                            quantity=Decimal('1'),
+                            source=source,
+                            destination=destination,
+                        ),
+                    )
+                self.assertIn('reason', context.exception.message_dict)
