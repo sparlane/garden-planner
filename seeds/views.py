@@ -17,6 +17,8 @@ from plantings.models import (
     SpecificPlantLocation,
 )
 
+from workspaces.models import get_current_workspace
+
 from .models import SeedPacket
 
 
@@ -86,7 +88,7 @@ def packets_current(request):
     packets = list(
         SeedPacket.objects
         .select_related('seeds', 'seeds__plant_variety', 'seeds__plant_variety__plant', 'seeds__supplier')
-        .filter(empty=False)
+        .filter(empty=False, workspace=get_current_workspace())
         .annotate(
             seeds_planted_trays=coalesced_sum(SeedTrayPlanting, 'seeds_used'),
             seeds_planted_direct=coalesced_sum(GardenSquareDirectSowPlanting, 'seeds_used'),
@@ -122,7 +124,11 @@ def packets_empty(request):
 
     data = get_request_data(request)
 
-    packet = get_object_or_404(SeedPacket, pk=data.get('packet'))
+    packet = get_object_or_404(
+        SeedPacket,
+        pk=data.get('packet'),
+        workspace=get_current_workspace(),
+    )
     packet.empty = True
     packet.save()
     return HttpResponse(status=204)

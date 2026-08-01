@@ -10,11 +10,13 @@ from django.utils import timezone
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from seedtrays.models import SeedTray
+from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 
 
-class GardenRowDirectSowPlantingSerializer(serializers.ModelSerializer):
+class GardenRowDirectSowPlantingSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenRowDirectSowPlanting
     """
@@ -22,8 +24,13 @@ class GardenRowDirectSowPlantingSerializer(serializers.ModelSerializer):
         model = GardenRowDirectSowPlanting
         fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
 
+    workspace_field_lookups = {
+        'seeds_used': 'workspace',
+        'location': 'workspace',
+    }
 
-class GardenSquareDirectSowSerializer(serializers.ModelSerializer):
+
+class GardenSquareDirectSowSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenSquareDirectSowPlanting
     """
@@ -31,12 +38,19 @@ class GardenSquareDirectSowSerializer(serializers.ModelSerializer):
         model = GardenSquareDirectSowPlanting
         fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
 
+    workspace_field_lookups = {
+        'seeds_used': 'workspace',
+        'location': 'workspace',
+    }
 
-class SeedTrayCellPlantingNestedSerializer(serializers.ModelSerializer):
+
+class SeedTrayCellPlantingNestedSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Nested serializer for creating/updating cell plantings inside a SeedTrayPlanting"""
     class Meta:
         model = SeedTrayCellPlanting
         fields = ['pk', 'cell', 'quantity']
+
+    workspace_field_lookups = {'cell': 'tray__workspace'}
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Require complete entries because the parent replaces rather than patches them."""
@@ -50,7 +64,7 @@ class SeedTrayCellPlantingNestedSerializer(serializers.ModelSerializer):
         return data
 
 
-class SeedTrayPlantingSerializer(serializers.ModelSerializer):
+class SeedTrayPlantingSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for SeedTrayPlanting
     """
@@ -62,6 +76,11 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
             'pk', 'planted', 'seeds_used', 'quantity',
             'seed_tray', 'location', 'removed', 'notes', 'cell_plantings',
         ]
+
+    workspace_field_lookups = {
+        'seeds_used': 'workspace',
+        'seed_tray': 'workspace',
+    }
 
     def _get_effective_cell_plantings(self, data):
         """Return submitted replacements or the retained cell plantings."""
@@ -241,13 +260,19 @@ class SeedTrayPlantingSerializer(serializers.ModelSerializer):
         return instance
 
 
-class SpecificPlantLocationSerializer(serializers.ModelSerializer):
+class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for SpecificPlantLocation
     """
     class Meta:
         model = SpecificPlantLocation
         fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'started', 'ended', 'notes']
+
+    workspace_field_lookups = {
+        'specific_plant': 'workspace',
+        'seed_tray_cell': 'tray__workspace',
+        'garden_square': 'workspace',
+    }
 
     def _get_effective_history_fields(self, data):
         """Resolve the interval and plant represented by create or partial update data."""
@@ -317,7 +342,7 @@ class SpecificPlantLocationSerializer(serializers.ModelSerializer):
             return super().update(instance, validated_data)
 
 
-class SpecificPlantMoveSerializer(serializers.ModelSerializer):
+class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for moving a SpecificPlant to a new active location.
     """
@@ -328,6 +353,11 @@ class SpecificPlantMoveSerializer(serializers.ModelSerializer):
             'started': {'required': False},
         }
 
+    workspace_field_lookups = {
+        'seed_tray_cell': 'tray__workspace',
+        'garden_square': 'workspace',
+    }
+
     def validate(self, data):  # pylint: disable=arguments-renamed
         validate_specific_plant_location(
             location_type=data.get('location_type'),
@@ -337,7 +367,7 @@ class SpecificPlantMoveSerializer(serializers.ModelSerializer):
         return data
 
 
-class SpecificPlantSerializer(serializers.ModelSerializer):
+class SpecificPlantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for SpecificPlant — includes nested location history.
     On create, automatically records the initial seed tray cell location.
@@ -347,6 +377,10 @@ class SpecificPlantSerializer(serializers.ModelSerializer):
     class Meta:
         model = SpecificPlant
         fields = ['pk', 'cell_planting', 'germinated', 'notes', 'locations']
+
+    workspace_field_lookups = {
+        'cell_planting': 'seed_tray_planting__workspace',
+    }
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep a plant attached to the cell allocation it germinated from."""
@@ -380,13 +414,18 @@ class SpecificPlantSerializer(serializers.ModelSerializer):
         return plant
 
 
-class GardenSquareTransplantSerializer(serializers.ModelSerializer):
+class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenSquareTransplant
     """
     class Meta:
         model = GardenSquareTransplant
         fields = ['pk', 'transplanted', 'original_planting', 'quantity', 'location', 'removed', 'notes']
+
+    workspace_field_lookups = {
+        'original_planting': 'workspace',
+        'location': 'workspace',
+    }
 
 
 _FIELD_MISSING = object()
@@ -502,7 +541,11 @@ def move_specific_plant(plant, move_data):
     started = move_data.get('started') or timezone.now()
     move_payload = {**move_data, 'started': started}
     with transaction.atomic():
-        plant = get_object_or_404(SpecificPlant.objects.select_for_update(), pk=plant.pk)
+        plant = get_object_or_404(
+            SpecificPlant.objects.select_for_update(),
+            pk=plant.pk,
+            workspace=plant.workspace,
+        )
         active_location = get_single_active_location_for_update(plant)
 
         if active_location:
@@ -533,7 +576,7 @@ def move_specific_plant(plant, move_data):
             }) from exc
 
 
-class GardenRowDirectSowPlantingViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenRowDirectSowPlantingViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of GardenRowDirectSowPlanting
     """
@@ -541,7 +584,7 @@ class GardenRowDirectSowPlantingViewSet(viewsets.ModelViewSet):  # pylint: disab
     serializer_class = GardenRowDirectSowPlantingSerializer
 
 
-class GardenSquareDirectSowPlantingViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenSquareDirectSowPlantingViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of GardenSquareDirectSowPlanting
     """
@@ -566,6 +609,7 @@ class ProtectedSeedTrayPlantingDestroyMixin:  # pylint: disable=too-few-public-m
 
 class SeedTrayPlantingViewSet(
     ProtectedSeedTrayPlantingDestroyMixin,
+    CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
 ):  # pylint: disable=too-many-ancestors
     """
@@ -577,6 +621,7 @@ class SeedTrayPlantingViewSet(
 
 class SeedTrayPlantingViewSeedTraySet(
     ProtectedSeedTrayPlantingDestroyMixin,
+    CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
 ):  # pylint: disable=too-many-ancestors
     """
@@ -584,12 +629,29 @@ class SeedTrayPlantingViewSeedTraySet(
     """
     queryset = SeedTrayPlanting.objects.all()
     serializer_class = SeedTrayPlantingSerializer
+    _parent_seed_tray = None
+
+    def get_parent_seed_tray(self):
+        """Resolve the nested tray inside the current workspace."""
+        if self._parent_seed_tray is None:
+            self._parent_seed_tray = get_object_or_404(
+                SeedTray,
+                pk=self.kwargs['seed_tray_pk'],
+                workspace=self.get_current_workspace(),
+            )
+        return self._parent_seed_tray
 
     def get_queryset(self):
-        return self.queryset.filter(seed_tray__pk=self.kwargs['seed_tray_pk'])
+        return super().get_queryset().filter(seed_tray=self.get_parent_seed_tray())
+
+    def perform_create(self, serializer):
+        serializer.save(
+            workspace=self.get_current_workspace(),
+            seed_tray=self.get_parent_seed_tray(),
+        )
 
 
-class GardenSquareTransplantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenSquareTransplantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
     """
     Read-only access to legacy aggregate transplant records.
 
@@ -599,7 +661,7 @@ class GardenSquareTransplantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: d
     serializer_class = GardenSquareTransplantSerializer
 
 
-class SpecificPlantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlant
     """
@@ -622,26 +684,38 @@ class SpecificPlantViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-a
         return Response(SpecificPlantLocationSerializer(location).data, status=status.HTTP_201_CREATED)
 
 
-class SpecificPlantBySeedTrayViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantBySeedTrayViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlant filtered by SeedTray
     """
     queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square')
     serializer_class = SpecificPlantSerializer
+    _parent_seed_tray = None
+
+    def get_parent_seed_tray(self):
+        """Resolve the filtered tray inside the current workspace."""
+        if self._parent_seed_tray is None:
+            self._parent_seed_tray = get_object_or_404(
+                SeedTray,
+                pk=self.kwargs['seed_tray_pk'],
+                workspace=self.get_current_workspace(),
+            )
+        return self._parent_seed_tray
 
     def get_queryset(self):
-        tray_pk = self.kwargs['seed_tray_pk']
-        currently_here = self.queryset.filter(
+        tray_pk = self.get_parent_seed_tray().pk
+        queryset = super().get_queryset()
+        currently_here = queryset.filter(
             locations__seed_tray_cell__tray__pk=tray_pk,
             locations__ended__isnull=True,
         )
-        originated_here = self.queryset.filter(
+        originated_here = queryset.filter(
             cell_planting__seed_tray_planting__seed_tray__pk=tray_pk,
         )
         return (currently_here | originated_here).distinct()
 
 
-class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantLocationViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlantLocation
 
@@ -650,6 +724,8 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
     queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
     serializer_class = SpecificPlantLocationSerializer
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    workspace_lookup = 'specific_plant__workspace'
+    bind_workspace_on_create = False
 
     @action(detail=True, methods=['post'])
     def end(self, request, pk=None):  # pylint: disable=unused-argument
@@ -658,6 +734,7 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
             location = get_object_or_404(
                 SpecificPlantLocation.objects.select_for_update(),
                 pk=pk,
+                specific_plant__workspace=self.get_current_workspace(),
             )
             self.check_object_permissions(request, location)
             if location.ended is None:
@@ -674,15 +751,22 @@ class SpecificPlantLocationViewSet(viewsets.ModelViewSet):  # pylint: disable=to
         return Response(self.get_serializer(location).data)
 
 
-class SpecificPlantLocationByPlantViewSet(viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantLocationByPlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlantLocation filtered by SpecificPlant
     """
     queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
     serializer_class = SpecificPlantLocationSerializer
+    workspace_lookup = 'specific_plant__workspace'
+    bind_workspace_on_create = False
 
     def get_queryset(self):
-        return self.queryset.filter(specific_plant__pk=self.kwargs['specific_plant_pk'])
+        plant = get_object_or_404(
+            SpecificPlant,
+            pk=self.kwargs['specific_plant_pk'],
+            workspace=self.get_current_workspace(),
+        )
+        return super().get_queryset().filter(specific_plant=plant)
 
 
 router = routers.SimpleRouter()
