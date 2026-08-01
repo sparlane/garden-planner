@@ -11,8 +11,12 @@ import workspaces.models
 def create_default_workspace(apps, _schema_editor):
     """Create the compatibility workspace used by existing installations."""
     workspace_model = apps.get_model('workspaces', 'Workspace')
+    # This is the first row in a newly-created table, so supported databases
+    # allocate ID 1 while also advancing their sequence. Do not pass an
+    # explicit primary key: PostgreSQL would otherwise reuse 1 on the next
+    # insert. Runtime selection remains independently configurable through
+    # CURRENT_WORKSPACE_ID.
     workspace_model.objects.create(
-        pk=1,
         name='My Garden',
         mode='garden',
         currency_code='USD',
