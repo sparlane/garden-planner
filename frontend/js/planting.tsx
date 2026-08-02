@@ -406,9 +406,9 @@ function SeedTrayPlantingTable() {
         <tr>
           <td>
             Plant{' '}
-            <a href="#" onClick={() => setShowPlantingAdd(true)}>
+            <Button variant="link" className="p-0 align-baseline" aria-label="Add seed tray planting" onClick={() => setShowPlantingAdd(true)}>
               +
-            </a>
+            </Button>
           </td>
           <td>Seeds / clusters sown</td>
           <td>Date</td>
@@ -775,9 +775,9 @@ function GardenSquarePlantingTable() {
         <tr key="header">
           <td>
             Plant{' '}
-            <a href="#" onClick={() => setShowPlantingAdd(true)}>
+            <Button variant="link" className="p-0 align-baseline" aria-label="Add garden square planting" onClick={() => setShowPlantingAdd(true)}>
               +
-            </a>
+            </Button>
           </td>
           <td>Quantity</td>
           <td>Date</td>
