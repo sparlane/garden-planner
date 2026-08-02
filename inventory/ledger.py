@@ -1,9 +1,9 @@
 """Transactional services for posting and querying the inventory ledger."""
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import NamedTuple
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
@@ -13,6 +13,8 @@ from .models import (
     MONEY_DECIMAL_PLACES,
     QUANTITY_DECIMAL_PLACES,
     InventoryItem,
+    InventoryUnit,
+    InventoryUnitReconciliation,
     QuantityCertainty,
     StockLot,
     StockMovement,
@@ -41,6 +43,27 @@ class MovementRequest(NamedTuple):
     enforce_source_balance: bool = True
 
 
+class UnitMovementRequest(NamedTuple):
+    """Caller intent for one exact serialized-unit movement."""
+
+    unit: InventoryUnit
+    movement_type: str
+    destination: object = None
+    occurred_at: object = None
+    reason: str = ''
+    reference: str = ''
+
+
+class UnitReconciliationRequest(NamedTuple):
+    """Caller intent for one legacy unit opening reconciliation."""
+
+    unit: InventoryUnit
+    acquisition_cost: Decimal
+    destination: object
+    occurred_at: object = None
+    reason: str = ''
+
+
 class OpeningBalanceRequest(NamedTuple):
     """Caller intent for a costed opening lot and movement."""
 
@@ -63,6 +86,7 @@ class MovementEntry(NamedTuple):
     lot: StockLot
     movement_type: str
     quantity: Decimal
+    unit: InventoryUnit = None
     source: object = None
     destination: object = None
     occurred_at: object = None
@@ -130,6 +154,20 @@ def lock_lots(workspace, lot_ids):
     return {lot.pk: lot for lot in lots}
 
 
+def lock_units(workspace, unit_ids):
+    """Lock exact workspace units in deterministic primary-key order."""
+    requested = sorted(set(unit_ids))
+    units = list(
+        InventoryUnit.objects.select_for_update(of=('self',))
+        .select_related('item', 'source_lot', 'current_location')
+        .filter(workspace=workspace, pk__in=requested)
+        .order_by('pk')
+    )
+    if len(units) != len(requested):
+        raise ValidationError({'unit': 'One or more serialized units are unavailable.'})
+    return {unit.pk: unit for unit in units}
+
+
 def _validate_location(location, workspace, field_name, require_active=True):
     """Require an operation location in the current workspace."""
     if not location or location.workspace_id != workspace.pk:
@@ -159,10 +197,11 @@ def _create_movement(entry):
     quantity = quantize_quantity(entry.quantity)
     if entry.source and entry.enforce_source_balance:
         _validate_source_balance(entry.lot, entry.source, quantity)
-    return StockMovement.objects.create(
+    movement = StockMovement.objects.create(
         workspace=entry.workspace,
         created_by=entry.user,
         lot=entry.lot,
+        unit=entry.unit,
         movement_type=entry.movement_type,
         quantity=quantity,
         source=entry.source,
@@ -174,6 +213,36 @@ def _create_movement(entry):
         receipt_line=entry.receipt_line,
         stocktake_line=entry.stocktake_line,
     )
+    if entry.unit:
+        _sync_unit_after_movement(entry.unit, movement)
+    return movement
+
+
+def _sync_unit_after_movement(unit, movement):
+    """Maintain the lockable current location and active-state projection."""
+    location_id = movement.destination_id
+    active = True
+    if movement.source_id and not movement.destination_id:
+        location_id = None
+        if movement.movement_type in {
+            StockMovement.MovementType.SALE,
+            StockMovement.MovementType.WASTE,
+        }:
+            active = False
+        elif movement.movement_type == StockMovement.MovementType.REVERSAL:
+            active = movement.reversal_of.movement_type not in {
+                StockMovement.MovementType.RECEIPT,
+                StockMovement.MovementType.OPENING,
+            }
+        else:
+            active = unit.active
+    InventoryUnit.objects.filter(pk=unit.pk).update(
+        current_location_id=location_id,
+        active=active,
+        updated=timezone.now(),
+    )
+    unit.current_location_id = location_id
+    unit.active = active
 
 
 @transaction.atomic
@@ -191,6 +260,10 @@ def post_stock_movement(workspace, user, request):
     if request.movement_type not in allowed:
         raise ValidationError({'movement_type': 'Use a supported domain action.'})
     locked_lot = lock_lots(workspace, [request.lot.pk])[request.lot.pk]
+    if locked_lot.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+        raise ValidationError({
+            'lot': 'Use a serialized-unit action for serialized stock.',
+        })
     if not locked_lot.item.active:
         raise ValidationError({'lot': 'The lot item is inactive.'})
     if request.source:
@@ -275,6 +348,10 @@ def post_opening_balance(workspace, user, request):
     )
     if not item.active:
         raise ValidationError({'item': 'The item is inactive.'})
+    if item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+        raise ValidationError({
+            'item': 'Receive serialized items through their unit workflow.',
+        })
     _validate_location(request.destination, workspace, 'destination')
     quantity = quantize_quantity(request.quantity)
     if quantity <= 0:
@@ -332,8 +409,31 @@ def _receipt_acquisition_cost(receipt, line):
     return line_cost + tax
 
 
+def _serialized_unit_costs(total, quantity):
+    """Split a receipt total exactly at stored currency precision."""
+    count = int(quantity)
+    share = (total / count).quantize(MONEY_QUANTUM, rounding=ROUND_DOWN)
+    remainder_steps = int((total - (share * count)) / MONEY_QUANTUM)
+    return [
+        share + (MONEY_QUANTUM if index < remainder_steps else Decimal('0'))
+        for index in range(count)
+    ]
+
+
+def _validate_serialized_receipt_line(line):
+    """Require a whole, exact count for individually created units."""
+    if line.quantity_certainty != QuantityCertainty.EXACT:
+        raise ValidationError({
+            'lines': f'Serialized line {line.pk} requires an exact quantity.',
+        })
+    if line.base_quantity != line.base_quantity.to_integral_value():
+        raise ValidationError({
+            'lines': f'Serialized line {line.pk} requires a whole quantity.',
+        })
+
+
 @transaction.atomic
-def post_receipt(receipt, user):
+def post_receipt(receipt, user):  # pylint: disable=too-many-branches
     """Create all receipt lots and movements or roll the document back."""
     receipt = StockReceipt.objects.select_for_update().select_related(
         'workspace',
@@ -374,6 +474,8 @@ def post_receipt(receipt, user):
             raise ValidationError(
                 {'lines': f'Conversion {line.unit_conversion_id} is inactive.'},
             )
+        if line.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+            _validate_serialized_receipt_line(line)
 
     posted_at = timezone.now()
     lots = []
@@ -399,7 +501,31 @@ def post_receipt(receipt, user):
             base_unit_cost=unit_cost,
             currency_code=receipt.currency_code,
         )
-        if line.quantity_certainty != QuantityCertainty.UNKNOWN:
+        if line.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+            for acquisition_cost in _serialized_unit_costs(
+                acquisition_total,
+                line.base_quantity,
+            ):
+                unit = InventoryUnit.objects.create(
+                    workspace=receipt.workspace,
+                    item=line.item,
+                    source_lot=lot,
+                    acquisition_cost=acquisition_cost,
+                    currency_code=receipt.currency_code,
+                )
+                _create_movement(MovementEntry(
+                    workspace=receipt.workspace,
+                    user=user,
+                    lot=lot,
+                    unit=unit,
+                    movement_type=StockMovement.MovementType.RECEIPT,
+                    quantity=Decimal('1'),
+                    destination=line.destination,
+                    occurred_at=posted_at,
+                    reference=receipt.supplier_reference,
+                    receipt_line=line,
+                ))
+        elif line.quantity_certainty != QuantityCertainty.UNKNOWN:
             _create_movement(MovementEntry(
                 workspace=receipt.workspace,
                 user=user,
@@ -447,6 +573,11 @@ def _validate_reversible(original, reason, allow_receipt, allow_stocktake):
             original.destination,
             original.quantity,
         )
+    removes_unit = original.unit_id and original.destination_id and not original.source_id
+    if removes_unit and unit_is_in_use(original.unit):
+        raise ValidationError({
+            'unit': 'Move or dispose of active plants before removing this tray.',
+        })
 
 
 def _create_reversal(original, user, reason, occurred_at):
@@ -455,6 +586,7 @@ def _create_reversal(original, user, reason, occurred_at):
         workspace=original.workspace,
         user=user,
         lot=original.lot,
+        unit=original.unit,
         movement_type=StockMovement.MovementType.REVERSAL,
         quantity=original.quantity,
         source=original.destination,
@@ -470,12 +602,16 @@ def _create_reversal(original, user, reason, occurred_at):
 def reverse_movement(original, user, reason, occurred_at=None):
     """Reverse one standalone movement while retaining the original row."""
     lot = lock_lots(original.workspace, [original.lot_id])[original.lot_id]
+    unit = None
+    if original.unit_id:
+        unit = lock_units(original.workspace, [original.unit_id])[original.unit_id]
     original = StockMovement.objects.select_for_update(of=('self',)).select_related(
         'workspace',
         'source',
         'destination',
     ).get(pk=original.pk)
     original.lot = lot
+    original.unit = unit
     _validate_reversible(original, reason, False, False)
     return _create_reversal(
         original,
@@ -494,9 +630,15 @@ def _reverse_document_movements(
 ):
     """Validate and reverse a complete document under deterministic lot locks."""
     locked_lots = lock_lots(workspace, [row.lot_id for row in movements])
+    locked_units = lock_units(
+        workspace,
+        [row.unit_id for row in movements if row.unit_id],
+    )
     occurred_at = timezone.now()
     for original in movements:
         original.lot = locked_lots[original.lot_id]
+        if original.unit_id:
+            original.unit = locked_units[original.unit_id]
         _validate_reversible(
             original,
             reason,
@@ -507,6 +649,170 @@ def _reverse_document_movements(
         _create_reversal(original, user, reason, occurred_at)
         for original in movements
     ]
+
+
+def unit_is_in_use(unit):
+    """Return whether cultivation still occupies the linked physical tray."""
+    try:
+        tray = unit.seed_tray
+    except ObjectDoesNotExist:
+        return False
+    from plantings.models import SeedTrayPlanting, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
+
+    active_sowing = SeedTrayPlanting.objects.filter(
+        seed_tray=tray,
+        removed=False,
+    ).exists()
+    active_plant = SpecificPlantLocation.objects.filter(
+        seed_tray_cell__tray=tray,
+        ended__isnull=True,
+    ).exists()
+    return active_sowing or active_plant
+
+
+def unit_physical_state(unit):
+    """Derive a unit state from non-reversed movements and current location."""
+    if unit.current_location_id:
+        if unit.current_location.location_type == unit.current_location.LocationType.QUARANTINE:
+            return 'quarantined'
+        latest = _latest_effective_unit_movement(unit)
+        if latest and latest.movement_type in {
+            StockMovement.MovementType.ADJUSTMENT_GAIN,
+            StockMovement.MovementType.CUSTOMER_RETURN,
+        }:
+            return 'returned'
+        return 'available'
+    latest = _latest_effective_unit_movement(unit)
+    if latest:
+        states = {
+            StockMovement.MovementType.ADJUSTMENT_LOSS: 'lost',
+            StockMovement.MovementType.WASTE: 'retired',
+            StockMovement.MovementType.SALE: 'dispatched',
+        }
+        if latest.movement_type in states:
+            return states[latest.movement_type]
+    return 'retired'
+
+
+def _latest_effective_unit_movement(unit):
+    """Ignore reversal pairs when locating the unit's latest real event."""
+    return (
+        StockMovement.objects.filter(unit=unit, reversal_of__isnull=True)
+        .filter(reversal__isnull=True)
+        .order_by('-occurred_at', '-pk')
+        .first()
+    )
+
+
+@transaction.atomic
+def post_unit_movement(workspace, user, request):
+    """Post one physical action against an exact locked serialized unit."""
+    lot = lock_lots(workspace, [request.unit.source_lot_id])[
+        request.unit.source_lot_id
+    ]
+    unit = lock_units(workspace, [request.unit.pk])[request.unit.pk]
+    if not unit.item.active:
+        raise ValidationError({'unit': 'The serialized item is inactive.'})
+    if request.destination:
+        _validate_location(request.destination, workspace, 'destination')
+    state = unit_physical_state(unit)
+    source = unit.current_location
+    destination = request.destination
+    allowed = {
+        StockMovement.MovementType.TRANSFER,
+        StockMovement.MovementType.ADJUSTMENT_LOSS,
+        StockMovement.MovementType.WASTE,
+        StockMovement.MovementType.ADJUSTMENT_GAIN,
+    }
+    if request.movement_type not in allowed:
+        raise ValidationError({'movement_type': 'Use a supported unit action.'})
+    if request.movement_type == StockMovement.MovementType.TRANSFER:
+        if not source:
+            raise ValidationError({'unit': 'The unit is not currently on hand.'})
+        if not destination or source.pk == destination.pk:
+            raise ValidationError({'destination': 'Choose a different destination.'})
+    elif request.movement_type in {
+        StockMovement.MovementType.ADJUSTMENT_LOSS,
+        StockMovement.MovementType.WASTE,
+    }:
+        if not source:
+            raise ValidationError({'unit': 'The unit is not currently on hand.'})
+        if unit_is_in_use(unit):
+            raise ValidationError({
+                'unit': 'Move or dispose of active plants before removing this tray.',
+            })
+        destination = None
+    else:
+        if state not in {'lost', 'retired'}:
+            raise ValidationError({'unit': 'Only a lost or retired unit can be returned.'})
+        if not destination:
+            raise ValidationError({'destination': 'A return destination is required.'})
+        source = None
+    movement = _create_movement(MovementEntry(
+        workspace=workspace,
+        user=user,
+        lot=lot,
+        unit=unit,
+        movement_type=request.movement_type,
+        quantity=Decimal('1'),
+        source=source,
+        destination=destination,
+        occurred_at=request.occurred_at,
+        reason=request.reason,
+        reference=request.reference,
+    ))
+    return movement
+
+
+@transaction.atomic
+def reconcile_unit_opening(workspace, user, request):
+    """Supply audited cost and location for one migrated tray unit."""
+    lot = lock_lots(workspace, [request.unit.source_lot_id])[
+        request.unit.source_lot_id
+    ]
+    unit = lock_units(workspace, [request.unit.pk])[request.unit.pk]
+    if hasattr(unit, 'opening_reconciliation'):
+        raise ValidationError({'unit': 'This unit has already been reconciled.'})
+    if unit.source_lot.origin != StockLot.Origin.OPENING:
+        raise ValidationError({'unit': 'Only opening units can be reconciled.'})
+    if not unit.current_location_id or unit.current_location.code != 'SYSTEM-TRAY-UNKNOWN':
+        raise ValidationError({'unit': 'The unit is no longer at its unknown location.'})
+    _validate_location(request.destination, workspace, 'destination')
+    if request.destination.pk == unit.current_location_id:
+        raise ValidationError({'destination': 'Choose an audited physical location.'})
+    cost = Decimal(request.acquisition_cost).quantize(
+        MONEY_QUANTUM,
+        rounding=ROUND_HALF_UP,
+    )
+    if cost < 0:
+        raise ValidationError({'acquisition_cost': 'Cost cannot be negative.'})
+    movement = _create_movement(MovementEntry(
+        workspace=workspace,
+        user=user,
+        lot=lot,
+        unit=unit,
+        movement_type=StockMovement.MovementType.TRANSFER,
+        quantity=Decimal('1'),
+        source=unit.current_location,
+        destination=request.destination,
+        occurred_at=request.occurred_at,
+        reason=request.reason,
+        reference='Opening inventory reconciliation',
+    ))
+    InventoryUnit.objects.filter(pk=unit.pk).update(
+        acquisition_cost=cost,
+        updated=timezone.now(),
+    )
+    reconciliation = InventoryUnitReconciliation.objects.create(
+        workspace=workspace,
+        unit=unit,
+        acquisition_cost=cost,
+        movement=movement,
+        reason=request.reason,
+        recorded_by=user,
+    )
+    unit.acquisition_cost = cost
+    return reconciliation
 
 
 @transaction.atomic
@@ -569,6 +875,10 @@ def post_stocktake(stocktake, user):
     for line in lines:
         line.lot = locked_lots[line.lot_id]
         line.full_clean()
+        if line.lot.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+            raise ValidationError({
+                'lines': 'Count serialized stock through unit actions.',
+            })
         if not line.lot.item.active:
             raise ValidationError(
                 {'lines': f'Item {line.lot.item_id} is inactive.'},
