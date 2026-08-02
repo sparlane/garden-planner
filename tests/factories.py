@@ -1,7 +1,10 @@
 """Small dependency-free model builders shared by API tests."""
+from datetime import date
+from decimal import Decimal
 from itertools import count
 
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
+from inventory.models import InventoryLocation, InventoryUnit, StockLot, StockMovement
 from plantings.models import (
     SeedTrayCellPlanting,
     SeedTrayPlanting,
@@ -165,13 +168,51 @@ def make_seed_tray_model(**overrides):
 
 
 def make_seed_tray(**overrides):
-    """Create a seed tray without implicitly creating cells."""
+    """Create an audited seed tray without implicitly creating cells."""
     values = {
         'notes': 'Shared test tray',
     }
     if 'model' not in overrides:
         values['model'] = make_seed_tray_model()
     values.update(overrides)
+    tray_model = values['model']
+    workspace = values.get('workspace', tray_model.workspace)
+    location, _created = InventoryLocation.objects.get_or_create(
+        workspace=workspace,
+        code='TEST-TRAY-STOCK',
+        defaults={
+            'name': 'Test tray stock',
+            'location_type': InventoryLocation.LocationType.STORAGE,
+        },
+    )
+    lot = StockLot.objects.create(
+        workspace=workspace,
+        item=tray_model.inventory_item,
+        origin=StockLot.Origin.OPENING,
+        received_on=date(2026, 1, 1),
+        initial_base_quantity=Decimal('1'),
+        acquisition_total=Decimal('0'),
+        base_unit_cost=Decimal('0'),
+        currency_code=workspace.currency_code,
+    )
+    unit = InventoryUnit.objects.create(
+        workspace=workspace,
+        item=tray_model.inventory_item,
+        source_lot=lot,
+        acquisition_cost=Decimal('0'),
+        currency_code=workspace.currency_code,
+        current_location=location,
+    )
+    StockMovement.objects.create(
+        workspace=workspace,
+        lot=lot,
+        unit=unit,
+        movement_type=StockMovement.MovementType.OPENING,
+        quantity=Decimal('1'),
+        destination=location,
+        occurred_at='2026-01-01T00:00:00Z',
+    )
+    values['inventory_unit'] = unit
     return SeedTray.objects.create(**values)
 
 

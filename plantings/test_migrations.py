@@ -10,9 +10,9 @@ from django.test import SimpleTestCase, TestCase
 
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
-from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
+from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
-from tests.factories import make_garden_square
+from tests.factories import make_garden_square, make_seed_tray
 from .models import (
     GardenSquareTransplant,
     SeedTrayCellPlanting,
@@ -50,7 +50,7 @@ class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instanc
             y_cells=2,
             cell_size_ml=40,
         )
-        self.tray = SeedTray.objects.create(model=self.tray_model)
+        self.tray = make_seed_tray(model=self.tray_model)
         self.cell = SeedTrayCell.objects.create(
             tray=self.tray,
             x_position=0,
@@ -215,7 +215,7 @@ class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instanc
 
     def test_audit_reports_cross_tray_cell_planting(self):
         """The failure identifies a cell planting whose parent tray differs."""
-        other_tray = SeedTray.objects.create(model=self.tray_model)
+        other_tray = make_seed_tray(model=self.tray_model)
         other_cell = SeedTrayCell.objects.create(
             tray=other_tray,
             x_position=0,

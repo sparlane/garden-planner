@@ -125,6 +125,7 @@ class SeedTrayAllViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  
     """
     queryset = SeedTray.objects.all()
     serializer_class = SeedTraySerializer
+    http_method_names = ['get', 'patch', 'head', 'options']
 
 
 class SeedTrayCellViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors

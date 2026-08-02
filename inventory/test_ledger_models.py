@@ -15,6 +15,7 @@ from workspaces.models import Workspace, get_current_workspace
 from .models import (
     InventoryItem,
     InventoryLocation,
+    InventoryUnit,
     QuantityCertainty,
     StockLot,
     StockMovement,
@@ -184,6 +185,88 @@ class LedgerModelTests(TestCase):
         with self.assertRaises(ValidationError) as context:
             line.save()
         self.assertIn('quantity', context.exception.message_dict)
+
+    def test_serialized_unit_requires_matching_serialized_identity(self):
+        """A unit cannot cross workspaces, lots, or tracking modes."""
+        serialized_item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Propagation tray',
+            category=InventoryItem.Category.TRAY,
+            base_unit=UnitCode.EACH,
+            tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
+        )
+        lot = StockLot.objects.create(
+            workspace=self.workspace,
+            item=serialized_item,
+            origin=StockLot.Origin.OPENING,
+            received_on=date(2026, 8, 1),
+            initial_base_quantity=Decimal('1'),
+            acquisition_total=Decimal('8.5000'),
+            base_unit_cost=Decimal('8.500000000000'),
+            currency_code='NZD',
+        )
+        unit = InventoryUnit.objects.create(
+            workspace=self.workspace,
+            item=serialized_item,
+            source_lot=lot,
+            acquisition_cost=Decimal('8.5000'),
+            currency_code='NZD',
+            current_location=self.location,
+        )
+        self.assertTrue(unit.asset_code.startswith('ASSET-'))
+
+        unit.item = self.item
+        with self.assertRaises(ValidationError) as context:
+            unit.save()
+        self.assertIn('item', context.exception.message_dict)
+
+    def test_serialized_movement_requires_unit_and_quantity_one(self):
+        """Serialized stock cannot re-enter aggregate lot accounting."""
+        item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Cell tray',
+            category=InventoryItem.Category.TRAY,
+            base_unit=UnitCode.EACH,
+            tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
+        )
+        lot = StockLot.objects.create(
+            workspace=self.workspace,
+            item=item,
+            origin=StockLot.Origin.OPENING,
+            received_on=date(2026, 8, 1),
+            initial_base_quantity=Decimal('1'),
+            acquisition_total=Decimal('4'),
+            base_unit_cost=Decimal('4'),
+            currency_code='NZD',
+        )
+        with self.assertRaises(ValidationError) as context:
+            StockMovement.objects.create(
+                workspace=self.workspace,
+                lot=lot,
+                movement_type=StockMovement.MovementType.OPENING,
+                quantity=Decimal('1'),
+                destination=self.location,
+                occurred_at=timezone.now(),
+            )
+        self.assertIn('unit', context.exception.message_dict)
+
+        unit = InventoryUnit.objects.create(
+            workspace=self.workspace,
+            item=item,
+            source_lot=lot,
+            acquisition_cost=Decimal('4'),
+            currency_code='NZD',
+        )
+        with self.assertRaises(ValidationError):
+            StockMovement.objects.create(
+                workspace=self.workspace,
+                lot=lot,
+                unit=unit,
+                movement_type=StockMovement.MovementType.OPENING,
+                quantity=Decimal('2'),
+                destination=self.location,
+                occurred_at=timezone.now(),
+            )
 
     def test_posted_documents_and_ledger_rows_are_immutable(self):
         """History remains append-only after its document posts."""
