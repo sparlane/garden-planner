@@ -40,7 +40,7 @@ jobs:
           ./setup-venv.sh
       - name: Test
         run:
-          venv/bin/python manage.py test
+          ./test-venv.sh
       - name: check-code
         run:
           ./check-code.sh

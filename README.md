@@ -206,7 +206,7 @@ Project layout (high level)
 
 Contributing
 - Fork, create a feature branch, add tests, and open a PR.
-- Please run linting and tests locally before submitting.
+- Run backend tests with `./test-venv.sh` and linting with `./check-code.sh` before submitting.
 - Consider adding a CONTRIBUTING.md and CODE_OF_CONDUCT.md if you want contribution guidelines formalised.
 
 License
