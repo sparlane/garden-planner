@@ -147,7 +147,22 @@ class SeedPacketSerializer(serializers.ModelSerializer):
 
     def get_inventory(self, packet):
         """Return nested truthful quantity and valuation metadata."""
-        return self._snapshot(packet)
+        snapshot = self._snapshot(packet)
+        if snapshot is None:
+            return None
+        for field, places in (
+            ('received_quantity', 9),
+            ('sown_quantity', 9),
+            ('adjustment_quantity', 9),
+            ('remaining_quantity', 9),
+            ('acquisition_total', 4),
+            ('effective_base_unit_cost', 12),
+        ):
+            value = snapshot[field]
+            snapshot[field] = (
+                f'{value:.{places}f}' if value is not None else None
+            )
+        return snapshot
 
 
 class PacketReceiptDraftSerializer(

@@ -12,7 +12,8 @@ import {
   SpecificPlant,
   SpecificPlantCreate,
   SpecificPlantLocationCreate,
-  SpecificPlantMove
+  SpecificPlantMove,
+  SowingCorrection
 } from '../types/plantings'
 
 function getPlantingDirectSowGardenRows(signal?: AbortSignal): Promise<Array<GardenRowDirectPlanting>> {
@@ -37,6 +38,10 @@ function completePlantingDirectSowGardenSquare(plantingPk: number) {
   })
 }
 
+function correctGardenSquareSowing(plantingPk: number, data: SowingCorrection) {
+  return csrfPost(`/plantings/directsowgardensquare/${plantingPk}/correct-sowing/`, data)
+}
+
 function getPlantingSeedTrays(signal?: AbortSignal): Promise<Array<SeedTrayPlanting>> {
   return fetchAsJson<Array<SeedTrayPlanting>>('/plantings/seedtray/', signal)
 }
@@ -53,6 +58,10 @@ function completePlantingSeedTray(plantingPk: number) {
   return csrfPost('/plantings/seedtray/complete/', {
     planting: plantingPk
   })
+}
+
+function correctSeedTraySowing(plantingPk: number, data: SowingCorrection) {
+  return csrfPost(`/plantings/seedtray/${plantingPk}/correct-sowing/`, data)
 }
 
 function getPlantingTransplantedGardenSquares(signal?: AbortSignal): Promise<Array<GardenSquareTransplanting>> {
@@ -99,10 +108,12 @@ export {
   getPlantingDirectSowGardenSquares,
   addPlantingDirectSowGardenSquare,
   completePlantingDirectSowGardenSquare,
+  correctGardenSquareSowing,
   getPlantingSeedTrays,
   getPlantingSeedTray,
   addPlantingSeedTray,
   completePlantingSeedTray,
+  correctSeedTraySowing,
   getPlantingTransplantedGardenSquares,
   completePlantingTransplantedGardenSquare,
   getPlantingSeedTrayCurrent,
