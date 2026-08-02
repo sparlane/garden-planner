@@ -13,6 +13,7 @@ from .models import (
     MONEY_DECIMAL_PLACES,
     QUANTITY_DECIMAL_PLACES,
     InventoryItem,
+    QuantityCertainty,
     StockLot,
     StockMovement,
     StockReceipt,
@@ -327,10 +328,12 @@ def post_receipt(receipt, user):
     lots = []
     for line in lines:
         acquisition_total = _receipt_acquisition_cost(receipt, line)
-        unit_cost = (acquisition_total / line.base_quantity).quantize(
-            COST_QUANTUM,
-            rounding=ROUND_HALF_UP,
-        )
+        unit_cost = None
+        if line.base_quantity is not None:
+            unit_cost = (acquisition_total / line.base_quantity).quantize(
+                COST_QUANTUM,
+                rounding=ROUND_HALF_UP,
+            )
         lot = StockLot.objects.create(
             workspace=receipt.workspace,
             item=line.item,
@@ -340,21 +343,23 @@ def post_receipt(receipt, user):
             received_on=receipt.received_date,
             expires_on=line.expires_on,
             initial_base_quantity=line.base_quantity,
+            quantity_certainty=line.quantity_certainty,
             acquisition_total=acquisition_total,
             base_unit_cost=unit_cost,
             currency_code=receipt.currency_code,
         )
-        _create_movement(MovementEntry(
-            workspace=receipt.workspace,
-            user=user,
-            lot=lot,
-            movement_type=StockMovement.MovementType.RECEIPT,
-            quantity=line.base_quantity,
-            destination=line.destination,
-            occurred_at=posted_at,
-            reference=receipt.supplier_reference,
-            receipt_line=line,
-        ))
+        if line.quantity_certainty != QuantityCertainty.UNKNOWN:
+            _create_movement(MovementEntry(
+                workspace=receipt.workspace,
+                user=user,
+                lot=lot,
+                movement_type=StockMovement.MovementType.RECEIPT,
+                quantity=line.base_quantity,
+                destination=line.destination,
+                occurred_at=posted_at,
+                reference=receipt.supplier_reference,
+                receipt_line=line,
+            ))
         lots.append(lot)
     InventoryItem.objects.filter(
         pk__in=item_ids,
@@ -467,6 +472,14 @@ def reverse_receipt(receipt, user, reason):
         .filter(receipt_line__receipt=receipt)
         .order_by('pk')
     )
+    receipt_lot_ids = list(
+        StockLot.objects.filter(receipt_line__receipt=receipt)
+        .values_list('pk', flat=True)
+    )
+    if not movements and StockMovement.objects.filter(lot_id__in=receipt_lot_ids).exists():
+        raise ValidationError({
+            'status': 'A quantity-unknown receipt cannot be reversed after stock use.',
+        })
     reversals = _reverse_document_movements(
         receipt.workspace,
         movements,

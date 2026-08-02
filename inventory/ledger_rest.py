@@ -32,6 +32,7 @@ from .models import (
     InventoryItem,
     InventoryLocation,
     ItemUnitConversion,
+    QuantityCertainty,
     StockLot,
     StockMovement,
     StockReceipt,
@@ -80,6 +81,16 @@ class InventoryLocationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created', 'updated']
 
+    def validate(self, attrs):
+        """Reserve packet-container locations for the seed workflow."""
+        current_type = getattr(self.instance, 'location_type', None)
+        requested_type = attrs.get('location_type', current_type)
+        if requested_type == InventoryLocation.LocationType.SEED_PACKET:
+            raise ValidationError({
+                'location_type': 'Seed packet locations are system-managed.',
+            })
+        return attrs
+
 
 class StockReceiptLineSerializer(
     CurrentWorkspaceSerializerMixin,
@@ -103,6 +114,7 @@ class StockReceiptLineSerializer(
             'supplier_lot_reference',
             'expires_on',
             'quantity',
+            'quantity_certainty',
             'unit_code',
             'unit_conversion',
             'base_quantity',
@@ -141,15 +153,26 @@ class StockReceiptLineSerializer(
             )
         if destination and not destination.active:
             raise ValidationError({'destination': 'The location is inactive.'})
-        try:
-            attrs['base_quantity'] = normalize_quantity(
-                item,
-                attrs.get('quantity'),
-                attrs.get('unit_code'),
-                conversion,
-            )
-        except DjangoValidationError as exc:
-            raise ValidationError(_model_errors(exc)) from exc
+        certainty = attrs.get(
+            'quantity_certainty',
+            getattr(self.instance, 'quantity_certainty', QuantityCertainty.EXACT),
+        )
+        if certainty == QuantityCertainty.UNKNOWN:
+            if attrs.get('quantity') is not None:
+                raise ValidationError({
+                    'quantity': 'Unknown quantities must not include a number.',
+                })
+            attrs['base_quantity'] = None
+        else:
+            try:
+                attrs['base_quantity'] = normalize_quantity(
+                    item,
+                    attrs.get('quantity'),
+                    attrs.get('unit_code'),
+                    conversion,
+                )
+            except DjangoValidationError as exc:
+                raise ValidationError(_model_errors(exc)) from exc
         return attrs
 
 
@@ -208,6 +231,10 @@ class StockReceiptSerializer(
 
     def validate(self, attrs):
         """Apply workspace financial defaults to new draft documents."""
+        if self.instance and hasattr(self.instance, 'seed_packet_draft'):
+            raise ValidationError({
+                'status': 'Edit seed packet drafts through the seed receipt API.',
+            })
         if self.instance and self.instance.status != StockReceipt.Status.DRAFT:
             raise ValidationError({'status': 'Posted receipts are immutable.'})
         if self.instance is None:
@@ -257,6 +284,7 @@ class StockLotSerializer(serializers.ModelSerializer):
             'received_on',
             'expires_on',
             'initial_base_quantity',
+            'quantity_certainty',
             'acquisition_total',
             'base_unit_cost',
             'currency_code',
@@ -606,6 +634,10 @@ class InventoryLocationViewSet(
         return queryset
 
     def perform_destroy(self, instance):
+        if instance.location_type == InventoryLocation.LocationType.SEED_PACKET:
+            raise ValidationError({
+                'location': 'Seed packet locations are system-managed.',
+            })
         try:
             instance.delete()
         except ProtectedError as exc:
@@ -635,6 +667,10 @@ class StockReceiptViewSet(
         )
 
     def perform_destroy(self, instance):
+        if hasattr(instance, 'seed_packet_draft'):
+            raise ValidationError({
+                'status': 'Cancel seed packet drafts through the seed receipt API.',
+            })
         try:
             instance.delete()
         except DjangoValidationError as exc:
@@ -670,9 +706,14 @@ class StockReceiptViewSet(
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):  # pylint: disable=unused-argument
         """Post every draft line as one exact lot and receipt movement."""
+        receipt = self.get_object()
+        if hasattr(receipt, 'seed_packet_draft'):
+            raise ValidationError({
+                'status': 'Post seed packet drafts through the seed receipt API.',
+            })
         receipt, _lots = _run_domain_action(
             post_receipt,
-            self.get_object(),
+            receipt,
             request.user,
         )
         return Response(self.get_serializer(receipt).data)
