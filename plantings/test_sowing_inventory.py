@@ -32,7 +32,7 @@ from tests.factories import (
     make_seed_tray_cell,
     make_supplier,
 )
-from workspaces.models import Workspace, get_current_workspace
+from workspaces.models import Workspace
 
 from .models import (
     GardenSquareDirectSowPlanting,
@@ -262,7 +262,10 @@ class ConcurrentSowingInventoryTests(TransactionTestCase):
 
     def setUp(self):
         super().setUp()
-        workspace = get_current_workspace()
+        workspace = Workspace.objects.get_or_create(
+            pk=settings.CURRENT_WORKSPACE_ID,
+            defaults={'name': 'My Garden'},
+        )[0]
         user = get_user_model().objects.create_user(username='sowing-concurrency')
         seeds = Seeds.objects.create(
             workspace=workspace,
