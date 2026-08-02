@@ -7,10 +7,17 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
+from inventory.models import InventoryLocation, InventoryUnit, StockMovement
+from plantings.models import SeedTrayPlanting
 from tests.api import RESTContractTestCase
-from tests.factories import make_seed_tray, make_seed_tray_cell
+from tests.factories import (
+    make_seed_packet,
+    make_seed_tray,
+    make_seed_tray_cell,
+    make_supplier,
+)
 
-from .models import SeedTrayCell, SeedTrayModel
+from .models import SeedTray, SeedTrayCell, SeedTrayModel
 
 
 class SeedTrayRESTContractTests(RESTContractTestCase):
@@ -54,11 +61,41 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
                 'cell_size_ml': 45,
             },
         )
-        response = self.client.post(
-            '/seedtrays/seedtrays/',
-            {'model': tray_model['pk'], 'notes': 'Spring sowing'},
+        supplier = make_supplier()
+        location = InventoryLocation.objects.create(
+            name='Receipt store',
+            code='RECEIPT-STORE',
+            location_type=InventoryLocation.LocationType.STORAGE,
         )
-        self.assertEqual(response.status_code, 405)
+        response = self.client.post(
+            f"/seedtrays/seedtraymodels/{tray_model['pk']}/receive/",
+            {
+                'supplier': supplier.pk,
+                'received_date': '2026-08-02',
+                'quantity': 1,
+                'line_cost_ex_tax': '5.0000',
+                'destination': location.pk,
+                'notes': 'Spring sowing',
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        tray = response.data['trays'][0]
+        retrieved = self.client.get(f"/seedtrays/seedtrays/{tray['pk']}/")
+        self.assertEqual(retrieved.status_code, 200)
+        self.assertEqual(retrieved.data, tray)
+        cell = SeedTrayCell.objects.get(
+            tray_id=tray['pk'],
+            x_position=2,
+            y_position=1,
+        )
+        response = self.client.get(f'/seedtrays/seedtraycells/{cell.pk}/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {
+            'pk': cell.pk,
+            'tray': tray['pk'],
+            'x_position': 2,
+            'y_position': 1,
+        })
 
         self.assert_create_retrieve(
             '/seedtrays/seedtraycells/',
@@ -86,6 +123,14 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
         self.assertEqual(response.status_code, 200)
         response = self.client.get(f'{nested_url}{other_cell.pk}/')
         self.assertEqual(response.status_code, 404)
+
+    def test_bare_tray_creation_is_replaced_by_receiving(self):
+        """A physical tray cannot bypass unit provenance and stock posting."""
+        response = self.client.post(
+            '/seedtrays/seedtrays/',
+            {'model': self.tray.model_id},
+        )
+        self.assertEqual(response.status_code, 405)
 
 
 class SeedTrayCellIntegrityTests(TestCase):
@@ -115,6 +160,12 @@ class SeedTrayCellIntegrityTests(TestCase):
         )
         self.tray = make_seed_tray(model=self.tray_model)
         self.other_tray = make_seed_tray(model=self.other_model)
+        self.supplier = make_supplier()
+        self.location = InventoryLocation.objects.create(
+            name='Tray receiving',
+            code='TRAY-RECEIVING',
+            location_type=InventoryLocation.LocationType.RECEIVING,
+        )
 
     def test_detail_view_requires_login(self):
         """Anonymous visitors cannot discover seed tray detail pages."""
@@ -127,18 +178,97 @@ class SeedTrayCellIntegrityTests(TestCase):
             f'/accounts/login/?next=/seedtrays/seedtray/{self.tray.pk}/',
         )
 
-    def test_bare_tray_creation_is_rejected(self):
-        """A physical tray cannot bypass its inventory identity."""
+    def test_receiving_tray_generates_complete_cell_grid(self):
+        """Receiving a tray generates every model cell exactly once."""
         response = self.client.post(
-            '/seedtrays/seedtrays/',
+            f'/seedtrays/seedtraymodels/{self.other_model.pk}/receive/',
             data=json.dumps({
-                'model': self.other_model.pk,
+                'supplier': self.supplier.pk,
+                'received_date': '2026-08-02',
+                'quantity': 1,
+                'line_cost_ex_tax': '6.0000',
+                'destination': self.location.pk,
                 'notes': 'Propagation tray',
             }),
             content_type='application/json',
         )
 
-        self.assertEqual(response.status_code, 405)
+        self.assertEqual(response.status_code, 201)
+        tray = SeedTray.objects.get(pk=response.json()['trays'][0]['pk'])
+        self.assertEqual(
+            set(tray.seedtraycell_set.values_list('x_position', 'y_position')),
+            {
+                (x_position, y_position)
+                for x_position in range(self.other_model.x_cells)
+                for y_position in range(self.other_model.y_cells)
+            },
+        )
+
+    def test_receiving_multiple_trays_keeps_identity_and_cost_exact(self):
+        """One receipt creates distinct units, trays, cells, and movement rows."""
+        response = self.client.post(
+            f'/seedtrays/seedtraymodels/{self.other_model.pk}/receive/',
+            {
+                'supplier': self.supplier.pk,
+                'received_date': '2026-08-02',
+                'quantity': 3,
+                'line_cost_ex_tax': '10.0000',
+                'destination': self.location.pk,
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        trays = response.data['trays']
+        self.assertEqual(len(trays), 3)
+        self.assertEqual(len({tray['inventory_unit'] for tray in trays}), 3)
+        units = InventoryUnit.objects.filter(
+            pk__in=[tray['inventory_unit'] for tray in trays],
+        )
+        self.assertEqual(sum(unit.acquisition_cost for unit in units), 10)
+        self.assertEqual(
+            StockMovement.objects.filter(unit__in=units, movement_type='receipt').count(),
+            3,
+        )
+        self.assertTrue(all(
+            SeedTrayCell.objects.filter(tray_id=tray['pk']).count() == 9
+            for tray in trays
+        ))
+
+    def test_active_cultivation_blocks_loss_but_allows_transfer(self):
+        """A tray stays on hand while occupied and cannot silently leave stock."""
+        tray = self.tray
+        planting = SeedTrayPlanting.objects.create(
+            seeds_used=make_seed_packet(),
+            quantity=1,
+            seed_tray=tray,
+        )
+        unit = tray.inventory_unit
+        response = self.client.get(
+            '/seedtrays/seedtrays/',
+            {'in_use': 'true'},
+        )
+        self.assertIn(tray.pk, [row['pk'] for row in response.data])
+
+        response = self.client.post(
+            f'/inventory/serialized-units/{unit.pk}/loss/',
+            {'reason': 'Incorrectly remove occupied tray'},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('unit', response.data)
+
+        destination = InventoryLocation.objects.create(
+            name='Growing bench',
+            code='GROWING-BENCH',
+            location_type=InventoryLocation.LocationType.GROWING,
+        )
+        response = self.client.post(
+            f'/inventory/serialized-units/{unit.pk}/transfer/',
+            {'destination': destination.pk, 'reason': 'Move occupied tray'},
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        planting.refresh_from_db()
+        unit.refresh_from_db()
+        self.assertFalse(planting.removed)
+        self.assertEqual(unit.current_location_id, destination.pk)
 
     def test_nested_create_uses_url_tray_instead_of_payload_tray(self):
         """
