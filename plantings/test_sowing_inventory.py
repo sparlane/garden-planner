@@ -1,13 +1,29 @@
 """Integration tests for audited seed consumption and correction."""
+# pylint: disable=duplicate-code
 
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from decimal import Decimal
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.db import close_old_connections, transaction
+from django.test import TransactionTestCase, skipUnlessDBFeature
 from rest_framework.test import APITestCase
 
-from inventory.models import QuantityCertainty, StockMovement
-from seeds.models import SeedPacket
-from seeds.services import packet_inventory_snapshot
+from inventory.ledger import OpeningBalanceRequest, post_opening_balance
+from inventory.models import (
+    InventoryLocation,
+    QuantityCertainty,
+    StockMovement,
+)
+from inventory.units import UnitCode
+from seeds.models import SeedPacket, Seeds
+from seeds.services import (
+    create_seed_inventory_item,
+    packet_inventory_snapshot,
+)
 from tests.factories import (
     make_garden_row,
     make_garden_square,
@@ -16,12 +32,14 @@ from tests.factories import (
     make_seed_tray_cell,
     make_supplier,
 )
+from workspaces.models import Workspace, get_current_workspace
 
 from .models import (
     GardenSquareDirectSowPlanting,
     SeedTrayPlanting,
     SowingStockPosting,
 )
+from .sowing import post_sowing_consumption
 
 
 class SowingInventoryTests(APITestCase):
@@ -227,3 +245,97 @@ class SowingInventoryTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         planting = SeedTrayPlanting.objects.get(pk=created.data['pk'])
         self.assertEqual(planting.quantity, 5)
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentSowingInventoryTests(TransactionTestCase):
+    """Packet and lot locks serialize sowings that compete for final stock."""
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        workspace = get_current_workspace()
+        user = get_user_model().objects.create_user(username='sowing-concurrency')
+        seeds = Seeds.objects.create(
+            workspace=workspace,
+            supplier=make_supplier(),
+            plant_variety=make_plant_variety(),
+        )
+        item = create_seed_inventory_item(workspace, seeds, UnitCode.SEED)
+        seeds.inventory_item = item
+        seeds.save(update_fields=['inventory_item'])
+        location = InventoryLocation.objects.create(
+            workspace=workspace,
+            name='Concurrent packet',
+            code='CONCURRENT-SEED-PACKET',
+            location_type=InventoryLocation.LocationType.SEED_PACKET,
+        )
+        lot, _movement = post_opening_balance(
+            workspace,
+            user,
+            OpeningBalanceRequest(
+                item=item,
+                quantity=Decimal('10'),
+                destination=location,
+                acquisition_total=Decimal('5'),
+                received_on=date(2026, 8, 2),
+            ),
+        )
+        packet = SeedPacket.objects.create(
+            workspace=workspace,
+            seeds=seeds,
+            stock_lot=lot,
+            storage_location=location,
+        )
+        square = make_garden_square()
+        self.workspace_pk = workspace.pk
+        self.user_pk = user.pk
+        self.packet_pk = packet.pk
+        self.square_pk = square.pk
+
+    def _sow_final_quantity(self):
+        """Attempt one atomic planting from an independent database connection."""
+        close_old_connections()
+        try:
+            with transaction.atomic():
+                planting = GardenSquareDirectSowPlanting.objects.create(
+                    workspace_id=self.workspace_pk,
+                    seeds_used_id=self.packet_pk,
+                    location_id=self.square_pk,
+                    quantity=10,
+                )
+                post_sowing_consumption(
+                    planting,
+                    get_user_model().objects.get(pk=self.user_pk),
+                )
+        except ValidationError:
+            result = 'rejected'
+        else:
+            result = 'posted'
+        close_old_connections()
+        return result
+
+    def test_only_one_sowing_consumes_the_final_packet_quantity(self):
+        """The rejected concurrent request rolls back its planting and posting."""
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda _index: self._sow_final_quantity(),
+                range(2),
+            ))
+
+        self.assertCountEqual(results, ['posted', 'rejected'])
+        self.assertEqual(GardenSquareDirectSowPlanting.objects.count(), 1)
+        self.assertEqual(SowingStockPosting.objects.count(), 1)
+        packet = SeedPacket.objects.get(pk=self.packet_pk)
+        self.assertEqual(
+            packet_inventory_snapshot(packet)['remaining_quantity'],
+            Decimal('0'),
+        )
