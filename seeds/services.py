@@ -75,11 +75,8 @@ def _packet_location(workspace):
 @transaction.atomic
 def ensure_packet_inventory_identity(packet):
     """Give direct-ORM legacy packets the identities migrations normally add."""
-    packet = SeedPacket.objects.select_for_update().select_related(
-        'seeds__inventory_item',
-        'workspace',
-    ).get(pk=packet.pk)
-    seeds = packet.seeds
+    packet = SeedPacket.objects.select_for_update().get(pk=packet.pk)
+    seeds = Seeds.objects.select_for_update().get(pk=packet.seeds_id)
     if not seeds.inventory_item_id:
         item = create_seed_inventory_item(
             packet.workspace,
