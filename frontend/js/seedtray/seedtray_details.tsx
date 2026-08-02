@@ -4,8 +4,8 @@ import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tan
 
 import { SeedTray, SeedTrayCell, SeedTrayModel } from '../types/seedtrays'
 import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
-import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from '../api/seedtrays'
-import { Button, Table } from 'react-bootstrap'
+import { getSeedTrayModels, getSeedTrays, getSeedTrayCells, getSerializedUnitMovements, postSerializedUnitAction } from '../api/seedtrays'
+import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
 import { getPlantingSeedTray, getSpecificPlantsBySeedTray, addSpecificPlant, moveSpecificPlant } from '../api/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
@@ -13,6 +13,7 @@ import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
 import { getGardenSquares } from '../api/garden'
+import { getInventoryLocations } from '../api/inventory'
 import { queryClient, queryKeys } from '../query'
 
 interface SeedTrayDetailsProps {
@@ -38,6 +39,7 @@ type SeedTrayMove = {
 }
 
 type MoveForm = BaseMoveForm & (GardenSquareMove | SeedTrayMove)
+type InventoryAction = 'transfer' | 'loss' | 'retire' | 'return' | 'reconcile-opening'
 
 type CellPlantingEntry = { cellPlantingPk: number; quantity: number; plantingPk: number }
 
@@ -331,6 +333,10 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const [germinationDate, setGerminationDate] = React.useState(localDatetimeInputValue())
   const [germinationNotes, setGerminationNotes] = React.useState('')
   const [moveForm, setMoveForm] = React.useState<MoveForm>()
+  const [inventoryAction, setInventoryAction] = React.useState<InventoryAction>()
+  const [inventoryDestination, setInventoryDestination] = React.useState<number>()
+  const [inventoryReason, setInventoryReason] = React.useState('')
+  const [inventoryCost, setInventoryCost] = React.useState('0.0000')
   const seedTrayModelsQuery = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
@@ -338,6 +344,16 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const seedTraysQuery = useQuery({
     queryKey: queryKeys.seedTrays.trays,
     queryFn: ({ signal }) => getSeedTrays(signal)
+  })
+  const selectedSeedTray = seedTraysQuery.data?.find((tray) => tray.pk === seedTrayPk)
+  const inventoryLocationsQuery = useQuery({
+    queryKey: queryKeys.inventory.locations,
+    queryFn: ({ signal }) => getInventoryLocations(signal)
+  })
+  const inventoryMovementsQuery = useQuery({
+    queryKey: queryKeys.seedTrays.movements(selectedSeedTray?.inventory_unit ?? 0),
+    queryFn: ({ signal }) => getSerializedUnitMovements(selectedSeedTray?.inventory_unit as number, signal),
+    enabled: Boolean(selectedSeedTray?.inventory_unit)
   })
   const seedTrayCellsQuery = useQuery({
     queryKey: queryKeys.seedTrays.cells(seedTrayPk),
@@ -383,6 +399,14 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
       ])
   })
+  const inventoryMutation = useMutation({
+    mutationFn: ({ unit, action, data }: { unit: number; action: InventoryAction; data: object }) => postSerializedUnitAction(unit, action, data),
+    onSuccess: () =>
+      Promise.all([
+        cache.invalidateQueries({ queryKey: queryKeys.seedTrays.trays }),
+        cache.invalidateQueries({ queryKey: queryKeys.seedTrays.movements(selectedSeedTray?.inventory_unit ?? 0) })
+      ])
+  })
 
   const seedTrayModels = seedTrayModelsQuery.data ?? []
   const seedTrays = seedTraysQuery.data ?? []
@@ -391,7 +415,14 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const seedPacketDetails = seedPacketsQuery.data ?? []
   const specificPlants = specificPlantsQuery.data ?? []
   const gardenSquares = gardenSquaresQuery.data ?? []
-  const seedTray = seedTrays.find((tray) => tray.pk === seedTrayPk)
+  const inventoryLocations = inventoryLocationsQuery.data ?? []
+  const inventoryDestinations = inventoryLocations.filter((location) => location.code !== 'SYSTEM-TRAY-UNKNOWN' && location.location_type !== 'seed_packet')
+  const inventoryMovements = inventoryMovementsQuery.data ?? []
+  const inventoryLocationMap = inventoryLocations.reduce<Record<number, string>>((locations, location) => {
+    locations[location.pk] = location.name
+    return locations
+  }, {})
+  const seedTray = selectedSeedTray
   const seedTrayModel = seedTrayModels.find((model) => model.pk === seedTray?.model)
   const seedTrayCells = buildCellGrid(seedTrayModel, allCells)
   const seeds = seedPacketDetails.reduce<Record<number, SeedPacketDetails>>((packets, packet) => {
@@ -399,9 +430,16 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return packets
   }, {})
   const { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting, cellTotals } = computeCellData(specificPlants, plantings)
-  const isLoading = [seedTrayModelsQuery, seedTraysQuery, seedTrayCellsQuery, plantingsQuery, seedPacketsQuery, specificPlantsQuery, gardenSquaresQuery].some(
-    (query) => query.isPending
-  )
+  const isLoading = [
+    seedTrayModelsQuery,
+    seedTraysQuery,
+    seedTrayCellsQuery,
+    plantingsQuery,
+    seedPacketsQuery,
+    specificPlantsQuery,
+    gardenSquaresQuery,
+    inventoryLocationsQuery
+  ].some((query) => query.isPending)
 
   async function handleRecordGermination() {
     if (!germinatingCellPlantingPk) return
@@ -465,6 +503,23 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return square ? square.name : `Square #${location.garden_square}`
   }
 
+  async function handleInventoryAction() {
+    if (!seedTray || !inventoryAction) return
+    const needsDestination = inventoryAction === 'transfer' || inventoryAction === 'return' || inventoryAction === 'reconcile-opening'
+    if (needsDestination && !inventoryDestination) return
+    const data: Record<string, string | number> = { reason: inventoryReason }
+    if (inventoryDestination) data.destination = inventoryDestination
+    if (inventoryAction === 'reconcile-opening') data.acquisition_cost = inventoryCost
+    await inventoryMutation.mutateAsync({
+      unit: seedTray.inventory_unit,
+      action: inventoryAction,
+      data
+    })
+    setInventoryAction(undefined)
+    setInventoryDestination(undefined)
+    setInventoryReason('')
+  }
+
   if (isLoading) {
     return <div>Loading...</div>
   }
@@ -481,6 +536,122 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       </p>
       <p>Created: {formatDate(seedTray.created)}</p>
       <p>Notes: {seedTray.notes}</p>
+      <Card className="mb-3">
+        <Card.Body>
+          <Card.Title>Physical inventory</Card.Title>
+          {seedTray.inventory.reconciliation_required && <Alert variant="warning">Opening cost and physical location require reconciliation.</Alert>}
+          <dl className="row mb-2">
+            <dt className="col-sm-3">Asset code</dt>
+            <dd className="col-sm-9">{seedTray.inventory.asset_code}</dd>
+            <dt className="col-sm-3">State</dt>
+            <dd className="col-sm-9">
+              {seedTray.inventory.physical_state} {seedTray.inventory.in_use ? '(in use)' : '(not in use)'}
+            </dd>
+            <dt className="col-sm-3">Location</dt>
+            <dd className="col-sm-9">{seedTray.inventory.current_location ? inventoryLocationMap[seedTray.inventory.current_location] : 'Off hand'}</dd>
+            <dt className="col-sm-3">Acquisition cost</dt>
+            <dd className="col-sm-9">{seedTray.inventory.acquisition_cost === null ? 'Unknown' : `${seedTray.inventory.acquisition_cost} ${seedTray.inventory.currency_code}`}</dd>
+            <dt className="col-sm-3">Source lot</dt>
+            <dd className="col-sm-9">
+              #{seedTray.inventory.source_lot}
+              {seedTray.inventory.receipt_line ? ` / receipt line #${seedTray.inventory.receipt_line}` : ' / opening balance'}
+            </dd>
+          </dl>
+          <div className="d-flex gap-2 flex-wrap">
+            {seedTray.inventory.current_location && !seedTray.inventory.reconciliation_required && (
+              <Button size="sm" onClick={() => setInventoryAction('transfer')}>
+                Transfer
+              </Button>
+            )}
+            {seedTray.inventory.current_location && !seedTray.inventory.in_use && !seedTray.inventory.reconciliation_required && (
+              <>
+                <Button size="sm" variant="warning" onClick={() => setInventoryAction('loss')}>
+                  Record loss
+                </Button>
+                <Button size="sm" variant="secondary" onClick={() => setInventoryAction('retire')}>
+                  Retire
+                </Button>
+              </>
+            )}
+            {(seedTray.inventory.physical_state === 'lost' || seedTray.inventory.physical_state === 'retired') && (
+              <Button size="sm" variant="success" onClick={() => setInventoryAction('return')}>
+                Return to stock
+              </Button>
+            )}
+            {seedTray.inventory.reconciliation_required && (
+              <Button size="sm" variant="outline-primary" onClick={() => setInventoryAction('reconcile-opening')}>
+                Reconcile opening
+              </Button>
+            )}
+          </div>
+          {inventoryAction && (
+            <Form className="border rounded p-2 mt-3">
+              <strong>{inventoryAction.replace('-', ' ')}</strong>
+              {(inventoryAction === 'transfer' || inventoryAction === 'return' || inventoryAction === 'reconcile-opening') && (
+                <Form.Group className="mt-2">
+                  <Form.Label>Destination</Form.Label>
+                  <Form.Select value={inventoryDestination ?? ''} onChange={(event) => setInventoryDestination(event.target.value ? Number(event.target.value) : undefined)}>
+                    <option value="">Select location</option>
+                    {inventoryDestinations.map((location) => (
+                      <option key={location.pk} value={location.pk}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+              )}
+              {inventoryAction === 'reconcile-opening' && (
+                <Form.Group className="mt-2">
+                  <Form.Label>Acquisition cost ({seedTray.inventory.currency_code})</Form.Label>
+                  <Form.Control type="number" min={0} step="0.0001" value={inventoryCost} onChange={(event) => setInventoryCost(event.target.value)} />
+                </Form.Group>
+              )}
+              <Form.Group className="mt-2">
+                <Form.Label>Reason</Form.Label>
+                <Form.Control value={inventoryReason} onChange={(event) => setInventoryReason(event.target.value)} />
+              </Form.Group>
+              <Button
+                className="mt-2"
+                size="sm"
+                onClick={handleInventoryAction}
+                disabled={
+                  inventoryMutation.isPending ||
+                  ((inventoryAction === 'loss' || inventoryAction === 'retire' || inventoryAction === 'return' || inventoryAction === 'reconcile-opening') &&
+                    !inventoryReason.trim())
+                }
+              >
+                Save action
+              </Button>{' '}
+              <Button className="mt-2" size="sm" variant="secondary" onClick={() => setInventoryAction(undefined)}>
+                Cancel
+              </Button>
+            </Form>
+          )}
+          <h6 className="mt-3">Movement history</h6>
+          <Table size="sm">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Reason/reference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventoryMovements.map((movement) => (
+                <tr key={movement.pk}>
+                  <td>{formatDateTime(movement.occurred_at)}</td>
+                  <td>{movement.movement_type}</td>
+                  <td>{movement.source ? inventoryLocationMap[movement.source] : ''}</td>
+                  <td>{movement.destination ? inventoryLocationMap[movement.destination] : ''}</td>
+                  <td>{movement.reason || movement.reference}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Card.Body>
+      </Card>
       Plantings:
       <Table border={1} cellPadding={5} cellSpacing={0}>
         <thead>

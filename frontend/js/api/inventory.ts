@@ -1,4 +1,4 @@
-import { InventoryItem, InventoryItemCreate, InventoryItemFilters, InventoryUnit, ItemUnitConversion, ItemUnitConversionCreate } from '../types/inventory'
+import { InventoryItem, InventoryItemCreate, InventoryItemFilters, InventoryLocation, InventoryUnit, ItemUnitConversion, ItemUnitConversionCreate } from '../types/inventory'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 const ITEMS_URL = '/inventory/items/'
@@ -6,6 +6,10 @@ const CONVERSIONS_URL = '/inventory/conversions/'
 
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
   return fetchAsJson<Array<InventoryUnit>>('/inventory/units/', signal)
+}
+
+function getInventoryLocations(signal?: AbortSignal): Promise<Array<InventoryLocation>> {
+  return fetchAsJson<Array<InventoryLocation>>('/inventory/locations/?active=true', signal)
 }
 
 function getInventoryItems(filters: InventoryItemFilters, signal?: AbortSignal): Promise<Array<InventoryItem>> {
@@ -43,4 +47,13 @@ async function setItemUnitConversionActive(pk: number, active: boolean): Promise
   return response.json() as Promise<ItemUnitConversion>
 }
 
-export { createInventoryItem, createItemUnitConversion, getInventoryItems, getInventoryUnits, getItemUnitConversions, setInventoryItemActive, setItemUnitConversionActive }
+export {
+  createInventoryItem,
+  createItemUnitConversion,
+  getInventoryItems,
+  getInventoryLocations,
+  getInventoryUnits,
+  getItemUnitConversions,
+  setInventoryItemActive,
+  setItemUnitConversionActive
+}
