@@ -1,5 +1,7 @@
 """Inventory catalog, purchasing, and append-only stock ledger models."""
 
+# pylint: disable=too-many-lines
+
 from decimal import Decimal
 from uuid import uuid4
 
