@@ -12,8 +12,9 @@ from rest_framework.test import APIClient
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
-from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
+from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
+from tests.factories import make_seed_tray
 from .models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -73,7 +74,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             y_cells=1,
             cell_size_ml=40,
         )
-        self.tray = SeedTray.objects.create(model=tray_model)
+        self.tray = make_seed_tray(model=tray_model)
         self.cell = SeedTrayCell.objects.create(
             tray=self.tray,
             x_position=0,
@@ -656,7 +657,7 @@ class ConcurrentGerminationTests(TransactionTestCase):
             y_cells=1,
             cell_size_ml=40,
         )
-        tray = SeedTray.objects.create(model=tray_model)
+        tray = make_seed_tray(model=tray_model)
         cell = SeedTrayCell.objects.create(
             tray=tray,
             x_position=0,

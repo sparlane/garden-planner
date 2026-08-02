@@ -10,7 +10,7 @@ from django.test import TestCase
 from tests.api import RESTContractTestCase
 from tests.factories import make_seed_tray, make_seed_tray_cell
 
-from .models import SeedTray, SeedTrayCell, SeedTrayModel
+from .models import SeedTrayCell, SeedTrayModel
 
 
 class SeedTrayRESTContractTests(RESTContractTestCase):
@@ -54,26 +54,11 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
                 'cell_size_ml': 45,
             },
         )
-        tray = self.assert_create_retrieve(
+        response = self.client.post(
             '/seedtrays/seedtrays/',
-            {
-                'model': tray_model['pk'],
-                'notes': 'Spring sowing',
-            },
+            {'model': tray_model['pk'], 'notes': 'Spring sowing'},
         )
-        cell = SeedTrayCell.objects.get(
-            tray_id=tray['pk'],
-            x_position=2,
-            y_position=1,
-        )
-        response = self.client.get(f'/seedtrays/seedtraycells/{cell.pk}/')
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, {
-            'pk': cell.pk,
-            'tray': tray['pk'],
-            'x_position': 2,
-            'y_position': 1,
-        })
+        self.assertEqual(response.status_code, 405)
 
         self.assert_create_retrieve(
             '/seedtrays/seedtraycells/',
@@ -128,8 +113,8 @@ class SeedTrayCellIntegrityTests(TestCase):
             y_cells=3,
             cell_size_ml=40,
         )
-        self.tray = SeedTray.objects.create(model=self.tray_model)
-        self.other_tray = SeedTray.objects.create(model=self.other_model)
+        self.tray = make_seed_tray(model=self.tray_model)
+        self.other_tray = make_seed_tray(model=self.other_model)
 
     def test_detail_view_requires_login(self):
         """Anonymous visitors cannot discover seed tray detail pages."""
@@ -142,8 +127,8 @@ class SeedTrayCellIntegrityTests(TestCase):
             f'/accounts/login/?next=/seedtrays/seedtray/{self.tray.pk}/',
         )
 
-    def test_create_tray_generates_complete_cell_grid(self):
-        """Creating a tray through the API generates every model cell once."""
+    def test_bare_tray_creation_is_rejected(self):
+        """A physical tray cannot bypass its inventory identity."""
         response = self.client.post(
             '/seedtrays/seedtrays/',
             data=json.dumps({
@@ -153,17 +138,7 @@ class SeedTrayCellIntegrityTests(TestCase):
             content_type='application/json',
         )
 
-        self.assertEqual(response.status_code, 201)
-        tray = SeedTray.objects.get(pk=response.json()['pk'])
-        self.assertEqual(tray.notes, 'Propagation tray')
-        self.assertEqual(
-            set(tray.seedtraycell_set.values_list('x_position', 'y_position')),
-            {
-                (x_position, y_position)
-                for x_position in range(self.other_model.x_cells)
-                for y_position in range(self.other_model.y_cells)
-            },
-        )
+        self.assertEqual(response.status_code, 405)
 
     def test_nested_create_uses_url_tray_instead_of_payload_tray(self):
         """

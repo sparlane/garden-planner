@@ -17,9 +17,9 @@ from plantings.models import (
 )
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
-from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
+from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
-from tests.factories import make_garden_square
+from tests.factories import make_garden_square, make_seed_tray
 
 from .models import Workspace, get_current_workspace
 
@@ -105,7 +105,7 @@ class ResourceIsolationTests(APITestCase):
             y_cells=2,
             cell_size_ml=40,
         )
-        self.tray = SeedTray.objects.create(
+        self.tray = make_seed_tray(
             workspace=self.other,
             model=self.tray_model,
         )
@@ -259,7 +259,6 @@ class ResourceIsolationTests(APITestCase):
                     'size_y': 1,
                 },
             ),
-            ('/seedtrays/seedtrays/', {'model': self.tray_model.pk}),
             (
                 '/seedtrays/seedtraycells/',
                 {'tray': self.tray.pk, 'x_position': 1, 'y_position': 1},

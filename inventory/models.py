@@ -44,6 +44,11 @@ def generate_lot_identifier():
     return f'LOT-{uuid4().hex.upper()}'
 
 
+def generate_asset_code():
+    """Return an opaque, server-owned serialized asset identity."""
+    return f'ASSET-{uuid4().hex.upper()}'
+
+
 class InventoryItem(WorkspaceOwnedModel):
     """One workspace-owned definition of a physical stock item."""
 
@@ -733,6 +738,151 @@ class StockLot(WorkspaceOwnedModel):
         raise ValidationError('Stock lots cannot be deleted.')
 
 
+class InventoryUnit(WorkspaceOwnedModel):
+    """One individually identified unit of a serialized inventory item."""
+
+    item = models.ForeignKey(
+        InventoryItem,
+        on_delete=models.PROTECT,
+        related_name='serialized_units',
+    )
+    source_lot = models.ForeignKey(
+        StockLot,
+        on_delete=models.PROTECT,
+        related_name='serialized_units',
+    )
+    asset_code = models.CharField(max_length=64, default=generate_asset_code)
+    acquisition_cost = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    currency_code = models.CharField(max_length=3)
+    current_location = models.ForeignKey(
+        InventoryLocation,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='serialized_units',
+    )
+    active = models.BooleanField(default=True)
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['asset_code', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'asset_code'],
+                name='inventory_unit_workspace_asset_code_unique',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(acquisition_cost__isnull=True) | models.Q(acquisition_cost__gte=0)),
+                name='inventory_unit_nonnegative_acquisition_cost',
+            ),
+        ]
+
+    def __str__(self):
+        return self.asset_code
+
+    def clean(self):
+        """Keep unit identity within one serialized item and workspace."""
+        super().clean()
+        errors = {}
+        if self.item_id:
+            if self.item.workspace_id != self.workspace_id:
+                errors['item'] = 'The item belongs to a different workspace.'
+            if self.item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
+                errors['item'] = 'Inventory units require a serialized item.'
+            if self.item.base_unit != UnitCode.EACH:
+                errors['item'] = 'Serialized items must use each as their base unit.'
+        if self.source_lot_id:
+            if self.source_lot.workspace_id != self.workspace_id:
+                errors['source_lot'] = 'The source lot belongs to a different workspace.'
+            if self.item_id and self.source_lot.item_id != self.item_id:
+                errors['source_lot'] = 'The source lot belongs to a different item.'
+        if self.current_location_id:
+            if self.current_location.workspace_id != self.workspace_id:
+                errors['current_location'] = 'The location belongs to a different workspace.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        """Validate direct writes and lock provenance after creation."""
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            if previous and self.movements.exists():
+                locked = ('workspace_id', 'item_id', 'source_lot_id', 'asset_code')
+                errors = {
+                    field.removesuffix('_id'): 'Serialized-unit identity is immutable after stock history exists.'
+                    for field in locked
+                    if getattr(previous, field) != getattr(self, field)
+                }
+                if errors:
+                    raise ValidationError(errors)
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Serialized inventory units cannot be deleted.')
+
+
+class InventoryUnitReconciliation(WorkspaceOwnedModel):
+    """One immutable opening-cost and location audit for a legacy unit."""
+
+    unit = models.OneToOneField(
+        InventoryUnit,
+        on_delete=models.PROTECT,
+        related_name='opening_reconciliation',
+    )
+    acquisition_cost = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    movement = models.OneToOneField(
+        'StockMovement',
+        on_delete=models.PROTECT,
+        related_name='unit_opening_reconciliation',
+    )
+    reason = models.TextField()
+    recorded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+
+    def clean(self):
+        """Keep reconciliation evidence with its unit and workspace."""
+        super().clean()
+        errors = {}
+        if self.unit_id and self.unit.workspace_id != self.workspace_id:
+            errors['unit'] = 'The unit belongs to a different workspace.'
+        if self.movement_id and self.movement.workspace_id != self.workspace_id:
+            errors['movement'] = 'The movement belongs to a different workspace.'
+        if not self.reason.strip():
+            errors['reason'] = 'A reason is required.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Unit reconciliations are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Unit reconciliations cannot be deleted.')
+
+
 class Stocktake(WorkspaceOwnedModel):
     """A counted stock document that posts explicit variance movements."""
 
@@ -924,6 +1074,13 @@ class StockMovement(WorkspaceOwnedModel):
         on_delete=models.PROTECT,
         related_name='movements',
     )
+    unit = models.ForeignKey(
+        InventoryUnit,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='movements',
+    )
     movement_type = models.CharField(max_length=24, choices=MovementType.choices)
     quantity = models.DecimalField(
         max_digits=QUANTITY_MAX_DIGITS,
@@ -988,6 +1145,10 @@ class StockMovement(WorkspaceOwnedModel):
                 condition=(models.Q(source__isnull=True) | models.Q(destination__isnull=True) | ~models.Q(source=models.F('destination'))),
                 name='inventory_movement_distinct_locations',
             ),
+            models.CheckConstraint(
+                condition=(models.Q(unit__isnull=True) | models.Q(quantity=1)),
+                name='inventory_movement_serialized_quantity_one',
+            ),
         ]
 
     def __str__(self):
@@ -1003,6 +1164,7 @@ class StockMovement(WorkspaceOwnedModel):
     def _workspace_errors(self):
         related = {
             'lot': self.lot if self.lot_id else None,
+            'unit': self.unit if self.unit_id else None,
             'source': self.source if self.source_id else None,
             'destination': self.destination if self.destination_id else None,
         }
@@ -1017,6 +1179,11 @@ class StockMovement(WorkspaceOwnedModel):
         if self.stocktake_line_id:
             if self.stocktake_line.stocktake.workspace_id != self.workspace_id:
                 errors['stocktake_line'] = 'The stocktake line belongs to a different workspace.'
+        if self.unit_id:
+            if self.unit.source_lot_id != self.lot_id:
+                errors['unit'] = 'The unit does not belong to this stock lot.'
+        elif self.lot_id and self.lot.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+            errors['unit'] = 'Serialized movements require an inventory unit.'
         return errors
 
     def save(self, *args, **kwargs):

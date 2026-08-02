@@ -12,7 +12,7 @@ from django.test import TestCase
 from garden.models import GardenArea, GardenBed, GardenSquare
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
-from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
+from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
 from tests.factories import (
     make_garden_square,
@@ -188,13 +188,13 @@ class SeedTrayPlantingMembershipTests(TestCase):
             y_cells=2,
             cell_size_ml=40,
         )
-        self.first_tray = SeedTray.objects.create(model=tray_model)
+        self.first_tray = make_seed_tray(model=tray_model)
         self.first_cell = SeedTrayCell.objects.create(
             tray=self.first_tray,
             x_position=0,
             y_position=0,
         )
-        self.second_tray = SeedTray.objects.create(model=tray_model)
+        self.second_tray = make_seed_tray(model=tray_model)
         self.second_cell = SeedTrayCell.objects.create(
             tray=self.second_tray,
             x_position=0,
@@ -344,10 +344,10 @@ class SpecificPlantMoveTests(TestCase):  # pylint: disable=too-many-public-metho
             y_cells=2,
             cell_size_ml=40,
         )
-        tray = SeedTray.objects.create(model=tray_model)
+        tray = make_seed_tray(model=tray_model)
         cell = SeedTrayCell.objects.create(tray=tray, x_position=0, y_position=0)
         self.other_cell = SeedTrayCell.objects.create(
-            tray=SeedTray.objects.create(model=tray_model),
+            tray=make_seed_tray(model=tray_model),
             x_position=1,
             y_position=1,
         )
@@ -902,7 +902,7 @@ class GardenSquareCurrentMissingMetadataTests(TestCase):
         )
 
     def _create_seed_tray_cell_planting(self):
-        tray = SeedTray.objects.create(model=self.tray_model)
+        tray = make_seed_tray(model=self.tray_model)
         cell = SeedTrayCell.objects.create(tray=tray, x_position=0, y_position=0)
         planting = SeedTrayPlanting.objects.create(
             seeds_used=self.packet,
