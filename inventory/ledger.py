@@ -525,6 +525,7 @@ def post_receipt(receipt, user):  # pylint: disable=too-many-branches
                     reference=receipt.supplier_reference,
                     receipt_line=line,
                 ))
+                _create_seed_tray_for_unit(unit)
         elif line.quantity_certainty != QuantityCertainty.UNKNOWN:
             _create_movement(MovementEntry(
                 workspace=receipt.workspace,
@@ -549,6 +550,13 @@ def post_receipt(receipt, user):  # pylint: disable=too-many-branches
     )
     receipt.refresh_from_db()
     return receipt, lots
+
+
+def _create_seed_tray_for_unit(unit):
+    """Create a tray when the serialized item maps to tray geometry."""
+    from seedtrays.services import create_tray_for_unit  # pylint: disable=import-outside-toplevel
+
+    return create_tray_for_unit(unit)
 
 
 def _validate_reversible(original, reason, allow_receipt, allow_stocktake):

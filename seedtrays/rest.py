@@ -1,25 +1,43 @@
 """
 Rest related classes for seed trays
 """
-from itertools import product
+# pylint: disable=duplicate-code
+from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from rest_framework import serializers, viewsets
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
 from rest_framework_nested import routers
 
+from inventory.ledger import post_receipt, unit_is_in_use, unit_physical_state
+from inventory.models import (
+    InventoryItem,
+    InventoryLocation,
+    StockReceipt,
+    StockReceiptLine,
+)
+from inventory.serialized_rest import InventoryUnitSerializer
+from inventory.units import UnitCode
+from supplies.models import Supplier
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .models import SeedTrayModel, SeedTray, SeedTrayCell
 
 
-class SeedTrayModelSerializer(serializers.ModelSerializer):
+class SeedTrayModelSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a SeedTrayModel
     """
     class Meta:
         model = SeedTrayModel
-        fields = ['pk', 'identifier', 'description', 'height', 'x_size', 'y_size', 'x_cells', 'y_cells', 'cell_size_ml']
+        fields = ['pk', 'identifier', 'inventory_item', 'description', 'height', 'x_size', 'y_size', 'x_cells', 'y_cells', 'cell_size_ml']
+        extra_kwargs = {'inventory_item': {'required': False}}
+
+    workspace_field_lookups = {'inventory_item': 'workspace'}
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep cell-grid dimensions stable after trays have been created."""
@@ -28,6 +46,18 @@ class SeedTrayModelSerializer(serializers.ModelSerializer):
             for field in ('x_cells', 'y_cells'):
                 if field in data and data[field] != getattr(self.instance, field):
                     errors[field] = 'Cannot change cell dimensions after trays have been created.'
+        item = data.get('inventory_item')
+        if item:
+            if item.category != InventoryItem.Category.TRAY:
+                errors['inventory_item'] = 'Select a tray-category inventory item.'
+            elif item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
+                errors['inventory_item'] = 'Select a serialized inventory item.'
+            elif item.base_unit != UnitCode.EACH:
+                errors['inventory_item'] = 'Tray inventory items must use each.'
+            if self.instance and item.pk != self.instance.inventory_item_id:
+                has_history = self.instance.seedtray_set.exists() or self.instance.inventory_item.stock_history_started_at
+                if has_history:
+                    errors['inventory_item'] = 'Cannot change the inventory item after tray or stock history exists.'
         if errors:
             raise serializers.ValidationError(errors)
         return data
@@ -37,9 +67,12 @@ class SeedTraySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSeria
     """
     Serializer for a Seed Tray
     """
+    inventory = InventoryUnitSerializer(source='inventory_unit', read_only=True)
+
     class Meta:
         model = SeedTray
-        fields = ['pk', 'model', 'created', 'notes']
+        fields = ['pk', 'model', 'inventory_unit', 'inventory', 'created', 'notes']
+        read_only_fields = ['inventory_unit', 'inventory', 'created']
 
     workspace_field_lookups = {'model': 'workspace'}
 
@@ -52,21 +85,44 @@ class SeedTraySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSeria
                 })
         return data
 
-    def create(self, validated_data):
-        """
-        Override create to automatically generate SeedTrayCells
-        """
-        with transaction.atomic():
-            seed_tray = super().create(validated_data)
-            model = seed_tray.model
 
-            # Create a cell for each position in the tray
-            cells = [
-                SeedTrayCell(tray=seed_tray, x_position=x, y_position=y)
-                for x, y in product(range(model.x_cells), range(model.y_cells))
-            ]
-            SeedTrayCell.objects.bulk_create(cells)
-        return seed_tray
+class SeedTrayReceiptSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.Serializer,
+):
+    """Validate an immediately posted receipt for one tray model."""
+
+    supplier = serializers.PrimaryKeyRelatedField(queryset=Supplier.objects.all())
+    received_date = serializers.DateField()
+    supplier_reference = serializers.CharField(allow_blank=True, required=False, default='')
+    quantity = serializers.IntegerField(min_value=1)
+    line_cost_ex_tax = serializers.DecimalField(
+        max_digits=18,
+        decimal_places=4,
+        min_value=Decimal('0'),
+    )
+    destination = serializers.PrimaryKeyRelatedField(
+        queryset=InventoryLocation.objects.all(),
+    )
+    tax_rate = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        min_value=Decimal('0'),
+        max_value=Decimal('100'),
+        required=False,
+    )
+    tax_recoverable = serializers.BooleanField(required=False, default=True)
+    notes = serializers.CharField(allow_blank=True, required=False, default='')
+    workspace_field_lookups = {
+        'supplier': 'workspace',
+        'destination': 'workspace',
+    }
+
+    def create(self, validated_data):
+        raise NotImplementedError
+
+    def update(self, instance, validated_data):
+        raise NotImplementedError
 
 
 class SeedTrayCellSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -118,14 +174,117 @@ class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet)
     queryset = SeedTrayModel.objects.all()
     serializer_class = SeedTrayModelSerializer
 
+    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    def receive(self, request, pk=None):  # pylint: disable=unused-argument
+        """Receive and serialize exact physical trays for this model."""
+        tray_model = self.get_object()
+        serializer = SeedTrayReceiptSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        workspace = self.get_current_workspace()
+        receipt = StockReceipt.objects.create(
+            workspace=workspace,
+            supplier=values['supplier'],
+            received_date=values['received_date'],
+            supplier_reference=values['supplier_reference'],
+            currency_code=workspace.currency_code,
+            tax_rate=values.get('tax_rate', workspace.default_tax_rate),
+            tax_recoverable=values['tax_recoverable'],
+            notes=values['notes'],
+            created_by=request.user,
+        )
+        line = StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=tray_model.inventory_item,
+            quantity=Decimal(values['quantity']),
+            unit_code=UnitCode.EACH,
+            base_quantity=Decimal(values['quantity']),
+            line_cost_ex_tax=values['line_cost_ex_tax'],
+            destination=values['destination'],
+        )
+        try:
+            receipt, lots = post_receipt(receipt, request.user)
+        except DjangoValidationError as exc:
+            details = exc.message_dict if hasattr(exc, 'message_dict') else exc.messages
+            raise ValidationError(details) from exc
+        trays = SeedTray.objects.filter(
+            inventory_unit__source_lot__in=lots,
+        ).select_related(
+            'model',
+            'inventory_unit__item',
+            'inventory_unit__source_lot',
+            'inventory_unit__current_location',
+        ).order_by('pk')
+        return Response(
+            {
+                'receipt': receipt.pk,
+                'receipt_line': line.pk,
+                'trays': SeedTraySerializer(trays, many=True).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
 
 class SeedTrayAllViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of all SeedTrays
     """
-    queryset = SeedTray.objects.all()
+    queryset = SeedTray.objects.select_related(
+        'model',
+        'inventory_unit__item',
+        'inventory_unit__source_lot__receipt_line',
+        'inventory_unit__current_location',
+    ).prefetch_related('inventory_unit__movements')
     serializer_class = SeedTraySerializer
     http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        """Filter trays by model and serialized inventory state."""
+        queryset = super().get_queryset()
+        model = self.request.query_params.get('model')
+        location = self.request.query_params.get('location')
+        if model:
+            try:
+                queryset = queryset.filter(model_id=int(model))
+            except ValueError as exc:
+                raise ValidationError({'model': 'Use an integer model ID.'}) from exc
+        if location:
+            try:
+                queryset = queryset.filter(inventory_unit__current_location_id=int(location))
+            except ValueError as exc:
+                raise ValidationError({'location': 'Use an integer location ID.'}) from exc
+        state = self.request.query_params.get('physical_state')
+        if state:
+            if state not in {
+                'available',
+                'quarantined',
+                'lost',
+                'retired',
+                'dispatched',
+                'returned',
+            }:
+                raise ValidationError({'physical_state': 'Select a valid physical state.'})
+            queryset = queryset.filter(
+                pk__in=[
+                    tray.pk
+                    for tray in queryset
+                    if unit_physical_state(tray.inventory_unit) == state
+                ],
+            )
+        in_use = self.request.query_params.get('in_use')
+        if in_use is not None:
+            if in_use not in {'true', 'false'}:
+                raise ValidationError({'in_use': 'Use true or false.'})
+            expected = in_use == 'true'
+            queryset = queryset.filter(
+                pk__in=[
+                    tray.pk
+                    for tray in queryset
+                    if unit_is_in_use(tray.inventory_unit) == expected
+                ],
+            )
+        return queryset
 
 
 class SeedTrayCellViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
