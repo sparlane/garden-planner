@@ -300,11 +300,11 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         inventory = response.data['inventory']
         self.assertEqual(inventory['quantity_certainty'], 'exact')
-        self.assertEqual(inventory['received_quantity'], Decimal('24'))
-        self.assertEqual(inventory['remaining_quantity'], Decimal('24'))
+        self.assertEqual(inventory['received_quantity'], '24.000000000')
+        self.assertEqual(inventory['remaining_quantity'], '24.000000000')
         self.assertEqual(
             inventory['effective_base_unit_cost'],
-            Decimal('0.250000000000'),
+            '0.250000000000',
         )
         self.assertFalse(response.data['empty'])
 
@@ -326,7 +326,7 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.data['inventory']['remaining_quantity'],
-            Decimal('27'),
+            '27.000000000',
         )
         self.assertTrue(StockMovement.objects.filter(
             lot_id=packet['inventory']['lot'],

@@ -124,14 +124,14 @@ async function checkResponse(method: ApiRequestMethod, url: string, response: Re
   }
 }
 
-async function csrfRequest(method: 'POST' | 'PATCH', url: string, data: object): Promise<Response> {
+async function csrfRequest(method: 'POST' | 'PATCH' | 'DELETE', url: string, data?: object): Promise<Response> {
   const response = await fetchResponse(method, url, {
     method,
     headers: {
       'Content-Type': 'application/json',
       'X-CSRFToken': Cookies.get('csrftoken') || ''
     },
-    body: JSON.stringify(data)
+    body: data === undefined ? undefined : JSON.stringify(data)
   })
   await checkResponse(method, url, response)
   return response
@@ -139,6 +139,10 @@ async function csrfRequest(method: 'POST' | 'PATCH', url: string, data: object):
 
 function csrfPost(url: string, data: object): Promise<Response> {
   return csrfRequest('POST', url, data)
+}
+
+function csrfDelete(url: string): Promise<Response> {
+  return csrfRequest('DELETE', url)
 }
 
 async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
@@ -220,4 +224,4 @@ function formatDateRange(start: string | null | undefined, end: string | null | 
   return `${formatDate(start ?? '')} - ${formatDate(end ?? '')}`
 }
 
-export { ApiError, csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange }
+export { ApiError, csrfDelete, csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange }

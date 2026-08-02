@@ -64,6 +64,7 @@ def seedtray_current(request):
         germination_min, germination_max, _, _ = _get_variety_days(variety)
         planting_data.append({
             'pk': planting.pk,
+            'seeds_used': planting.seeds_used_id,
             'plant': variety.plant.name,
             'variety': variety.name,
             'planted': planting.planted,
@@ -139,6 +140,7 @@ def gardensquare_current(request):
         germination_min, germination_max, maturity_min, maturity_max = _get_variety_days(variety)
         planting_data.append({
             'planting_pk': planting.pk,
+            'seeds_used': planting.seeds_used_id,
             'plant': planting.seeds_used.seeds.plant_variety.plant.name,
             'variety': planting.seeds_used.seeds.plant_variety.name,
             'planted': planting.planted,

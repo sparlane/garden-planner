@@ -155,11 +155,11 @@ class SowingInventoryTests(APITestCase):
         self.assertEqual(count.status_code, 200)
         self.assertEqual(
             count.data['inventory']['received_quantity'],
-            Decimal('19'),
+            '19.000000000',
         )
         self.assertEqual(
             count.data['inventory']['remaining_quantity'],
-            Decimal('12'),
+            '12.000000000',
         )
 
     def test_correction_reverses_and_reposts_without_silent_edits(self):

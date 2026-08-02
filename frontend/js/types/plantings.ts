@@ -53,6 +53,7 @@ interface GardenSquareTransplanting extends Planting {
 
 interface SeedTrayPlantingDetails {
   pk: number
+  seeds_used: number
   plant: string
   variety: string
   planted: string
@@ -77,6 +78,7 @@ interface GardenSquarePlanting {
   transplanting_pk?: number
   transplanted?: string
   planting_pk: number
+  seeds_used?: number
   plant: string
   variety: string
   quantity: number
@@ -131,6 +133,12 @@ interface SpecificPlantCreate {
   notes?: string
 }
 
+interface SowingCorrection {
+  seeds_used?: number
+  quantity?: number
+  reason: string
+}
+
 export {
   Planting,
   GardenRowDirectPlanting,
@@ -146,5 +154,6 @@ export {
   SpecificPlantCreate,
   SpecificPlantLocation,
   SpecificPlantLocationCreate,
-  SpecificPlantMove
+  SpecificPlantMove,
+  SowingCorrection
 }

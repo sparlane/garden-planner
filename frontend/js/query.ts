@@ -34,7 +34,8 @@ const queryKeys = {
       all: ['seeds', 'packets'] as const,
       raw: ['seeds', 'packets', 'raw'] as const,
       current: ['seeds', 'packets', 'current'] as const
-    }
+    },
+    packetReceipts: ['seeds', 'packetReceipts'] as const
   },
   seedTrays: {
     all: ['seedTrays'] as const,

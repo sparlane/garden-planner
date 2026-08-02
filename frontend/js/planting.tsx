@@ -11,7 +11,7 @@ import { Supplier } from './types/suppliers'
 import { PlantVariety } from './types/plants'
 import { Seed, SeedPacket } from './types/seeds'
 import { GardenBed, GardenSquare } from './types/garden'
-import { GardenSquareDirectPlantingCreate, GardenSquarePlanting, SeedTrayPlantingCreate, SeedTrayPlantingDetails } from './types/plantings'
+import { GardenSquareDirectPlantingCreate, GardenSquarePlanting, SeedTrayPlantingCreate, SeedTrayPlantingDetails, SowingCorrection } from './types/plantings'
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
@@ -24,6 +24,8 @@ import {
   completePlantingDirectSowGardenSquare,
   completePlantingTransplantedGardenSquare,
   completePlantingSeedTray,
+  correctGardenSquareSowing,
+  correctSeedTraySowing,
   endSpecificPlantLocation
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
@@ -32,6 +34,14 @@ import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from './api/seedtra
 import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
 import { queryKeys } from './query'
+
+function packetBalanceLabel(packet: SeedPacket): string {
+  const inventory = packet.inventory
+  if (!inventory || inventory.remaining_quantity === null) {
+    return `quantity unknown; ${inventory?.sown_quantity ?? '0'} sown`
+  }
+  return `${inventory.remaining_quantity} ${inventory.base_unit} remaining (${inventory.quantity_certainty})`
+}
 
 interface SeedTrayCellGridProps {
   cells: Array<SeedTrayCell>
@@ -197,7 +207,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     const variety = varieties.find((candidate) => candidate.pk === seedData?.plant_variety)
     packetOptions.push(
       <option key={seedPacketData.pk} value={seedPacketData.pk}>
-        {variety?.name} from {supplier?.name} (Sow By: {seedPacketData.sow_by})
+        {variety?.name} from {supplier?.name} (Sow by: {seedPacketData.sow_by || 'unknown'}; {packetBalanceLabel(seedPacketData)})
       </option>
     )
   }
@@ -248,47 +258,67 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
 
 interface SeedTrayPlantingRowProps {
   planting: SeedTrayPlantingDetails
+  seedPackets: Array<SeedPacket>
   completePlanting: (plantingPk: number) => Promise<void>
+  correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-class SeedTrayPlantingRow extends React.Component<SeedTrayPlantingRowProps> {
-  constructor(props: SeedTrayPlantingRowProps) {
-    super(props)
+function SeedTrayPlantingRow({ planting, seedPackets, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
+  const [correcting, setCorrecting] = React.useState(false)
+  const [packetPk, setPacketPk] = React.useState(planting.seeds_used)
+  const [quantity, setQuantity] = React.useState(planting.quantity)
+  const [reason, setReason] = React.useState('')
 
-    this.empty = this.empty.bind(this)
+  async function correct() {
+    await correctPlanting(planting.pk, { seeds_used: packetPk, quantity, reason })
+    setCorrecting(false)
+    setReason('')
   }
 
-  async empty() {
-    await this.props.completePlanting(this.props.planting.pk)
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>
-          {this.props.planting.plant} - {this.props.planting.variety}
-        </td>
-        <td>
-          <span title="Number of seeds or seed clusters sown">Sown: {this.props.planting.quantity}</span> (
-          <span title="Number of individual plants that have germinated">Germinated: {this.props.planting.germinated_count}</span>,{' '}
-          <span title="Number that have been transplanted to a garden square">Transplanted: {this.props.planting.transplanted_count}</span>)
-        </td>
-        <td>{formatDate(this.props.planting.planted)}</td>
-        <td>{this.props.planting.seed_tray}</td>
-        <td>{this.props.planting.location}</td>
-        <td>{formatDateRange(this.props.planting.germination_date_early, this.props.planting.germination_date_late)}</td>
-        <td>{this.props.planting.notes}</td>
-        <td>
-          {this.props.planting.seed_tray && (
-            <Link className="btn btn-primary" to={`/seedtrays/${this.props.planting.seed_tray}`}>
-              Manage Plants
-            </Link>
-          )}
-          <Button onClick={this.empty}>Empty</Button>
-        </td>
-      </tr>
-    )
-  }
+  return (
+    <tr>
+      <td>
+        {planting.plant} - {planting.variety}
+      </td>
+      <td>
+        <span title="Number of seeds or seed clusters sown">Sown: {planting.quantity}</span> (
+        <span title="Number of individual plants that have germinated">Germinated: {planting.germinated_count}</span>,{' '}
+        <span title="Number that have been transplanted to a garden square">Transplanted: {planting.transplanted_count}</span>)
+      </td>
+      <td>{formatDate(planting.planted)}</td>
+      <td>{planting.seed_tray}</td>
+      <td>{planting.location}</td>
+      <td>{formatDateRange(planting.germination_date_early, planting.germination_date_late)}</td>
+      <td>{planting.notes}</td>
+      <td>
+        {planting.seed_tray && (
+          <Link className="btn btn-primary" to={`/seedtrays/${planting.seed_tray}`}>
+            Manage Plants
+          </Link>
+        )}
+        <Button onClick={() => completePlanting(planting.pk)}>Empty</Button>
+        <Button variant="outline-secondary" onClick={() => setCorrecting((current) => !current)}>
+          Correct sowing
+        </Button>
+        {correcting && (
+          <div>
+            <select value={packetPk} onChange={(event) => setPacketPk(Number(event.target.value))}>
+              {seedPackets.map((packet) => (
+                <option key={packet.pk} value={packet.pk}>
+                  Packet #{packet.pk}: {packetBalanceLabel(packet)}
+                </option>
+              ))}
+            </select>
+            <input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+            <input required placeholder="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+            <Button size="sm" disabled={!reason} onClick={correct}>
+              Apply correction
+            </Button>
+          </div>
+        )}
+      </td>
+    </tr>
+  )
 }
 
 function SeedTrayPlantingTable() {
@@ -330,6 +360,10 @@ function SeedTrayPlantingTable() {
     mutationFn: completePlantingSeedTray,
     onSuccess: () => Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.plantings.all }), queryClient.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })])
   })
+  const correctionMutation = useMutation({
+    mutationFn: ({ pk, data }: { pk: number; data: SowingCorrection }) => correctSeedTraySowing(pk, data),
+    onSuccess: () => Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.plantings.all }), queryClient.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })])
+  })
   const seedTrayModels = seedTrayModelList.reduce<Record<number, SeedTrayModel>>((models, model) => {
     models[model.pk] = model
     return models
@@ -341,6 +375,10 @@ function SeedTrayPlantingTable() {
 
   async function completePlanting(plantingPk: number) {
     await completeMutation.mutateAsync(plantingPk)
+  }
+
+  async function correctPlanting(plantingPk: number, data: SowingCorrection) {
+    await correctionMutation.mutateAsync({ pk: plantingPk, data })
   }
 
   const rows = []
@@ -360,7 +398,7 @@ function SeedTrayPlantingTable() {
     )
   }
   for (const planting of plantings) {
-    rows.push(<SeedTrayPlantingRow key={planting.pk} planting={planting} completePlanting={completePlanting} />)
+    rows.push(<SeedTrayPlantingRow key={planting.pk} planting={planting} seedPackets={seedPackets} completePlanting={completePlanting} correctPlanting={correctPlanting} />)
   }
   return (
     <Table>
@@ -477,7 +515,10 @@ class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlanting
       const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
       const supplier = this.props.suppliers.find((s) => s.pk === seeds?.supplier)
       const variety = this.props.varieties.find((v) => v.pk === seeds?.plant_variety)
-      seedPackets.push({ value: seedPacketData.pk, label: `${variety?.name} from ${supplier?.name} (Sow By: ${seedPacketData.sow_by})` })
+      seedPackets.push({
+        value: seedPacketData.pk,
+        label: `${variety?.name} from ${supplier?.name} (Sow by: ${seedPacketData.sow_by || 'unknown'}; ${packetBalanceLabel(seedPacketData)})`
+      })
     }
     const locations = []
     for (const b in this.props.gardenBeds) {
@@ -514,46 +555,64 @@ class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlanting
 
 interface GardenSquarePlantingRowProps {
   planting: GardenSquarePlanting
+  seedPackets: Array<SeedPacket>
   completePlanting: (planting: GardenSquarePlanting) => Promise<void>
+  correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-class GardenSquarePlantingRow extends React.Component<GardenSquarePlantingRowProps> {
-  constructor(props: GardenSquarePlantingRowProps) {
-    super(props)
+function GardenSquarePlantingRow({ planting, seedPackets, completePlanting, correctPlanting }: GardenSquarePlantingRowProps) {
+  const [correcting, setCorrecting] = React.useState(false)
+  const [packetPk, setPacketPk] = React.useState(planting.seeds_used)
+  const [quantity, setQuantity] = React.useState(planting.quantity)
+  const [reason, setReason] = React.useState('')
+  const planted = planting.transplanted ? `${formatDate(planting.transplanted)} (S: ${formatDate(planting.planted)})` : formatDate(planting.planted)
+  const directSowing = !planting.transplanted && planting.specific_plant_pk === undefined
 
-    this.empty = this.empty.bind(this)
+  async function correct() {
+    await correctPlanting(planting.planting_pk, { seeds_used: packetPk, quantity, reason })
+    setCorrecting(false)
+    setReason('')
   }
 
-  async empty() {
-    await this.props.completePlanting(this.props.planting)
-  }
-
-  render() {
-    let planted = ''
-    if (this.props.planting.transplanted) {
-      planted = `${formatDate(this.props.planting.transplanted)} (S: ${formatDate(this.props.planting.planted)})`
-    } else {
-      planted = formatDate(this.props.planting.planted)
-    }
-    return (
-      <tr>
-        <td>
-          {this.props.planting.plant} - {this.props.planting.variety}
-        </td>
-        <td>{this.props.planting.quantity}</td>
-        <td>{planted}</td>
-        <td>
-          {this.props.planting.location.area} - {this.props.planting.location.bed} - {this.props.planting.location.name}
-        </td>
-        <td>{formatDateRange(this.props.planting.germination_date_early, this.props.planting.germination_date_late)}</td>
-        <td>{formatDateRange(this.props.planting.maturity_date_early, this.props.planting.maturity_date_late)}</td>
-        <td>{this.props.planting.notes}</td>
-        <td>
-          <Button onClick={this.empty}>Harvested</Button>
-        </td>
-      </tr>
-    )
-  }
+  return (
+    <tr>
+      <td>
+        {planting.plant} - {planting.variety}
+      </td>
+      <td>{planting.quantity}</td>
+      <td>{planted}</td>
+      <td>
+        {planting.location.area} - {planting.location.bed} - {planting.location.name}
+      </td>
+      <td>{formatDateRange(planting.germination_date_early, planting.germination_date_late)}</td>
+      <td>{formatDateRange(planting.maturity_date_early, planting.maturity_date_late)}</td>
+      <td>{planting.notes}</td>
+      <td>
+        <Button onClick={() => completePlanting(planting)}>Harvested</Button>
+        {directSowing && (
+          <Button variant="outline-secondary" onClick={() => setCorrecting((current) => !current)}>
+            Correct sowing
+          </Button>
+        )}
+        {correcting && (
+          <div>
+            <select value={packetPk} onChange={(event) => setPacketPk(Number(event.target.value))}>
+              {seedPackets.map((packet) => (
+                <option key={packet.pk} value={packet.pk}>
+                  Packet #{packet.pk}: {packetBalanceLabel(packet)}
+                </option>
+              ))}
+            </select>
+            <input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+            <input required placeholder="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+            <Button size="sm" disabled={!reason} onClick={correct}>
+              Apply correction
+            </Button>
+          </div>
+        )}
+      </td>
+    </tr>
+  )
 }
 
 function GardenSquarePlantingTable() {
@@ -607,6 +666,10 @@ function GardenSquarePlantingTable() {
     mutationFn: completePlantingTransplantedGardenSquare,
     onSuccess: invalidatePlantingsAndPackets
   })
+  const correctionMutation = useMutation({
+    mutationFn: ({ pk, data }: { pk: number; data: SowingCorrection }) => correctGardenSquareSowing(pk, data),
+    onSuccess: invalidatePlantingsAndPackets
+  })
   const endLocationMutation = useMutation({
     mutationFn: endSpecificPlantLocation,
     onSuccess: () =>
@@ -646,6 +709,10 @@ function GardenSquarePlantingTable() {
     } else {
       await completeDirectMutation.mutateAsync(planting.planting_pk)
     }
+  }
+
+  async function correctPlanting(plantingPk: number, data: SowingCorrection) {
+    await correctionMutation.mutateAsync({ pk: plantingPk, data })
   }
 
   const areas = gardenAreas.map((area) => (
@@ -692,7 +759,13 @@ function GardenSquarePlantingTable() {
       (gardenAreas.find((area) => area.pk === filterGardenArea)?.name === planting.location.area && (!filterGardenBed || filterGardenBed === planting.location.bed))
     ) {
       rows.push(
-        <GardenSquarePlantingRow key={planting.transplanting_pk ? 't' + planting.transplanting_pk : planting.planting_pk} planting={planting} completePlanting={completePlanting} />
+        <GardenSquarePlantingRow
+          key={planting.transplanting_pk ? 't' + planting.transplanting_pk : planting.planting_pk}
+          planting={planting}
+          seedPackets={seedPackets}
+          completePlanting={completePlanting}
+          correctPlanting={correctPlanting}
+        />
       )
     }
   }
