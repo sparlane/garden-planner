@@ -20,6 +20,7 @@ from plantings.models import (
 from workspaces.models import get_current_workspace
 
 from .models import SeedPacket
+from .services import packet_inventory_snapshot, reconcile_packet_quantity
 
 
 def coalesced_sum(model, lookup):
@@ -80,6 +81,14 @@ def get_transplanted_counts(packet_ids):
     return transplanted_counts
 
 
+def _packet_is_usable(packet):
+    """Keep unknown and positive packets available to sowing selectors."""
+    if not packet.stock_lot_id or not packet.storage_location_id:
+        return not packet.empty
+    remaining = packet_inventory_snapshot(packet)['remaining_quantity']
+    return remaining is None or remaining > 0
+
+
 @login_required
 def packets_current(request):
     """
@@ -87,14 +96,22 @@ def packets_current(request):
     """
     packets = list(
         SeedPacket.objects
-        .select_related('seeds', 'seeds__plant_variety', 'seeds__plant_variety__plant', 'seeds__supplier')
-        .filter(empty=False, workspace=get_current_workspace())
+        .select_related(
+            'seeds',
+            'seeds__plant_variety',
+            'seeds__plant_variety__plant',
+            'seeds__supplier',
+            'stock_lot__item',
+            'storage_location',
+        )
+        .filter(workspace=get_current_workspace())
         .annotate(
             seeds_planted_trays=coalesced_sum(SeedTrayPlanting, 'seeds_used'),
             seeds_planted_direct=coalesced_sum(GardenSquareDirectSowPlanting, 'seeds_used'),
         )
         .order_by('seeds__plant_variety__plant__name', 'seeds__plant_variety__name')
     )
+    packets = [packet for packet in packets if _packet_is_usable(packet)]
     transplanted_counts = get_transplanted_counts([packet.pk for packet in packets])
     packet_data = [
         {
@@ -108,6 +125,11 @@ def packets_current(request):
             'seeds_planted_trays': packet.seeds_planted_trays,
             'seeds_planted_direct': packet.seeds_planted_direct,
             'transplanted_count': transplanted_counts[packet.pk],
+            'inventory': (
+                packet_inventory_snapshot(packet)
+                if packet.stock_lot_id and packet.storage_location_id
+                else None
+            ),
         }
         for packet in packets
     ]
@@ -129,6 +151,15 @@ def packets_empty(request):
         pk=data.get('packet'),
         workspace=get_current_workspace(),
     )
-    packet.empty = True
-    packet.save()
+    if packet.stock_lot_id and packet.storage_location_id:
+        reconcile_packet_quantity(
+            packet,
+            request.user,
+            0,
+            'exact',
+            'Marked physically empty through the compatibility endpoint.',
+        )
+    else:
+        packet.empty = True
+        packet.save(update_fields=['empty'])
     return HttpResponse(status=204)

@@ -1,6 +1,12 @@
 """
 Tests related to seeds
 """
+from decimal import Decimal
+
+from django.contrib.auth import get_user_model
+from rest_framework.test import APITestCase
+
+from inventory.models import QuantityCertainty, StockMovement, StockReceipt
 from plantings.models import (
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
@@ -12,9 +18,11 @@ from plantings.models import (
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_garden_square,
+    make_plant_variety,
     make_seed_packet,
     make_seed_tray,
     make_seed_tray_cell,
+    make_supplier,
 )
 
 
@@ -40,7 +48,7 @@ class SeedRESTContractTests(RESTContractTestCase):
         self.assert_list_contract(self.LIST_URLS)
 
     def test_resources_round_trip(self):
-        """Seed products and packets survive create and retrieve."""
+        """Seed products create inventory identities and packets require receipts."""
         seeds = self.assert_create_retrieve(
             '/seeds/seeds/',
             {
@@ -49,9 +57,11 @@ class SeedRESTContractTests(RESTContractTestCase):
                 'supplier_code': 'CARROT-01',
                 'url': 'https://seeds.example.com/carrot',
                 'notes': 'Pelleted seed',
+                'base_unit': 'seed_cluster',
             },
         )
-        self.assert_create_retrieve(
+        self.assertEqual(seeds['base_unit'], 'seed_cluster')
+        response = self.client.post(
             '/seeds/packets/',
             {
                 'seeds': seeds['pk'],
@@ -60,7 +70,9 @@ class SeedRESTContractTests(RESTContractTestCase):
                 'empty': False,
                 'notes': 'Opened packet',
             },
+            format='json',
         )
+        self.assertEqual(response.status_code, 405)
 
     def test_current_and_all_packet_routes_apply_empty_filter(self):
         """The current route omits empty packets while the all route retains them."""
@@ -200,3 +212,139 @@ class SeedRESTContractTests(RESTContractTestCase):
                 )
                 self.assertEqual(summary['seeds_planted_trays'], 2)
                 self.assertEqual(summary['transplanted_count'], 5)
+
+
+class SeedPacketInventoryWorkflowTests(APITestCase):
+    """Seed receipt drafts preserve exact, estimated, and unknown stock truth."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='packet-stock')
+        self.client.force_authenticate(self.user)
+        supplier = make_supplier()
+        variety = make_plant_variety()
+        response = self.client.post(
+            '/seeds/seeds/',
+            {
+                'supplier': supplier.pk,
+                'plant_variety': variety.pk,
+                'supplier_code': 'BEET-CLUSTER',
+                'base_unit': 'seed_cluster',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        self.seeds_pk = response.data['pk']
+
+    def create_draft(self, certainty, quantity=None, price='6.0000'):
+        """Create one packet receipt through the public seed workflow."""
+        payload = {
+            'seeds': self.seeds_pk,
+            'quantity_certainty': certainty,
+            'line_price': price,
+            'received_date': '2026-08-02',
+            'sow_by': '2028-08-02',
+            'supplier_lot_reference': 'SUPPLIER-LOT-1',
+            'notes': 'Silverbeet clusters',
+        }
+        if quantity is not None:
+            payload['quantity'] = quantity
+        response = self.client.post(
+            '/seeds/packet-receipts/',
+            payload,
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        return response.data
+
+    def post_draft(self, draft_pk):
+        """Confirm a receipt draft and return the packet response."""
+        response = self.client.post(
+            f'/seeds/packet-receipts/{draft_pk}/post/',
+            {},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201)
+        return response.data
+
+    def test_unknown_receipt_posts_lot_without_inventing_quantity(self):
+        """A priced packet can be received while its contents remain unknown."""
+        draft = self.create_draft(QuantityCertainty.UNKNOWN)
+        packet = self.post_draft(draft['pk'])
+
+        self.assertEqual(packet['inventory']['quantity_certainty'], 'unknown')
+        self.assertIsNone(packet['inventory']['received_quantity'])
+        self.assertIsNone(packet['inventory']['remaining_quantity'])
+        self.assertIsNone(packet['empty'])
+        receipt = StockReceipt.objects.get(seed_packet_draft__pk=draft['pk'])
+        self.assertEqual(receipt.status, StockReceipt.Status.POSTED)
+        self.assertFalse(
+            StockMovement.objects.filter(receipt_line__receipt=receipt).exists(),
+        )
+
+    def test_unknown_packet_count_establishes_balance_and_effective_cost(self):
+        """A later count fills the missing inbound quantity without rewriting receipt."""
+        packet = self.post_draft(
+            self.create_draft(QuantityCertainty.UNKNOWN)['pk'],
+        )
+        response = self.client.post(
+            f"/seeds/packets/{packet['pk']}/reconcile/",
+            {
+                'counted_quantity': '24',
+                'quantity_certainty': QuantityCertainty.EXACT,
+                'reason': 'Counted packet contents',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        inventory = response.data['inventory']
+        self.assertEqual(inventory['quantity_certainty'], 'exact')
+        self.assertEqual(inventory['received_quantity'], Decimal('24'))
+        self.assertEqual(inventory['remaining_quantity'], Decimal('24'))
+        self.assertEqual(
+            inventory['effective_base_unit_cost'],
+            Decimal('0.250000000000'),
+        )
+        self.assertFalse(response.data['empty'])
+
+    def test_estimated_packet_count_posts_audited_loss(self):
+        """A low physical count corrects the balance instead of editing receipt history."""
+        packet = self.post_draft(
+            self.create_draft(QuantityCertainty.ESTIMATED, '30')['pk'],
+        )
+        response = self.client.post(
+            f"/seeds/packets/{packet['pk']}/reconcile/",
+            {
+                'counted_quantity': '27',
+                'quantity_certainty': QuantityCertainty.EXACT,
+                'reason': 'Counted three fewer clusters',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.data['inventory']['remaining_quantity'],
+            Decimal('27'),
+        )
+        self.assertTrue(StockMovement.objects.filter(
+            lot_id=packet['inventory']['lot'],
+            movement_type=StockMovement.MovementType.ADJUSTMENT_LOSS,
+            quantity=Decimal('3'),
+        ).exists())
+
+    def test_draft_can_be_cancelled_but_posted_packet_cannot(self):
+        """Draft cleanup removes its reserved container without erasing history."""
+        draft = self.create_draft(QuantityCertainty.EXACT, '10')
+        response = self.client.delete(
+            f"/seeds/packet-receipts/{draft['pk']}/",
+        )
+        self.assertEqual(response.status_code, 204)
+
+        posted = self.create_draft(QuantityCertainty.EXACT, '10')
+        self.post_draft(posted['pk'])
+        response = self.client.delete(
+            f"/seeds/packet-receipts/{posted['pk']}/",
+        )
+        self.assertEqual(response.status_code, 400)
