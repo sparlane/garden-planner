@@ -1,5 +1,7 @@
 """REST resources and explicit actions for the exact-lot stock ledger."""
 
+# pylint: disable=too-many-lines
+
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -83,6 +85,10 @@ class InventoryLocationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """Reserve packet-container locations for the seed workflow."""
+        if self.instance and self.instance.code == 'SYSTEM-TRAY-UNKNOWN':
+            raise ValidationError({
+                'location': 'The legacy tray location is system-managed.',
+            })
         current_type = getattr(self.instance, 'location_type', None)
         requested_type = attrs.get('location_type', current_type)
         if requested_type == InventoryLocation.LocationType.SEED_PACKET:
@@ -304,6 +310,7 @@ class StockMovementSerializer(serializers.ModelSerializer):
         fields = [
             'pk',
             'lot',
+            'unit',
             'movement_type',
             'quantity',
             'base_unit',
@@ -634,9 +641,10 @@ class InventoryLocationViewSet(
         return queryset
 
     def perform_destroy(self, instance):
-        if instance.location_type == InventoryLocation.LocationType.SEED_PACKET:
+        seed_packet = instance.location_type == InventoryLocation.LocationType.SEED_PACKET
+        if seed_packet or instance.code == 'SYSTEM-TRAY-UNKNOWN':
             raise ValidationError({
-                'location': 'Seed packet locations are system-managed.',
+                'location': 'This inventory location is system-managed.',
             })
         try:
             instance.delete()
@@ -766,6 +774,7 @@ class StockMovementViewSet(
 
     queryset = StockMovement.objects.select_related(
         'lot__item',
+        'unit',
         'source',
         'destination',
         'created_by',
@@ -777,6 +786,7 @@ class StockMovementViewSet(
         queryset = super().get_queryset()
         lot = _parse_integer(self.request.query_params.get('lot'), 'lot')
         item = _parse_integer(self.request.query_params.get('item'), 'item')
+        unit = _parse_integer(self.request.query_params.get('unit'), 'unit')
         location = _parse_integer(
             self.request.query_params.get('location'),
             'location',
@@ -785,6 +795,8 @@ class StockMovementViewSet(
             queryset = queryset.filter(lot_id=lot)
         if item is not None:
             queryset = queryset.filter(lot__item_id=item)
+        if unit is not None:
+            queryset = queryset.filter(unit_id=unit)
         if location is not None:
             queryset = queryset.filter(Q(source_id=location) | Q(destination_id=location))
         movement_type = self.request.query_params.get('movement_type')
@@ -992,8 +1004,11 @@ class StocktakeViewSet(
 
 def register_ledger_routes(router):
     """Attach ledger viewsets to the inventory API router."""
+    from .serialized_rest import InventoryUnitViewSet  # pylint: disable=import-outside-toplevel
+
     router.register(r'locations', InventoryLocationViewSet)
     router.register(r'receipts', StockReceiptViewSet)
     router.register(r'lots', StockLotViewSet)
+    router.register(r'serialized-units', InventoryUnitViewSet)
     router.register(r'movements', StockMovementViewSet)
     router.register(r'stocktakes', StocktakeViewSet)
