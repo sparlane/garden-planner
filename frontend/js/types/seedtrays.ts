@@ -1,3 +1,5 @@
+import { SerializedInventoryUnit, SerializedPhysicalState } from './inventory'
+
 interface SeedTrayModelCreate {
   identifier: string
   description: string
@@ -10,17 +12,41 @@ interface SeedTrayModelCreate {
 }
 interface SeedTrayModel extends SeedTrayModelCreate {
   pk: number
+  inventory_item: number
 }
 
-interface SeedTrayCreate {
-  model?: number
+interface SeedTrayReceiptCreate {
+  supplier: number
+  received_date: string
+  supplier_reference?: string
+  quantity: number
+  line_cost_ex_tax: string
+  destination: number
+  tax_rate?: string
+  tax_recoverable?: boolean
   notes?: string
 }
 
-type SeedTray = SeedTrayCreate & {
+interface SeedTray {
   pk: number
   model: number
+  inventory_unit: number
+  inventory: SerializedInventoryUnit
   created: string
+  notes?: string
+}
+
+interface SeedTrayFilters {
+  model?: number
+  location?: number
+  physical_state?: SerializedPhysicalState
+  in_use?: boolean
+}
+
+interface SeedTrayReceiptResponse {
+  receipt: number
+  receipt_line: number
+  trays: SeedTray[]
 }
 
 interface SeedTrayCell {
@@ -30,4 +56,4 @@ interface SeedTrayCell {
   y_position: number
 }
 
-export { SeedTrayModel, SeedTray, SeedTrayCell, SeedTrayModelCreate, SeedTrayCreate }
+export { SeedTrayModel, SeedTray, SeedTrayCell, SeedTrayFilters, SeedTrayModelCreate, SeedTrayReceiptCreate, SeedTrayReceiptResponse }

@@ -476,6 +476,10 @@ def post_receipt(receipt, user):  # pylint: disable=too-many-branches
             )
         if line.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
             _validate_serialized_receipt_line(line)
+            if line.destination.code == 'SYSTEM-TRAY-UNKNOWN':
+                raise ValidationError({
+                    'lines': 'The unknown tray location is reserved for migration.',
+                })
 
     posted_at = timezone.now()
     lots = []
@@ -713,7 +717,7 @@ def _latest_effective_unit_movement(unit):
 
 
 @transaction.atomic
-def post_unit_movement(workspace, user, request):
+def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-branches
     """Post one physical action against an exact locked serialized unit."""
     lot = lock_lots(workspace, [request.unit.source_lot_id])[
         request.unit.source_lot_id
@@ -723,9 +727,17 @@ def post_unit_movement(workspace, user, request):
         raise ValidationError({'unit': 'The serialized item is inactive.'})
     if request.destination:
         _validate_location(request.destination, workspace, 'destination')
+        if request.destination.code == 'SYSTEM-TRAY-UNKNOWN':
+            raise ValidationError({
+                'destination': 'The unknown tray location is reserved for migration.',
+            })
     state = unit_physical_state(unit)
     source = unit.current_location
     destination = request.destination
+    if source and source.code == 'SYSTEM-TRAY-UNKNOWN':
+        raise ValidationError({
+            'unit': 'Reconcile this opening unit before another stock action.',
+        })
     allowed = {
         StockMovement.MovementType.TRANSFER,
         StockMovement.MovementType.ADJUSTMENT_LOSS,

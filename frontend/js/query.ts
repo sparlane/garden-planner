@@ -8,6 +8,7 @@ const queryKeys = {
   inventory: {
     all: ['inventory'] as const,
     units: ['inventory', 'units'] as const,
+    locations: ['inventory', 'locations'] as const,
     items: (search: string, category: string, trackingMode: string, status: string) => ['inventory', 'items', search, category, trackingMode, status] as const,
     conversions: (itemPk: number) => ['inventory', 'conversions', itemPk] as const
   },
@@ -41,6 +42,7 @@ const queryKeys = {
     all: ['seedTrays'] as const,
     models: ['seedTrays', 'models'] as const,
     trays: ['seedTrays', 'trays'] as const,
+    movements: (unitPk: number) => ['seedTrays', 'movements', unitPk] as const,
     cells: (trayPk: number) => ['seedTrays', 'cells', trayPk] as const
   },
   plantings: {

@@ -9,16 +9,19 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
+from django.utils import timezone
 
 from workspaces.models import Workspace, get_current_workspace
 
 from .ledger import (
     MovementRequest,
     OpeningBalanceRequest,
+    UnitMovementRequest,
     post_opening_balance,
     post_stock_movement,
+    post_unit_movement,
 )
-from .models import InventoryItem, InventoryLocation, StockLot, StockMovement
+from .models import InventoryItem, InventoryLocation, InventoryUnit, StockLot, StockMovement
 from .units import UnitCode
 
 
@@ -108,6 +111,116 @@ class ConcurrentLedgerTests(TransactionTestCase):
             StockMovement.objects.filter(
                 lot_id=self.lot_pk,
                 movement_type=StockMovement.MovementType.CONSUMPTION,
+            ).count(),
+            1,
+        )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentSerializedUnitTests(TransactionTestCase):
+    """A unit lock prevents two callers moving one physical identity twice."""
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        workspace = get_current_workspace()
+        self.user = get_user_model().objects.create_user(
+            username='unit-concurrency-user',
+        )
+        item = InventoryItem.objects.create(
+            workspace=workspace,
+            name='Concurrent serialized tray',
+            category=InventoryItem.Category.TRAY,
+            base_unit=UnitCode.EACH,
+            tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
+        )
+        source = InventoryLocation.objects.create(
+            workspace=workspace,
+            name='Unit source',
+            code='UNIT-SOURCE',
+            location_type=InventoryLocation.LocationType.STORAGE,
+        )
+        destination = InventoryLocation.objects.create(
+            workspace=workspace,
+            name='Unit destination',
+            code='UNIT-DESTINATION',
+            location_type=InventoryLocation.LocationType.GROWING,
+        )
+        lot = StockLot.objects.create(
+            workspace=workspace,
+            item=item,
+            origin=StockLot.Origin.OPENING,
+            received_on=date(2026, 8, 1),
+            initial_base_quantity=Decimal('1'),
+            acquisition_total=Decimal('5'),
+            base_unit_cost=Decimal('5'),
+            currency_code='NZD',
+        )
+        unit = InventoryUnit.objects.create(
+            workspace=workspace,
+            item=item,
+            source_lot=lot,
+            acquisition_cost=Decimal('5'),
+            currency_code='NZD',
+            current_location=source,
+        )
+        StockMovement.objects.create(
+            workspace=workspace,
+            lot=lot,
+            unit=unit,
+            movement_type=StockMovement.MovementType.OPENING,
+            quantity=Decimal('1'),
+            destination=source,
+            occurred_at=timezone.now(),
+        )
+        self.unit_pk = unit.pk
+        self.destination_pk = destination.pk
+
+    def _transfer_unit(self):
+        """Attempt one move from an independent database connection."""
+        close_old_connections()
+        workspace = get_current_workspace()
+        unit = InventoryUnit.objects.get(pk=self.unit_pk)
+        destination = InventoryLocation.objects.get(pk=self.destination_pk)
+        user = get_user_model().objects.get(pk=self.user.pk)
+        try:
+            post_unit_movement(
+                workspace,
+                user,
+                UnitMovementRequest(
+                    unit=unit,
+                    movement_type=StockMovement.MovementType.TRANSFER,
+                    destination=destination,
+                ),
+            )
+        except ValidationError:
+            result = 'rejected'
+        else:
+            result = 'posted'
+        close_old_connections()
+        return result
+
+    def test_only_one_request_moves_the_unit(self):
+        """The second caller sees the destination committed by the first."""
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda _index: self._transfer_unit(),
+                range(2),
+            ))
+
+        self.assertCountEqual(results, ['posted', 'rejected'])
+        self.assertEqual(
+            StockMovement.objects.filter(
+                unit_id=self.unit_pk,
+                movement_type=StockMovement.MovementType.TRANSFER,
             ).count(),
             1,
         )
