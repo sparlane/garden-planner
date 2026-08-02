@@ -23,6 +23,7 @@ from inventory.models import (
     StockMovement,
     StockReceipt,
     StockReceiptLine,
+    StockLot,
 )
 
 from .models import (
@@ -75,7 +76,6 @@ def create_packet_receipt_draft(workspace, user, values):
     """Create one ordinary receipt line backed by a packet container."""
     seeds = Seeds.objects.select_for_update().select_related(
         'supplier',
-        'inventory_item',
     ).get(pk=values['seeds'].pk, workspace=workspace)
     if not seeds.inventory_item_id:
         raise ValidationError({'seeds': 'The seed catalog has no inventory item.'})
@@ -122,7 +122,7 @@ def update_packet_receipt_draft(draft, values):
     """Update an unposted one-line seed packet receipt."""
     draft = SeedPacketReceiptDraft.objects.select_for_update().select_related(
         'receipt',
-        'seeds__inventory_item',
+        'seeds',
     ).get(pk=draft.pk)
     if draft.receipt.status != StockReceipt.Status.DRAFT:
         raise ValidationError({'status': 'Posted packet receipts are immutable.'})
@@ -301,12 +301,12 @@ def reconcile_packet_quantity(packet, user, count, certainty, reason):
         raise ValidationError({
             'quantity_certainty': 'A physical count must be exact or estimated.',
         })
-    packet = SeedPacket.objects.select_for_update().select_related(
-        'stock_lot__item',
-        'storage_location',
-    ).get(pk=packet.pk)
+    packet = SeedPacket.objects.select_for_update().get(pk=packet.pk)
     if not packet.stock_lot_id or not packet.storage_location_id:
         raise ValidationError({'packet': 'The packet has no inventory identity.'})
+    packet.stock_lot = StockLot.objects.select_for_update().select_related(
+        'item',
+    ).get(pk=packet.stock_lot_id)
     counted = quantize_quantity(count)
     if counted < 0:
         raise ValidationError({'counted_quantity': 'Quantity cannot be negative.'})

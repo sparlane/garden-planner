@@ -217,7 +217,15 @@ class ResourceIsolationTests(APITestCase):
                 '/seeds/seeds/',
                 {'supplier': self.supplier.pk, 'plant_variety': self.variety.pk},
             ),
-            ('/seeds/packets/', {'seeds': self.seeds.pk}),
+            (
+                '/seeds/packet-receipts/',
+                {
+                    'seeds': self.seeds.pk,
+                    'quantity_certainty': 'unknown',
+                    'line_price': '5.0000',
+                    'received_date': '2026-08-02',
+                },
+            ),
             (
                 '/garden/beds/',
                 {
