@@ -29,6 +29,14 @@ COST_MAX_DIGITS = 30
 COST_DECIMAL_PLACES = 12
 
 
+class QuantityCertainty(models.TextChoices):
+    """How confidently a stock quantity describes physical contents."""
+
+    EXACT = 'exact', 'Exact'
+    ESTIMATED = 'estimated', 'Estimated'
+    UNKNOWN = 'unknown', 'Unknown'
+
+
 def generate_lot_identifier():
     """Return an opaque stable lot identifier suitable for offline creation."""
     return f'LOT-{uuid4().hex.upper()}'
@@ -358,6 +366,7 @@ class InventoryLocation(WorkspaceOwnedModel):
         DISPATCH = 'dispatch', 'Customer dispatch'
         QUARANTINE = 'quarantine', 'Quarantine'
         ADJUSTMENT = 'adjustment', 'Adjustment'
+        SEED_PACKET = 'seed_packet', 'Seed packet'
 
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=64)
@@ -490,7 +499,14 @@ class StockReceiptLine(models.Model):
     quantity = models.DecimalField(
         max_digits=QUANTITY_MAX_DIGITS,
         decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
         validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    quantity_certainty = models.CharField(
+        max_length=16,
+        choices=QuantityCertainty.choices,
+        default=QuantityCertainty.EXACT,
     )
     unit_code = models.CharField(
         max_length=16,
@@ -508,6 +524,8 @@ class StockReceiptLine(models.Model):
     base_quantity = models.DecimalField(
         max_digits=QUANTITY_MAX_DIGITS,
         decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
         validators=[MinValueValidator(POSITIVE_DECIMAL)],
     )
     line_cost_ex_tax = models.DecimalField(
@@ -527,11 +545,11 @@ class StockReceiptLine(models.Model):
         ordering = ['pk']
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(quantity__gt=0),
+                condition=(models.Q(quantity__isnull=True) | models.Q(quantity__gt=0)),
                 name='inventory_receipt_line_positive_quantity',
             ),
             models.CheckConstraint(
-                condition=models.Q(base_quantity__gt=0),
+                condition=(models.Q(base_quantity__isnull=True) | models.Q(base_quantity__gt=0)),
                 name='inventory_receipt_line_positive_base_quantity',
             ),
             models.CheckConstraint(
@@ -555,7 +573,12 @@ class StockReceiptLine(models.Model):
             )
         if self.unit_conversion_id and self.unit_conversion.item_id != self.item_id:
             errors['unit_conversion'] = 'The conversion does not belong to this item.'
-        if not errors and self.base_quantity != self.normalized_quantity():
+        if self.quantity_certainty == QuantityCertainty.UNKNOWN:
+            if self.quantity is not None or self.base_quantity is not None:
+                errors['quantity'] = 'Unknown quantities must not include a number.'
+        elif self.quantity is None or self.base_quantity is None:
+            errors['quantity'] = 'Exact and estimated quantities require a number.'
+        if not errors and self.quantity is not None and self.base_quantity != self.normalized_quantity():
             errors['base_quantity'] = 'The normalized quantity is incorrect.'
         if errors:
             raise ValidationError(errors)
@@ -613,12 +636,19 @@ class StockLot(WorkspaceOwnedModel):
         blank=True,
         default='',
     )
-    received_on = models.DateField()
+    received_on = models.DateField(null=True, blank=True)
     expires_on = models.DateField(null=True, blank=True)
     initial_base_quantity = models.DecimalField(
         max_digits=QUANTITY_MAX_DIGITS,
         decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
         validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    quantity_certainty = models.CharField(
+        max_length=16,
+        choices=QuantityCertainty.choices,
+        default=QuantityCertainty.EXACT,
     )
     acquisition_total = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS,
@@ -645,7 +675,7 @@ class StockLot(WorkspaceOwnedModel):
                 name='inventory_lot_workspace_item_identifier_unique',
             ),
             models.CheckConstraint(
-                condition=models.Q(initial_base_quantity__gt=0),
+                condition=(models.Q(initial_base_quantity__isnull=True) | models.Q(initial_base_quantity__gt=0)),
                 name='inventory_lot_positive_initial_quantity',
             ),
             models.CheckConstraint(
@@ -675,6 +705,19 @@ class StockLot(WorkspaceOwnedModel):
             errors['receipt_line'] = 'Receipt lots require receipt-line provenance.'
         if self.origin == self.Origin.OPENING and self.receipt_line_id:
             errors['receipt_line'] = 'Opening lots cannot reference a receipt line.'
+        if self.quantity_certainty == QuantityCertainty.UNKNOWN:
+            if self.initial_base_quantity is not None:
+                errors['initial_base_quantity'] = (
+                    'Unknown lots must not claim an initial quantity.'
+                )
+            if self.base_unit_cost is not None:
+                errors['base_unit_cost'] = (
+                    'Unknown lots cannot claim a per-unit cost.'
+                )
+        elif self.initial_base_quantity is None:
+            errors['initial_base_quantity'] = (
+                'Exact and estimated lots require an initial quantity.'
+            )
         if errors:
             raise ValidationError(errors)
 

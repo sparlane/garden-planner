@@ -15,6 +15,7 @@ from workspaces.models import Workspace, get_current_workspace
 from .models import (
     InventoryItem,
     InventoryLocation,
+    QuantityCertainty,
     StockLot,
     StockMovement,
     StockReceipt,
@@ -138,6 +139,51 @@ class LedgerModelTests(TestCase):
         with self.assertRaises(ValidationError) as context:
             line.save()
         self.assertIn('destination', context.exception.message_dict)
+
+    def test_unknown_seed_receipt_omits_quantity_without_claiming_zero(self):
+        """An uncounted packet keeps its quantity genuinely nullable."""
+        seed_item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Uncounted beet clusters',
+            category=InventoryItem.Category.SEED,
+            base_unit=UnitCode.SEED_CLUSTER,
+        )
+        receipt = StockReceipt.objects.create(
+            workspace=self.workspace,
+            supplier=self.supplier,
+            received_date=date(2026, 8, 1),
+            currency_code='NZD',
+            created_by=self.user,
+        )
+        line = StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=seed_item,
+            quantity_certainty=QuantityCertainty.UNKNOWN,
+            unit_code=UnitCode.SEED_CLUSTER,
+            line_cost_ex_tax=Decimal('4.50'),
+            destination=self.location,
+        )
+        lot = StockLot.objects.create(
+            workspace=self.workspace,
+            item=seed_item,
+            origin=StockLot.Origin.RECEIPT,
+            receipt_line=line,
+            received_on=receipt.received_date,
+            initial_base_quantity=None,
+            quantity_certainty=QuantityCertainty.UNKNOWN,
+            acquisition_total=Decimal('4.50'),
+            base_unit_cost=None,
+            currency_code='NZD',
+        )
+
+        self.assertIsNone(line.quantity)
+        self.assertIsNone(line.base_quantity)
+        self.assertIsNone(lot.initial_base_quantity)
+
+        line.quantity = Decimal('0')
+        with self.assertRaises(ValidationError) as context:
+            line.save()
+        self.assertIn('quantity', context.exception.message_dict)
 
     def test_posted_documents_and_ledger_rows_are_immutable(self):
         """History remains append-only after its document posts."""
