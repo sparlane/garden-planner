@@ -6,6 +6,7 @@ from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
+from inventory.models import StockMovement
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell
 from garden.models import GardenRow, GardenSquare
@@ -97,6 +98,87 @@ class SeedTrayCellPlanting(models.Model):
 
     def __str__(self):
         return f'{self.quantity} in {self.cell} for planting {self.seed_tray_planting.pk}'
+
+
+class SowingStockPosting(WorkspaceOwnedModel):
+    """Immutable linkage from one sowing to each ledger audit row."""
+
+    movement = models.OneToOneField(
+        StockMovement,
+        on_delete=models.PROTECT,
+        related_name='sowing_posting',
+    )
+    row_planting = models.ForeignKey(
+        GardenRowDirectSowPlanting,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stock_postings',
+    )
+    square_planting = models.ForeignKey(
+        GardenSquareDirectSowPlanting,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stock_postings',
+    )
+    tray_planting = models.ForeignKey(
+        SeedTrayPlanting,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stock_postings',
+    )
+    replacement_of = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='replacement',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(row_planting__isnull=False, square_planting__isnull=True, tray_planting__isnull=True),
+                    models.Q(row_planting__isnull=True, square_planting__isnull=False, tray_planting__isnull=True),
+                    models.Q(row_planting__isnull=True, square_planting__isnull=True, tray_planting__isnull=False),
+                    _connector=models.Q.OR,
+                ),
+                name='sowing_posting_exactly_one_planting',
+            ),
+        ]
+
+    def clean(self):
+        """Require the movement and selected planting in one workspace."""
+        super().clean()
+        errors = {}
+        plantings = [
+            self.row_planting,
+            self.square_planting,
+            self.tray_planting,
+        ]
+        selected = [planting for planting in plantings if planting is not None]
+        if len(selected) != 1:
+            errors['row_planting'] = 'Select exactly one sowing.'
+        elif selected[0].workspace_id != self.workspace_id:
+            errors['row_planting'] = 'The sowing belongs to a different workspace.'
+        if self.movement_id and self.movement.workspace_id != self.workspace_id:
+            errors['movement'] = 'The movement belongs to a different workspace.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Sowing stock postings are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Sowing stock postings cannot be deleted.')
 
 
 class SpecificPlant(WorkspaceOwnedModel):

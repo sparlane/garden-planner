@@ -25,6 +25,7 @@ from inventory.models import (
     StockReceiptLine,
     StockLot,
 )
+from inventory.units import UnitCode
 
 from .models import (
     SeedPacket,
@@ -69,6 +70,41 @@ def _packet_location(workspace):
         location_type=InventoryLocation.LocationType.SEED_PACKET,
         notes='System-managed seed packet container.',
     )
+
+
+@transaction.atomic
+def ensure_packet_inventory_identity(packet):
+    """Give direct-ORM legacy packets the identities migrations normally add."""
+    packet = SeedPacket.objects.select_for_update().select_related(
+        'seeds__inventory_item',
+        'workspace',
+    ).get(pk=packet.pk)
+    seeds = packet.seeds
+    if not seeds.inventory_item_id:
+        item = create_seed_inventory_item(
+            packet.workspace,
+            seeds,
+            UnitCode.SEED,
+        )
+        seeds.inventory_item = item
+        seeds.save(update_fields=['inventory_item'])
+    if not packet.storage_location_id:
+        packet.storage_location = _packet_location(packet.workspace)
+    if not packet.stock_lot_id:
+        packet.stock_lot = StockLot.objects.create(
+            workspace=packet.workspace,
+            item=seeds.inventory_item,
+            origin=StockLot.Origin.OPENING,
+            received_on=packet.purchase_date,
+            expires_on=packet.sow_by,
+            initial_base_quantity=None,
+            quantity_certainty=QuantityCertainty.UNKNOWN,
+            acquisition_total=None,
+            base_unit_cost=None,
+            currency_code=packet.workspace.currency_code,
+        )
+    packet.save(update_fields=['storage_location', 'stock_lot'])
+    return packet
 
 
 @transaction.atomic

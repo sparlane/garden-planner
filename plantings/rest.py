@@ -11,12 +11,56 @@ from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from seedtrays.models import SeedTray
+from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
+from .sowing import correct_sowing_consumption, post_sowing_consumption
 
 
-class GardenRowDirectSowPlantingSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+def _model_errors(error):
+    """Translate Django validation into field-friendly REST errors."""
+    if hasattr(error, 'message_dict'):
+        return error.message_dict
+    return error.messages
+
+
+class PostedSowingSerializerMixin:
+    """Post creates and lock stock-affecting generic updates."""
+
+    stock_fields = ('planted', 'seeds_used', 'quantity')
+
+    def _validate_stock_fields(self, attrs):
+        if not self.instance or not self.instance.stock_postings.exists():
+            return
+        errors = {
+            field: 'Use the explicit sowing correction action.'
+            for field in self.stock_fields
+            if field in attrs and attrs[field] != getattr(self.instance, field)
+        }
+        if errors:
+            raise serializers.ValidationError(errors)
+
+    def validate(self, attrs):
+        """Reject silent edits once the seed movement exists."""
+        self._validate_stock_fields(attrs)
+        return super().validate(attrs)
+
+    def create(self, validated_data):
+        """Create the sowing and its consumption as one transaction."""
+        try:
+            with transaction.atomic():
+                planting = super().create(validated_data)
+                post_sowing_consumption(
+                    planting,
+                    self.context['request'].user,
+                )
+                return planting
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_model_errors(exc)) from exc
+
+
+class GardenRowDirectSowPlantingSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenRowDirectSowPlanting
     """
@@ -30,7 +74,7 @@ class GardenRowDirectSowPlantingSerializer(CurrentWorkspaceSerializerMixin, seri
     }
 
 
-class GardenSquareDirectSowSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class GardenSquareDirectSowSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenSquareDirectSowPlanting
     """
@@ -64,7 +108,7 @@ class SeedTrayCellPlantingNestedSerializer(CurrentWorkspaceSerializerMixin, seri
         return data
 
 
-class SeedTrayPlantingSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedTrayPlantingSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for SeedTrayPlanting
     """
@@ -167,6 +211,7 @@ class SeedTrayPlantingSerializer(CurrentWorkspaceSerializerMixin, serializers.Mo
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep retained or replacement cells on the effective seed tray."""
+        self._validate_stock_fields(data)
         cell_plantings = self._get_effective_cell_plantings(data)
         self._validate_cell_allocations(data, cell_plantings)
 
@@ -229,6 +274,13 @@ class SeedTrayPlantingSerializer(CurrentWorkspaceSerializerMixin, serializers.Mo
             planting = SeedTrayPlanting.objects.create(**validated_data)
             if cell_data:
                 self._save_cell_plantings(planting, cell_data)
+            try:
+                post_sowing_consumption(
+                    planting,
+                    self.context['request'].user,
+                )
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(_model_errors(exc)) from exc
         return planting
 
     def update(self, instance, validated_data):
@@ -576,7 +628,81 @@ def move_specific_plant(plant, move_data):
             }) from exc
 
 
-class GardenRowDirectSowPlantingViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SowingCorrectionSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.Serializer,
+):
+    """Validate replacement packet/quantity intent and an audit reason."""
+
+    seeds_used = serializers.PrimaryKeyRelatedField(
+        queryset=SeedPacket.objects.all(),
+        required=False,
+    )
+    quantity = serializers.IntegerField(min_value=1, required=False)
+    reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+    workspace_field_lookups = {'seeds_used': 'workspace'}
+
+    def validate(self, attrs):
+        """Require at least one stock-affecting replacement value."""
+        if 'seeds_used' not in attrs and 'quantity' not in attrs:
+            raise serializers.ValidationError({
+                'detail': 'Supply a replacement packet or quantity.',
+            })
+        return attrs
+
+    def create(self, validated_data):
+        raise NotImplementedError
+
+    def update(self, instance, validated_data):
+        raise NotImplementedError
+
+
+class SowingCorrectionViewSetMixin:  # pylint: disable=too-few-public-methods
+    """Expose one common correction action for concrete sowing resources."""
+
+    @action(detail=True, methods=['post'], url_path='correct-sowing')
+    def correct_sowing(self, request, pk=None):  # pylint: disable=unused-argument
+        """Reverse and replace the current linked consumption movement."""
+        serializer = SowingCorrectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        try:
+            result = correct_sowing_consumption(
+                self.get_object(),
+                request.user,
+                seeds_used=values.get('seeds_used'),
+                quantity=values.get('quantity'),
+                reason=values['reason'],
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_model_errors(exc)) from exc
+        return Response({
+            'planting': self.get_serializer(result['planting']).data,
+            'original_movement': result['original_movement'],
+            'reversal_movement': result['reversal_movement'],
+            'replacement_movement': result['replacement_movement'],
+        })
+
+
+class PostedSowingDestroyMixin:  # pylint: disable=too-few-public-methods
+    """Preserve a planting once immutable stock history refers to it."""
+
+    def perform_destroy(self, instance):
+        """Reject generic deletion after a consumption was posted."""
+        if instance.stock_postings.exists():
+            raise serializers.ValidationError({
+                'detail': 'Posted sowings cannot be deleted.',
+            })
+        super().perform_destroy(instance)
+
+
+class GardenRowDirectSowPlantingViewSet(
+    SowingCorrectionViewSetMixin,
+    PostedSowingDestroyMixin,
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
     """
     ViewSet of GardenRowDirectSowPlanting
     """
@@ -584,7 +710,12 @@ class GardenRowDirectSowPlantingViewSet(CurrentWorkspaceViewSetMixin, viewsets.M
     serializer_class = GardenRowDirectSowPlantingSerializer
 
 
-class GardenSquareDirectSowPlantingViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenSquareDirectSowPlantingViewSet(
+    SowingCorrectionViewSetMixin,
+    PostedSowingDestroyMixin,
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
     """
     ViewSet of GardenSquareDirectSowPlanting
     """
@@ -597,6 +728,10 @@ class ProtectedSeedTrayPlantingDestroyMixin:  # pylint: disable=too-few-public-m
 
     def perform_destroy(self, instance):
         """Delete a planting unless protected dependents still refer to it."""
+        if instance.stock_postings.exists():
+            raise serializers.ValidationError({
+                'detail': ['Posted sowings cannot be deleted.'],
+            })
         try:
             instance.delete()
         except ProtectedError as exc:
@@ -608,6 +743,7 @@ class ProtectedSeedTrayPlantingDestroyMixin:  # pylint: disable=too-few-public-m
 
 
 class SeedTrayPlantingViewSet(
+    SowingCorrectionViewSetMixin,
     ProtectedSeedTrayPlantingDestroyMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
@@ -620,6 +756,7 @@ class SeedTrayPlantingViewSet(
 
 
 class SeedTrayPlantingViewSeedTraySet(
+    SowingCorrectionViewSetMixin,
     ProtectedSeedTrayPlantingDestroyMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,

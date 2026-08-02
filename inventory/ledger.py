@@ -38,6 +38,7 @@ class MovementRequest(NamedTuple):
     occurred_at: object = None
     reason: str = ''
     reference: str = ''
+    enforce_source_balance: bool = True
 
 
 class OpeningBalanceRequest(NamedTuple):
@@ -70,6 +71,7 @@ class MovementEntry(NamedTuple):
     reversal_of: object = None
     receipt_line: object = None
     stocktake_line: object = None
+    enforce_source_balance: bool = True
 
 
 def quantize_quantity(value):
@@ -155,7 +157,7 @@ def _validate_source_balance(lot, source, quantity):
 def _create_movement(entry):
     """Create a validated movement after callers acquire the lot lock."""
     quantity = quantize_quantity(entry.quantity)
-    if entry.source:
+    if entry.source and entry.enforce_source_balance:
         _validate_source_balance(entry.lot, entry.source, quantity)
     return StockMovement.objects.create(
         workspace=entry.workspace,
@@ -195,6 +197,16 @@ def post_stock_movement(workspace, user, request):
         _validate_location(request.source, workspace, 'source')
     if request.destination:
         _validate_location(request.destination, workspace, 'destination')
+    if request.movement_type == StockMovement.MovementType.TRANSFER:
+        packet_type = request.source.LocationType.SEED_PACKET
+        location_types = (
+            request.source.location_type,
+            request.destination.location_type,
+        )
+        if packet_type in location_types:
+            raise ValidationError({
+                'source': 'Seed packet containers cannot be transferred or split.',
+            })
     if request.movement_type in {
         StockMovement.MovementType.ADJUSTMENT_GAIN,
         StockMovement.MovementType.ADJUSTMENT_LOSS,
@@ -212,7 +224,46 @@ def post_stock_movement(workspace, user, request):
         occurred_at=request.occurred_at,
         reason=request.reason,
         reference=request.reference,
+        enforce_source_balance=request.enforce_source_balance,
     ))
+
+
+@transaction.atomic
+def correct_stock_movement(original, user, replacement, reason):
+    """Reverse and replace one standalone movement under ordered lot locks."""
+    if replacement.movement_type != StockMovement.MovementType.CONSUMPTION:
+        raise ValidationError({'movement_type': 'Corrections require consumption.'})
+    workspace = original.workspace
+    locked_lots = lock_lots(
+        workspace,
+        [original.lot_id, replacement.lot.pk],
+    )
+    original = StockMovement.objects.select_for_update(of=('self',)).select_related(
+        'workspace',
+        'source',
+        'destination',
+    ).get(pk=original.pk)
+    original.lot = locked_lots[original.lot_id]
+    replacement_lot = locked_lots[replacement.lot.pk]
+    _validate_reversible(original, reason, False, False)
+    _validate_location(replacement.source, workspace, 'source')
+    if replacement_lot.item_id != replacement.lot.item_id:
+        raise ValidationError({'lot': 'The replacement lot identity changed.'})
+    occurred_at = timezone.now()
+    reversal = _create_reversal(original, user, reason, occurred_at)
+    replacement_movement = _create_movement(MovementEntry(
+        workspace=workspace,
+        user=user,
+        lot=replacement_lot,
+        movement_type=StockMovement.MovementType.CONSUMPTION,
+        quantity=replacement.quantity,
+        source=replacement.source,
+        occurred_at=occurred_at,
+        reason=reason,
+        reference=replacement.reference,
+        enforce_source_balance=replacement.enforce_source_balance,
+    ))
+    return reversal, replacement_movement
 
 
 @transaction.atomic
