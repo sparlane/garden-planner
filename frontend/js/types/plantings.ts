@@ -95,6 +95,7 @@ interface ProductionBatchLocation {
 interface ProductionBatchDetail extends ProductionBatch {
   sowings: Array<ProductionBatchSowing>
   current_locations: Array<ProductionBatchLocation>
+  lifecycle_counts: Record<PlantLifecycleState, number>
   transitions: Array<ProductionBatchTransition>
 }
 
@@ -229,6 +230,43 @@ interface SpecificPlantMove {
   notes?: string
 }
 
+type PlantLifecycleEventType = 'germinated' | 'ready' | 'transplanted' | 'retained' | 'failed' | 'culled' | 'donated' | 'harvest_finished' | 'corrected'
+
+type PlantLifecycleState = 'growing' | 'available' | 'retained' | 'donated' | 'failed' | 'culled' | 'harvested'
+
+type PlantOutcomeAction = 'ready' | 'retain' | 'fail' | 'cull' | 'donate' | 'finish-harvest'
+
+interface PlantLifecycleEvent {
+  pk: number
+  plant: number
+  batch: number
+  event_type: PlantLifecycleEventType
+  occurred_at: string
+  reason: string
+  reference: string
+  created_by: number | null
+  reversal_of: number | null
+  reversed_by: number | null
+  created: string
+}
+
+interface PlantOutcome {
+  occurred_at?: string
+  reason?: string
+  reference?: string
+}
+
+interface BulkPlantOutcome extends PlantOutcome {
+  plants: Array<number>
+  event_type: PlantLifecycleEventType
+}
+
+interface ReversePlantEvent {
+  event: number
+  reason: string
+  occurred_at?: string
+}
+
 interface SpecificPlant {
   pk: number
   cell_planting: number
@@ -236,6 +274,14 @@ interface SpecificPlant {
   germinated: string
   notes?: string
   locations: Array<SpecificPlantLocation>
+  lifecycle_state: PlantLifecycleState
+  sellable: boolean
+  final_outcome: PlantLifecycleEventType | null
+  final_outcome_at: string | null
+}
+
+interface SpecificPlantDetail extends SpecificPlant {
+  lifecycle_events: Array<PlantLifecycleEvent>
 }
 
 interface SpecificPlantCreate {
@@ -252,6 +298,13 @@ interface SowingCorrection {
 
 export {
   BatchAction,
+  BulkPlantOutcome,
+  PlantLifecycleEvent,
+  PlantLifecycleEventType,
+  PlantLifecycleState,
+  PlantOutcome,
+  PlantOutcomeAction,
+  ReversePlantEvent,
   NewBatchInline,
   Planting,
   ProductionBatch,
@@ -275,6 +328,7 @@ export {
   SeedTrayPlantingCreate,
   SpecificPlant,
   SpecificPlantCreate,
+  SpecificPlantDetail,
   SpecificPlantLocation,
   SpecificPlantLocationCreate,
   SpecificPlantMove,

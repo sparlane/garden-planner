@@ -6,8 +6,17 @@ import { SeedTray, SeedTrayCell, SeedTrayModel } from '../types/seedtrays'
 import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
 import { getSeedTrayModels, getSeedTrays, getSeedTrayCells, getSerializedUnitMovements, postSerializedUnitAction } from '../api/seedtrays'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
-import { SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
-import { getPlantingSeedTray, getSpecificPlantsBySeedTray, addSpecificPlant, moveSpecificPlant } from '../api/plantings'
+import { PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
+import {
+  getPlantingSeedTray,
+  getSpecificPlantsBySeedTray,
+  getSpecificPlantLifecycleEvents,
+  addSpecificPlant,
+  moveSpecificPlant,
+  postSpecificPlantOutcome,
+  reverseSpecificPlantEvent
+} from '../api/plantings'
+import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons } from '../plantings/lifecycle'
 import { ApiErrorAlert } from '../api_error_alert'
 import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
@@ -139,6 +148,9 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
               Plant #{plant.pk}
               {loc && <span style={{ color: '#555' }}> — {locationLabel(loc)}</span>}
             </div>
+            <div style={{ marginTop: 2 }}>
+              <PlantLifecycleBadge plant={plant} />
+            </div>
             <Button size="sm" variant="outline-primary" style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 2 }} onClick={() => onOpenMove(plant)}>
               Move
             </Button>
@@ -168,6 +180,56 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
           </Button>
         ))}
     </td>
+  )
+}
+
+type PlantLifecycleRowProps = {
+  plant: SpecificPlant
+  locationLabel: (loc: SpecificPlantLocation) => string
+  onOutcome: (plant: SpecificPlant, outcome: PlantOutcomeAction) => void
+  onReverse: (plant: SpecificPlant, event: PlantLifecycleEvent) => void
+  busy: boolean
+}
+
+const PlantLifecycleRow: React.FC<PlantLifecycleRowProps> = ({ plant, locationLabel, onOutcome, onReverse, busy }) => {
+  const [showHistory, setShowHistory] = React.useState(false)
+  const loc = currentLocation(plant)
+  const historyQuery = useQuery({
+    queryKey: queryKeys.plantings.plantLifecycle(plant.pk),
+    queryFn: ({ signal }) => getSpecificPlantLifecycleEvents(plant.pk, signal),
+    enabled: showHistory
+  })
+
+  return (
+    <>
+      <tr>
+        <td>#{plant.pk}</td>
+        <td>
+          <PlantLifecycleBadge plant={plant} />
+        </td>
+        <td>{loc ? locationLabel(loc) : '—'}</td>
+        <td>{plant.final_outcome_at ? formatDateTime(plant.final_outcome_at) : '—'}</td>
+        <td>
+          <PlantOutcomeButtons plant={plant} onOutcome={onOutcome} disabled={busy} />
+        </td>
+        <td>
+          <Button size="sm" variant="outline-secondary" onClick={() => setShowHistory((shown) => !shown)}>
+            {showHistory ? 'Hide history' : 'History'}
+          </Button>
+        </td>
+      </tr>
+      {showHistory && (
+        <tr>
+          <td colSpan={6}>
+            {historyQuery.isPending ? (
+              <span className="text-muted">Loading history…</span>
+            ) : (
+              <PlantLifecycleHistory events={historyQuery.data ?? []} onReverse={(event) => onReverse(plant, event)} />
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   )
 }
 
@@ -399,6 +461,14 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
       ])
   })
+  const outcomeMutation = useMutation({
+    mutationFn: ({ plantPk, outcome }: { plantPk: number; outcome: PlantOutcomeAction }) => postSpecificPlantOutcome(plantPk, outcome),
+    onSuccess: (_event, variables) => invalidatePlantLifecycle(variables.plantPk)
+  })
+  const reverseMutation = useMutation({
+    mutationFn: ({ plantPk, event, reason }: { plantPk: number; event: number; reason: string }) => reverseSpecificPlantEvent(plantPk, { event, reason }),
+    onSuccess: (_event, variables) => invalidatePlantLifecycle(variables.plantPk)
+  })
   const inventoryMutation = useMutation({
     mutationFn: ({ unit, action, data }: { unit: number; action: InventoryAction; data: object }) => postSerializedUnitAction(unit, action, data),
     onSuccess: () =>
@@ -469,6 +539,26 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       }
     })
     setMoveForm(undefined)
+  }
+
+  function invalidatePlantLifecycle(plantPk: number) {
+    return Promise.all([
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.plantLifecycle(plantPk) }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.batchesAll }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares })
+    ])
+  }
+
+  async function handleRecordOutcome(plant: SpecificPlant, outcome: PlantOutcomeAction) {
+    await outcomeMutation.mutateAsync({ plantPk: plant.pk, outcome })
+  }
+
+  async function handleReverseEvent(plant: SpecificPlant, event: PlantLifecycleEvent) {
+    const reason = globalThis.prompt('Why was this recorded in error?')
+    if (!reason || !reason.trim()) return
+    await reverseMutation.mutateAsync({ plantPk: plant.pk, event: event.pk, reason })
   }
 
   function openMoveForm(plant: SpecificPlant) {
@@ -705,6 +795,39 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
             ))}
         </tbody>
       </Table>
+      <Card className="mb-3">
+        <Card.Body>
+          <Card.Title>Plants</Card.Title>
+          {specificPlants.length === 0 ? (
+            <p className="text-muted mb-0">No germinations recorded for this tray yet.</p>
+          ) : (
+            <Table size="sm" responsive>
+              <thead>
+                <tr>
+                  <th>Plant</th>
+                  <th>State</th>
+                  <th>Location</th>
+                  <th>Resolved</th>
+                  <th>Record outcome</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {specificPlants.map((plant) => (
+                  <PlantLifecycleRow
+                    key={plant.pk}
+                    plant={plant}
+                    locationLabel={locationLabel}
+                    onOutcome={handleRecordOutcome}
+                    onReverse={handleReverseEvent}
+                    busy={outcomeMutation.isPending || reverseMutation.isPending}
+                  />
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </Card.Body>
+      </Card>
       {germinatingCellPlantingPk && (
         <GerminationForm
           cellPlantingPk={germinatingCellPlantingPk}

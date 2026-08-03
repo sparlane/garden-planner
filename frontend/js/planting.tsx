@@ -26,7 +26,7 @@ import {
   completePlantingSeedTray,
   correctGardenSquareSowing,
   correctSeedTraySowing,
-  endSpecificPlantLocation
+  postSpecificPlantOutcome
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { getSeedPackets, getSeeds } from './api/seeds'
@@ -319,7 +319,7 @@ function SeedTrayPlantingRow({ planting, seedPackets, completePlanting, correctP
             Manage Plants
           </Link>
         )}
-        <Button onClick={() => completePlanting(planting.pk)}>Empty</Button>
+        <Button onClick={() => completePlanting(planting.pk)}>Close sowing</Button>
         <Button variant="outline-secondary" onClick={() => setCorrecting((current) => !current)}>
           Correct sowing
         </Button>
@@ -594,7 +594,7 @@ function GardenSquarePlantingRow({ planting, seedPackets, completePlanting, corr
       <td>{formatDateRange(planting.maturity_date_early, planting.maturity_date_late)}</td>
       <td>{planting.notes}</td>
       <td>
-        <Button onClick={() => completePlanting(planting)}>Harvested</Button>
+        <Button onClick={() => completePlanting(planting)}>{planting.specific_plant_pk ? 'Harvested' : 'Close sowing'}</Button>
         {directSowing && (
           <Button variant="outline-secondary" onClick={() => setCorrecting((current) => !current)}>
             Correct sowing
@@ -676,12 +676,14 @@ function GardenSquarePlantingTable() {
     mutationFn: ({ pk, data }: { pk: number; data: SowingCorrection }) => correctGardenSquareSowing(pk, data),
     onSuccess: invalidatePlantingsAndPackets
   })
-  const endLocationMutation = useMutation({
-    mutationFn: endSpecificPlantLocation,
+  const finishHarvestMutation = useMutation({
+    mutationFn: (plantPk: number) => postSpecificPlantOutcome(plantPk, 'finish-harvest'),
     onSuccess: () =>
       Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll })
+        queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.plantings.plantLifecycleAll }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.plantings.batchesAll })
       ])
   })
 
@@ -708,8 +710,10 @@ function GardenSquarePlantingTable() {
   }
 
   async function completePlanting(planting: GardenSquarePlanting) {
-    if (planting.specific_plant_pk && planting.transplanting_pk) {
-      await endLocationMutation.mutateAsync(planting.transplanting_pk)
+    if (planting.specific_plant_pk) {
+      // An individual plant records the outcome itself; the service closes its
+      // location in the same transaction.
+      await finishHarvestMutation.mutateAsync(planting.specific_plant_pk)
     } else if (planting.transplanted && planting.transplanting_pk) {
       await completeTransplantMutation.mutateAsync(planting.transplanting_pk)
     } else {

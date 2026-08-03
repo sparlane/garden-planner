@@ -1,6 +1,11 @@
 import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
 import {
   BatchAction,
+  BulkPlantOutcome,
+  PlantLifecycleEvent,
+  PlantOutcome,
+  PlantOutcomeAction,
+  ReversePlantEvent,
   ProductionBatch,
   ProductionBatchCreate,
   ProductionBatchDetail,
@@ -17,6 +22,7 @@ import {
   SeedTrayPlantingDetails,
   SpecificPlant,
   SpecificPlantCreate,
+  SpecificPlantDetail,
   SpecificPlantLocationCreate,
   SpecificPlantMove,
   SowingCorrection
@@ -149,6 +155,26 @@ function moveSpecificPlant(plantPk: number, data: SpecificPlantMove): Promise<Re
   return csrfPost(`/plantings/specificplants/${plantPk}/move/`, data)
 }
 
+function getSpecificPlant(plantPk: number, signal?: AbortSignal): Promise<SpecificPlantDetail> {
+  return fetchAsJson<SpecificPlantDetail>(`/plantings/specificplants/${plantPk}/`, signal)
+}
+
+function getSpecificPlantLifecycleEvents(plantPk: number, signal?: AbortSignal): Promise<Array<PlantLifecycleEvent>> {
+  return fetchAsJson<Array<PlantLifecycleEvent>>(`/plantings/specificplants/${plantPk}/lifecycle-events/`, signal)
+}
+
+function postSpecificPlantOutcome(plantPk: number, outcome: PlantOutcomeAction, data: PlantOutcome = {}): Promise<PlantLifecycleEvent> {
+  return csrfPost(`/plantings/specificplants/${plantPk}/${outcome}/`, data).then((response) => response.json() as Promise<PlantLifecycleEvent>)
+}
+
+function reverseSpecificPlantEvent(plantPk: number, data: ReversePlantEvent): Promise<PlantLifecycleEvent> {
+  return csrfPost(`/plantings/specificplants/${plantPk}/reverse-event/`, data).then((response) => response.json() as Promise<PlantLifecycleEvent>)
+}
+
+function postBulkPlantOutcome(data: BulkPlantOutcome): Promise<Array<PlantLifecycleEvent>> {
+  return csrfPost('/plantings/specificplants/bulk-outcome/', data).then((response) => response.json() as Promise<Array<PlantLifecycleEvent>>)
+}
+
 export {
   ProductionBatchFilters,
   getProductionBatches,
@@ -175,5 +201,10 @@ export {
   addSpecificPlant,
   addSpecificPlantLocation,
   endSpecificPlantLocation,
-  moveSpecificPlant
+  moveSpecificPlant,
+  getSpecificPlant,
+  getSpecificPlantLifecycleEvents,
+  postSpecificPlantOutcome,
+  reverseSpecificPlantEvent,
+  postBulkPlantOutcome
 }

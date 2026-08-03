@@ -7,7 +7,8 @@ import { addProductionBatch, getProductionBatch, getProductionBatches, postProdu
 import { getPlantVarieties } from '../api/plants'
 import { queryKeys } from '../query'
 import { formatDate, formatDateTime } from '../utils'
-import { ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
+import { PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
+import { STATE_LABELS } from './lifecycle'
 
 const STATUS_LABELS: Record<ProductionBatchStatus, string> = {
   planned: 'Planned',
@@ -376,6 +377,38 @@ function BatchSowings({ batch }: { batch: ProductionBatchDetail }) {
   )
 }
 
+function BatchLifecycleStates({ batch }: { batch: ProductionBatchDetail }) {
+  const states = Object.entries(batch.lifecycle_counts).filter(([, count]) => count > 0) as Array<[PlantLifecycleState, number]>
+
+  return (
+    <Card className="mb-3">
+      <Card.Body>
+        <Card.Title>Plant lifecycle states</Card.Title>
+        {states.length === 0 ? (
+          <p className="text-muted mb-0">No individual plants have been observed from this batch.</p>
+        ) : (
+          <Table size="sm">
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Plants</th>
+              </tr>
+            </thead>
+            <tbody>
+              {states.map(([state, count]) => (
+                <tr key={state}>
+                  <td>{STATE_LABELS[state]}</td>
+                  <td>{count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card.Body>
+    </Card>
+  )
+}
+
 function BatchLocations({ batch }: { batch: ProductionBatchDetail }) {
   return (
     <Card className="mb-3">
@@ -537,6 +570,7 @@ function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) 
         <BatchActions batch={batch} />
         <BatchDetailsForm batch={batch} />
         <BatchSowings batch={batch} />
+        <BatchLifecycleStates batch={batch} />
         <BatchLocations batch={batch} />
         <BatchHistory batch={batch} />
       </div>
