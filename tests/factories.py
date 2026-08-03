@@ -10,6 +10,7 @@ from inventory.models import InventoryLocation, InventoryUnit, StockLot, StockMo
 from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
+    PlantLifecycleEvent,
     ProductionBatch,
     ProductionBatchTransition,
     SeedTrayCellPlanting,
@@ -339,6 +340,20 @@ def make_specific_plant(**overrides):
         values['cell_planting'] = make_seed_tray_cell_planting()
     values.update(overrides)
     return SpecificPlant.objects.create(**values)
+
+
+def make_plant_lifecycle_event(**overrides):
+    """Create one lifecycle fact, defaulting to the germination of a plant."""
+    values = dict(overrides)
+    plant = values.pop('plant', None) or make_specific_plant()
+    defaults = {
+        'plant': plant,
+        'batch': plant.cell_planting.seed_tray_planting.batch,
+        'event_type': PlantLifecycleEvent.EventType.GERMINATED,
+        'occurred_at': plant.germinated,
+    }
+    defaults.update(values)
+    return PlantLifecycleEvent.objects.create(**defaults)
 
 
 def make_specific_plant_location(**overrides):
