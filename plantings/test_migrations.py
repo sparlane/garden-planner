@@ -29,8 +29,10 @@ from tests.factories import (
 )
 from workspaces.models import Workspace
 
+from .lifecycle import LifecycleState, plant_lifecycle_summary
 from .models import (
     GardenSquareTransplant,
+    PlantLifecycleEvent,
     ProductionBatch,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
@@ -486,3 +488,142 @@ class ProductionBatchBackfillTests(TransactionTestCase):
         self.assertEqual(batch.repair_state, ProductionBatch.RepairState.NEEDS_REPAIR)
         self.assertIn(str(stray_cell.pk), batch.repair_details)
         self.assertIn(f'seed tray #{tray_sowing.seed_tray_id}', batch.repair_details)
+
+
+class PlantLifecycleBackfillTests(TransactionTestCase):
+    """The lifecycle backfill records only the facts already on file."""
+
+    EMPTY_STATE = [('plantings', '0022_plantlifecycleevent')]
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self._migrate, latest_plantings_state())
+
+    @staticmethod
+    def _migrate(targets):
+        """Move the test database to one explicit migration state."""
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(targets)
+
+    def _run_backfill(self):
+        """Unapply the backfill and replay it over the existing data."""
+        self._migrate(self.EMPTY_STATE)
+        self.assertEqual(PlantLifecycleEvent.objects.count(), 0)
+        self._migrate(latest_plantings_state())
+
+    def test_every_existing_plant_gets_its_recorded_germination(self):
+        """Germination time is already on file, so it becomes a fact."""
+        cell_planting = make_seed_tray_cell_planting()
+        plants = [
+            make_specific_plant(cell_planting=cell_planting),
+            make_specific_plant(cell_planting=cell_planting),
+        ]
+
+        self._run_backfill()
+
+        for plant in plants:
+            with self.subTest(plant=plant.pk):
+                event = PlantLifecycleEvent.objects.get(
+                    plant_id=plant.pk,
+                    event_type='germinated',
+                )
+                self.assertEqual(event.occurred_at, plant.germinated)
+                self.assertEqual(event.workspace_id, plant.workspace_id)
+                self.assertEqual(
+                    event.batch_id,
+                    cell_planting.seed_tray_planting.batch_id,
+                )
+                self.assertIsNone(event.created_by_id)
+
+    def test_planting_out_is_backfilled_from_trusted_location_history(self):
+        """A garden-square interval is the evidence a plant was planted out."""
+        plant = make_specific_plant(
+            germinated=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+            seed_tray_cell=plant.cell_planting.cell,
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=make_garden_square(),
+            started=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+        self._run_backfill()
+
+        events = list(
+            PlantLifecycleEvent.objects.filter(plant_id=plant.pk).order_by('occurred_at', 'pk')
+        )
+        self.assertEqual(
+            [event.event_type for event in events],
+            ['germinated', 'transplanted'],
+        )
+        self.assertEqual(
+            events[1].occurred_at,
+            datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+    def test_no_final_outcome_is_invented_from_removal_or_ended_locations(self):
+        """A closed activity says nothing about what became of a plant."""
+        tray_sowing = make_seed_tray_planting(removed=True)
+        cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=tray_sowing,
+        )
+        plant = make_specific_plant(cell_planting=cell_planting)
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+            seed_tray_cell=cell_planting.cell,
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+        self._run_backfill()
+
+        self.assertEqual(
+            list(
+                PlantLifecycleEvent.objects
+                .filter(plant_id=plant.pk)
+                .values_list('event_type', flat=True)
+            ),
+            ['germinated'],
+        )
+        self.assertEqual(
+            plant_lifecycle_summary(SpecificPlant.objects.get(pk=plant.pk)).state,
+            LifecycleState.GROWING,
+        )
+
+    def test_a_location_predating_germination_cannot_reverse_the_history(self):
+        """Clamping keeps the replayed order sane on inconsistent data."""
+        plant = make_specific_plant(
+            germinated=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=make_garden_square(),
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+        self._run_backfill()
+
+        transplanted = PlantLifecycleEvent.objects.get(
+            plant_id=plant.pk,
+            event_type='transplanted',
+        )
+        self.assertEqual(transplanted.occurred_at, plant.germinated)
