@@ -39,6 +39,18 @@ from .models import (
 )
 
 
+def latest_plantings_state():
+    """Return the newest migration state for the plantings app.
+
+    Backfill tests rewind the schema and must restore it completely, so the
+    target is resolved from the migration graph instead of a pinned name that
+    every later migration would silently invalidate.
+    """
+    executor = MigrationExecutor(connection)
+    executor.loader.build_graph()
+    return list(executor.loader.graph.leaf_nodes('plantings'))
+
+
 class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instance-attributes
     """
     Tests for deployment-time planting integrity audits.
@@ -332,7 +344,6 @@ class LocationChronologyAuditHelperTests(SimpleTestCase):
 class ProductionBatchBackfillTests(TransactionTestCase):
     """The legacy backfill gives every historical sowing one stable batch."""
 
-    MIGRATED_STATE = [('plantings', '0021_require_planting_batch')]
     UNLINKED_STATE = [('plantings', '0019_productionbatch')]
 
     def _post_teardown(self):
@@ -346,7 +357,7 @@ class ProductionBatchBackfillTests(TransactionTestCase):
 
     def setUp(self):
         super().setUp()
-        self.addCleanup(self._migrate, self.MIGRATED_STATE)
+        self.addCleanup(self._migrate, latest_plantings_state())
 
     @staticmethod
     def _migrate(targets):
@@ -372,7 +383,7 @@ class ProductionBatchBackfillTests(TransactionTestCase):
         """Strip the batch links, then replay the backfill over them."""
         self._migrate(self.UNLINKED_STATE)
         self._unlink_batches()
-        self._migrate(self.MIGRATED_STATE)
+        self._migrate(latest_plantings_state())
 
     def test_every_historical_sowing_gets_one_stable_legacy_batch(self):
         """Each sowing keeps its own deterministic code, dates, and identity."""
