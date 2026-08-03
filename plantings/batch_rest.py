@@ -20,6 +20,8 @@ from .batches import (
     BatchRequest,
     SOWING_MODELS,
     activate_batch,
+    batch_final_outcome_count,
+    batch_lifecycle_counts,
     batch_plants_with_active_location,
     batch_seeds_sown,
     batch_specific_plants,
@@ -257,9 +259,9 @@ class ProductionBatchSerializer(
         """Return the plants currently occupying a tracked location."""
         return batch_plants_with_active_location(batch).count()
 
-    def get_final_outcomes(self, batch):  # pylint: disable=unused-argument
-        """Return recorded final dispositions, which task 41 will supply."""
-        return 0
+    def get_final_outcomes(self, batch):
+        """Return how many plants have a recorded final disposition."""
+        return batch_final_outcome_count(batch)
 
     def get_unresolved_plants(self, batch):
         """Return the plants blocking completion of this batch."""
@@ -325,18 +327,24 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
 
     sowings = serializers.SerializerMethodField()
     current_locations = serializers.SerializerMethodField()
+    lifecycle_counts = serializers.SerializerMethodField()
     transitions = ProductionBatchTransitionSerializer(many=True, read_only=True)
 
     class Meta(ProductionBatchSerializer.Meta):
         fields = ProductionBatchSerializer.Meta.fields + [
             'sowings',
             'current_locations',
+            'lifecycle_counts',
             'transitions',
         ]
 
     def get_sowings(self, batch):
         """Return each attached sowing with its lot, cells, and germinations."""
         return BatchSowingSerializer(_batch_sowings(batch), many=True).data
+
+    def get_lifecycle_counts(self, batch):
+        """Return how many of this batch's plants sit in each derived state."""
+        return batch_lifecycle_counts(batch)
 
     def get_current_locations(self, batch):
         """Return where this batch's individual plants are living now."""

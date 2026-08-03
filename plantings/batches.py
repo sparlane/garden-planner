@@ -9,6 +9,7 @@ from django.db import transaction
 from django.db.models import Exists, OuterRef, Sum
 from django.utils import timezone
 
+from .lifecycle import LifecycleState, is_final, lifecycle_summaries
 from .models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -100,14 +101,41 @@ def batch_plants_with_active_location(batch):
     return batch_specific_plants(batch).filter(Exists(open_location))
 
 
-def batch_unresolved_plant_ids(batch):
-    """Return plants without a final disposition, newest task 41 pending.
+def _batch_lifecycle_summaries(batch):
+    """Return the derived lifecycle summary of every plant in this batch."""
+    return lifecycle_summaries(
+        batch_specific_plants(batch).order_by('pk').values_list('pk', flat=True),
+    )
 
-    Until lifecycle outcomes exist, an observed plant is always unresolved:
-    an ended location records where a plant stopped being, not what became
-    of it.
+
+def batch_unresolved_plant_ids(batch):
+    """Return the plants whose lifecycle has recorded no final outcome.
+
+    An ended location records where a plant stopped being, not what became of
+    it, so resolution comes from the lifecycle history alone.
     """
-    return list(batch_specific_plants(batch).order_by('pk').values_list('pk', flat=True))
+    return sorted(
+        plant_id
+        for plant_id, summary in _batch_lifecycle_summaries(batch).items()
+        if not is_final(summary.state)
+    )
+
+
+def batch_final_outcome_count(batch):
+    """Return how many of this batch's plants have a recorded final outcome."""
+    return sum(
+        1
+        for summary in _batch_lifecycle_summaries(batch).values()
+        if is_final(summary.state)
+    )
+
+
+def batch_lifecycle_counts(batch):
+    """Return how many of this batch's plants sit in each derived state."""
+    counts = {state.value: 0 for state in LifecycleState}
+    for summary in _batch_lifecycle_summaries(batch).values():
+        counts[summary.state] += 1
+    return counts
 
 
 def _record_transition(batch, previous_status, user, reason=''):
