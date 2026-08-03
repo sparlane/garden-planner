@@ -15,7 +15,7 @@ import { GardenSquareDirectPlantingCreate, GardenSquarePlanting, SeedTrayPlantin
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
-import { formatDate, formatDateRange } from './utils'
+import { formatDate, formatDateRange, formatQuantity } from './utils'
 import {
   getPlantingSeedTrayCurrent,
   getPlantingGardenSquaresCurrent,
@@ -47,9 +47,9 @@ function packetVarietyPk(packetPk: number | undefined, packets: Array<SeedPacket
 function packetBalanceLabel(packet: SeedPacket): string {
   const inventory = packet.inventory
   if (!inventory || inventory.remaining_quantity === null) {
-    return `quantity unknown; ${inventory?.sown_quantity ?? '0'} sown`
+    return `quantity unknown; ${formatQuantity(inventory?.sown_quantity, '0')} sown`
   }
-  return `${inventory.remaining_quantity} ${inventory.base_unit} remaining (${inventory.quantity_certainty})`
+  return `${formatQuantity(inventory.remaining_quantity)} ${inventory.base_unit} remaining (${inventory.quantity_certainty})`
 }
 
 interface SeedTrayCellGridProps {
