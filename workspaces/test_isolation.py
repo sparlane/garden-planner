@@ -10,6 +10,7 @@ from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
+    PlantLifecycleEvent,
     ProductionBatch,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
@@ -156,6 +157,13 @@ class ResourceIsolationTests(APITestCase):
             location_type=SpecificPlantLocation.SEED_TRAY_CELL,
             seed_tray_cell=self.cell,
         )
+        self.lifecycle_event = PlantLifecycleEvent.objects.create(
+            workspace=self.other,
+            plant=self.specific_plant,
+            batch=self.batch,
+            event_type=PlantLifecycleEvent.EventType.GERMINATED,
+            occurred_at=self.specific_plant.germinated,
+        )
         self.transplant = GardenSquareTransplant.objects.create(
             workspace=self.other,
             original_planting=self.tray_sowing,
@@ -298,6 +306,7 @@ class ResourceIsolationTests(APITestCase):
             ('/plantings/transplantedgardensquare/', self.transplant.pk),
             ('/plantings/specificplants/', self.specific_plant.pk),
             ('/plantings/specificplantlocations/', self.location.pk),
+            ('/plantings/lifecycle-events/', self.lifecycle_event.pk),
         )
         for url, record_pk in resources:
             with self.subTest(url=url):
@@ -311,6 +320,7 @@ class ResourceIsolationTests(APITestCase):
             f'/plantings/seedtray-data/{self.tray.pk}/plantings/',
             f'/plantings/seedtray-data/{self.tray.pk}/specificplants/',
             f'/plantings/specificplants/{self.specific_plant.pk}/locations/',
+            f'/plantings/specificplants/{self.specific_plant.pk}/lifecycle-events/',
         )
         for url in nested_urls:
             with self.subTest(url=url):
@@ -404,6 +414,12 @@ class ResourceIsolationTests(APITestCase):
             (
                 f'/plantings/specificplantlocations/{self.location.pk}/end/',
                 {},
+            ),
+            (f'/plantings/specificplants/{self.specific_plant.pk}/ready/', {}),
+            (f'/plantings/specificplants/{self.specific_plant.pk}/fail/', {}),
+            (
+                f'/plantings/specificplants/{self.specific_plant.pk}/reverse-event/',
+                {'event': self.lifecycle_event.pk, 'reason': 'Wrong plant.'},
             ),
         )
         for url, payload in requests:
