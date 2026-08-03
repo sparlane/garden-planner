@@ -23,6 +23,8 @@ from workspaces.models import Workspace, get_current_workspace
 from .batches import (
     BatchRequest,
     activate_batch,
+    batch_final_outcome_count,
+    batch_lifecycle_counts,
     batch_plants_with_active_location,
     batch_seeds_sown,
     batch_unresolved_plant_ids,
@@ -33,6 +35,12 @@ from .batches import (
     finalize_batch_output,
     reopen_batch,
     validate_batch_for_sowing,
+)
+from .lifecycle import (
+    EventType,
+    OutcomeRequest,
+    record_lifecycle_event,
+    reverse_lifecycle_event,
 )
 from .models import ProductionBatch
 
@@ -330,6 +338,69 @@ class BatchLifecycleTests(TestCase):
             self.packet,
             self.workspace,
         )
+
+
+class BatchPlantResolutionTests(TestCase):
+    """Batch completion follows the plants' recorded lifecycle outcomes."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='resolver')
+        self.packet = make_seed_packet()
+
+    def _finalized_batch_with_plants(self, count):
+        """Return an output-finalized batch and the plants it raised."""
+        batch = make_batch_for_packet(self.packet)
+        sowing = make_seed_tray_planting(
+            seeds_used=self.packet,
+            batch=batch,
+            removed=True,
+        )
+        cell_planting = make_seed_tray_cell_planting(seed_tray_planting=sowing)
+        plants = [
+            make_specific_plant(cell_planting=cell_planting)
+            for _ in range(count)
+        ]
+        finalize_batch_output(batch, self.user)
+        return batch, plants
+
+    def test_recorded_outcomes_resolve_plants_and_unblock_completion(self):
+        """Every recorded final outcome clears one plant from the blockers."""
+        batch, (failed, retained) = self._finalized_batch_with_plants(2)
+
+        record_lifecycle_event(failed, self.user, OutcomeRequest(EventType.FAILED))
+        self.assertEqual(batch_unresolved_plant_ids(batch), [retained.pk])
+        self.assertEqual(batch_final_outcome_count(batch), 1)
+
+        record_lifecycle_event(retained, self.user, OutcomeRequest(EventType.RETAINED))
+        self.assertEqual(batch_unresolved_plant_ids(batch), [])
+        self.assertEqual(batch_final_outcome_count(batch), 2)
+        self.assertEqual(
+            batch_lifecycle_counts(batch),
+            {
+                'growing': 0,
+                'available': 0,
+                'retained': 1,
+                'donated': 0,
+                'failed': 1,
+                'culled': 0,
+                'harvested': 0,
+            },
+        )
+
+        completed = complete_batch(batch, self.user)
+        self.assertEqual(completed.status, ProductionBatch.Status.COMPLETED)
+
+    def test_a_reversed_outcome_blocks_completion_again(self):
+        """Correcting a mistaken failure returns the plant to the blockers."""
+        batch, (plant,) = self._finalized_batch_with_plants(1)
+
+        failure = record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.FAILED))
+        self.assertEqual(batch_unresolved_plant_ids(batch), [])
+
+        reverse_lifecycle_event(failure, self.user, 'Recorded against the wrong plant.')
+        self.assertEqual(batch_unresolved_plant_ids(batch), [plant.pk])
+        with self.assertRaisesMessage(ValidationError, '1 observed plants'):
+            complete_batch(batch, self.user)
 
 
 @skipUnlessDBFeature('has_select_for_update')
