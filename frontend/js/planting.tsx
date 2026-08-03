@@ -33,7 +33,16 @@ import { getSeedPackets, getSeeds } from './api/seeds'
 import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from './api/seedtrays'
 import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
+import { BatchChooser, isChoiceComplete, type BatchChoice } from './plantings/batch_chooser'
 import { queryKeys } from './query'
+
+function packetVarietyPk(packetPk: number | undefined, packets: Array<SeedPacket>, seeds: Array<Seed>): number | undefined {
+  if (packetPk === undefined) {
+    return undefined
+  }
+  const packet = packets.find((candidate) => candidate.pk === packetPk)
+  return seeds.find((candidate) => candidate.pk === packet?.seeds)?.plant_variety
+}
 
 function packetBalanceLabel(packet: SeedPacket): string {
   const inventory = packet.inventory
@@ -122,7 +131,9 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   const [location, setLocation] = React.useState<string>()
   const [notes, setNotes] = React.useState<string>()
   const [cellQuantities, setCellQuantities] = React.useState<Record<number, number>>({})
+  const [batchChoice, setBatchChoice] = React.useState<BatchChoice>({})
   const [error, setError] = React.useState<string>()
+  const packetVariety = packetVarietyPk(seedPacket, seedPackets, seeds)
   const { data: seedTrayCells = [] } = useQuery({
     queryKey: queryKeys.seedTrays.cells(seedTray ?? 0),
     queryFn: ({ signal }) => getSeedTrayCells(seedTray as number, signal),
@@ -132,6 +143,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   function updateSeedPacket(event: React.ChangeEvent<HTMLSelectElement>) {
     const { value } = event.target
 
+    setBatchChoice({})
     if (value === '' || value === undefined || value === null) {
       setSeedPacket(undefined)
       return
@@ -171,6 +183,10 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     if (seedPacket === undefined) {
       return
     }
+    if (!isChoiceComplete(batchChoice)) {
+      setError('Choose an existing batch or name a new one')
+      return
+    }
 
     const cellPlantings = Object.entries(cellQuantities).map(([cellPk, qty]) => ({
       cell: Number(cellPk),
@@ -188,6 +204,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
 
     const data: SeedTrayPlantingCreate = {
       seeds_used: seedPacket,
+      ...batchChoice,
       quantity,
       location,
       seed_tray: seedTray,
@@ -217,7 +234,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     <>
       {error && (
         <tr>
-          <td colSpan={7} style={{ padding: '8px', backgroundColor: '#f8d7da', color: '#721c24', border: '1px solid #f5c6cb' }}>
+          <td colSpan={8} style={{ padding: '8px', backgroundColor: '#f8d7da', color: '#721c24', border: '1px solid #f5c6cb' }}>
             <strong>Error:</strong> {error}
           </td>
         </tr>
@@ -225,6 +242,9 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
       <tr>
         <td>
           <select onChange={updateSeedPacket}>{packetOptions}</select>
+        </td>
+        <td>
+          <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
         </td>
         <td>
           <input type="number" defaultValue={quantity} onChange={updateQuantity} />
@@ -246,7 +266,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
       </tr>
       {seedTray !== undefined && seedTrayCells.length > 0 && (
         <tr>
-          <td colSpan={7} style={{ padding: '16px' }}>
+          <td colSpan={8} style={{ padding: '16px' }}>
             <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>Select cells and quantities:</div>
             <SeedTrayCellGrid cells={seedTrayCells} cellQuantities={cellQuantities} quantity={quantity} onUpdateCellQuantity={updateCellQuantity} />
           </td>
@@ -279,6 +299,9 @@ function SeedTrayPlantingRow({ planting, seedPackets, completePlanting, correctP
     <tr>
       <td>
         {planting.plant} - {planting.variety}
+      </td>
+      <td>
+        <Link to={`/plantings/batches/${planting.batch}`}>{planting.batch_code}</Link>
       </td>
       <td>
         <span title="Number of seeds or seed clusters sown">Sown: {planting.quantity}</span> (
@@ -410,6 +433,7 @@ function SeedTrayPlantingTable() {
               +
             </Button>
           </td>
+          <td>Batch</td>
           <td>Seeds / clusters sown</td>
           <td>Date</td>
           <td>Seed Tray</td>
@@ -434,123 +458,102 @@ interface NewGardenSquarePlantingRowProps {
   createPlanting: (data: GardenSquareDirectPlantingCreate) => Promise<void>
 }
 
-interface NewGardenSquarePlantingRowState {
-  seedPacket?: number
-  quantity: number
-  location?: number
-  notes?: string
-}
+function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, gardenBeds, gardenSquares, done, createPlanting }: NewGardenSquarePlantingRowProps) {
+  const [seedPacket, setSeedPacket] = React.useState<number>()
+  const [quantity, setQuantity] = React.useState(1)
+  const [location, setLocation] = React.useState<number>()
+  const [notes, setNotes] = React.useState<string>()
+  const [batchChoice, setBatchChoice] = React.useState<BatchChoice>({})
+  const [error, setError] = React.useState<string>()
+  const packetVariety = packetVarietyPk(seedPacket, seedPackets, seeds)
 
-class NewGardenSquarePlantingRow extends React.Component<NewGardenSquarePlantingRowProps, NewGardenSquarePlantingRowState> {
-  constructor(props: NewGardenSquarePlantingRowProps) {
-    super(props)
-
-    this.state = {
-      seedPacket: undefined,
-      quantity: 1,
-      location: undefined,
-      notes: undefined
-    }
-
-    this.updateSeedPacket = this.updateSeedPacket.bind(this)
-    this.updateQuantity = this.updateQuantity.bind(this)
-    this.updateLocation = this.updateLocation.bind(this)
-    this.updateNotes = this.updateNotes.bind(this)
-
-    this.add = this.add.bind(this)
-  }
-
-  updateSeedPacket(selectedSeedPacket: SelectOption | null) {
+  function updateSeedPacket(selectedSeedPacket: SelectOption | null) {
     const value = selectedSeedPacket?.value
-    if (value === undefined || value === null) {
-      this.setState({ seedPacket: undefined })
-      return
-    }
-    this.setState({ seedPacket: Number(value) })
+    setBatchChoice({})
+    setSeedPacket(value === undefined || value === null ? undefined : Number(value))
   }
 
-  updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
+  function updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
     const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ quantity: 0 })
-      return
-    }
-    this.setState({ quantity: Number(value) })
+    setQuantity(value === '' ? 0 : Number(value))
   }
 
-  updateLocation(selectedLocation: SelectOption | null) {
+  function updateLocation(selectedLocation: SelectOption | null) {
     const value = selectedLocation?.value
-    if (value === undefined || value === null) {
-      this.setState({ location: undefined })
-      return
-    }
-    this.setState({ location: Number(value) })
+    setLocation(value === undefined || value === null ? undefined : Number(value))
   }
 
-  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
-    const { value } = event.target
-
-    this.setState({ notes: value })
-  }
-
-  async add() {
-    if (this.state.seedPacket === undefined || this.state.location === undefined) {
+  async function add() {
+    if (seedPacket === undefined || location === undefined) {
       return
     }
+    if (!isChoiceComplete(batchChoice)) {
+      setError('Choose an existing batch or name a new one')
+      return
+    }
+    setError(undefined)
     const data: GardenSquareDirectPlantingCreate = {
-      seeds_used: this.state.seedPacket,
-      quantity: this.state.quantity,
-      location: this.state.location,
-      notes: this.state.notes
+      seeds_used: seedPacket,
+      ...batchChoice,
+      quantity,
+      location,
+      notes
     }
-    await this.props.createPlanting(data)
-    this.props.done()
+    await createPlanting(data)
+    done()
   }
 
-  render() {
-    const seedPackets = []
-    for (const sp in this.props.seedPackets) {
-      const seedPacketData = this.props.seedPackets[sp]
-      const seeds = this.props.seeds.find((s) => s.pk === seedPacketData.seeds)
-      const supplier = this.props.suppliers.find((s) => s.pk === seeds?.supplier)
-      const variety = this.props.varieties.find((v) => v.pk === seeds?.plant_variety)
-      seedPackets.push({
-        value: seedPacketData.pk,
-        label: `${variety?.name} from ${supplier?.name} (Sow by: ${seedPacketData.sow_by || 'unknown'}; ${packetBalanceLabel(seedPacketData)})`
-      })
+  const packetOptions = seedPackets.map((seedPacketData) => {
+    const seedData = seeds.find((candidate) => candidate.pk === seedPacketData.seeds)
+    const supplier = suppliers.find((candidate) => candidate.pk === seedData?.supplier)
+    const variety = varieties.find((candidate) => candidate.pk === seedData?.plant_variety)
+    return {
+      value: seedPacketData.pk,
+      label: `${variety?.name} from ${supplier?.name} (Sow by: ${seedPacketData.sow_by || 'unknown'}; ${packetBalanceLabel(seedPacketData)})`
     }
-    const locations = []
-    for (const b in this.props.gardenBeds) {
-      const gardenBedData = this.props.gardenBeds[b]
-      const bedSquares = this.props.gardenSquares.filter((s) => s.bed === gardenBedData.pk)
-      for (const l in bedSquares) {
-        const gardenSquareData = bedSquares[l]
-        locations.push({ value: gardenSquareData.pk, label: `${gardenBedData.name} - ${gardenSquareData.name}` })
-      }
-    }
-    return (
+  })
+  const locations = gardenBeds.flatMap((gardenBedData) =>
+    gardenSquares
+      .filter((square) => square.bed === gardenBedData.pk)
+      .map((gardenSquareData) => ({
+        value: gardenSquareData.pk,
+        label: `${gardenBedData.name} - ${gardenSquareData.name}`
+      }))
+  )
+
+  return (
+    <>
+      {error && (
+        <tr>
+          <td colSpan={8} style={{ padding: '8px', backgroundColor: '#f8d7da', color: '#721c24', border: '1px solid #f5c6cb' }}>
+            <strong>Error:</strong> {error}
+          </td>
+        </tr>
+      )}
       <tr>
         <td>
-          <Select onChange={this.updateSeedPacket} options={seedPackets} value={seedPackets.find((o) => o.value === this.state.seedPacket)} />
+          <Select onChange={updateSeedPacket} options={packetOptions} value={packetOptions.find((option) => option.value === seedPacket)} />
         </td>
         <td>
-          <input type="number" defaultValue={this.state.quantity} onChange={this.updateQuantity} />
+          <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
+        </td>
+        <td>
+          <input type="number" defaultValue={quantity} onChange={updateQuantity} />
         </td>
         <td></td>
         <td>
-          <Select onChange={this.updateLocation} options={locations} value={locations.find((o) => o.value === this.state.location)} />
+          <Select onChange={updateLocation} options={locations} value={locations.find((option) => option.value === location)} />
         </td>
         <td>
-          <textarea onChange={this.updateNotes} />
+          <textarea onChange={(event) => setNotes(event.target.value)} />
         </td>
         <td>
-          <Button onClick={this.add}>Add</Button>
-          <Button onClick={this.props.done}>Cancel</Button>
+          <Button onClick={add}>Add</Button>
+          <Button onClick={done}>Cancel</Button>
         </td>
       </tr>
-    )
-  }
+    </>
+  )
 }
 
 interface GardenSquarePlantingRowProps {
@@ -578,6 +581,9 @@ function GardenSquarePlantingRow({ planting, seedPackets, completePlanting, corr
     <tr>
       <td>
         {planting.plant} - {planting.variety}
+      </td>
+      <td>
+        <Link to={`/plantings/batches/${planting.batch}`}>{planting.batch_code}</Link>
       </td>
       <td>{planting.quantity}</td>
       <td>{planted}</td>
@@ -779,6 +785,7 @@ function GardenSquarePlantingTable() {
               +
             </Button>
           </td>
+          <td>Batch</td>
           <td>Quantity</td>
           <td>Date</td>
           <td>Location</td>
@@ -787,6 +794,7 @@ function GardenSquarePlantingTable() {
           <td>Notes</td>
         </tr>
         <tr key="filters">
+          <td></td>
           <td></td>
           <td></td>
           <td></td>
