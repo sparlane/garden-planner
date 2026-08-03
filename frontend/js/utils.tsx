@@ -224,4 +224,13 @@ function formatDateRange(start: string | null | undefined, end: string | null | 
   return `${formatDate(start ?? '')} - ${formatDate(end ?? '')}`
 }
 
-export { ApiError, csrfDelete, csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange }
+// Quantities arrive as zero-padded decimal strings ("24.000000000"). Trim the padding without
+// parsing to a number, which would reintroduce float artifacts the decimal column avoids.
+function formatQuantity(value: string | number | null | undefined, fallback = ''): string {
+  if (value === null || value === undefined || value === '') return fallback
+  const s = String(value)
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return s
+  return s.includes('.') ? s.replace(/\.?0+$/, '') : s
+}
+
+export { ApiError, csrfDelete, csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange, formatQuantity }

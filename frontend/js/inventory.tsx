@@ -23,6 +23,7 @@ import {
   UnitCode,
   UnitDimension
 } from './types/inventory'
+import { formatQuantity } from './utils'
 
 const CATEGORY_LABELS: Record<InventoryCategory, string> = {
   seed: 'Seed',
@@ -310,7 +311,7 @@ function ConversionPanel({ item }: ConversionPanelProps) {
               <tr key={conversion.pk}>
                 <td>{conversion.label}</td>
                 <td>
-                  {conversion.multiplier} {conversion.base_unit}
+                  {formatQuantity(conversion.multiplier)} {conversion.base_unit}
                 </td>
                 <td>{conversion.active ? 'Active' : 'Inactive'}</td>
                 <td>

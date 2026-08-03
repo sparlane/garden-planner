@@ -23,6 +23,7 @@ import {
 } from './api/seeds'
 import { addSupplier, getSuppliers } from './api/supplies'
 import { queryKeys } from './query'
+import { formatQuantity } from './utils'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -509,7 +510,7 @@ function ReceiptDraftRow({ draft, label, onPost, onCancel }: ReceiptDraftRowProp
       <td>{draft.received_date}</td>
       <td>{draft.sow_by || '—'}</td>
       <td>
-        {draft.quantity_certainty === 'unknown' ? 'Unknown' : `${draft.quantity} ${draft.base_unit}`} ({draft.quantity_certainty})
+        {draft.quantity_certainty === 'unknown' ? 'Unknown' : `${formatQuantity(draft.quantity)} ${draft.base_unit}`} ({draft.quantity_certainty})
       </td>
       <td>{draft.line_price}</td>
       <td colSpan={2}>Draft — confirm these normalized receipt details before posting.</td>
@@ -550,17 +551,17 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
       <td>{packet.purchase_date || '—'}</td>
       <td>{packet.sow_by || '—'}</td>
       <td>
-        {inventory?.received_quantity ?? 'Unknown'} {inventory?.base_unit} ({inventory?.quantity_certainty ?? 'unlinked'})
+        {formatQuantity(inventory?.received_quantity, 'Unknown')} {inventory?.base_unit} ({inventory?.quantity_certainty ?? 'unlinked'})
       </td>
       <td>
         {inventory?.acquisition_total ?? 'Unknown'} {inventory?.currency_code}
         {inventory?.effective_base_unit_cost && ` (${inventory.effective_base_unit_cost}/${inventory.base_unit})`}
       </td>
       <td>
-        {inventory?.sown_quantity ?? '0'} sown; {inventory?.adjustment_quantity ?? '0'} adjusted
+        {formatQuantity(inventory?.sown_quantity, '0')} sown; {formatQuantity(inventory?.adjustment_quantity, '0')} adjusted
       </td>
       <td>
-        {inventory?.remaining_quantity ?? 'Unknown'} {inventory?.base_unit}
+        {formatQuantity(inventory?.remaining_quantity, 'Unknown')} {inventory?.base_unit}
         {inventory?.warnings.map((warning) => (
           <Alert key={warning} variant="warning" className="p-1 my-1">
             {warning}
