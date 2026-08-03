@@ -15,6 +15,8 @@ from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
+from .lifecycle import record_germination_event, record_transplant_event
+from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 from .sowing import correct_sowing_consumption, post_sowing_consumption
 
@@ -433,20 +435,33 @@ class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.M
         return data
 
 
-class SpecificPlantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
-    Serializer for SpecificPlant — includes nested location history.
-    On create, automatically records the initial seed tray cell location.
+    Serializer for SpecificPlant — includes nested location history and the
+    lifecycle state derived from its recorded facts.
+    On create, automatically records the initial seed tray cell location
+    and the germination that started the plant's lifecycle history.
     """
     locations = SpecificPlantLocationSerializer(many=True, read_only=True)
     batch = serializers.IntegerField(
         source='cell_planting.seed_tray_planting.batch_id',
         read_only=True,
     )
+    lifecycle_state = serializers.SerializerMethodField()
+    sellable = serializers.SerializerMethodField()
+    final_outcome = serializers.SerializerMethodField()
+    final_outcome_at = serializers.SerializerMethodField()
 
     class Meta:
         model = SpecificPlant
-        fields = ['pk', 'cell_planting', 'batch', 'germinated', 'notes', 'locations']
+        fields = [
+            'pk',
+            'cell_planting',
+            'batch',
+            'germinated',
+            'notes',
+            'locations',
+        ] + PlantLifecycleSerializerMixin.LIFECYCLE_FIELDS
 
     workspace_field_lookups = {
         'cell_planting': 'seed_tray_planting__workspace',
@@ -481,7 +496,17 @@ class SpecificPlantSerializer(CurrentWorkspaceSerializerMixin, serializers.Model
                 seed_tray_cell=plant.cell_planting.cell,
                 started=plant.germinated,
             )
+            record_germination_event(plant, self.context['request'].user)
         return plant
+
+
+class SpecificPlantDetailSerializer(SpecificPlantSerializer):
+    """Add the chronological lifecycle history one plant screen needs."""
+
+    lifecycle_events = PlantLifecycleEventSerializer(many=True, read_only=True)
+
+    class Meta(SpecificPlantSerializer.Meta):
+        fields = SpecificPlantSerializer.Meta.fields + ['lifecycle_events']
 
 
 class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -609,18 +634,27 @@ def is_active_location_integrity_error(exc):
     return names_constraint or names_sqlite_column
 
 
-def move_specific_plant(plant, move_data):
+def move_specific_plant(plant, move_data, user=None):
     """
     Move a plant by ending its active location and creating the new one atomically.
+
+    A move into a garden square is also the moment the plant is planted out, so
+    the matching lifecycle fact is appended in the same transaction.
     """
     started = move_data.get('started') or timezone.now()
     move_payload = {**move_data, 'started': started}
+    planted_out = move_payload.get('location_type') == SpecificPlantLocation.GARDEN_SQUARE
     with transaction.atomic():
         plant = get_object_or_404(
             SpecificPlant.objects.select_for_update(),
             pk=plant.pk,
             workspace=plant.workspace,
         )
+        if planted_out:
+            try:
+                record_transplant_event(plant, user, started)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(_model_errors(exc)) from exc
         active_location = get_single_active_location_for_update(plant)
 
         if active_location:
@@ -821,12 +855,18 @@ class GardenSquareTransplantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadO
     serializer_class = GardenSquareTransplantSerializer
 
 
-class SpecificPlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantViewSet(PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlant
     """
-    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square')
+    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'lifecycle_events')
     serializer_class = SpecificPlantSerializer
+
+    def get_serializer_class(self):
+        """Use the richer serializer for a single plant."""
+        if self.action == 'retrieve':
+            return SpecificPlantDetailSerializer
+        return SpecificPlantSerializer
 
     @action(detail=True, methods=['post'])
     def move(self, request, pk=None):  # pylint: disable=unused-argument
@@ -840,6 +880,7 @@ class SpecificPlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
         location = move_specific_plant(
             plant,
             dict(serializer.validated_data),
+            user=request.user,
         )
         return Response(SpecificPlantLocationSerializer(location).data, status=status.HTTP_201_CREATED)
 
@@ -848,7 +889,7 @@ class SpecificPlantBySeedTrayViewSet(CurrentWorkspaceViewSetMixin, viewsets.Read
     """
     ViewSet of SpecificPlant filtered by SeedTray
     """
-    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square')
+    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'lifecycle_events')
     serializer_class = SpecificPlantSerializer
     _parent_seed_tray = None
 
@@ -941,3 +982,4 @@ router.register(r'specificplantlocations', SpecificPlantLocationViewSet)
 router.register(r'seedtray-data/(?P<seed_tray_pk>[^/.]+)/plantings', SeedTrayPlantingViewSeedTraySet, basename='seedtray-plantings')
 router.register(r'seedtray-data/(?P<seed_tray_pk>[^/.]+)/specificplants', SpecificPlantBySeedTrayViewSet, basename='seedtray-specificplants')
 router.register(r'specificplants/(?P<specific_plant_pk>[^/.]+)/locations', SpecificPlantLocationByPlantViewSet, basename='specificplant-locations')
+register_lifecycle_routes(router)
