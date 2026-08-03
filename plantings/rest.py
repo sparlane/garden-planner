@@ -14,7 +14,7 @@ from seedtrays.models import SeedTray
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
-from .batch_rest import register_batch_routes
+from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 from .sowing import correct_sowing_consumption, post_sowing_consumption
 
@@ -61,30 +61,16 @@ class PostedSowingSerializerMixin:
             raise serializers.ValidationError(_model_errors(exc)) from exc
 
 
-class BatchedSowingSerializerMixin:  # pylint: disable=too-few-public-methods
-    """Keep a sowing attached to exactly one production batch for life."""
-
-    def _validate_batch(self, attrs):
-        """Reject moving an existing sowing to a different batch."""
-        if self.instance is not None and 'batch' in attrs:
-            if attrs['batch'].pk != self.instance.batch_id:
-                raise serializers.ValidationError({
-                    'batch': 'Cannot move a sowing between batches.',
-                })
-
-    def validate(self, attrs):
-        """Apply the batch guard before the remaining sowing rules."""
-        self._validate_batch(attrs)
-        return super().validate(attrs)
-
-
 class GardenRowDirectSowPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenRowDirectSowPlanting
     """
+    new_batch = InlineBatchSerializer(required=False, write_only=True)
+
     class Meta:
         model = GardenRowDirectSowPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'batch', 'quantity', 'location', 'removed', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'batch', 'new_batch', 'quantity', 'location', 'removed', 'notes']
+        extra_kwargs = {'batch': {'required': False}}
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
@@ -97,9 +83,12 @@ class GardenSquareDirectSowSerializer(BatchedSowingSerializerMixin, PostedSowing
     """
     Serializer for GardenSquareDirectSowPlanting
     """
+    new_batch = InlineBatchSerializer(required=False, write_only=True)
+
     class Meta:
         model = GardenSquareDirectSowPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'batch', 'quantity', 'location', 'removed', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'batch', 'new_batch', 'quantity', 'location', 'removed', 'notes']
+        extra_kwargs = {'batch': {'required': False}}
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
@@ -133,13 +122,15 @@ class SeedTrayPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSeria
     Serializer for SeedTrayPlanting
     """
     cell_plantings = SeedTrayCellPlantingNestedSerializer(many=True, required=False)
+    new_batch = InlineBatchSerializer(required=False, write_only=True)
 
     class Meta:
         model = SeedTrayPlanting
         fields = [
-            'pk', 'planted', 'seeds_used', 'batch', 'quantity',
+            'pk', 'planted', 'seeds_used', 'batch', 'new_batch', 'quantity',
             'seed_tray', 'location', 'removed', 'notes', 'cell_plantings',
         ]
+        extra_kwargs = {'batch': {'required': False}}
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
@@ -293,6 +284,7 @@ class SeedTrayPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSeria
     def create(self, validated_data):
         cell_data = validated_data.pop('cell_plantings', [])
         with transaction.atomic():
+            self._resolve_batch(validated_data)
             planting = SeedTrayPlanting.objects.create(**validated_data)
             if cell_data:
                 self._save_cell_plantings(planting, cell_data)
@@ -447,10 +439,14 @@ class SpecificPlantSerializer(CurrentWorkspaceSerializerMixin, serializers.Model
     On create, automatically records the initial seed tray cell location.
     """
     locations = SpecificPlantLocationSerializer(many=True, read_only=True)
+    batch = serializers.IntegerField(
+        source='cell_planting.seed_tray_planting.batch_id',
+        read_only=True,
+    )
 
     class Meta:
         model = SpecificPlant
-        fields = ['pk', 'cell_planting', 'germinated', 'notes', 'locations']
+        fields = ['pk', 'cell_planting', 'batch', 'germinated', 'notes', 'locations']
 
     workspace_field_lookups = {
         'cell_planting': 'seed_tray_planting__workspace',
@@ -492,9 +488,14 @@ class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializ
     """
     Serializer for GardenSquareTransplant
     """
+    batch = serializers.IntegerField(
+        source='original_planting.batch_id',
+        read_only=True,
+    )
+
     class Meta:
         model = GardenSquareTransplant
-        fields = ['pk', 'transplanted', 'original_planting', 'quantity', 'location', 'removed', 'notes']
+        fields = ['pk', 'transplanted', 'original_planting', 'batch', 'quantity', 'location', 'removed', 'notes']
 
     workspace_field_lookups = {
         'original_planting': 'workspace',

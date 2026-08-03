@@ -109,6 +109,10 @@ def correct_sowing_consumption(
             'planting': 'Historical sowings without stock postings cannot be corrected.',
         })
     packet = ensure_packet_inventory_identity(seeds_used or planting.seeds_used)
+    if packet.seeds.plant_variety_id != planting.batch.variety_id:
+        raise ValidationError({
+            'seeds_used': 'The replacement packet grows a different variety from the batch.',
+        })
     corrected_quantity = quantity if quantity is not None else planting.quantity
     if corrected_quantity <= 0:
         raise ValidationError({'quantity': 'Quantity must be greater than zero.'})
