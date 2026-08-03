@@ -1,0 +1,520 @@
+"""Tests for the append-only plant lifecycle services."""
+# pylint: disable=duplicate-code
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.db import close_old_connections
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
+from django.utils import timezone
+
+from tests.factories import (
+    make_garden_square,
+    make_plant_lifecycle_event,
+    make_specific_plant,
+    make_specific_plant_location,
+)
+from workspaces.models import Workspace
+
+from .lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    plant_lifecycle_summary,
+    record_bulk_outcome,
+    record_germination_event,
+    record_lifecycle_event,
+    record_transplant_event,
+    reverse_lifecycle_event,
+)
+from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
+
+
+#: Facts that resolve a plant, paired with the state each one derives to.
+FINAL_OUTCOMES = (
+    (EventType.RETAINED, LifecycleState.RETAINED),
+    (EventType.DONATED, LifecycleState.DONATED),
+    (EventType.FAILED, LifecycleState.FAILED),
+    (EventType.CULLED, LifecycleState.CULLED),
+    (EventType.HARVEST_FINISHED, LifecycleState.HARVESTED),
+)
+
+
+class LifecycleStateDerivationTests(TestCase):
+    """Current state is replayed from the recorded facts."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='deriver')
+        self.plant = make_specific_plant()
+        record_germination_event(self.plant, self.user)
+
+    def test_a_germinated_plant_is_growing_and_not_sellable(self):
+        """Germination starts a plant active but not yet offerable."""
+        summary = plant_lifecycle_summary(self.plant)
+        self.assertEqual(summary.state, LifecycleState.GROWING)
+        self.assertFalse(summary.sellable)
+        self.assertIsNone(summary.final_outcome)
+        self.assertIsNone(summary.final_outcome_at)
+
+    def test_a_plant_with_no_history_at_all_is_growing(self):
+        """A plant predating any recorded fact is not treated as resolved."""
+        summary = plant_lifecycle_summary(make_specific_plant())
+        self.assertEqual(summary.state, LifecycleState.GROWING)
+        self.assertIsNone(summary.final_outcome)
+
+    def test_ready_makes_a_plant_available_and_sellable(self):
+        """A ready plant is the one state that may be offered to somebody."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        summary = plant_lifecycle_summary(self.plant)
+        self.assertEqual(summary.state, LifecycleState.AVAILABLE)
+        self.assertTrue(summary.sellable)
+
+    def test_transplanting_records_a_fact_without_changing_state(self):
+        """Where a plant lives is separate from its commercial disposition."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        record_transplant_event(self.plant, self.user, timezone.now())
+        summary = plant_lifecycle_summary(self.plant)
+        self.assertEqual(summary.state, LifecycleState.AVAILABLE)
+
+    def test_each_final_outcome_derives_its_state_and_metadata(self):
+        """Every resolving fact reports itself as the final outcome."""
+        for event_type, expected_state in FINAL_OUTCOMES:
+            with self.subTest(event_type=event_type):
+                plant = make_specific_plant()
+                record_germination_event(plant, self.user)
+                occurred_at = timezone.now()
+                record_lifecycle_event(
+                    plant,
+                    self.user,
+                    OutcomeRequest(event_type, occurred_at=occurred_at),
+                )
+                summary = plant_lifecycle_summary(plant)
+                self.assertEqual(summary.state, expected_state)
+                self.assertEqual(summary.final_outcome, event_type)
+                self.assertEqual(summary.final_outcome_at, occurred_at)
+                self.assertFalse(summary.sellable)
+
+
+class LifecycleTransitionTests(TestCase):
+    """Only the permitted transitions are accepted."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='transitioner')
+        self.plant = make_specific_plant()
+        record_germination_event(self.plant, self.user)
+
+    def test_germination_cannot_be_recorded_twice(self):
+        """A plant already has history, so it cannot germinate again."""
+        with self.assertRaises(ValidationError):
+            record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.GERMINATED))
+
+    def test_ready_is_rejected_from_a_resolved_plant(self):
+        """A failed plant cannot become available again without a correction."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        with self.assertRaises(ValidationError) as caught:
+            record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        self.assertIn('event_type', caught.exception.message_dict)
+
+    def test_every_final_outcome_is_rejected_from_a_resolved_plant(self):
+        """A resolved plant cannot pick up a second competing outcome."""
+        for event_type, _ in FINAL_OUTCOMES:
+            with self.subTest(event_type=event_type):
+                plant = make_specific_plant()
+                record_germination_event(plant, self.user)
+                record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.CULLED))
+                with self.assertRaises(ValidationError):
+                    record_lifecycle_event(plant, self.user, OutcomeRequest(event_type))
+
+    def test_a_retained_plant_may_still_fail_or_be_harvested(self):
+        """Retention ends availability without ending biological growth."""
+        for event_type in (EventType.FAILED, EventType.HARVEST_FINISHED):
+            with self.subTest(event_type=event_type):
+                plant = make_specific_plant()
+                record_germination_event(plant, self.user)
+                record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.RETAINED))
+                record_lifecycle_event(plant, self.user, OutcomeRequest(event_type))
+                self.assertEqual(
+                    plant_lifecycle_summary(plant).final_outcome,
+                    event_type,
+                )
+
+    def test_a_retained_plant_cannot_be_marked_ready(self):
+        """Retention is final for availability."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.RETAINED))
+        with self.assertRaises(ValidationError):
+            record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+
+    def test_a_resolved_plant_cannot_be_transplanted(self):
+        """A culled plant is not moved anywhere else."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.CULLED))
+        with self.assertRaises(ValidationError):
+            record_transplant_event(self.plant, self.user, timezone.now())
+
+    def test_events_cannot_be_recorded_out_of_order(self):
+        """History is append-only in time as well as in storage."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        with self.assertRaises(ValidationError) as caught:
+            record_lifecycle_event(
+                self.plant,
+                self.user,
+                OutcomeRequest(
+                    EventType.FAILED,
+                    occurred_at=timezone.now() - timedelta(days=7),
+                ),
+            )
+        self.assertIn('occurred_at', caught.exception.message_dict)
+
+
+class LifecycleLocationClosureTests(TestCase):
+    """Outcomes close a physical location only where they should."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='closer')
+        self.plant = make_specific_plant()
+        record_germination_event(self.plant, self.user)
+        self.location = make_specific_plant_location(specific_plant=self.plant)
+
+    def _active_location(self):
+        """Return the plant's open location, if it still has one."""
+        return SpecificPlantLocation.objects.filter(
+            specific_plant=self.plant,
+            ended__isnull=True,
+        ).first()
+
+    def test_departing_and_ending_outcomes_close_the_location(self):
+        """Leaving the operation or dying ends the plant's occupancy."""
+        closing = (
+            EventType.DONATED,
+            EventType.FAILED,
+            EventType.CULLED,
+            EventType.HARVEST_FINISHED,
+        )
+        for event_type in closing:
+            with self.subTest(event_type=event_type):
+                plant = make_specific_plant()
+                record_germination_event(plant, self.user)
+                location = make_specific_plant_location(specific_plant=plant)
+                occurred_at = timezone.now()
+                record_lifecycle_event(
+                    plant,
+                    self.user,
+                    OutcomeRequest(event_type, occurred_at=occurred_at),
+                )
+                location.refresh_from_db()
+                self.assertEqual(location.ended, occurred_at)
+
+    def test_a_retained_plant_keeps_its_location(self):
+        """Retention removes a plant from sale, not from the ground."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.RETAINED))
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+        self.assertIsNotNone(self._active_location())
+
+    def test_marking_a_plant_ready_keeps_its_location(self):
+        """Readiness is a commercial fact, not a physical one."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+
+    def test_an_outcome_cannot_predate_the_current_location(self):
+        """A closure that ends before it started is refused outright."""
+        self.location.started = timezone.now()
+        self.location.save(update_fields=['started'])
+        with self.assertRaises(ValidationError):
+            record_lifecycle_event(
+                self.plant,
+                self.user,
+                OutcomeRequest(
+                    EventType.FAILED,
+                    occurred_at=self.location.started - timedelta(hours=1),
+                ),
+            )
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+
+    def test_a_rejected_outcome_leaves_the_location_untouched(self):
+        """An invalid transition never half-closes a location."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.RETAINED))
+        with self.assertRaises(ValidationError):
+            record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+
+    def test_an_outcome_without_a_location_is_still_recorded(self):
+        """A plant with no tracked location can still be resolved."""
+        plant = make_specific_plant()
+        record_germination_event(plant, self.user)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.FAILED))
+        self.assertEqual(
+            plant_lifecycle_summary(plant).final_outcome,
+            EventType.FAILED,
+        )
+
+
+class LifecycleCorrectionTests(TestCase):
+    """Corrections append a reversal instead of rewriting history."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='corrector')
+        self.plant = make_specific_plant()
+        record_germination_event(self.plant, self.user)
+        self.location = make_specific_plant_location(specific_plant=self.plant)
+
+    def test_reversing_a_failure_reopens_the_plant_and_keeps_the_fact(self):
+        """The mistaken event stays visible while the state recovers."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        correction = reverse_lifecycle_event(failure, self.user, 'Wrong plant.')
+
+        self.assertEqual(correction.reversal_of_id, failure.pk)
+        self.assertTrue(
+            PlantLifecycleEvent.objects.filter(pk=failure.pk).exists(),
+        )
+        summary = plant_lifecycle_summary(self.plant)
+        self.assertEqual(summary.state, LifecycleState.GROWING)
+        self.assertIsNone(summary.final_outcome)
+
+    def test_a_replacement_location_can_follow_a_reversed_failure(self):
+        """The closed location stays closed; a new interval is appended."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        reverse_lifecycle_event(failure, self.user, 'Wrong plant.')
+        self.location.refresh_from_db()
+        self.assertIsNotNone(self.location.ended)
+
+        replacement = SpecificPlantLocation.objects.create(
+            specific_plant=self.plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=make_garden_square(),
+            started=self.location.ended,
+        )
+        self.assertIsNone(replacement.ended)
+
+    def test_a_reversed_plant_accepts_a_valid_replacement_outcome(self):
+        """After a correction the plant can be resolved properly."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        reverse_lifecycle_event(failure, self.user, 'Wrong plant.')
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.CULLED))
+        self.assertEqual(
+            plant_lifecycle_summary(self.plant).final_outcome,
+            EventType.CULLED,
+        )
+
+    def test_a_correction_requires_a_reason(self):
+        """Audited corrections always say why they were needed."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        with self.assertRaises(ValidationError) as caught:
+            reverse_lifecycle_event(failure, self.user, '   ')
+        self.assertIn('reason', caught.exception.message_dict)
+
+    def test_an_event_cannot_be_corrected_twice(self):
+        """One fact has at most one reversal."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        reverse_lifecycle_event(failure, self.user, 'Wrong plant.')
+        with self.assertRaises(ValidationError):
+            reverse_lifecycle_event(failure, self.user, 'Again.')
+
+    def test_a_correction_cannot_itself_be_corrected(self):
+        """Corrections are undone by recording the truth, not by nesting."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        correction = reverse_lifecycle_event(failure, self.user, 'Wrong plant.')
+        with self.assertRaises(ValidationError):
+            reverse_lifecycle_event(correction, self.user, 'Undo the undo.')
+
+    def test_germination_cannot_be_reversed(self):
+        """The fact that created the plant is not correctable."""
+        germination = PlantLifecycleEvent.objects.get(
+            plant=self.plant,
+            event_type=EventType.GERMINATED,
+        )
+        with self.assertRaises(ValidationError):
+            reverse_lifecycle_event(germination, self.user, 'Never happened.')
+
+
+class LifecycleImmutabilityTests(TestCase):
+    """Recorded facts are never overwritten or deleted."""
+
+    def setUp(self):
+        super().setUp()
+        self.event = make_plant_lifecycle_event()
+
+    def test_an_event_cannot_be_saved_again(self):
+        """Editing a fact is refused by the model itself."""
+        self.event.reason = 'Rewritten.'
+        with self.assertRaises(ValidationError):
+            self.event.save()
+
+    def test_an_event_cannot_be_deleted(self):
+        """Deleting a fact is refused by the model itself."""
+        with self.assertRaises(ValidationError):
+            self.event.delete()
+
+    def test_an_event_must_match_its_plant_batch(self):
+        """The denormalised batch cannot disagree with the plant's own."""
+        other_plant = make_specific_plant()
+        with self.assertRaises(ValidationError) as caught:
+            make_plant_lifecycle_event(
+                plant=other_plant,
+                batch=self.event.batch,
+            )
+        self.assertIn('batch', caught.exception.message_dict)
+
+
+class BulkOutcomeTests(TestCase):
+    """A selection produces one traceable event per plant."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='bulk')
+        self.plants = []
+        for _ in range(3):
+            plant = make_specific_plant()
+            record_germination_event(plant, self.user)
+            make_specific_plant_location(specific_plant=plant)
+            self.plants.append(plant)
+
+    def test_each_plant_receives_its_own_event(self):
+        """The aggregate action stays auditable plant by plant."""
+        plant_ids = [plant.pk for plant in self.plants]
+        events = record_bulk_outcome(
+            plant_ids,
+            self.user,
+            OutcomeRequest(EventType.CULLED, reason='Frost damage.'),
+        )
+
+        self.assertEqual(len(events), len(plant_ids))
+        self.assertEqual(
+            sorted(event.plant_id for event in events),
+            sorted(plant_ids),
+        )
+        for event in events:
+            self.assertEqual(event.event_type, EventType.CULLED)
+            self.assertEqual(event.reason, 'Frost damage.')
+
+    def test_each_plant_location_is_closed(self):
+        """Bulk outcomes honour the same location rules as single ones."""
+        record_bulk_outcome(
+            [plant.pk for plant in self.plants],
+            self.user,
+            OutcomeRequest(EventType.CULLED),
+        )
+        self.assertFalse(
+            SpecificPlantLocation.objects.filter(
+                specific_plant__in=self.plants,
+                ended__isnull=True,
+            ).exists(),
+        )
+
+    def test_one_invalid_plant_rejects_the_whole_selection(self):
+        """A partial application would leave an unexplainable audit trail."""
+        record_lifecycle_event(self.plants[0], self.user, OutcomeRequest(EventType.FAILED))
+        with self.assertRaises(ValidationError) as caught:
+            record_bulk_outcome(
+                [plant.pk for plant in self.plants],
+                self.user,
+                OutcomeRequest(EventType.CULLED),
+            )
+
+        self.assertIn('plants', caught.exception.message_dict)
+        self.assertEqual(
+            PlantLifecycleEvent.objects.filter(
+                plant__in=self.plants[1:],
+                event_type=EventType.CULLED,
+            ).count(),
+            0,
+        )
+
+    def test_an_unknown_plant_is_rejected(self):
+        """A selection naming a missing plant records nothing."""
+        with self.assertRaises(ValidationError):
+            record_bulk_outcome([0], self.user, OutcomeRequest(EventType.CULLED))
+
+    def test_an_empty_selection_is_rejected(self):
+        """Recording an outcome for nothing is a mistake, not a no-op."""
+        with self.assertRaises(ValidationError):
+            record_bulk_outcome([], self.user, OutcomeRequest(EventType.CULLED))
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentPlantOutcomeTests(TransactionTestCase):
+    """A locked plant admits only one final outcome at a time."""
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='plant-racer')
+        plant = make_specific_plant()
+        record_germination_event(plant, self.user)
+        make_specific_plant_location(specific_plant=plant)
+        self.plant_pk = plant.pk
+
+    def _record(self, event_type):
+        """Attempt one outcome from an independent connection."""
+        close_old_connections()
+        plant = SpecificPlant.objects.get(pk=self.plant_pk)
+        user = get_user_model().objects.get(pk=self.user.pk)
+        try:
+            record_lifecycle_event(plant, user, OutcomeRequest(event_type))
+        except ValidationError:
+            result = 'rejected'
+        else:
+            result = 'recorded'
+        close_old_connections()
+        return result
+
+    def test_only_one_concurrent_outcome_commits(self):
+        """The loser is rejected instead of resolving the plant twice."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(
+                future.result()
+                for future in [
+                    pool.submit(self._record, EventType.FAILED),
+                    pool.submit(self._record, EventType.CULLED),
+                ]
+            )
+
+        self.assertEqual(results, ['recorded', 'rejected'])
+        outcomes = PlantLifecycleEvent.objects.filter(
+            plant_id=self.plant_pk,
+            event_type__in=[EventType.FAILED, EventType.CULLED],
+        )
+        self.assertEqual(outcomes.count(), 1)
+        self.assertEqual(
+            SpecificPlantLocation.objects.filter(
+                specific_plant_id=self.plant_pk,
+                ended__isnull=True,
+            ).count(),
+            0,
+        )
+
+    def test_only_one_concurrent_reservation_of_readiness_commits(self):
+        """Racing the same transition twice still appends one fact."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(
+                future.result()
+                for future in [
+                    pool.submit(self._record, EventType.READY),
+                    pool.submit(self._record, EventType.READY),
+                ]
+            )
+
+        self.assertEqual(results, ['recorded', 'rejected'])
+        self.assertEqual(
+            PlantLifecycleEvent.objects.filter(
+                plant_id=self.plant_pk,
+                event_type=EventType.READY,
+            ).count(),
+            1,
+        )
