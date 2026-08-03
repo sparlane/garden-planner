@@ -6,7 +6,7 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Exists, OuterRef, Sum
 from django.utils import timezone
 
 from .models import (
@@ -16,6 +16,7 @@ from .models import (
     ProductionBatchTransition,
     SeedTrayPlanting,
     SpecificPlant,
+    SpecificPlantLocation,
 )
 
 
@@ -84,6 +85,19 @@ def batch_specific_plants(batch):
     return SpecificPlant.objects.filter(
         cell_planting__seed_tray_planting__batch=batch,
     )
+
+
+def batch_plants_with_active_location(batch):
+    """Return this batch's plants that currently occupy a tracked location.
+
+    An `ended__isnull=True` join would also match plants with no location
+    history at all, so the presence of an open interval is asserted directly.
+    """
+    open_location = SpecificPlantLocation.objects.filter(
+        specific_plant=OuterRef('pk'),
+        ended__isnull=True,
+    )
+    return batch_specific_plants(batch).filter(Exists(open_location))
 
 
 def batch_unresolved_plant_ids(batch):

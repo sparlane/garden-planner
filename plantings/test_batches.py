@@ -16,13 +16,16 @@ from tests.factories import (
     make_seed_tray_cell_planting,
     make_seed_tray_planting,
     make_specific_plant,
+    make_specific_plant_location,
 )
 from workspaces.models import Workspace, get_current_workspace
 
 from .batches import (
     BatchRequest,
     activate_batch,
+    batch_plants_with_active_location,
     batch_seeds_sown,
+    batch_unresolved_plant_ids,
     cancel_batch,
     complete_batch,
     create_and_activate_batch,
@@ -287,6 +290,26 @@ class BatchLifecycleTests(TestCase):
         make_seed_tray_planting(seeds_used=self.packet, batch=batch, quantity=4)
 
         self.assertEqual(batch_seeds_sown(batch), 7)
+
+    def test_plants_without_any_location_are_not_counted_as_housed(self):
+        """Only an open interval means a plant currently occupies a place."""
+        batch = make_batch_for_packet(self.packet)
+        sowing = make_seed_tray_planting(seeds_used=self.packet, batch=batch)
+        cell_planting = make_seed_tray_cell_planting(seed_tray_planting=sowing)
+        housed = make_specific_plant(cell_planting=cell_planting)
+        make_specific_plant_location(specific_plant=housed)
+        ended = make_specific_plant(cell_planting=cell_planting)
+        make_specific_plant_location(
+            specific_plant=ended,
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        make_specific_plant(cell_planting=cell_planting)
+
+        housed_plants = batch_plants_with_active_location(batch)
+
+        self.assertEqual([plant.pk for plant in housed_plants], [housed.pk])
+        self.assertEqual(len(batch_unresolved_plant_ids(batch)), 3)
 
     def test_sowings_only_attach_to_a_compatible_active_batch(self):
         """Workspace, status, and variety must all agree before attaching."""

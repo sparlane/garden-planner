@@ -1,0 +1,460 @@
+"""REST resources and explicit lifecycle actions for production batches."""
+
+# pylint: disable=duplicate-code
+
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Count
+from rest_framework import serializers, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
+
+from workspaces.scoping import (
+    CurrentWorkspaceSerializerMixin,
+    CurrentWorkspaceViewSetMixin,
+)
+
+from .batches import (
+    BatchRequest,
+    SOWING_MODELS,
+    activate_batch,
+    batch_plants_with_active_location,
+    batch_seeds_sown,
+    batch_specific_plants,
+    batch_unresolved_plant_ids,
+    cancel_batch,
+    complete_batch,
+    create_batch,
+    finalize_batch_output,
+    reopen_batch,
+)
+from .models import ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
+
+
+def _model_errors(error):
+    """Translate model validation errors into DRF response details."""
+    if hasattr(error, 'message_dict'):
+        return error.message_dict
+    return error.messages
+
+
+def _run_domain_action(function, *args, **kwargs):
+    """Invoke a batch service with field-friendly API errors."""
+    try:
+        return function(*args, **kwargs)
+    except DjangoValidationError as exc:
+        raise ValidationError(_model_errors(exc)) from exc
+
+
+class ActionSerializer(serializers.Serializer):
+    """Validation-only serializer base for batch lifecycle actions."""
+
+    def create(self, validated_data):
+        raise NotImplementedError
+
+    def update(self, instance, validated_data):
+        raise NotImplementedError
+
+
+class ActivateBatchSerializer(ActionSerializer):  # pylint: disable=abstract-method
+    """Validate an optional supplied actual-start time."""
+
+    actual_start = serializers.DateTimeField(required=False)
+    reason = serializers.CharField(allow_blank=True, required=False, default='')
+
+
+class OptionalReasonSerializer(ActionSerializer):  # pylint: disable=abstract-method
+    """Validate audit metadata for an action that does not require a reason."""
+
+    reason = serializers.CharField(allow_blank=True, required=False, default='')
+
+
+class RequiredReasonSerializer(ActionSerializer):  # pylint: disable=abstract-method
+    """Validate the reason an audited correction always requires."""
+
+    reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+
+class ProductionBatchTransitionSerializer(serializers.ModelSerializer):
+    """Serialize one immutable lifecycle history row."""
+
+    class Meta:
+        model = ProductionBatchTransition
+        fields = [
+            'pk',
+            'previous_status',
+            'new_status',
+            'created_by',
+            'reason',
+            'created',
+        ]
+        read_only_fields = fields
+
+
+class BatchSowingSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Serialize one attached sowing without its model-specific write rules."""
+
+    pk = serializers.IntegerField(read_only=True)
+    sowing_type = serializers.CharField(read_only=True)
+    planted = serializers.DateTimeField(read_only=True)
+    quantity = serializers.IntegerField(read_only=True)
+    removed = serializers.BooleanField(read_only=True)
+    seeds_used = serializers.IntegerField(read_only=True)
+    seed_lot = serializers.IntegerField(read_only=True, allow_null=True)
+    seed_tray = serializers.IntegerField(read_only=True, allow_null=True)
+    location = serializers.CharField(read_only=True, allow_null=True)
+    notes = serializers.CharField(read_only=True, allow_null=True)
+    cells = serializers.ListField(read_only=True)
+    plants_observed = serializers.IntegerField(read_only=True)
+
+
+def _describe_cells(sowing):
+    """Describe one tray sowing's cell allocations and their germinations."""
+    cell_plantings = sowing.cell_plantings.select_related('cell').annotate(
+        observed=Count('specific_plants'),
+    ).order_by('pk')
+    return [
+        {
+            'pk': cell_planting.pk,
+            'cell': cell_planting.cell_id,
+            'x_position': cell_planting.cell.x_position,
+            'y_position': cell_planting.cell.y_position,
+            'quantity': cell_planting.quantity,
+            'plants_observed': cell_planting.observed,
+        }
+        for cell_planting in cell_plantings
+    ]
+
+
+def _describe_sowing(sowing):
+    """Return one sowing's batch-level summary in a display-neutral shape."""
+    is_tray = hasattr(sowing, 'cell_plantings')
+    location = getattr(sowing, 'location', None)
+    cells = _describe_cells(sowing) if is_tray else []
+    return {
+        'pk': sowing.pk,
+        'sowing_type': type(sowing).__name__,
+        'planted': sowing.planted,
+        'quantity': sowing.quantity,
+        'removed': sowing.removed,
+        'seeds_used': sowing.seeds_used_id,
+        'seed_lot': sowing.seeds_used.stock_lot_id,
+        'seed_tray': getattr(sowing, 'seed_tray_id', None),
+        'location': None if location is None else str(location),
+        'notes': sowing.notes,
+        'cells': cells,
+        'plants_observed': sum(cell['plants_observed'] for cell in cells),
+    }
+
+
+def _batch_sowings(batch):
+    """Return every attached sowing across the concrete planting models."""
+    sowings = []
+    for model in SOWING_MODELS:
+        queryset = model.objects.filter(batch=batch).select_related(
+            'seeds_used',
+        ).order_by('planted', 'pk')
+        sowings.extend(_describe_sowing(sowing) for sowing in queryset)
+    return sowings
+
+
+def _current_locations(batch):
+    """Describe where this batch's individual plants are living now."""
+    locations = SpecificPlantLocation.objects.filter(
+        specific_plant__cell_planting__seed_tray_planting__batch=batch,
+        ended__isnull=True,
+    ).select_related('seed_tray_cell', 'garden_square').order_by('pk')
+    return [
+        {
+            'specific_plant': location.specific_plant_id,
+            'location_type': location.location_type,
+            'seed_tray_cell': location.seed_tray_cell_id,
+            'garden_square': location.garden_square_id,
+            'started': location.started,
+            'label': str(location.seed_tray_cell or location.garden_square),
+        }
+        for location in locations
+    ]
+
+
+class ProductionBatchSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
+    """Serialize batch identity, lifecycle state, and output summary counts."""
+
+    variety_name = serializers.CharField(source='variety.name', read_only=True)
+    plant_name = serializers.CharField(source='variety.plant.name', read_only=True)
+    sowing_count = serializers.SerializerMethodField()
+    seeds_sown = serializers.SerializerMethodField()
+    plants_observed = serializers.SerializerMethodField()
+    plants_with_active_location = serializers.SerializerMethodField()
+    final_outcomes = serializers.SerializerMethodField()
+    unresolved_plants = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductionBatch
+        fields = [
+            'pk',
+            'code',
+            'variety',
+            'variety_name',
+            'plant_name',
+            'status',
+            'planned_start',
+            'actual_start',
+            'output_finalized_at',
+            'completed_at',
+            'cancelled_at',
+            'notes',
+            'created_by',
+            'repair_state',
+            'repair_details',
+            'sowing_count',
+            'seeds_sown',
+            'plants_observed',
+            'plants_with_active_location',
+            'final_outcomes',
+            'unresolved_plants',
+            'created',
+            'updated',
+        ]
+        read_only_fields = [
+            'status',
+            'actual_start',
+            'output_finalized_at',
+            'completed_at',
+            'cancelled_at',
+            'created_by',
+            'repair_state',
+            'repair_details',
+            'created',
+            'updated',
+        ]
+
+    workspace_field_lookups = {'variety': 'workspace'}
+
+    def get_sowing_count(self, batch):
+        """Return how many sowings this batch groups."""
+        return sum(
+            model.objects.filter(batch=batch).count()
+            for model in SOWING_MODELS
+        )
+
+    def get_seeds_sown(self, batch):
+        """Return the seeds or seed clusters sown, not the plants raised."""
+        return batch_seeds_sown(batch)
+
+    def get_plants_observed(self, batch):
+        """Return the individual plants germinated from this batch."""
+        return batch_specific_plants(batch).count()
+
+    def get_plants_with_active_location(self, batch):
+        """Return the plants currently occupying a tracked location."""
+        return batch_plants_with_active_location(batch).count()
+
+    def get_final_outcomes(self, batch):  # pylint: disable=unused-argument
+        """Return recorded final dispositions, which task 41 will supply."""
+        return 0
+
+    def get_unresolved_plants(self, batch):
+        """Return the plants blocking completion of this batch."""
+        return batch_unresolved_plant_ids(batch)
+
+    def _has_sowings(self):
+        """Return whether the batch being edited already groups sowings."""
+        return any(
+            model.objects.filter(batch=self.instance).exists()
+            for model in SOWING_MODELS
+        )
+
+    def validate_code(self, value):
+        """Keep batch codes unique and meaningful inside one workspace."""
+        code = value.strip()
+        if not code:
+            raise serializers.ValidationError('A batch code is required.')
+        duplicates = ProductionBatch.objects.filter(
+            workspace=self.context['view'].get_current_workspace(),
+            code=code,
+        )
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError(
+                'Another batch in this workspace already uses that code.',
+            )
+        return code
+
+    def validate(self, attrs):
+        """Lock the variety once a status or a sowing depends on it."""
+        if self.instance is None or 'variety' not in attrs:
+            return attrs
+        if attrs['variety'].pk == self.instance.variety_id:
+            return attrs
+        if self.instance.status != ProductionBatch.Status.PLANNED:
+            raise serializers.ValidationError({
+                'variety': 'Only a planned batch can change its variety.',
+            })
+        if self._has_sowings():
+            raise serializers.ValidationError({
+                'variety': 'Cannot change the variety after a sowing exists.',
+            })
+        return attrs
+
+    def create(self, validated_data):
+        """Create the batch and its opening transition in one operation."""
+        return _run_domain_action(
+            create_batch,
+            self.context['view'].get_current_workspace(),
+            self.context['request'].user,
+            BatchRequest(
+                code=validated_data['code'],
+                variety=validated_data['variety'],
+                planned_start=validated_data.get('planned_start'),
+                notes=validated_data.get('notes', ''),
+            ),
+        )
+
+
+class ProductionBatchDetailSerializer(ProductionBatchSerializer):
+    """Add the grouped cultivation detail one batch screen needs."""
+
+    sowings = serializers.SerializerMethodField()
+    current_locations = serializers.SerializerMethodField()
+    transitions = ProductionBatchTransitionSerializer(many=True, read_only=True)
+
+    class Meta(ProductionBatchSerializer.Meta):
+        fields = ProductionBatchSerializer.Meta.fields + [
+            'sowings',
+            'current_locations',
+            'transitions',
+        ]
+
+    def get_sowings(self, batch):
+        """Return each attached sowing with its lot, cells, and germinations."""
+        return BatchSowingSerializer(_batch_sowings(batch), many=True).data
+
+    def get_current_locations(self, batch):
+        """Return where this batch's individual plants are living now."""
+        return _current_locations(batch)
+
+
+class ProductionBatchViewSet(
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
+    """Manage batch identity and post explicit lifecycle transitions."""
+
+    queryset = ProductionBatch.objects.select_related(
+        'variety__plant',
+    ).prefetch_related('transitions')
+    serializer_class = ProductionBatchSerializer
+    http_method_names = ['get', 'post', 'patch', 'put', 'head', 'options']
+    bind_workspace_on_create = False
+
+    def get_serializer_class(self):
+        """Use the richer serializer for a single batch."""
+        if self.action == 'retrieve':
+            return ProductionBatchDetailSerializer
+        return ProductionBatchSerializer
+
+    def get_queryset(self):
+        """Apply the status, variety, and repair filters the screens use."""
+        queryset = super().get_queryset()
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            valid = {choice.value for choice in ProductionBatch.Status}
+            if status_filter not in valid:
+                raise ValidationError({'status': 'Select a valid batch status.'})
+            queryset = queryset.filter(status=status_filter)
+        variety = self.request.query_params.get('variety')
+        if variety:
+            if not variety.isdigit():
+                raise ValidationError({'variety': 'Enter a variety ID.'})
+            queryset = queryset.filter(variety_id=int(variety))
+        code = self.request.query_params.get('code', '').strip()
+        if code:
+            queryset = queryset.filter(code__icontains=code)
+        if self.request.query_params.get('needs_repair') == 'true':
+            queryset = queryset.filter(
+                repair_state=ProductionBatch.RepairState.NEEDS_REPAIR,
+            )
+        return queryset
+
+    def _detail_response(self, batch):
+        """Return one batch through the detail contract after an action."""
+        batch.refresh_from_db()
+        return Response(ProductionBatchDetailSerializer(batch).data)
+
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):  # pylint: disable=unused-argument
+        """Start a planned batch at a supplied or current time."""
+        values = self._action_values(request, ActivateBatchSerializer)
+        batch = _run_domain_action(
+            activate_batch,
+            self.get_object(),
+            request.user,
+            actual_start=values.get('actual_start'),
+            reason=values['reason'],
+        )
+        return self._detail_response(batch)
+
+    @action(detail=True, methods=['post'], url_path='finalize-output')
+    def finalize_output(self, request, pk=None):  # pylint: disable=unused-argument
+        """Declare that no further seedlings will come from this batch."""
+        values = self._action_values(request, OptionalReasonSerializer)
+        batch = _run_domain_action(
+            finalize_batch_output,
+            self.get_object(),
+            request.user,
+            reason=values['reason'],
+        )
+        return self._detail_response(batch)
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):  # pylint: disable=unused-argument
+        """Complete a batch whose outputs all have final dispositions."""
+        values = self._action_values(request, OptionalReasonSerializer)
+        batch = _run_domain_action(
+            complete_batch,
+            self.get_object(),
+            request.user,
+            reason=values['reason'],
+        )
+        return self._detail_response(batch)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):  # pylint: disable=unused-argument
+        """Abandon a batch that produced no tracked individual outputs."""
+        values = self._action_values(request, RequiredReasonSerializer)
+        batch = _run_domain_action(
+            cancel_batch,
+            self.get_object(),
+            request.user,
+            values['reason'],
+        )
+        return self._detail_response(batch)
+
+    @action(detail=True, methods=['post'])
+    def reopen(self, request, pk=None):  # pylint: disable=unused-argument
+        """Correct a lifecycle mistake by stepping one status back."""
+        values = self._action_values(request, RequiredReasonSerializer)
+        batch = _run_domain_action(
+            reopen_batch,
+            self.get_object(),
+            request.user,
+            values['reason'],
+        )
+        return self._detail_response(batch)
+
+    @staticmethod
+    def _action_values(request, serializer_class):
+        """Validate one action payload and return its cleaned values."""
+        serializer = serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return serializer.validated_data
+
+
+def register_batch_routes(router):
+    """Attach the production batch resources to the planting API router."""
+    router.register(r'batches', ProductionBatchViewSet)
