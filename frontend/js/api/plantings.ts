@@ -1,5 +1,11 @@
-import { fetchAsJson, csrfPost } from '../utils'
+import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
 import {
+  BatchAction,
+  ProductionBatch,
+  ProductionBatchCreate,
+  ProductionBatchDetail,
+  ProductionBatchStatus,
+  ProductionBatchUpdate,
   GardenRowDirectPlanting,
   GardenSquareDirectPlanting,
   SeedTrayPlanting,
@@ -15,6 +21,47 @@ import {
   SpecificPlantMove,
   SowingCorrection
 } from '../types/plantings'
+
+interface ProductionBatchFilters {
+  status?: ProductionBatchStatus | ''
+  variety?: number
+  code?: string
+  needsRepair?: boolean
+}
+
+function getProductionBatches(filters: ProductionBatchFilters = {}, signal?: AbortSignal): Promise<Array<ProductionBatch>> {
+  const query = new URLSearchParams()
+  if (filters.status) {
+    query.set('status', filters.status)
+  }
+  if (filters.variety !== undefined) {
+    query.set('variety', String(filters.variety))
+  }
+  if (filters.code) {
+    query.set('code', filters.code)
+  }
+  if (filters.needsRepair) {
+    query.set('needs_repair', 'true')
+  }
+  const suffix = query.size > 0 ? `?${query.toString()}` : ''
+  return fetchAsJson<Array<ProductionBatch>>(`/plantings/batches/${suffix}`, signal)
+}
+
+function getProductionBatch(batchPk: number, signal?: AbortSignal): Promise<ProductionBatchDetail> {
+  return fetchAsJson<ProductionBatchDetail>(`/plantings/batches/${batchPk}/`, signal)
+}
+
+function addProductionBatch(data: ProductionBatchCreate): Promise<ProductionBatch> {
+  return csrfPost('/plantings/batches/', data).then((response) => response.json() as Promise<ProductionBatch>)
+}
+
+function updateProductionBatch(batchPk: number, data: ProductionBatchUpdate): Promise<ProductionBatch> {
+  return csrfPatch(`/plantings/batches/${batchPk}/`, data).then((response) => response.json() as Promise<ProductionBatch>)
+}
+
+function postProductionBatchAction(batchPk: number, batchAction: string, data: BatchAction = {}): Promise<ProductionBatchDetail> {
+  return csrfPost(`/plantings/batches/${batchPk}/${batchAction}/`, data).then((response) => response.json() as Promise<ProductionBatchDetail>)
+}
 
 function getPlantingDirectSowGardenRows(signal?: AbortSignal): Promise<Array<GardenRowDirectPlanting>> {
   return fetchAsJson<Array<GardenRowDirectPlanting>>('/plantings/directsowgardenrow/', signal)
@@ -103,6 +150,12 @@ function moveSpecificPlant(plantPk: number, data: SpecificPlantMove): Promise<Re
 }
 
 export {
+  ProductionBatchFilters,
+  getProductionBatches,
+  getProductionBatch,
+  addProductionBatch,
+  updateProductionBatch,
+  postProductionBatchAction,
   getPlantingDirectSowGardenRows,
   addPlantingDirectSowGardenRow,
   getPlantingDirectSowGardenSquares,
