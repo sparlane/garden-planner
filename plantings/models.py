@@ -99,7 +99,7 @@ class ProductionBatch(WorkspaceOwnedModel):
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
-        self.full_clean(validate_unique=False, validate_constraints=False)
+        self.full_clean()
         super().save(*args, **kwargs)
 
 
