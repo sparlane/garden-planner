@@ -25,6 +25,7 @@ from seeds.services import (
     packet_inventory_snapshot,
 )
 from tests.factories import (
+    make_batch_for_packet,
     make_garden_row,
     make_garden_square,
     make_plant_variety,
@@ -54,6 +55,7 @@ class SowingInventoryTests(APITestCase):
         self.tray = make_seed_tray()
         self.cell = make_seed_tray_cell(tray=self.tray)
         self.packet = self.receive_packet(QuantityCertainty.EXACT, '20')
+        self.batch = make_batch_for_packet(self.packet)
 
     def receive_packet(self, certainty, quantity=None):
         """Receive one packet through the same API used by the browser."""
@@ -115,7 +117,7 @@ class SowingInventoryTests(APITestCase):
             with self.subTest(url=url):
                 response = self.client.post(
                     url,
-                    {'seeds_used': self.packet.pk, **payload},
+                    {'seeds_used': self.packet.pk, 'batch': self.batch.pk, **payload},
                     format='json',
                 )
                 self.assertEqual(response.status_code, 201)
@@ -133,6 +135,7 @@ class SowingInventoryTests(APITestCase):
             '/plantings/directsowgardensquare/',
             {
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 21,
                 'location': self.square.pk,
             },
@@ -150,6 +153,7 @@ class SowingInventoryTests(APITestCase):
             '/plantings/directsowgardensquare/',
             {
                 'seeds_used': packet.pk,
+                'batch': make_batch_for_packet(packet).pk,
                 'quantity': 7,
                 'location': self.square.pk,
             },
@@ -186,6 +190,7 @@ class SowingInventoryTests(APITestCase):
             '/plantings/directsowgardensquare/',
             {
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 4,
                 'location': self.square.pk,
             },
@@ -230,6 +235,7 @@ class SowingInventoryTests(APITestCase):
             '/plantings/seedtray/',
             {
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 5,
                 'seed_tray': self.tray.pk,
                 'cell_plantings': [{'cell': self.cell.pk, 'quantity': 5}],
@@ -303,6 +309,7 @@ class ConcurrentSowingInventoryTests(TransactionTestCase):
         self.user_pk = user.pk
         self.packet_pk = packet.pk
         self.square_pk = square.pk
+        self.batch_pk = make_batch_for_packet(packet).pk
 
     def _sow_final_quantity(self):
         """Attempt one atomic planting from an independent database connection."""
@@ -312,6 +319,7 @@ class ConcurrentSowingInventoryTests(TransactionTestCase):
                 planting = GardenSquareDirectSowPlanting.objects.create(
                     workspace_id=self.workspace_pk,
                     seeds_used_id=self.packet_pk,
+                    batch_id=self.batch_pk,
                     location_id=self.square_pk,
                     quantity=10,
                 )

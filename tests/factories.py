@@ -3,9 +3,15 @@ from datetime import date
 from decimal import Decimal
 from itertools import count
 
+from django.utils import timezone
+
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
 from inventory.models import InventoryLocation, InventoryUnit, StockLot, StockMovement
 from plantings.models import (
+    GardenRowDirectSowPlanting,
+    GardenSquareDirectSowPlanting,
+    ProductionBatch,
+    ProductionBatchTransition,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
     SpecificPlant,
@@ -228,18 +234,80 @@ def make_seed_tray_cell(**overrides):
     return SeedTrayCell.objects.create(**values)
 
 
-def make_seed_tray_planting(**overrides):
-    """Create a seed-tray planting and its related seed and tray graph."""
+def make_production_batch(**overrides):
+    """Create an active production batch and its opening transition."""
     values = {
-        'quantity': 2,
-        'notes': 'Shared test tray planting',
+        'code': _next_name('BATCH').replace(' ', '-').upper(),
+        'status': ProductionBatch.Status.ACTIVE,
+        'notes': 'Shared test batch',
     }
+    if 'variety' not in overrides:
+        values['variety'] = make_plant_variety()
+    values.update(overrides)
+    if values['status'] == ProductionBatch.Status.ACTIVE and 'actual_start' not in values:
+        values['actual_start'] = timezone.now()
+    batch = ProductionBatch.objects.create(**values)
+    ProductionBatchTransition.objects.create(
+        batch=batch,
+        previous_status='',
+        new_status=batch.status,
+        reason='Created for tests.',
+    )
+    return batch
+
+
+def make_batch_for_packet(packet, **overrides):
+    """Create an active batch whose variety matches one seed packet."""
+    values = {
+        'variety': packet.seeds.plant_variety,
+        'workspace': packet.workspace,
+    }
+    values.update(overrides)
+    return make_production_batch(**values)
+
+
+def _sowing_values(overrides, defaults):
+    """Fill in a packet and a variety-matched active batch for a sowing."""
+    values = dict(defaults)
     if 'seeds_used' not in overrides:
         values['seeds_used'] = make_seed_packet()
-    if 'seed_tray' not in overrides:
-        values['seed_tray'] = make_seed_tray()
     values.update(overrides)
+    if 'batch' not in values:
+        values['batch'] = make_batch_for_packet(values['seeds_used'])
+    return values
+
+
+def make_seed_tray_planting(**overrides):
+    """Create a seed-tray planting and its related seed and tray graph."""
+    values = _sowing_values(overrides, {
+        'quantity': 2,
+        'notes': 'Shared test tray planting',
+    })
+    if 'seed_tray' not in values:
+        values['seed_tray'] = make_seed_tray()
     return SeedTrayPlanting.objects.create(**values)
+
+
+def make_garden_row_sowing(**overrides):
+    """Create a direct-sow row planting with a variety-matched batch."""
+    values = _sowing_values(overrides, {
+        'quantity': 2,
+        'notes': 'Shared test row sowing',
+    })
+    if 'location' not in values:
+        values['location'] = make_garden_row()
+    return GardenRowDirectSowPlanting.objects.create(**values)
+
+
+def make_garden_square_sowing(**overrides):
+    """Create a direct-sow square planting with a variety-matched batch."""
+    values = _sowing_values(overrides, {
+        'quantity': 2,
+        'notes': 'Shared test square sowing',
+    })
+    if 'location' not in values:
+        values['location'] = make_garden_square()
+    return GardenSquareDirectSowPlanting.objects.create(**values)
 
 
 def make_seed_tray_cell_planting(**overrides):

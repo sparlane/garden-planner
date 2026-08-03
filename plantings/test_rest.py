@@ -1,6 +1,7 @@
 """Smoke tests for planting and specific-plant REST resources."""
 from tests.api import RESTContractTestCase
 from tests.factories import (
+    make_batch_for_packet,
     make_garden_row,
     make_garden_square,
     make_seed_packet,
@@ -70,6 +71,7 @@ class PlantingRESTContractTests(RESTContractTestCase):
         """Each current aggregate planting resource survives create and retrieve."""
         common_fields = {
             'seeds_used': self.packet.pk,
+            'batch': make_batch_for_packet(self.packet).pk,
             'quantity': 3,
             'removed': False,
         }

@@ -14,7 +14,7 @@ from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
-from tests.factories import make_seed_tray
+from tests.factories import make_batch_for_packet, make_seed_tray
 from .models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -26,7 +26,7 @@ from .models import (
 from .rest import SpecificPlantSerializer
 
 
-class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-methods
+class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-methods,too-many-instance-attributes
     """Planting APIs reject quantities that cannot represent planted items."""
 
     def setUp(self):
@@ -85,8 +85,10 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             x_position=1,
             y_position=0,
         )
+        self.batch = make_batch_for_packet(self.packet)
         self.original_planting = SeedTrayPlanting.objects.create(
             seeds_used=self.packet,
+            batch=self.batch,
             quantity=1,
             seed_tray=self.tray,
         )
@@ -96,17 +98,17 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             (
                 '/plantings/directsowgardenrow/',
                 GardenRowDirectSowPlanting,
-                {'seeds_used': self.packet.pk, 'location': self.row.pk},
+                {'seeds_used': self.packet.pk, 'batch': self.batch.pk, 'location': self.row.pk},
             ),
             (
                 '/plantings/directsowgardensquare/',
                 GardenSquareDirectSowPlanting,
-                {'seeds_used': self.packet.pk, 'location': self.square.pk},
+                {'seeds_used': self.packet.pk, 'batch': self.batch.pk, 'location': self.square.pk},
             ),
             (
                 '/plantings/seedtray/',
                 SeedTrayPlanting,
-                {'seeds_used': self.packet.pk, 'seed_tray': self.tray.pk},
+                {'seeds_used': self.packet.pk, 'batch': self.batch.pk, 'seed_tray': self.tray.pk},
             ),
         ]
 
@@ -137,6 +139,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
                     '/plantings/seedtray/',
                     data=json.dumps({
                         'seeds_used': self.packet.pk,
+                        'batch': self.batch.pk,
                         'quantity': 1,
                         'seed_tray': self.tray.pk,
                         'cell_plantings': [{
@@ -165,6 +168,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             '/plantings/seedtray/',
             data=json.dumps({
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 1,
                 'seed_tray': self.tray.pk,
                 'cell_plantings': [{
@@ -193,6 +197,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             '/plantings/seedtray/',
             data=json.dumps({
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 3,
                 'seed_tray': self.tray.pk,
                 'cell_plantings': [
@@ -274,6 +279,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             '/plantings/seedtray/',
             data=json.dumps({
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 2,
                 'seed_tray': self.tray.pk,
                 'cell_plantings': [{
@@ -295,6 +301,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             '/plantings/seedtray/',
             data=json.dumps({
                 'seeds_used': self.packet.pk,
+                'batch': self.batch.pk,
                 'quantity': 2,
                 'seed_tray': self.tray.pk,
                 'cell_plantings': [
@@ -377,6 +384,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         )
         other_planting = SeedTrayPlanting.objects.create(
             seeds_used=self.packet,
+            batch=self.batch,
             quantity=1,
             seed_tray=self.tray,
         )
@@ -603,11 +611,13 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         planting_rows = [
             GardenRowDirectSowPlanting.objects.create(
                 seeds_used=self.packet,
+                batch=self.batch,
                 quantity=1,
                 location=self.row,
             ),
             GardenSquareDirectSowPlanting.objects.create(
                 seeds_used=self.packet,
+                batch=self.batch,
                 quantity=1,
                 location=self.square,
             ),
@@ -665,6 +675,7 @@ class ConcurrentGerminationTests(TransactionTestCase):
         )
         planting = SeedTrayPlanting.objects.create(
             seeds_used=packet,
+            batch=make_batch_for_packet(packet),
             quantity=1,
             seed_tray=tray,
         )

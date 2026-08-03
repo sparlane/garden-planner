@@ -1,16 +1,151 @@
 """
 Models for Plantings
 """
+# pylint: disable=duplicate-code
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
 from inventory.models import StockMovement
+from plants.models import PlantVariety
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell
 from garden.models import GardenRow, GardenSquare
 from workspaces.models import WorkspaceOwnedModel
+
+
+class ProductionBatch(WorkspaceOwnedModel):
+    """
+    The shared cultivation identity for one tracked crop.
+
+    A batch groups the sowings that intentionally produce the same crop so that
+    lifecycle, input, and costing work attaches to one profile-neutral record
+    instead of to tray-specific implementation details.
+    """
+
+    class Status(models.TextChoices):
+        """Batch lifecycle states."""
+
+        PLANNED = 'planned', 'Planned'
+        ACTIVE = 'active', 'Active'
+        OUTPUT_FINALIZED = 'output_finalized', 'Output finalized'
+        COMPLETED = 'completed', 'Completed'
+        CANCELLED = 'cancelled', 'Cancelled'
+
+    class RepairState(models.TextChoices):
+        """Whether migrated data needs an operator decision."""
+
+        NONE = 'none', 'None'
+        NEEDS_REPAIR = 'needs_repair', 'Needs repair'
+
+    code = models.CharField(max_length=64)
+    variety = models.ForeignKey(
+        PlantVariety,
+        on_delete=models.PROTECT,
+        related_name='production_batches',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PLANNED,
+        editable=False,
+    )
+    planned_start = models.DateField(null=True, blank=True)
+    actual_start = models.DateTimeField(null=True, blank=True, editable=False)
+    output_finalized_at = models.DateTimeField(null=True, blank=True, editable=False)
+    completed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    cancelled_at = models.DateTimeField(null=True, blank=True, editable=False)
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    repair_state = models.CharField(
+        max_length=16,
+        choices=RepairState.choices,
+        default=RepairState.NONE,
+        editable=False,
+    )
+    repair_details = models.TextField(blank=True, default='')
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created', '-pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'code'],
+                name='production_batch_workspace_code_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return self.code
+
+    def clean(self):
+        """Require a usable code and a variety inside this workspace."""
+        super().clean()
+        errors = {}
+        if not self.code.strip():
+            errors['code'] = 'A batch code is required.'
+        if self.variety_id and self.variety.workspace_id != self.workspace_id:
+            errors['variety'] = 'The variety belongs to a different workspace.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean(validate_unique=False, validate_constraints=False)
+        super().save(*args, **kwargs)
+
+
+class ProductionBatchTransition(models.Model):
+    """One immutable record of a batch lifecycle change."""
+
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        related_name='transitions',
+    )
+    previous_status = models.CharField(
+        max_length=20,
+        choices=ProductionBatch.Status.choices,
+        blank=True,
+        default='',
+    )
+    new_status = models.CharField(
+        max_length=20,
+        choices=ProductionBatch.Status.choices,
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    reason = models.TextField(blank=True, default='')
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+
+    def __str__(self):
+        previous = self.previous_status or 'new'
+        return f'Batch {self.batch_id}: {previous} -> {self.new_status}'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Batch transitions are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Batch transitions cannot be deleted.')
 
 
 class Planting(WorkspaceOwnedModel):
@@ -19,6 +154,11 @@ class Planting(WorkspaceOwnedModel):
     """
     planted = models.DateTimeField(default=timezone.now)
     seeds_used = models.ForeignKey(SeedPacket, on_delete=models.PROTECT)
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        related_name='%(class)s_sowings',
+    )
     quantity = models.IntegerField(validators=[MinValueValidator(1)])
     location = None
     notes = models.TextField(null=True, blank=True)
