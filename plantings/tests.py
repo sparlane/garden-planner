@@ -15,6 +15,7 @@ from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
 from tests.factories import (
+    make_batch_for_packet,
     make_garden_square,
     make_seed_packet,
     make_seed_tray,
@@ -202,6 +203,7 @@ class SeedTrayPlantingMembershipTests(TestCase):
         )
         self.planting = SeedTrayPlanting.objects.create(
             seeds_used=self.packet,
+            batch=make_batch_for_packet(self.packet),
             quantity=1,
             seed_tray=self.first_tray,
         )
@@ -353,6 +355,7 @@ class SpecificPlantMoveTests(TestCase):  # pylint: disable=too-many-public-metho
         )
         planting = SeedTrayPlanting.objects.create(
             seeds_used=packet,
+            batch=make_batch_for_packet(packet),
             quantity=1,
             seed_tray=tray,
         )
@@ -906,6 +909,7 @@ class GardenSquareCurrentMissingMetadataTests(TestCase):
         cell = SeedTrayCell.objects.create(tray=tray, x_position=0, y_position=0)
         planting = SeedTrayPlanting.objects.create(
             seeds_used=self.packet,
+            batch=make_batch_for_packet(self.packet),
             quantity=1,
             seed_tray=tray,
         )
@@ -928,6 +932,7 @@ class GardenSquareCurrentMissingMetadataTests(TestCase):
         """
         GardenSquareDirectSowPlanting.objects.create(
             seeds_used=self.packet,
+            batch=make_batch_for_packet(self.packet),
             quantity=1,
             location=self.square,
         )

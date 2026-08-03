@@ -11,6 +11,7 @@ from inventory.models import InventoryLocation, InventoryUnit, StockMovement
 from plantings.models import SeedTrayPlanting
 from tests.api import RESTContractTestCase
 from tests.factories import (
+    make_batch_for_packet,
     make_seed_packet,
     make_seed_tray,
     make_seed_tray_cell,
@@ -236,8 +237,10 @@ class SeedTrayCellIntegrityTests(TestCase):
     def test_active_cultivation_blocks_loss_but_allows_transfer(self):
         """A tray stays on hand while occupied and cannot silently leave stock."""
         tray = self.tray
+        packet = make_seed_packet()
         planting = SeedTrayPlanting.objects.create(
-            seeds_used=make_seed_packet(),
+            seeds_used=packet,
+            batch=make_batch_for_packet(packet),
             quantity=1,
             seed_tray=tray,
         )

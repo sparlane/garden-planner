@@ -60,30 +60,49 @@ class PostedSowingSerializerMixin:
             raise serializers.ValidationError(_model_errors(exc)) from exc
 
 
-class GardenRowDirectSowPlantingSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class BatchedSowingSerializerMixin:  # pylint: disable=too-few-public-methods
+    """Keep a sowing attached to exactly one production batch for life."""
+
+    def _validate_batch(self, attrs):
+        """Reject moving an existing sowing to a different batch."""
+        if self.instance is not None and 'batch' in attrs:
+            if attrs['batch'].pk != self.instance.batch_id:
+                raise serializers.ValidationError({
+                    'batch': 'Cannot move a sowing between batches.',
+                })
+
+    def validate(self, attrs):
+        """Apply the batch guard before the remaining sowing rules."""
+        self._validate_batch(attrs)
+        return super().validate(attrs)
+
+
+class GardenRowDirectSowPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenRowDirectSowPlanting
     """
     class Meta:
         model = GardenRowDirectSowPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'batch', 'quantity', 'location', 'removed', 'notes']
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
+        'batch': 'workspace',
         'location': 'workspace',
     }
 
 
-class GardenSquareDirectSowSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class GardenSquareDirectSowSerializer(BatchedSowingSerializerMixin, PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for GardenSquareDirectSowPlanting
     """
     class Meta:
         model = GardenSquareDirectSowPlanting
-        fields = ['pk', 'planted', 'seeds_used', 'quantity', 'location', 'removed', 'notes']
+        fields = ['pk', 'planted', 'seeds_used', 'batch', 'quantity', 'location', 'removed', 'notes']
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
+        'batch': 'workspace',
         'location': 'workspace',
     }
 
@@ -108,7 +127,7 @@ class SeedTrayCellPlantingNestedSerializer(CurrentWorkspaceSerializerMixin, seri
         return data
 
 
-class SeedTrayPlantingSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedTrayPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for SeedTrayPlanting
     """
@@ -117,12 +136,13 @@ class SeedTrayPlantingSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSe
     class Meta:
         model = SeedTrayPlanting
         fields = [
-            'pk', 'planted', 'seeds_used', 'quantity',
+            'pk', 'planted', 'seeds_used', 'batch', 'quantity',
             'seed_tray', 'location', 'removed', 'notes', 'cell_plantings',
         ]
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
+        'batch': 'workspace',
         'seed_tray': 'workspace',
     }
 
@@ -211,6 +231,7 @@ class SeedTrayPlantingSerializer(PostedSowingSerializerMixin, CurrentWorkspaceSe
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep retained or replacement cells on the effective seed tray."""
+        self._validate_batch(data)
         self._validate_stock_fields(data)
         cell_plantings = self._get_effective_cell_plantings(data)
         self._validate_cell_allocations(data, cell_plantings)

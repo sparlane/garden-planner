@@ -1,20 +1,37 @@
 """
 Tests for plantings data migrations
 """
+# pylint: disable=duplicate-code
 from datetime import datetime, timezone as datetime_timezone
 from importlib import import_module
 from unittest import mock
 
 from django.apps import apps as django_apps
-from django.test import SimpleTestCase, TestCase
+from django.conf import settings
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
-from tests.factories import make_garden_square, make_seed_tray
+from tests.factories import (
+    make_batch_for_packet,
+    make_garden_row_sowing,
+    make_garden_square,
+    make_garden_square_sowing,
+    make_seed_tray,
+    make_seed_tray_cell,
+    make_seed_tray_cell_planting,
+    make_seed_tray_planting,
+    make_specific_plant,
+)
+from workspaces.models import Workspace
+
 from .models import (
     GardenSquareTransplant,
+    ProductionBatch,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
     SpecificPlant,
@@ -58,6 +75,7 @@ class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instanc
         )
         planting = SeedTrayPlanting.objects.create(
             seeds_used=packet,
+            batch=make_batch_for_packet(packet),
             quantity=1,
             seed_tray=self.tray,
         )
@@ -161,8 +179,10 @@ class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instanc
     def test_transplant_audit_accepts_separate_representations(self):
         """Aggregate and individual transplants may belong to different plantings."""
         square = make_garden_square()
+        legacy_packet = self.cell_planting.seed_tray_planting.seeds_used
         legacy_planting = SeedTrayPlanting.objects.create(
-            seeds_used=self.cell_planting.seed_tray_planting.seeds_used,
+            seeds_used=legacy_packet,
+            batch=make_batch_for_packet(legacy_packet),
             quantity=1,
         )
         GardenSquareTransplant.objects.create(
@@ -307,3 +327,151 @@ class LocationChronologyAuditHelperTests(SimpleTestCase):
 
         self.assertEqual(pairs, [(1, 2)])
         self.assertEqual(count, 1)
+
+
+class ProductionBatchBackfillTests(TransactionTestCase):
+    """The legacy backfill gives every historical sowing one stable batch."""
+
+    MIGRATED_STATE = [('plantings', '0021_require_planting_batch')]
+    UNLINKED_STATE = [('plantings', '0019_productionbatch')]
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self._migrate, self.MIGRATED_STATE)
+
+    @staticmethod
+    def _migrate(targets):
+        """Move the test database to one explicit migration state."""
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(targets)
+
+    @staticmethod
+    def _unlink_batches():
+        """Return the database to its pre-batch shape without dropping sowings."""
+        with connection.cursor() as cursor:
+            for table in (
+                'plantings_gardenrowdirectsowplanting',
+                'plantings_gardensquaredirectsowplanting',
+                'plantings_seedtrayplanting',
+            ):
+                cursor.execute(f'UPDATE {table} SET batch_id = NULL')
+            cursor.execute('DELETE FROM plantings_productionbatchtransition')
+            cursor.execute('DELETE FROM plantings_productionbatch')
+
+    def _run_backfill(self):
+        """Strip the batch links, then replay the backfill over them."""
+        self._migrate(self.UNLINKED_STATE)
+        self._unlink_batches()
+        self._migrate(self.MIGRATED_STATE)
+
+    def test_every_historical_sowing_gets_one_stable_legacy_batch(self):
+        """Each sowing keeps its own deterministic code, dates, and identity."""
+        row_sowing = make_garden_row_sowing()
+        square_sowing = make_garden_square_sowing()
+        tray_sowing = make_seed_tray_planting()
+        cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=tray_sowing,
+        )
+        plants = [
+            make_specific_plant(cell_planting=cell_planting),
+            make_specific_plant(cell_planting=cell_planting),
+        ]
+
+        self._run_backfill()
+
+        for sowing, code_prefix in (
+            (row_sowing, 'LEGACY-ROW'),
+            (square_sowing, 'LEGACY-SQUARE'),
+            (tray_sowing, 'LEGACY-TRAY'),
+        ):
+            with self.subTest(code_prefix=code_prefix):
+                sowing.refresh_from_db()
+                batch = sowing.batch
+                self.assertEqual(batch.code, f'{code_prefix}-{sowing.pk}')
+                self.assertEqual(batch.status, ProductionBatch.Status.ACTIVE)
+                self.assertEqual(batch.actual_start, sowing.planted)
+                self.assertEqual(batch.workspace_id, sowing.workspace_id)
+                self.assertEqual(
+                    batch.variety_id,
+                    sowing.seeds_used.seeds.plant_variety_id,
+                )
+                self.assertIsNone(batch.created_by)
+                self.assertEqual(batch.repair_state, ProductionBatch.RepairState.NONE)
+                transitions = list(batch.transitions.all())
+                self.assertEqual(len(transitions), 1)
+                self.assertEqual(transitions[0].previous_status, '')
+                self.assertEqual(
+                    transitions[0].new_status,
+                    ProductionBatch.Status.ACTIVE,
+                )
+
+        self.assertEqual(ProductionBatch.objects.count(), 3)
+        self.assertEqual(
+            SpecificPlant.objects.filter(cell_planting=cell_planting).count(),
+            len(plants),
+        )
+
+    def test_multigerm_and_recovered_plants_share_their_sowing_batch(self):
+        """Individual plants inherit one batch through their cell planting."""
+        tray_sowing = make_seed_tray_planting(quantity=2)
+        cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=tray_sowing,
+            quantity=2,
+        )
+        recovered = [
+            make_specific_plant(
+                cell_planting=cell_planting,
+                notes='Recovered from legacy GardenSquareTransplant #1.',
+            )
+            for _index in range(5)
+        ]
+        square = make_garden_square()
+        legacy_transplant = GardenSquareTransplant.objects.create(
+            original_planting=tray_sowing,
+            quantity=5,
+            location=square,
+        )
+
+        self._run_backfill()
+
+        tray_sowing.refresh_from_db()
+        batches = {
+            plant.cell_planting.seed_tray_planting.batch_id
+            for plant in SpecificPlant.objects.filter(pk__in=[p.pk for p in recovered])
+        }
+        self.assertEqual(batches, {tray_sowing.batch_id})
+        legacy_transplant.refresh_from_db()
+        self.assertEqual(
+            legacy_transplant.original_planting.batch_id,
+            tray_sowing.batch_id,
+        )
+        self.assertEqual(ProductionBatch.objects.count(), 1)
+        self.assertEqual(legacy_transplant.quantity, 5)
+
+    def test_anomalous_cell_membership_is_flagged_for_repair(self):
+        """A stray cell allocation is reported instead of silently guessed at."""
+        tray_sowing = make_seed_tray_planting()
+        stray_cell = make_seed_tray_cell()
+        SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=tray_sowing,
+            cell=stray_cell,
+            quantity=1,
+        )
+
+        self._run_backfill()
+
+        tray_sowing.refresh_from_db()
+        batch = tray_sowing.batch
+        self.assertEqual(batch.repair_state, ProductionBatch.RepairState.NEEDS_REPAIR)
+        self.assertIn(str(stray_cell.pk), batch.repair_details)
+        self.assertIn(f'seed tray #{tray_sowing.seed_tray_id}', batch.repair_details)

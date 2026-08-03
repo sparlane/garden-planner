@@ -17,6 +17,7 @@ from plantings.models import (
 )
 from tests.api import RESTContractTestCase
 from tests.factories import (
+    make_batch_for_packet,
     make_garden_square,
     make_plant_variety,
     make_seed_packet,
@@ -99,19 +100,23 @@ class SeedRESTContractTests(RESTContractTestCase):
         tray = make_seed_tray()
         square = make_garden_square()
 
+        batch = make_batch_for_packet(used_packet)
         first_tray_planting = SeedTrayPlanting.objects.create(
             seeds_used=used_packet,
+            batch=batch,
             quantity=4,
             seed_tray=tray,
         )
         second_tray_planting = SeedTrayPlanting.objects.create(
             seeds_used=used_packet,
+            batch=batch,
             quantity=6,
             seed_tray=tray,
         )
         for quantity in (3, 5):
             GardenSquareDirectSowPlanting.objects.create(
                 seeds_used=used_packet,
+                batch=batch,
                 quantity=quantity,
                 location=square,
             )
@@ -174,6 +179,7 @@ class SeedRESTContractTests(RESTContractTestCase):
         square = make_garden_square()
         planting = SeedTrayPlanting.objects.create(
             seeds_used=packet,
+            batch=make_batch_for_packet(packet),
             quantity=2,
             seed_tray=tray,
         )

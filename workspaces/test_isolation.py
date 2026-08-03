@@ -10,6 +10,7 @@ from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
+    ProductionBatch,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
     SpecificPlant,
@@ -114,21 +115,30 @@ class ResourceIsolationTests(APITestCase):
             x_position=0,
             y_position=0,
         )
+        self.batch = ProductionBatch.objects.create(
+            workspace=self.other,
+            code='OTHER-BATCH',
+            variety=self.variety,
+            status=ProductionBatch.Status.ACTIVE,
+        )
         self.row_sowing = GardenRowDirectSowPlanting.objects.create(
             workspace=self.other,
             seeds_used=self.packet,
+            batch=self.batch,
             location=self.row,
             quantity=2,
         )
         self.square_sowing = GardenSquareDirectSowPlanting.objects.create(
             workspace=self.other,
             seeds_used=self.packet,
+            batch=self.batch,
             location=self.square,
             quantity=2,
         )
         self.tray_sowing = SeedTrayPlanting.objects.create(
             workspace=self.other,
             seeds_used=self.packet,
+            batch=self.batch,
             seed_tray=self.tray,
             quantity=2,
         )
@@ -326,6 +336,7 @@ class ResourceIsolationTests(APITestCase):
                 '/plantings/directsowgardenrow/',
                 {
                     'seeds_used': self.packet.pk,
+                    'batch': self.batch.pk,
                     'location': self.row.pk,
                     'quantity': 1,
                 },
@@ -334,6 +345,7 @@ class ResourceIsolationTests(APITestCase):
                 '/plantings/directsowgardensquare/',
                 {
                     'seeds_used': self.packet.pk,
+                    'batch': self.batch.pk,
                     'location': self.square.pk,
                     'quantity': 1,
                 },
@@ -342,6 +354,7 @@ class ResourceIsolationTests(APITestCase):
                 '/plantings/seedtray/',
                 {
                     'seeds_used': self.packet.pk,
+                    'batch': self.batch.pk,
                     'seed_tray': self.tray.pk,
                     'quantity': 1,
                     'cell_plantings': [
