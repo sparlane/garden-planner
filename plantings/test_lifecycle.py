@@ -142,6 +142,16 @@ class LifecycleTransitionTests(TestCase):
                     event_type,
                 )
 
+    def test_a_rejection_names_the_state_it_came_from(self):
+        """The message reads as a sentence for a vowel-initial state too."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        with self.assertRaises(ValidationError) as caught:
+            record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        self.assertEqual(
+            caught.exception.message_dict['event_type'],
+            ['An available plant cannot be recorded as ready for sale or use.'],
+        )
+
     def test_a_retained_plant_cannot_be_marked_ready(self):
         """Retention is final for availability."""
         record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.RETAINED))

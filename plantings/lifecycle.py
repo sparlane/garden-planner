@@ -217,12 +217,18 @@ def _require_reason(reason):
         raise ValidationError({'reason': 'A reason is required.'})
 
 
+def _article_for(word):
+    """Return the indefinite article that reads correctly before a word."""
+    return 'An' if word[:1].lower() in 'aeiou' else 'A'
+
+
 def _require_transition(state, event_type):
     """Reject a fact that the plant's current condition does not permit."""
     if state not in ALLOWED_FROM.get(event_type, set()):
+        described = LifecycleState(state).label.lower()
         raise ValidationError({
             'event_type': (
-                f'A {LifecycleState(state).label.lower()} plant cannot be '
+                f'{_article_for(described)} {described} plant cannot be '
                 f'recorded as {EventType(event_type).label.lower()}.'
             ),
         })
