@@ -18,6 +18,7 @@ import { SeedTrayDetails } from './seedtray/seedtray_details.js'
 import { getWorkspace } from './api/workspace.js'
 import { WorkspaceModeRoute, WorkspaceSettings } from './workspace.js'
 import { InventoryCatalog } from './inventory.js'
+import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -28,6 +29,17 @@ function SeedTrayDetailsRoute() {
   }
 
   return <SeedTrayDetails seedTrayPk={seedTrayPk} />
+}
+
+function ProductionBatchDetailRoute() {
+  const { batchId } = useParams()
+  const batchPk = Number(batchId)
+
+  if (!batchId || !Number.isInteger(batchPk) || batchPk <= 0) {
+    return <div>Batch not found.</div>
+  }
+
+  return <ProductionBatchDetailView batchPk={batchPk} />
 }
 
 function FrontEndPage() {
@@ -62,6 +74,8 @@ function FrontEndPage() {
         <Route path="/seedtrays/models" element={<SeedTrayModelsTable />} />
         <Route path="/seedtrays" element={<SeedTraysTable />} />
         <Route path="/seedtrays/:trayId" element={<SeedTrayDetailsRoute />} />
+        <Route path="/plantings/batches" element={<ProductionBatchTable />} />
+        <Route path="/plantings/batches/:batchId" element={<ProductionBatchDetailRoute />} />
         <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
         <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
         <Route path="/inventory" element={<InventoryCatalog />} />

@@ -47,6 +47,9 @@ const queryKeys = {
   },
   plantings: {
     all: ['plantings'] as const,
+    batchesAll: ['plantings', 'batches'] as const,
+    batches: (status: string, variety: number | '', code: string, needsRepair: boolean) => ['plantings', 'batches', status, variety, code, needsRepair] as const,
+    batch: (batchPk: number) => ['plantings', 'batches', 'detail', batchPk] as const,
     directGardenRows: ['plantings', 'directGardenRows'] as const,
     directGardenSquares: ['plantings', 'directGardenSquares'] as const,
     transplantedGardenSquares: ['plantings', 'transplantedGardenSquares'] as const,
