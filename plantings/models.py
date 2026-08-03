@@ -388,6 +388,126 @@ class SpecificPlantLocation(models.Model):
         return f'Plant {self.specific_plant_id} @ {loc} from {self.started}'
 
 
+class PlantLifecycleEvent(WorkspaceOwnedModel):
+    """One immutable fact about what happened to an individual plant.
+
+    Lifecycle state is replayed from these events rather than stored, so no
+    mutable status field can become a competing source of truth. Corrections
+    append a reversal instead of editing or deleting the original fact.
+    """
+
+    class EventType(models.TextChoices):
+        """Recorded lifecycle and disposition facts."""
+
+        GERMINATED = 'germinated', 'Germinated'
+        READY = 'ready', 'Ready for sale or use'
+        TRANSPLANTED = 'transplanted', 'Transplanted or planted out'
+        RETAINED = 'retained', 'Retained'
+        FAILED = 'failed', 'Failed'
+        CULLED = 'culled', 'Culled'
+        DONATED = 'donated', 'Donated'
+        HARVEST_FINISHED = 'harvest_finished', 'Harvest finished'
+        CORRECTED = 'corrected', 'Corrected'
+
+    plant = models.ForeignKey(
+        SpecificPlant,
+        on_delete=models.CASCADE,
+        related_name='lifecycle_events',
+    )
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        editable=False,
+        related_name='plant_lifecycle_events',
+    )
+    event_type = models.CharField(max_length=20, choices=EventType.choices)
+    occurred_at = models.DateTimeField()
+    reason = models.TextField(blank=True, default='')
+    reference = models.CharField(max_length=255, blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    reversal_of = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='reversal',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['occurred_at', 'pk']
+        indexes = [
+            models.Index(fields=['plant', 'occurred_at'], name='plant_lifecycle_replay_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['plant'],
+                condition=models.Q(event_type='germinated'),
+                name='plant_lifecycle_single_germination',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(event_type='corrected', reversal_of__isnull=False),
+                    ~models.Q(event_type='corrected') & models.Q(reversal_of__isnull=True),
+                    _connector=models.Q.OR,
+                ),
+                name='plant_lifecycle_reversal_type',
+            ),
+            models.UniqueConstraint(
+                fields=['plant', 'event_type', 'reference'],
+                condition=~models.Q(reference=''),
+                name='plant_lifecycle_reference_idempotent',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Plant {self.plant_id}: {self.event_type} at {self.occurred_at}'
+
+    def clean(self):
+        """Keep the event, its plant, and its denormalised batch consistent."""
+        super().clean()
+        errors = {}
+        if self.plant_id and self.plant.workspace_id != self.workspace_id:
+            errors['plant'] = 'The plant belongs to a different workspace.'
+        if self.batch_id:
+            if self.batch.workspace_id != self.workspace_id:
+                errors['batch'] = 'The batch belongs to a different workspace.'
+            elif self.plant_id and self.batch_id != self.plant_batch_id():
+                errors['batch'] = 'The batch does not match the batch that raised this plant.'
+        errors.update(self._reversal_errors())
+        if errors:
+            raise ValidationError(errors)
+
+    def _reversal_errors(self):
+        """Reject a correction that does not name one of this plant's facts."""
+        if self.reversal_of_id is None:
+            return {}
+        if self.reversal_of.plant_id != self.plant_id:
+            return {'reversal_of': 'The corrected event belongs to a different plant.'}
+        if self.reversal_of.event_type == self.EventType.CORRECTED:
+            return {'reversal_of': 'A correction cannot itself be corrected.'}
+        return {}
+
+    def plant_batch_id(self):
+        """Return the batch that raised this event's plant."""
+        return self.plant.cell_planting.seed_tray_planting.batch_id
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Plant lifecycle events are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Plant lifecycle events cannot be deleted.')
+
+
 class GardenSquareTransplant(WorkspaceOwnedModel):
     """
     Legacy aggregate transplant from a seed tray into a garden square.
