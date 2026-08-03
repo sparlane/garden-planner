@@ -3,7 +3,9 @@
 # pylint: disable=duplicate-code
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from django.db.models import Count
+from django.utils import timezone
 from rest_framework import serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -24,8 +26,10 @@ from .batches import (
     batch_unresolved_plant_ids,
     cancel_batch,
     complete_batch,
+    create_and_activate_batch,
     create_batch,
     finalize_batch_output,
+    lock_batch_for_sowing,
     reopen_batch,
 )
 from .models import ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
@@ -337,6 +341,88 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
     def get_current_locations(self, batch):
         """Return where this batch's individual plants are living now."""
         return _current_locations(batch)
+
+
+class InlineBatchSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Validate the batch a sowing form creates alongside its sowing.
+
+    The variety and actual start are derived from the sowing itself, so a
+    caller supplies only the descriptive fields.
+    """
+
+    code = serializers.CharField(max_length=64, allow_blank=False, trim_whitespace=True)
+    planned_start = serializers.DateField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class BatchedSowingSerializerMixin:
+    """Attach each sowing to exactly one production batch for life.
+
+    Concrete sowing serializers declare the `new_batch` field themselves
+    because DRF only collects declared fields from serializer bases.
+    """
+
+    def _validate_batch(self, attrs):
+        """Require exactly one batch choice and keep an existing one fixed."""
+        if self.instance is not None:
+            if 'new_batch' in attrs:
+                raise serializers.ValidationError({
+                    'new_batch': 'An existing sowing already has a batch.',
+                })
+            if 'batch' in attrs and attrs['batch'].pk != self.instance.batch_id:
+                raise serializers.ValidationError({
+                    'batch': 'Cannot move a sowing between batches.',
+                })
+            return
+
+        chosen = [field for field in ('batch', 'new_batch') if attrs.get(field)]
+        if len(chosen) != 1:
+            raise serializers.ValidationError({
+                'batch': 'Supply exactly one of an existing batch or a new batch.',
+            })
+
+    def validate(self, attrs):
+        """Apply the batch guard before the remaining sowing rules."""
+        self._validate_batch(attrs)
+        return super().validate(attrs)
+
+    def _resolve_batch(self, validated_data):
+        """Create or lock the batch this new sowing joins.
+
+        Must be called inside the transaction that creates the sowing so no
+        work can attach to a batch that is finalizing concurrently.
+        """
+        workspace = validated_data['workspace']
+        packet = validated_data['seeds_used']
+        inline = validated_data.pop('new_batch', None)
+        try:
+            if inline is None:
+                validated_data['batch'] = lock_batch_for_sowing(
+                    validated_data['batch'],
+                    packet,
+                    workspace,
+                )
+                return
+            planted = validated_data.setdefault('planted', timezone.now())
+            validated_data['batch'] = create_and_activate_batch(
+                workspace,
+                self.context['request'].user,
+                BatchRequest(
+                    code=inline['code'],
+                    variety=packet.seeds.plant_variety,
+                    planned_start=inline.get('planned_start'),
+                    notes=inline.get('notes', ''),
+                ),
+                actual_start=planted,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_model_errors(exc)) from exc
+
+    def create(self, validated_data):
+        """Resolve the batch before the sowing and its consumption exist."""
+        with transaction.atomic():
+            self._resolve_batch(validated_data)
+            return super().create(validated_data)
 
 
 class ProductionBatchViewSet(

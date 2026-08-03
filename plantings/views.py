@@ -24,7 +24,7 @@ def seedtray_current(request):
         SeedTrayPlanting.objects
         .filter(removed=False, workspace=workspace)
         .order_by('planted')
-        .select_related('seeds_used__seeds__plant_variety__plant', 'seed_tray')
+        .select_related('seeds_used__seeds__plant_variety__plant', 'seed_tray', 'batch')
         .prefetch_related('cell_plantings__cell')
     )
     garden_square_location_counts = dict(
@@ -65,6 +65,8 @@ def seedtray_current(request):
         planting_data.append({
             'pk': planting.pk,
             'seeds_used': planting.seeds_used_id,
+            'batch': planting.batch_id,
+            'batch_code': planting.batch.code,
             'plant': variety.plant.name,
             'variety': variety.name,
             'planted': planting.planted,
@@ -132,7 +134,7 @@ def gardensquare_current(request):
         GardenSquareDirectSowPlanting.objects
         .filter(removed=False, workspace=workspace)
         .order_by('planted')
-        .select_related('seeds_used__seeds__plant_variety__plant', 'location__bed__area')
+        .select_related('seeds_used__seeds__plant_variety__plant', 'location__bed__area', 'batch')
     )
     planting_data = []
     for planting in plantings:
@@ -141,6 +143,8 @@ def gardensquare_current(request):
         planting_data.append({
             'planting_pk': planting.pk,
             'seeds_used': planting.seeds_used_id,
+            'batch': planting.batch_id,
+            'batch_code': planting.batch.code,
             'plant': planting.seeds_used.seeds.plant_variety.plant.name,
             'variety': planting.seeds_used.seeds.plant_variety.name,
             'planted': planting.planted,
@@ -166,7 +170,11 @@ def gardensquare_current(request):
             has_specific_representation=Exists(specific_garden_locations),
         )
         .filter(has_specific_representation=False)
-        .select_related('original_planting__seeds_used__seeds__plant_variety__plant', 'location__bed__area')
+        .select_related(
+            'original_planting__seeds_used__seeds__plant_variety__plant',
+            'original_planting__batch',
+            'location__bed__area',
+        )
     )
     for transplanting in transplantings:
         planting = transplanting.original_planting
@@ -175,6 +183,8 @@ def gardensquare_current(request):
         planting_data.append({
             'transplanting_pk': transplanting.pk,
             'planting_pk': planting.pk,
+            'batch': planting.batch_id,
+            'batch_code': planting.batch.code,
             'transplanted': transplanting.transplanted,
             'plant': planting.seeds_used.seeds.plant_variety.plant.name,
             'variety': planting.seeds_used.seeds.plant_variety.name,
@@ -193,6 +203,7 @@ def gardensquare_current(request):
         ended__isnull=True,
     ).select_related(
         'specific_plant__cell_planting__seed_tray_planting__seeds_used__seeds__plant_variety__plant',
+        'specific_plant__cell_planting__seed_tray_planting__batch',
         'garden_square__bed__area',
     )
     for location in specific_plant_locations:
@@ -203,6 +214,8 @@ def gardensquare_current(request):
             'specific_plant_pk': location.specific_plant.pk,
             'transplanting_pk': location.pk,
             'planting_pk': planting.pk,
+            'batch': planting.batch_id,
+            'batch_code': planting.batch.code,
             'transplanted': location.started,
             'plant': variety.plant.name,
             'variety': variety.name,
