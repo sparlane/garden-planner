@@ -14,6 +14,7 @@ from seedtrays.models import SeedTray
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
+from .batch_rest import register_batch_routes
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 from .sowing import correct_sowing_consumption, post_sowing_consumption
 
@@ -928,6 +929,7 @@ class SpecificPlantLocationByPlantViewSet(CurrentWorkspaceViewSetMixin, viewsets
 
 
 router = routers.SimpleRouter()
+register_batch_routes(router)
 router.register(r'directsowgardenrow', GardenRowDirectSowPlantingViewSet)
 router.register(r'directsowgardensquare', GardenSquareDirectSowPlantingViewSet)
 router.register(r'seedtray', SeedTrayPlantingViewSet)
