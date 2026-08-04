@@ -108,14 +108,17 @@ function HarvestTable({ harvests, showCrop = true, showLocation = true }: Harves
         {harvests.map((harvest) => {
           const reversed = harvest.status === 'reversed'
           return (
-            <tr key={harvest.pk} className={reversed ? 'text-muted text-decoration-line-through' : undefined}>
+            // Only the quantity is struck through, because the quantity is what
+            // stopped counting. Striking the whole row would also strike the
+            // reason it was retracted, which no descendant style can undo.
+            <tr key={harvest.pk} className={reversed ? 'text-muted' : undefined}>
               <td>{formatDateTime(harvest.harvested_at)}</td>
               {showCrop && (
                 <td>
                   {harvest.batch_code} · {harvest.plant_name} — {harvest.variety_name}
                 </td>
               )}
-              <td>{formatMeasure(harvest.quantity, HARVEST_UNIT_LABELS[harvest.unit_code])}</td>
+              <td className={reversed ? 'text-decoration-line-through' : undefined}>{formatMeasure(harvest.quantity, HARVEST_UNIT_LABELS[harvest.unit_code])}</td>
               {showLocation && <td>{harvest.location_label ?? '—'}</td>}
               <td>{GRADE_LABELS[harvest.grade]}</td>
               <td>{harvest.quality_rating ?? '—'}</td>
@@ -125,7 +128,7 @@ function HarvestTable({ harvests, showCrop = true, showLocation = true }: Harves
               </td>
               <td>
                 {harvest.notes || '—'}
-                {reversed && harvest.reverse_reason && <div className="text-decoration-none">Reversed: {harvest.reverse_reason}</div>}
+                {reversed && harvest.reverse_reason && <div>Reversed: {harvest.reverse_reason}</div>}
               </td>
               <td className="text-nowrap">
                 <ReverseHarvestButton harvest={harvest} />
