@@ -2,6 +2,12 @@ import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
 import {
   BatchAction,
   BulkPlantOutcome,
+  Harvest,
+  HarvestCreate,
+  HarvestFilters,
+  HarvestReportFilters,
+  HarvestReportRow,
+  ReverseHarvest,
   PlantLifecycleEvent,
   PlantOutcome,
   PlantOutcomeAction,
@@ -175,6 +181,36 @@ function postBulkPlantOutcome(data: BulkPlantOutcome): Promise<Array<PlantLifecy
   return csrfPost('/plantings/specificplants/bulk-outcome/', data).then((response) => response.json() as Promise<Array<PlantLifecycleEvent>>)
 }
 
+function harvestQuery(filters: HarvestFilters | HarvestReportFilters): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      query.set(key, String(value))
+    }
+  }
+  return query.size > 0 ? `?${query.toString()}` : ''
+}
+
+function getHarvests(filters: HarvestFilters = {}, signal?: AbortSignal): Promise<Array<Harvest>> {
+  return fetchAsJson<Array<Harvest>>(`/plantings/harvests/${harvestQuery(filters)}`, signal)
+}
+
+function getHarvest(harvestPk: number, signal?: AbortSignal): Promise<Harvest> {
+  return fetchAsJson<Harvest>(`/plantings/harvests/${harvestPk}/`, signal)
+}
+
+function addHarvest(data: HarvestCreate): Promise<Harvest> {
+  return csrfPost('/plantings/harvests/', data).then((response) => response.json() as Promise<Harvest>)
+}
+
+function reverseHarvest(harvestPk: number, data: ReverseHarvest): Promise<Harvest> {
+  return csrfPost(`/plantings/harvests/${harvestPk}/reverse/`, data).then((response) => response.json() as Promise<Harvest>)
+}
+
+function getHarvestReport(filters: HarvestReportFilters, signal?: AbortSignal): Promise<Array<HarvestReportRow>> {
+  return fetchAsJson<Array<HarvestReportRow>>(`/plantings/harvest-report/${harvestQuery(filters)}`, signal)
+}
+
 export {
   ProductionBatchFilters,
   getProductionBatches,
@@ -206,5 +242,10 @@ export {
   getSpecificPlantLifecycleEvents,
   postSpecificPlantOutcome,
   reverseSpecificPlantEvent,
-  postBulkPlantOutcome
+  postBulkPlantOutcome,
+  getHarvests,
+  getHarvest,
+  addHarvest,
+  reverseHarvest,
+  getHarvestReport
 }

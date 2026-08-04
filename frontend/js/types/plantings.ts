@@ -96,6 +96,9 @@ interface ProductionBatchDetail extends ProductionBatch {
   sowings: Array<ProductionBatchSowing>
   current_locations: Array<ProductionBatchLocation>
   lifecycle_counts: Record<PlantLifecycleState, number>
+  harvest_count: number
+  harvest_totals: Array<HarvestFamilyTotal>
+  plants_harvest_finished: number
   transitions: Array<ProductionBatchTransition>
 }
 
@@ -296,9 +299,133 @@ interface SowingCorrection {
   reason: string
 }
 
+// The five units a yield may be measured in. The backend rejects the seed and
+// area codes the inventory registry also publishes, so this list is the
+// contract rather than /inventory/units/.
+type HarvestUnitCode = 'each' | 'g' | 'kg' | 'ml' | 'l'
+
+const HARVEST_UNIT_LABELS: Record<HarvestUnitCode, string> = {
+  each: 'each',
+  g: 'g',
+  kg: 'kg',
+  ml: 'ml',
+  l: 'L'
+}
+
+type HarvestStatus = 'posted' | 'reversed'
+
+type HarvestGrade = 'ungraded' | 'premium' | 'standard' | 'seconds'
+
+interface Harvest {
+  pk: number
+  batch: number
+  batch_code: string
+  variety: number
+  variety_name: string
+  plant_name: string
+  harvested_at: string
+  quantity: string
+  unit_code: HarvestUnitCode
+  garden_square: number | null
+  garden_row: number | null
+  location_label: string | null
+  quality_rating: number | null
+  grade: HarvestGrade
+  notes: string
+  status: HarvestStatus
+  posted_at: string
+  reversed_at: string | null
+  reverse_reason: string
+  created_by: number | null
+  reversed_by: number | null
+  created: string
+  plants: Array<number>
+  finished_plants: Array<number>
+}
+
+interface HarvestCreate {
+  batch: number
+  harvested_at: string
+  quantity: string
+  unit_code: HarvestUnitCode
+  garden_square?: number | null
+  garden_row?: number | null
+  quality_rating?: number | null
+  grade?: HarvestGrade
+  notes?: string
+  plants?: Array<number>
+  finish_plants?: boolean
+  finish_reason?: string
+}
+
+interface ReverseHarvest {
+  reason: string
+}
+
+interface HarvestFilters {
+  batch?: number
+  variety?: number
+  garden_square?: number
+  garden_row?: number
+  plant?: number
+  status?: HarvestStatus | ''
+  harvested_from?: string
+  harvested_to?: string
+}
+
+// One total per unit family. Count, mass, and volume are never summed
+// together, so a report row carries one of these per dimension it measured.
+interface HarvestFamilyTotal {
+  conversion_family: string
+  dimension: string
+  unit_code: HarvestUnitCode
+  quantity: string
+  harvest_count: number
+}
+
+type HarvestReportGroupBy = 'plant' | 'variety' | 'batch' | 'garden_square' | 'garden_row' | 'month' | 'year'
+
+interface HarvestReportRow {
+  group_by: HarvestReportGroupBy
+  key: number | string | null
+  label: string
+  harvest_count: number
+  first_harvested_at: string
+  last_harvested_at: string
+  totals: Array<HarvestFamilyTotal>
+  // Only ever populated when grouping by plant: harvests shared with other
+  // plants, reported beside the total rather than added into it.
+  shared_totals: Array<HarvestFamilyTotal>
+  seeds_sown: number | null
+  plants_observed: number | null
+  plants_harvest_finished: number | null
+}
+
+interface HarvestReportFilters {
+  group_by: HarvestReportGroupBy
+  batch?: number
+  variety?: number
+  garden_square?: number
+  garden_row?: number
+  harvested_from?: string
+  harvested_to?: string
+}
+
 export {
   BatchAction,
   BulkPlantOutcome,
+  HARVEST_UNIT_LABELS,
+  Harvest,
+  HarvestCreate,
+  HarvestFamilyTotal,
+  HarvestFilters,
+  HarvestGrade,
+  HarvestReportFilters,
+  HarvestReportGroupBy,
+  HarvestReportRow,
+  HarvestStatus,
+  HarvestUnitCode,
+  ReverseHarvest,
   PlantLifecycleEvent,
   PlantLifecycleEventType,
   PlantLifecycleState,
