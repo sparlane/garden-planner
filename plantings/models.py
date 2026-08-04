@@ -4,11 +4,17 @@ Models for Plantings
 # pylint: disable=duplicate-code
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
-from inventory.models import StockMovement
+from inventory.models import (
+    POSITIVE_DECIMAL,
+    QUANTITY_DECIMAL_PLACES,
+    QUANTITY_MAX_DIGITS,
+    StockMovement,
+)
+from inventory.units import UnitCode
 from plants.models import PlantVariety
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell
@@ -506,6 +512,228 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Plant lifecycle events cannot be deleted.')
+
+
+#: The measurement units a crop yield may be recorded in. Seed units describe
+#: what went in rather than what came out, and an area is not a yield, so
+#: neither appears here.
+HARVEST_UNIT_CODES = (
+    UnitCode.EACH,
+    UnitCode.GRAM,
+    UnitCode.KILOGRAM,
+    UnitCode.MILLILITRE,
+    UnitCode.LITRE,
+)
+
+HARVEST_UNIT_CHOICES = [(code.value, code.label) for code in HARVEST_UNIT_CODES]
+
+
+class Harvest(WorkspaceOwnedModel):
+    """One measured crop yield taken from a production batch.
+
+    A harvest is an observation rather than a document assembled from lines, so
+    it is posted the moment it is recorded. A mistake is corrected by reversing
+    the record, which keeps it visible while excluding it from every total.
+    """
+
+    class Status(models.TextChoices):
+        """Whether this harvest still counts towards yield."""
+
+        POSTED = 'posted', 'Posted'
+        REVERSED = 'reversed', 'Reversed'
+
+    class Grade(models.TextChoices):
+        """The saleable class an operator assigned to this yield."""
+
+        UNGRADED = 'ungraded', 'Ungraded'
+        PREMIUM = 'premium', 'Premium'
+        STANDARD = 'standard', 'Standard'
+        SECONDS = 'seconds', 'Seconds'
+
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        related_name='harvests',
+    )
+    harvested_at = models.DateTimeField()
+    quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    unit_code = models.CharField(max_length=16, choices=HARVEST_UNIT_CHOICES)
+    garden_square = models.ForeignKey(
+        GardenSquare,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='harvests',
+    )
+    garden_row = models.ForeignKey(
+        GardenRow,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='harvests',
+    )
+    quality_rating = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    grade = models.CharField(
+        max_length=16,
+        choices=Grade.choices,
+        default=Grade.UNGRADED,
+    )
+    notes = models.TextField(blank=True, default='')
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.POSTED,
+        editable=False,
+    )
+    posted_at = models.DateTimeField(default=timezone.now, editable=False)
+    reversed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    reverse_reason = models.TextField(blank=True, default='', editable=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-harvested_at', '-pk']
+        indexes = [
+            models.Index(fields=['batch', 'harvested_at'], name='harvest_batch_period_idx'),
+            models.Index(fields=['workspace', 'harvested_at'], name='harvest_period_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0),
+                name='harvest_quantity_positive',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(garden_square__isnull=True),
+                    models.Q(garden_row__isnull=True),
+                    _connector=models.Q.OR,
+                ),
+                name='harvest_single_location',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    unit_code__in=[code.value for code in HARVEST_UNIT_CODES],
+                ),
+                name='harvest_allowed_unit',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(status='posted', reversed_at__isnull=True),
+                    models.Q(status='reversed', reversed_at__isnull=False),
+                    _connector=models.Q.OR,
+                ),
+                name='harvest_reversal_stamp',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.quantity} {self.unit_code} from {self.batch} on {self.harvested_at}'
+
+    def clean(self):
+        """Keep the batch, the location, and the unit inside this workspace."""
+        super().clean()
+        errors = {}
+        if self.batch_id and self.batch.workspace_id != self.workspace_id:
+            errors['batch'] = 'The batch belongs to a different workspace.'
+        if self.garden_square_id and self.garden_row_id:
+            errors['garden_row'] = 'Record a garden square or a garden row, not both.'
+        for field in ('garden_square', 'garden_row'):
+            location = getattr(self, field, None)
+            if location is not None and location.workspace_id != self.workspace_id:
+                errors[field] = 'The location belongs to a different workspace.'
+        if self.unit_code not in {code.value for code in HARVEST_UNIT_CODES}:
+            errors['unit_code'] = 'Record a harvest in each, g, kg, ml, or l.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Harvests are immutable; reverse them instead.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Harvests cannot be deleted; reverse them instead.')
+
+
+class HarvestPlant(models.Model):
+    """One individual plant a harvest is attributed to.
+
+    The allocation records attribution and nothing more. A measured kilogram is
+    never split across the plants it came from, because that division was not
+    observed and inventing it would misreport every per-plant total.
+    """
+
+    harvest = models.ForeignKey(
+        Harvest,
+        on_delete=models.PROTECT,
+        related_name='plant_allocations',
+    )
+    plant = models.ForeignKey(
+        SpecificPlant,
+        on_delete=models.PROTECT,
+        related_name='harvest_allocations',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['harvest', 'plant']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['harvest', 'plant'],
+                name='harvest_plant_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Harvest {self.harvest_id} from plant {self.plant_id}'
+
+    def clean(self):
+        """Require a plant this workspace raised in this harvest's batch."""
+        super().clean()
+        if not self.harvest_id or not self.plant_id:
+            return
+        errors = {}
+        if self.plant.workspace_id != self.harvest.workspace_id:
+            errors['plant'] = 'The plant belongs to a different workspace.'
+        elif self.plant_batch_id() != self.harvest.batch_id:
+            errors['plant'] = "The plant was not raised by this harvest's batch."
+        if errors:
+            raise ValidationError(errors)
+
+    def plant_batch_id(self):
+        """Return the batch that raised this allocation's plant."""
+        return self.plant.cell_planting.seed_tray_planting.batch_id
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Harvest allocations are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Harvest allocations cannot be deleted.')
 
 
 class GardenSquareTransplant(WorkspaceOwnedModel):
