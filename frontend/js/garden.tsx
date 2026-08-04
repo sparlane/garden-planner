@@ -12,7 +12,9 @@ import { useNavigate, useParams } from 'react-router'
 import { GardenArea, GardenBed, GardenSquare } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
-import { getPlantingGardenSquaresCurrent } from './api/plantings'
+import { getHarvests, getPlantingGardenSquaresCurrent } from './api/plantings'
+import { HarvestForm, HarvestFormBatch, HarvestFormPlant } from './plantings/harvest_form'
+import { HarvestTable } from './plantings/harvest_list'
 import { SelectOption } from './types/others'
 import { queryKeys } from './query'
 
@@ -116,6 +118,33 @@ function GardenBedElement({ area, bed, squares, plantingsBySquare, onSelectSquar
   )
 }
 
+// Everything a harvest form needs about this square is already in the current
+// plantings payload: it carries one entry per direct sowing and one per
+// individual plant standing here, each naming the batch that raised it.
+function squareBatches(plantings: Array<GardenSquarePlanting>): Array<HarvestFormBatch> {
+  const byPk = new Map(plantings.map((planting) => [planting.batch, `${planting.batch_code} · ${plantingName(planting)}`]))
+  return [...byPk].map(([pk, label]) => ({ pk, label }))
+}
+
+function squarePlants(plantings: Array<GardenSquarePlanting>): Array<HarvestFormPlant> {
+  return plantings
+    .filter((planting) => planting.specific_plant_pk !== undefined)
+    .map((planting) => ({
+      pk: planting.specific_plant_pk as number,
+      label: `Plant ${planting.specific_plant_pk} (${plantingName(planting)})`,
+      batch: planting.batch,
+      since: planting.transplanted ?? null
+    }))
+}
+
+function SquareHarvests({ squarePk }: { squarePk: number }) {
+  const { data: harvests = [] } = useQuery({
+    queryKey: queryKeys.plantings.harvests('', '', squarePk, '', '', '', ''),
+    queryFn: ({ signal }) => getHarvests({ garden_square: squarePk }, signal)
+  })
+  return <HarvestTable harvests={harvests} showLocation={false} />
+}
+
 function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: GardenSquareDetailsModalProps) {
   return (
     <Modal show onHide={onClose} size="lg" aria-labelledby="garden-square-details-title">
@@ -187,6 +216,16 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: Gar
             )
           })
         )}
+
+        <section className="garden-square-harvest">
+          <h2 className="h5">Record a harvest</h2>
+          <HarvestForm batches={squareBatches(plantings)} plants={squarePlants(plantings)} gardenSquare={square.pk} />
+        </section>
+
+        <section className="garden-square-harvest">
+          <h2 className="h5">Harvests from this square</h2>
+          <SquareHarvests squarePk={square.pk} />
+        </section>
       </Modal.Body>
       <Modal.Footer>
         <Button variant="secondary" onClick={onClose}>
