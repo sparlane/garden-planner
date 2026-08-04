@@ -1,9 +1,13 @@
 """Tests for the production batch REST resources and lifecycle actions."""
 # pylint: disable=duplicate-code
+from decimal import Decimal
+
+from inventory.units import UnitCode
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_batch_for_packet,
     make_garden_square_sowing,
+    make_harvest,
     make_plant_variety,
     make_seed_packet,
     make_seed_tray_cell_planting,
@@ -251,6 +255,25 @@ class ProductionBatchRESTTests(RESTContractTestCase):
         self.assertEqual(len(response.data['current_locations']), 1)
         self.assertEqual(response.data['sowings'][0]['plants_observed'], 3)
         self.assertEqual(response.data['sowings'][0]['cells'][0]['quantity'], 2)
+
+    def test_batch_detail_reports_yield_beside_its_lineage_counts(self):
+        """The batch screen shows what came out without a second request."""
+        batch = make_batch_for_packet(self.packet)
+        make_harvest(batch=batch, quantity=Decimal('1.5'), unit_code=UnitCode.KILOGRAM)
+        make_harvest(batch=batch, quantity=Decimal('250'), unit_code=UnitCode.GRAM)
+        make_harvest(batch=batch, quantity=Decimal('12'), unit_code=UnitCode.EACH)
+
+        response = self.client.get(f'{self.url}{batch.pk}/')
+
+        self.assertEqual(response.data['harvest_count'], 3)
+        totals = {
+            entry['conversion_family']: entry
+            for entry in response.data['harvest_totals']
+        }
+        self.assertEqual(Decimal(totals['metric_mass']['quantity']), Decimal('1750'))
+        self.assertEqual(totals['metric_mass']['unit_code'], UnitCode.GRAM)
+        self.assertEqual(Decimal(totals['each']['quantity']), Decimal('12'))
+        self.assertEqual(response.data['plants_harvest_finished'], 0)
 
     def test_batches_are_filterable_by_status_variety_and_repair_state(self):
         """The batch screens can narrow a long list without extra endpoints."""

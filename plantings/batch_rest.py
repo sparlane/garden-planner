@@ -23,6 +23,7 @@ from .batches import (
     batch_final_outcome_count,
     batch_lifecycle_counts,
     batch_plants_with_active_location,
+    batch_posted_harvest_count,
     batch_seeds_sown,
     batch_specific_plants,
     batch_unresolved_plant_ids,
@@ -35,6 +36,7 @@ from .batches import (
     reopen_batch,
 )
 from .models import ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
+from .yields import batch_harvest_finished_count, batch_harvest_totals
 
 
 def _model_errors(error):
@@ -328,6 +330,9 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
     sowings = serializers.SerializerMethodField()
     current_locations = serializers.SerializerMethodField()
     lifecycle_counts = serializers.SerializerMethodField()
+    harvest_count = serializers.SerializerMethodField()
+    harvest_totals = serializers.SerializerMethodField()
+    plants_harvest_finished = serializers.SerializerMethodField()
     transitions = ProductionBatchTransitionSerializer(many=True, read_only=True)
 
     class Meta(ProductionBatchSerializer.Meta):
@@ -335,12 +340,35 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
             'sowings',
             'current_locations',
             'lifecycle_counts',
+            'harvest_count',
+            'harvest_totals',
+            'plants_harvest_finished',
             'transitions',
         ]
 
     def get_sowings(self, batch):
         """Return each attached sowing with its lot, cells, and germinations."""
         return BatchSowingSerializer(_batch_sowings(batch), many=True).data
+
+    def get_harvest_count(self, batch):
+        """Return how many harvests still count as output from this batch."""
+        return batch_posted_harvest_count(batch)
+
+    def get_harvest_totals(self, batch):
+        """Return this batch's yield, one total per unit family.
+
+        Count, mass, and volume stay in separate entries; they are never added
+        together into a single figure.
+        """
+        return batch_harvest_totals(batch)
+
+    def get_plants_harvest_finished(self, batch):
+        """Return how many plants this batch harvested out.
+
+        Narrower than `final_outcomes`, which also counts plants that failed,
+        were culled, were donated, or were retained.
+        """
+        return batch_harvest_finished_count(batch)
 
     def get_lifecycle_counts(self, batch):
         """Return how many of this batch's plants sit in each derived state."""
