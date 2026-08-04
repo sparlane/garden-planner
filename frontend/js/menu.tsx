@@ -60,6 +60,12 @@ function GPTopBar({ workspace }: GPTopBarProps) {
             <NavDropdown.Item as={NavLink} to="/plantings/garden-squares">
               Garden Squares
             </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/plantings/harvests">
+              Harvests
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/plantings/yield">
+              Yield
+            </NavDropdown.Item>
           </NavDropdown>
           <Nav.Link as={NavLink} to="/inventory">
             Inventory
