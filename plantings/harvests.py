@@ -21,7 +21,13 @@ from inventory.ledger import quantize_quantity
 
 from .batches import batch_specific_plants, lock_batch
 from .lifecycle import EventType, OutcomeRequest, record_bulk_outcome
-from .models import Harvest, HarvestPlant, PlantLifecycleEvent, ProductionBatch
+from .models import (
+    Harvest,
+    HarvestPlant,
+    PlantLifecycleEvent,
+    ProductionBatch,
+    SpecificPlant,
+)
 
 
 #: Batch statuses that may still yield a crop. `output_finalized` declares that
@@ -78,16 +84,21 @@ def _require_within_batch(batch, harvested_at):
 
 
 def _resolve_plants(batch, plant_ids):
-    """Return the named plants, refusing any this batch did not raise."""
+    """Return the named plants under a row lock, in primary-key order.
+
+    Membership is checked before the lock is taken because a plant's batch is
+    reached through links that never move: a sowing cannot change batches and a
+    plant cannot change cell allocations, so no concurrent write can make a
+    plant belong to a different crop while this runs.
+    """
     wanted = sorted(set(plant_ids))
     if not wanted:
         return []
-    plants = list(
+    known = set(
         batch_specific_plants(batch)
         .filter(pk__in=wanted)
-        .order_by('pk')
+        .values_list('pk', flat=True)
     )
-    known = {plant.pk for plant in plants}
     missing = [plant_id for plant_id in wanted if plant_id not in known]
     if missing:
         raise ValidationError({
@@ -95,7 +106,12 @@ def _resolve_plants(batch, plant_ids):
                 f'These plants did not come from batch {batch.code}: {missing}.'
             ),
         })
-    return plants
+    return list(
+        SpecificPlant.objects
+        .select_for_update()
+        .filter(pk__in=wanted)
+        .order_by('pk')
+    )
 
 
 def _finish_plants(harvest, plants, user, reason):
@@ -124,15 +140,16 @@ def _finish_plants(harvest, plants, user, reason):
 def record_harvest(workspace, user, request):
     """Post one harvest and, when asked, finish the plants it took.
 
-    The batch lock is always acquired before any plant lock, because
-    `record_bulk_outcome` locks the selected plants in primary-key order. No
-    other path takes a plant lock before a batch lock, so this ordering keeps
-    concurrent batch and plant work free of deadlock.
+    Plants are locked in primary-key order before the batch is locked, and that
+    ordering is load-bearing. Recording any plant outcome writes a lifecycle
+    event carrying a batch reference, so it holds the plant while the database
+    takes a key-share lock on the batch row. Taking the batch first here would
+    close the cycle and deadlock the two writers against each other.
     """
+    plants = _resolve_plants(request.batch, request.plant_ids)
     batch = lock_batch(request.batch)
     _require_harvestable(batch)
     _require_within_batch(batch, request.harvested_at)
-    plants = _resolve_plants(batch, request.plant_ids)
     harvest = Harvest(
         workspace=workspace,
         batch=batch,
