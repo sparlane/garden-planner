@@ -7,9 +7,12 @@ from django.utils import timezone
 
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
 from inventory.models import InventoryLocation, InventoryUnit, StockLot, StockMovement
+from inventory.units import UnitCode
 from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
+    Harvest,
+    HarvestPlant,
     PlantLifecycleEvent,
     ProductionBatch,
     ProductionBatchTransition,
@@ -354,6 +357,36 @@ def make_plant_lifecycle_event(**overrides):
     }
     defaults.update(values)
     return PlantLifecycleEvent.objects.create(**defaults)
+
+
+def make_harvest(**overrides):
+    """Create a posted harvest, defaulting to a gram yield from a new batch."""
+    values = {
+        'quantity': Decimal('1'),
+        'unit_code': UnitCode.GRAM,
+        'notes': 'Shared test harvest',
+    }
+    if 'batch' not in overrides:
+        values['batch'] = make_production_batch()
+    if 'harvested_at' not in overrides:
+        values['harvested_at'] = timezone.now()
+    values.update(overrides)
+    return Harvest.objects.create(**values)
+
+
+def make_harvest_plant(**overrides):
+    """Attribute a harvest to one plant, building either side when absent."""
+    values = dict(overrides)
+    plant = values.pop('plant', None) or make_specific_plant()
+    defaults = {
+        'plant': plant,
+        'harvest': make_harvest(
+            batch=plant.cell_planting.seed_tray_planting.batch,
+            workspace=plant.workspace,
+        ),
+    }
+    defaults.update(values)
+    return HarvestPlant.objects.create(**defaults)
 
 
 def make_specific_plant_location(**overrides):
