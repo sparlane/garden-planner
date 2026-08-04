@@ -54,6 +54,7 @@ class PlantingRESTContractTests(RESTContractTestCase):
             '/plantings/transplantedgardensquare/',
             '/plantings/specificplants/',
             '/plantings/specificplantlocations/',
+            '/plantings/harvests/',
             f'/plantings/seedtray-data/{self.tray.pk}/plantings/',
             f'/plantings/seedtray-data/{self.tray.pk}/specificplants/',
             f'/plantings/specificplants/{self.specific_plant.pk}/locations/',
