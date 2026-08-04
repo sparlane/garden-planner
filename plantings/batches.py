@@ -13,6 +13,7 @@ from .lifecycle import LifecycleState, is_final, lifecycle_summaries
 from .models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
+    Harvest,
     ProductionBatch,
     ProductionBatchTransition,
     SeedTrayPlanting,
@@ -130,6 +131,14 @@ def batch_final_outcome_count(batch):
     )
 
 
+def batch_posted_harvest_count(batch):
+    """Return how many harvests still count as output from this batch."""
+    return Harvest.objects.filter(
+        batch=batch,
+        status=Harvest.Status.POSTED,
+    ).count()
+
+
 def batch_lifecycle_counts(batch):
     """Return how many of this batch's plants sit in each derived state."""
     counts = {state.value: 0 for state in LifecycleState}
@@ -149,7 +158,7 @@ def _record_transition(batch, previous_status, user, reason=''):
     )
 
 
-def _lock_batch(batch):
+def lock_batch(batch):
     """Reload one batch under a row lock for a lifecycle change."""
     return ProductionBatch.objects.select_for_update().get(pk=batch.pk)
 
@@ -194,7 +203,7 @@ def create_batch(workspace, user, request):
 @transaction.atomic
 def activate_batch(batch, user, actual_start=None, reason=''):
     """Start a planned batch at a supplied or current time."""
-    batch = _lock_batch(batch)
+    batch = lock_batch(batch)
     _require_status(batch, {ProductionBatch.Status.PLANNED}, 'be activated')
     previous_status = batch.status
     batch.status = ProductionBatch.Status.ACTIVE
@@ -219,7 +228,7 @@ def create_and_activate_batch(workspace, user, request, actual_start=None):
 @transaction.atomic
 def finalize_batch_output(batch, user, reason=''):
     """Declare that no further seedlings will come from this batch."""
-    batch = _lock_batch(batch)
+    batch = lock_batch(batch)
     _require_status(batch, {ProductionBatch.Status.ACTIVE}, 'finalize its output')
     if batch_sowing_count(batch) == 0:
         raise ValidationError({
@@ -244,7 +253,7 @@ def finalize_batch_output(batch, user, reason=''):
 @transaction.atomic
 def complete_batch(batch, user, reason=''):
     """Complete a batch once every output has a final disposition."""
-    batch = _lock_batch(batch)
+    batch = lock_batch(batch)
     _require_status(batch, {ProductionBatch.Status.OUTPUT_FINALIZED}, 'be completed')
     unresolved = batch_unresolved_plant_ids(batch)
     if unresolved:
@@ -266,7 +275,7 @@ def complete_batch(batch, user, reason=''):
 def cancel_batch(batch, user, reason):
     """Abandon a batch that produced no tracked individual outputs."""
     _require_reason(reason)
-    batch = _lock_batch(batch)
+    batch = lock_batch(batch)
     _require_status(
         batch,
         {ProductionBatch.Status.PLANNED, ProductionBatch.Status.ACTIVE},
@@ -286,6 +295,14 @@ def cancel_batch(batch, user, reason):
             raise ValidationError({
                 'detail': (
                     f'{observed} observed plants came from this batch, so it '
+                    'produced output and cannot be cancelled.'
+                ),
+            })
+        harvested = batch_posted_harvest_count(batch)
+        if harvested:
+            raise ValidationError({
+                'detail': (
+                    f'{harvested} harvests came from this batch, so it '
                     'produced output and cannot be cancelled.'
                 ),
             })
@@ -310,7 +327,7 @@ def _reopen_target(batch):
 def reopen_batch(batch, user, reason):
     """Correct a lifecycle mistake by returning to the previous status."""
     _require_reason(reason)
-    batch = _lock_batch(batch)
+    batch = lock_batch(batch)
     _require_status(batch, set(REOPEN_TARGETS) | {ProductionBatch.Status.CANCELLED}, 'be reopened')
     previous_status = batch.status
     batch.status = _reopen_target(batch)
@@ -336,6 +353,6 @@ def validate_batch_for_sowing(batch, packet, workspace):
 @transaction.atomic
 def lock_batch_for_sowing(batch, packet, workspace):
     """Lock and revalidate a batch so work cannot attach after finalization."""
-    locked = _lock_batch(batch)
+    locked = lock_batch(batch)
     validate_batch_for_sowing(locked, packet, workspace)
     return locked
