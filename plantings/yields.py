@@ -120,12 +120,12 @@ def batch_harvest_finished_count(batch):
     )
 
 
-def _zone(workspace):
+def workspace_zone(workspace):
     """Return the timezone a workspace's calendar buckets are cut in."""
     return ZoneInfo(workspace.timezone)
 
 
-def _day_bounds(zone, harvested_from, harvested_to):
+def local_day_bounds(zone, harvested_from, harvested_to):
     """Return the half-open aware range two inclusive local dates describe."""
     start = None
     end = None
@@ -146,8 +146,8 @@ def _filtered_harvests(workspace, filters):
         'garden_square',
         'garden_row',
     ).prefetch_related('plant_allocations')
-    start, end = _day_bounds(
-        _zone(workspace),
+    start, end = local_day_bounds(
+        workspace_zone(workspace),
         filters.get('harvested_from'),
         filters.get('harvested_to'),
     )
@@ -257,7 +257,7 @@ def harvest_report(workspace, filters):
     portable SQL equivalent.
     """
     group_by = filters['group_by']
-    zone = _zone(workspace)
+    zone = workspace_zone(workspace)
     harvests = list(_filtered_harvests(workspace, filters))
     rows = []
     for key, group in _grouped_harvests(harvests, group_by, zone):

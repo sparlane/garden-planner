@@ -25,19 +25,32 @@ def parse_integer(value, field):
 
 def parse_date(value, field):
     """Parse an optional ISO date query parameter."""
-    if value is None:
-        return None
-    parsed = serializers.DateField().run_validation(value)
-    if parsed is None:
-        raise ValidationError({field: 'Enter a valid date.'})
-    return parsed
+    return _parse_field(serializers.DateField(), value, field, 'Enter a valid date.')
 
 
 def parse_datetime(value, field):
     """Parse an optional ISO timestamp query parameter."""
+    return _parse_field(
+        serializers.DateTimeField(),
+        value,
+        field,
+        'Enter a valid timestamp.',
+    )
+
+
+def _parse_field(serializer_field, value, field, message):
+    """Run one field's validation, blaming the query parameter by name.
+
+    The field's own error is raised without a key, which reads as a body error
+    rather than a bad query parameter, so it is re-raised under the parameter
+    name the caller supplied.
+    """
     if value is None:
         return None
-    parsed = serializers.DateTimeField().run_validation(value)
+    try:
+        parsed = serializer_field.run_validation(value)
+    except ValidationError as exc:
+        raise ValidationError({field: exc.detail}) from exc
     if parsed is None:
-        raise ValidationError({field: 'Enter a valid timestamp.'})
+        raise ValidationError({field: message})
     return parsed
