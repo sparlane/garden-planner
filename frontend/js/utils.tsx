@@ -233,4 +233,24 @@ function formatQuantity(value: string | number | null | undefined, fallback = ''
   return s.includes('.') ? s.replace(/\.?0+$/, '') : s
 }
 
-export { ApiError, csrfDelete, csrfPost, csrfPatch, fetchAsJson, localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, formatDateRange, formatQuantity }
+// A measured quantity is meaningless without the unit it was measured in, so
+// the two are rendered together and never separately.
+function formatMeasure(value: string | number | null | undefined, unit: string, fallback = ''): string {
+  const quantity = formatQuantity(value)
+  return quantity === '' ? fallback : `${quantity} ${unit}`
+}
+
+export {
+  ApiError,
+  csrfDelete,
+  csrfPost,
+  csrfPatch,
+  fetchAsJson,
+  localDatetimeInputValue,
+  parseLocalDatetimeInput,
+  formatDate,
+  formatDateTime,
+  formatDateRange,
+  formatQuantity,
+  formatMeasure
+}

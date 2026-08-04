@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { Link } from 'react-router'
 
-import { addProductionBatch, getProductionBatch, getProductionBatches, postProductionBatchAction, updateProductionBatch } from '../api/plantings'
+import { addProductionBatch, getHarvests, getProductionBatch, getProductionBatches, postProductionBatchAction, updateProductionBatch } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
 import { queryKeys } from '../query'
 import { formatDate, formatDateTime } from '../utils'
 import { PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
+import { HarvestForm } from './harvest_form'
+import { FamilyTotals, HarvestTable } from './harvest_list'
 import { STATE_LABELS } from './lifecycle'
 
 const STATUS_LABELS: Record<ProductionBatchStatus, string> = {
@@ -441,6 +443,65 @@ function BatchLocations({ batch }: { batch: ProductionBatchDetail }) {
   )
 }
 
+function BatchYield({ batch }: { batch: ProductionBatchDetail }) {
+  const plants = batch.current_locations.map((location) => ({
+    pk: location.specific_plant,
+    label: `Plant ${location.specific_plant} @ ${location.label}`,
+    batch: batch.pk,
+    since: location.started
+  }))
+  return (
+    <Card className="mb-3">
+      <Card.Body>
+        <Card.Title>Yield</Card.Title>
+        <Table size="sm" responsive>
+          <thead>
+            <tr>
+              <th>Harvests</th>
+              <th>Picked</th>
+              <th>Seeds sown</th>
+              <th>Plants observed</th>
+              <th>Plants harvested out</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{batch.harvest_count}</td>
+              <td>
+                <FamilyTotals totals={batch.harvest_totals} />
+              </td>
+              <td>{batch.seeds_sown}</td>
+              <td>{batch.plants_observed}</td>
+              <td>{batch.plants_harvest_finished}</td>
+            </tr>
+          </tbody>
+        </Table>
+        <p className="text-muted small">
+          Counts, weights, and volumes are totalled separately. Seeds sown, plants observed, and plants harvested out are three separate outcomes and are not divided into each
+          other.
+        </p>
+        <h3 className="fs-6 mt-3">Record a harvest</h3>
+        <HarvestForm batches={[{ pk: batch.pk, label: batch.code }]} plants={plants} />
+      </Card.Body>
+    </Card>
+  )
+}
+
+function BatchHarvests({ batch }: { batch: ProductionBatchDetail }) {
+  const { data: harvests = [] } = useQuery({
+    queryKey: queryKeys.plantings.harvests(batch.pk, '', '', '', '', '', ''),
+    queryFn: ({ signal }) => getHarvests({ batch: batch.pk }, signal)
+  })
+  return (
+    <Card className="mb-3">
+      <Card.Body>
+        <Card.Title>Harvests</Card.Title>
+        <HarvestTable harvests={harvests} showCrop={false} />
+      </Card.Body>
+    </Card>
+  )
+}
+
 function BatchHistory({ batch }: { batch: ProductionBatchDetail }) {
   return (
     <Card className="mb-3">
@@ -571,6 +632,8 @@ function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) 
         <BatchDetailsForm batch={batch} />
         <BatchSowings batch={batch} />
         <BatchLifecycleStates batch={batch} />
+        <BatchYield batch={batch} />
+        <BatchHarvests batch={batch} />
         <BatchLocations batch={batch} />
         <BatchHistory batch={batch} />
       </div>
