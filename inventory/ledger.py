@@ -1,5 +1,7 @@
 """Transactional services for posting and querying the inventory ledger."""
 
+# pylint: disable=too-many-lines
+
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import NamedTuple
 
@@ -318,7 +320,7 @@ def correct_stock_movement(original, user, replacement, reason):
     ).get(pk=original.pk)
     original.lot = locked_lots[original.lot_id]
     replacement_lot = locked_lots[replacement.lot.pk]
-    _validate_reversible(original, reason, False, False)
+    _validate_reversible(original, reason)
     _validate_location(replacement.source, workspace, 'source')
     if replacement_lot.item_id != replacement.lot.item_id:
         raise ValidationError({'lot': 'The replacement lot identity changed.'})
@@ -563,22 +565,48 @@ def _create_seed_tray_for_unit(unit):
     return create_tray_for_unit(unit)
 
 
-def _validate_reversible(original, reason, allow_receipt, allow_stocktake):
-    """Validate one original before any reversal row is written."""
+def _linked_to_receipt(movement):
+    """Return whether a receipt document posted this movement."""
+    return bool(movement.receipt_line_id)
+
+
+def _linked_to_stocktake(movement):
+    """Return whether a stocktake document posted this movement."""
+    return bool(movement.stocktake_line_id)
+
+
+#: Documents that own the movements they post, keyed by the name a caller passes
+#: as ``document_kind``. A row one of these wrote may only be reversed through
+#: its own document, so the document restores every row it posted together
+#: instead of leaving some of them stranded.
+DOCUMENT_LINKS = {
+    'receipt': (
+        _linked_to_receipt,
+        'Reverse receipt movements through their receipt.',
+    ),
+    'stocktake': (
+        _linked_to_stocktake,
+        'Reverse stocktake movements through their stocktake.',
+    ),
+}
+
+
+def _validate_reversible(original, reason, document_kind=None):
+    """Validate one original before any reversal row is written.
+
+    ``document_kind`` names the document doing the reversing, which may reverse
+    its own rows. Rows belonging to any other document stay refused, and a
+    standalone reversal passes no kind at all.
+    """
     if not reason.strip():
         raise ValidationError({'reason': 'A reason is required.'})
     if original.movement_type == StockMovement.MovementType.REVERSAL:
         raise ValidationError({'movement': 'A reversal cannot itself be reversed.'})
     if hasattr(original, 'reversal'):
         raise ValidationError({'movement': 'This movement is already reversed.'})
-    if original.receipt_line_id and not allow_receipt:
-        raise ValidationError(
-            {'movement': 'Reverse receipt movements through their receipt.'},
-        )
-    if original.stocktake_line_id and not allow_stocktake:
-        raise ValidationError(
-            {'movement': 'Reverse stocktake movements through their stocktake.'},
-        )
+    for kind, (is_linked, message) in DOCUMENT_LINKS.items():
+        if kind != document_kind and is_linked(original):
+            raise ValidationError({'movement': message})
     if original.destination_id:
         _validate_source_balance(
             original.lot,
@@ -624,7 +652,7 @@ def reverse_movement(original, user, reason, occurred_at=None):
     ).get(pk=original.pk)
     original.lot = lot
     original.unit = unit
-    _validate_reversible(original, reason, False, False)
+    _validate_reversible(original, reason)
     return _create_reversal(
         original,
         user,
@@ -651,12 +679,7 @@ def _reverse_document_movements(
         original.lot = locked_lots[original.lot_id]
         if original.unit_id:
             original.unit = locked_units[original.unit_id]
-        _validate_reversible(
-            original,
-            reason,
-            document_kind == 'receipt',
-            document_kind == 'stocktake',
-        )
+        _validate_reversible(original, reason, document_kind)
     return [
         _create_reversal(original, user, reason, occurred_at)
         for original in movements
