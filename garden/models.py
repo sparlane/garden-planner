@@ -2,10 +2,22 @@
 Garden models
 """
 
+# pylint: disable=duplicate-code
+
+from decimal import Decimal
+
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 from workspaces.models import WorkspaceOwnedModel
+
+
+#: Smallest grid step a confirmation can record, matching ``cell_length``'s
+#: six decimal places.
+POSITIVE_LENGTH = Decimal('0.000001')
 
 
 class GardenArea(WorkspaceOwnedModel):
@@ -26,6 +38,90 @@ class GardenArea(WorkspaceOwnedModel):
 
     def __str__(self):
         return self.name
+
+
+class GardenGeometryConfirmation(WorkspaceOwnedModel):
+    """One operator's audited statement of what an area's integers mean.
+
+    Garden geometry is a bare integer grid: an area, bed, row, and square all
+    carry ``size_x``/``size_y`` with no recorded physical scale. Nothing may
+    read those integers as a length until somebody says what one grid step
+    measures, so this record exists and areas without one stay unconfirmed.
+
+    Confirmations are append-only and the newest one wins. A mistaken unit is
+    corrected by confirming again, which leaves the original statement on file;
+    input applications freeze the square metres they calculated, so a later
+    correction never rewrites what was already applied.
+    """
+
+    class LengthUnit(models.TextChoices):
+        """Physical units a grid step may be measured in."""
+
+        MILLIMETRE = 'mm', 'Millimetres'
+        CENTIMETRE = 'cm', 'Centimetres'
+        METRE = 'm', 'Metres'
+        INCH = 'in', 'Inches'
+        FOOT = 'ft', 'Feet'
+
+    area = models.ForeignKey(
+        GardenArea,
+        on_delete=models.PROTECT,
+        related_name='geometry_confirmations',
+    )
+    length_unit = models.CharField(max_length=8, choices=LengthUnit.choices)
+    cell_length = models.DecimalField(
+        max_digits=12,
+        decimal_places=6,
+        validators=[MinValueValidator(POSITIVE_LENGTH)],
+        help_text='Physical length of one grid step, in the chosen unit.',
+    )
+    notes = models.TextField(blank=True, default='')
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    confirmed_at = models.DateTimeField(default=timezone.now, editable=False)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-confirmed_at', '-pk']
+        indexes = [
+            models.Index(
+                fields=['area', '-confirmed_at'],
+                name='garden_geometry_latest_idx',
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(cell_length__gt=0),
+                name='garden_geometry_positive_cell_length',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.area}: 1 step = {self.cell_length} {self.length_unit}'
+
+    def clean(self):
+        """Keep a confirmation and the area it describes in one workspace."""
+        super().clean()
+        if self.area_id and self.area.workspace_id != self.workspace_id:
+            raise ValidationError(
+                {'area': 'The area belongs to a different workspace.'},
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError(
+                'Geometry confirmations are immutable; confirm again instead.',
+            )
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Geometry confirmations cannot be deleted.')
 
 
 class GardenBed(WorkspaceOwnedModel):

@@ -5,7 +5,13 @@ from itertools import count
 
 from django.utils import timezone
 
-from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
+from garden.models import (
+    GardenArea,
+    GardenBed,
+    GardenGeometryConfirmation,
+    GardenRow,
+    GardenSquare,
+)
 from inventory.models import InventoryLocation, InventoryUnit, StockLot, StockMovement
 from inventory.units import UnitCode
 from plantings.models import (
@@ -114,6 +120,18 @@ def make_garden_area(**overrides):
     }
     values.update(overrides)
     return GardenArea.objects.create(**values)
+
+
+def make_garden_geometry_confirmation(**overrides):
+    """Confirm what one area's grid step physically measures."""
+    values = {
+        'length_unit': GardenGeometryConfirmation.LengthUnit.MILLIMETRE,
+        'cell_length': Decimal('1'),
+    }
+    if 'area' not in overrides:
+        values['area'] = make_garden_area()
+    values.update(overrides)
+    return GardenGeometryConfirmation.objects.create(**values)
 
 
 def make_garden_bed(**overrides):
