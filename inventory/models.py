@@ -74,7 +74,7 @@ class InventoryItem(WorkspaceOwnedModel):
         SERIALIZED = 'serialized', 'Serialized'
 
     class UsageBasis(models.TextChoices):
-        """Ways task 42 may calculate suggested consumption."""
+        """Ways input applications may calculate suggested consumption."""
 
         CELL_VOLUME = 'cell_volume', 'Cell volume'
         SURFACE_AREA = 'surface_area', 'Surface-area rate'
@@ -202,20 +202,44 @@ class InventoryItem(WorkspaceOwnedModel):
     def _validate_usage_configuration(self, errors):
         """Dispatch the selected usage basis to its configuration rules."""
         validators = {
-            self.UsageBasis.CELL_VOLUME: self._validate_rate_based_usage,
             self.UsageBasis.SURFACE_AREA: self._validate_rate_based_usage,
             self.UsageBasis.PER_UNIT: self._validate_rate_based_usage,
             self.UsageBasis.FIXED: self._validate_fixed_usage,
             self.UsageBasis.MANUAL: self._validate_manual_usage,
         }
+        if self.default_usage_basis == self.UsageBasis.CELL_VOLUME:
+            self._validate_cell_volume_usage(errors)
+            return
         validator = validators.get(self.default_usage_basis)
         if validator:
             validator(errors)
 
+    def _validate_cell_volume_usage(self, errors):
+        """Derive usage directly from tray cells in the item's volume unit."""
+        try:
+            base_unit = get_unit_definition(self.base_unit)
+        except ValidationError:
+            return
+        if base_unit.dimension != UnitDimension.VOLUME:
+            errors['base_unit'] = (
+                'Cell-volume usage requires a volume base unit.'
+            )
+        if self.default_usage_rate is not None:
+            errors['default_usage_rate'] = (
+                'Cell-volume usage derives quantity from each tray cell.'
+            )
+        if self.usage_rate_unit:
+            errors['usage_rate_unit'] = (
+                'Cell-volume usage derives quantity from each tray cell.'
+            )
+        if self.default_fixed_quantity is not None:
+            errors['default_fixed_quantity'] = (
+                'Cell-volume usage does not accept a fixed quantity.'
+            )
+
     def _validate_rate_based_usage(self, errors):
         """Require a positive rate with the correct denominator dimension."""
         rate_dimensions = {
-            self.UsageBasis.CELL_VOLUME: UnitDimension.VOLUME,
             self.UsageBasis.SURFACE_AREA: UnitDimension.AREA,
             self.UsageBasis.PER_UNIT: UnitDimension.COUNT,
         }

@@ -33,8 +33,6 @@ class InventoryRestTests(APITestCase):
             'category': InventoryItem.Category.GROWING_MEDIA,
             'base_unit': UnitCode.MILLILITRE,
             'default_usage_basis': InventoryItem.UsageBasis.CELL_VOLUME,
-            'default_usage_rate': '1.000000000',
-            'usage_rate_unit': UnitCode.MILLILITRE,
         }
         payload.update(overrides)
         return self.client.post(self.item_url, payload, format='json')
@@ -66,8 +64,8 @@ class InventoryRestTests(APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data['base_unit'], 'ml')
         self.assertEqual(response.data['base_unit_dimension'], 'volume')
-        self.assertEqual(response.data['default_usage_rate'], '1.000000000')
-        self.assertEqual(response.data['usage_rate_unit_dimension'], 'volume')
+        self.assertIsNone(response.data['default_usage_rate'])
+        self.assertIsNone(response.data['usage_rate_unit_dimension'])
         self.assertEqual(response.data['tracking_mode'], 'lot')
         self.assertNotIn('workspace', response.data)
 
@@ -92,6 +90,23 @@ class InventoryRestTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn('usage_rate_unit', response.data)
+
+    def test_cell_volume_uses_tray_measurements_without_an_item_rate(self):
+        """Cell volume is converted from each selected tray into a volume item."""
+        response = self.create_item(
+            default_usage_rate='1',
+            usage_rate_unit=UnitCode.MILLILITRE,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('default_usage_rate', response.data)
+        self.assertIn('usage_rate_unit', response.data)
+
+        response = self.create_item(
+            sku='MASS-CELL-VOLUME',
+            base_unit=UnitCode.GRAM,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('base_unit', response.data)
 
     def test_item_filters_and_inactive_selector_contract(self):
         """Catalog screens and future selectors can request precise subsets."""

@@ -135,10 +135,42 @@ class InventoryItemModelTests(TestCase):
         volume = self.make_item(
             sku='VOLUME-RATE',
             default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,
-            default_usage_rate=Decimal('1'),
-            usage_rate_unit=UnitCode.MILLILITRE,
         )
-        self.assertEqual(volume.default_usage_rate, Decimal('1'))
+        self.assertIsNone(volume.default_usage_rate)
+        self.assertIsNone(volume.usage_rate_unit)
+
+        litre_volume = self.make_item(
+            sku='LITRE-VOLUME',
+            base_unit=UnitCode.LITRE,
+            default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,
+        )
+        self.assertEqual(litre_volume.base_unit, UnitCode.LITRE)
+
+        with self.assertRaises(ValidationError) as context:
+            self.make_item(
+                sku='WEIGHT-VOLUME',
+                base_unit=UnitCode.GRAM,
+                default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,
+            )
+        self.assertIn('base_unit', context.exception.message_dict)
+
+        with self.assertRaises(ValidationError) as context:
+            self.make_item(
+                sku='CONFIGURED-VOLUME-RATE',
+                default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,
+                default_usage_rate=Decimal('1'),
+                usage_rate_unit=UnitCode.MILLILITRE,
+            )
+        self.assertIn('default_usage_rate', context.exception.message_dict)
+        self.assertIn('usage_rate_unit', context.exception.message_dict)
+
+        area = self.make_item(
+            sku='AREA-RATE',
+            default_usage_basis=InventoryItem.UsageBasis.SURFACE_AREA,
+            default_usage_rate=Decimal('2'),
+            usage_rate_unit=UnitCode.SQUARE_METRE,
+        )
+        self.assertEqual(area.default_usage_rate, Decimal('2'))
 
         with self.assertRaises(ValidationError) as context:
             self.make_item(
