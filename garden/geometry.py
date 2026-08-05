@@ -47,6 +47,16 @@ def owning_area(geometry):
     )
 
 
+def latest_confirmation(confirmations):
+    """Return the newest of an already-loaded set of confirmations.
+
+    Sorting in Python rather than the database lets a caller that prefetched an
+    area's confirmations reuse them instead of issuing one query per area.
+    """
+    rows = sorted(confirmations, key=lambda row: (row.confirmed_at, row.pk))
+    return rows[-1] if rows else None
+
+
 def area_confirmation(area):
     """Return the newest confirmation for one area, or None while unconfirmed."""
     return area.geometry_confirmations.order_by('-confirmed_at', '-pk').first()
@@ -57,8 +67,8 @@ def is_confirmed(area):
     return area_confirmation(area) is not None
 
 
-def metres_per_grid_step(area):
-    """Return the physical length of one grid step for one area."""
+def require_confirmation(area):
+    """Return one area's governing confirmation, refusing to guess without it."""
     confirmation = area_confirmation(area)
     if confirmation is None:
         raise ValidationError({
@@ -67,15 +77,30 @@ def metres_per_grid_step(area):
                 f'"{area.name}" before measuring it.'
             ),
         })
+    return confirmation
+
+
+def metres_per_step(confirmation):
+    """Return the physical length of one grid step for one confirmation."""
     return confirmation.cell_length * LENGTH_UNIT_METRES[confirmation.length_unit]
 
 
-def square_metres(geometry):
-    """Return one piece of geometry's normalized area in square metres.
+def metres_per_grid_step(area):
+    """Return the physical length of one grid step for one area."""
+    return metres_per_step(require_confirmation(area))
+
+
+def measure(confirmation, geometry):
+    """Return normalized area from an already-resolved confirmation.
 
     The scale is squared because ``size_x`` and ``size_y`` are both counts of
     the same grid step, so an area is steps squared times metres squared.
     """
-    step = metres_per_grid_step(owning_area(geometry))
+    step = metres_per_step(confirmation)
     total = Decimal(geometry.size_x) * Decimal(geometry.size_y) * step * step
     return total.quantize(AREA_QUANTUM)
+
+
+def square_metres(geometry):
+    """Return one piece of geometry's normalized area in square metres."""
+    return measure(require_confirmation(owning_area(geometry)), geometry)
