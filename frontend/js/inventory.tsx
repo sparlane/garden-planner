@@ -42,7 +42,7 @@ const TRACKING_LABELS: Record<InventoryTrackingMode, string> = {
 }
 
 const USAGE_LABELS: Record<InventoryUsageBasis, string> = {
-  cell_volume: 'Cell volume',
+  cell_volume: 'Tray cell volume',
   surface_area: 'Surface-area rate',
   per_unit: 'Per plant or item',
   fixed: 'Fixed quantity',
@@ -50,7 +50,6 @@ const USAGE_LABELS: Record<InventoryUsageBasis, string> = {
 }
 
 const RATE_DIMENSIONS: Partial<Record<InventoryUsageBasis, UnitDimension>> = {
-  cell_volume: 'volume',
   surface_area: 'area',
   per_unit: 'count'
 }
@@ -118,6 +117,10 @@ function InventoryItemForm({ units, onCreated }: InventoryItemFormProps) {
     setForm((current) => ({
       ...current,
       usageBasis,
+      baseUnit:
+        usageBasis === 'cell_volume' && units.find((unit) => unit.code === current.baseUnit)?.dimension !== 'volume'
+          ? (units.find((unit) => unit.dimension === 'volume')?.code ?? current.baseUnit)
+          : current.baseUnit,
       usageRateUnit: firstCompatibleUnit?.code ?? current.usageRateUnit
     }))
   }
@@ -144,6 +147,7 @@ function InventoryItemForm({ units, onCreated }: InventoryItemFormProps) {
 
   const rateDimension = RATE_DIMENSIONS[form.usageBasis]
   const rateUnits = units.filter((unit) => unit.dimension === rateDimension)
+  const baseUnits = form.usageBasis === 'cell_volume' ? units.filter((unit) => unit.dimension === 'volume') : units
 
   return (
     <Card className="mb-4">
@@ -181,7 +185,7 @@ function InventoryItemForm({ units, onCreated }: InventoryItemFormProps) {
               <Form.Group className="mb-3" controlId="inventory-item-unit">
                 <Form.Label>Base unit</Form.Label>
                 <Form.Select value={form.baseUnit} onChange={(event) => update('baseUnit', event.target.value as UnitCode)}>
-                  {units.map((unit) => (
+                  {baseUnits.map((unit) => (
                     <option key={unit.code} value={unit.code}>
                       {unit.label} ({unit.code})
                     </option>
@@ -211,6 +215,7 @@ function InventoryItemForm({ units, onCreated }: InventoryItemFormProps) {
                     </option>
                   ))}
                 </Form.Select>
+                {form.usageBasis === 'cell_volume' && <Form.Text muted>Usage comes from each selected tray&apos;s cell volume, including when tray cell sizes differ.</Form.Text>}
               </Form.Group>
             </Col>
           </Row>
