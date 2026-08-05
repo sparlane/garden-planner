@@ -151,9 +151,9 @@ function SeedSuppliersTable() {
         <tr>
           <td>
             Name{' '}
-            <a href="#" onClick={() => setShowSupplierAdd(true)}>
+            <Button variant="link" className="p-0 align-baseline" aria-label="Add supplier" onClick={() => setShowSupplierAdd(true)}>
               +
-            </a>
+            </Button>
           </td>
           <td>Website</td>
           <td>Notes</td>
@@ -375,9 +375,9 @@ function SeedTable() {
           <td>Inventory unit</td>
           <td>Notes</td>
           <td>
-            <a href="#" onClick={() => setShowSeedAdd(true)}>
+            <Button variant="link" className="p-0 align-baseline" aria-label="Add seed" onClick={() => setShowSeedAdd(true)}>
               +
-            </a>
+            </Button>
           </td>
         </tr>
       </thead>
