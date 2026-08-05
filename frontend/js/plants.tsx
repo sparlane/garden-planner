@@ -97,9 +97,9 @@ class PlantFamilyRow extends React.Component<PlantFamilyRowProps> {
       <tr>
         <td>{this.props.family.name}</td>
         <td>
-          <a href="#" onClick={this.addNewPlant}>
+          <Button variant="link" className="p-0 align-baseline" aria-label="Add plant" onClick={this.addNewPlant}>
             +
-          </a>
+          </Button>
         </td>
         <td></td>
         <td></td>
@@ -261,9 +261,9 @@ class PlantRow extends React.Component<PlantRowProps> {
         <td>{this.props.familyName}</td>
         <td>{this.props.plant.name}</td>
         <td>
-          <a href="#" onClick={this.addNewPlantVariety}>
+          <Button variant="link" className="p-0 align-baseline" aria-label="Add variety" onClick={this.addNewPlantVariety}>
             +
-          </a>
+          </Button>
         </td>
         <td>{this.props.plant.spacing}</td>
         <td>{this.props.plant.inter_row_spacing}</td>
@@ -581,9 +581,9 @@ function PlantsView() {
         <tr>
           <td>
             Family{' '}
-            <a href="#" onClick={() => setShowFamilyAdd(true)}>
+            <Button variant="link" className="p-0 align-baseline" aria-label="Add family" onClick={() => setShowFamilyAdd(true)}>
               +
-            </a>
+            </Button>
           </td>
           <td>Plant</td>
           <td>Variety</td>
