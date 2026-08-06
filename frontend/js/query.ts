@@ -68,6 +68,13 @@ const queryKeys = {
     harvestReportAll: ['plantings', 'harvestReport'] as const,
     harvestReport: (groupBy: string, batch: number | '', variety: number | '', from: string, to: string) =>
       ['plantings', 'harvestReport', groupBy, batch, variety, from, to] as const
+  },
+  applications: {
+    all: ['applications'] as const,
+    listAll: ['applications', 'list'] as const,
+    list: (status: string, batch: number | '', item: number | '', from: string, to: string) => ['applications', 'list', status, batch, item, from, to] as const,
+    detail: (applicationPk: number) => ['applications', 'detail', applicationPk] as const,
+    preview: (applicationPk: number) => ['applications', 'preview', applicationPk] as const
   }
 }
 
