@@ -381,12 +381,46 @@ def create_application_draft(workspace, user, request):
     return application
 
 
+@transaction.atomic
+def update_application_draft(application, request, replace_lines=True):
+    """Edit a draft, bumping the revision a client has to echo back.
+
+    Every change moves the revision, including one that leaves the numbers
+    alone, because the point is to invalidate what another tab was shown
+    rather than to describe how much changed.
+    """
+    application = InputApplication.objects.select_for_update().get(pk=application.pk)
+    if application.status != InputApplication.Status.DRAFT:
+        raise ValidationError({'status': 'Only draft applications can be edited.'})
+    application.applied_at = request.applied_at
+    application.source_location = request.source_location
+    application.batch = request.batch
+    application.notes = request.notes
+    application.save()
+    if replace_lines:
+        if not request.lines:
+            raise ValidationError({'lines': 'Add at least one application line.'})
+        application.lines.all().delete()
+        for line_request in request.lines:
+            _create_line(application, line_request)
+    InputApplication.objects.filter(pk=application.pk).update(
+        revision=application.revision + 1,
+        target_summary=target_summary(application),
+    )
+    application.refresh_from_db()
+    return application
+
+
 def _create_line(application, request):
     """Create one line, its frozen catalog snapshot, and its targets."""
     item = request.item
     basis = request.usage_basis or item.default_usage_basis
     snapshots = [measure_target(target) for target in request.targets]
     calculation = _line_usage(item, basis, request.fill_factor, snapshots)
+    # The ledger refuses anything but a Decimal or string, to keep a float from
+    # ever reaching a quantity column. Convert once here so no caller has to.
+    applied_quantity = Decimal(request.applied_quantity)
+    waste_quantity = Decimal(request.waste_quantity)
     line = InputApplicationLine(
         application=application,
         item=item,
@@ -400,19 +434,19 @@ def _create_line(application, request):
         formula_basis_quantity=calculation.basis_quantity,
         formula_basis_unit=calculation.basis_unit,
         calculated_base_quantity=calculation.calculated_base_quantity,
-        applied_quantity=Decimal(request.applied_quantity),
+        applied_quantity=applied_quantity,
         unit_code=request.unit_code,
         unit_conversion=request.unit_conversion,
         applied_base_quantity=normalize_quantity(
             item,
-            request.applied_quantity,
+            applied_quantity,
             unit_code=request.unit_code,
             unit_conversion=request.unit_conversion,
         ),
-        waste_quantity=Decimal(request.waste_quantity),
+        waste_quantity=waste_quantity,
         waste_base_quantity=normalize_quantity(
             item,
-            request.waste_quantity,
+            waste_quantity,
             unit_code=request.unit_code,
             unit_conversion=request.unit_conversion,
             allow_zero=True,
