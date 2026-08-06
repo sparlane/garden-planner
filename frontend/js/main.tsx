@@ -18,6 +18,7 @@ import { SeedTrayDetails } from './seedtray/seedtray_details.js'
 import { getWorkspace } from './api/workspace.js'
 import { WorkspaceModeRoute, WorkspaceSettings } from './workspace.js'
 import { InventoryCatalog } from './inventory.js'
+import { InputApplicationsView } from './applications/applications.js'
 import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
 
@@ -82,6 +83,7 @@ function FrontEndPage() {
         <Route path="/plantings/harvests" element={<HarvestsView />} />
         <Route path="/plantings/yield" element={<YieldReportView />} />
         <Route path="/inventory" element={<InventoryCatalog />} />
+        <Route path="/applications" element={<InputApplicationsView />} />
         <Route
           path="/settings"
           element={
