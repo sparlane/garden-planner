@@ -76,6 +76,7 @@ interface InventoryItem {
   usage_rate_unit_dimension: UnitDimension | null
   default_fixed_quantity: string | null
   stock_history_started_at: string | null
+  reorder_level: string | null
   created: string
   updated: string
 }
@@ -131,7 +132,85 @@ interface InventoryBalance {
   base_unit: UnitCode
   base_unit_cost: string | null
   valuation: string | null
+  currency_code: string
+  expires_on: string | null
   low_stock: boolean
+}
+
+type QuantityCertainty = 'exact' | 'estimated' | 'unknown'
+type StockReceiptStatus = 'draft' | 'posted' | 'reversed'
+
+interface StockReceiptLine {
+  pk: number
+  item: number
+  supplier_lot_reference: string
+  expires_on: string | null
+  // Null only when the certainty is 'unknown'. A missing number is the honest
+  // answer for a sealed sack nobody has weighed; it is not a zero.
+  quantity: string | null
+  quantity_certainty: QuantityCertainty
+  // Exactly one of these is set: a controlled unit or one of the item's own
+  // package units.
+  unit_code: UnitCode | null
+  unit_conversion: number | null
+  base_quantity: string | null
+  base_unit: UnitCode
+  line_cost_ex_tax: string
+  destination: number
+  lot: number | null
+  created: string
+  updated: string
+}
+
+// Every field is present on every write. PATCHing `lines` replaces the whole
+// set server-side, so a partial line would be stored as a whole one.
+interface StockReceiptLineWrite {
+  item: number
+  supplier_lot_reference: string
+  expires_on: string | null
+  quantity: string | null
+  quantity_certainty: QuantityCertainty
+  unit_code: UnitCode | null
+  unit_conversion: number | null
+  line_cost_ex_tax: string
+  destination: number
+}
+
+interface StockReceipt {
+  pk: number
+  supplier: number
+  status: StockReceiptStatus
+  received_date: string
+  supplier_reference: string
+  currency_code: string
+  tax_rate: string
+  tax_recoverable: boolean
+  notes: string
+  created_by: number | null
+  posted_at: string | null
+  reversed_at: string | null
+  is_seed_packet_draft: boolean
+  created: string
+  updated: string
+  lines: Array<StockReceiptLine>
+  movement_ids: Array<number>
+}
+
+interface StockReceiptWrite {
+  supplier: number
+  received_date: string
+  supplier_reference?: string
+  // Omit these two and the server applies the workspace defaults.
+  currency_code?: string
+  tax_rate?: string
+  tax_recoverable?: boolean
+  notes?: string
+  lines: Array<StockReceiptLineWrite>
+}
+
+interface StockReceiptFilters {
+  status?: StockReceiptStatus
+  seed_packet?: boolean
 }
 
 export {
@@ -146,9 +225,16 @@ export {
   InventoryUsageBasis,
   ItemUnitConversion,
   ItemUnitConversionCreate,
+  QuantityCertainty,
   SerializedInventoryUnit,
   SerializedPhysicalState,
   SerializedStockMovement,
+  StockReceipt,
+  StockReceiptFilters,
+  StockReceiptLine,
+  StockReceiptLineWrite,
+  StockReceiptStatus,
+  StockReceiptWrite,
   UnitCode,
   UnitDimension
 }

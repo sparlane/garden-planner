@@ -6,12 +6,16 @@ import {
   InventoryLocation,
   InventoryUnit,
   ItemUnitConversion,
-  ItemUnitConversionCreate
+  ItemUnitConversionCreate,
+  StockReceipt,
+  StockReceiptFilters,
+  StockReceiptWrite
 } from '../types/inventory'
-import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
+import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 const ITEMS_URL = '/inventory/items/'
 const CONVERSIONS_URL = '/inventory/conversions/'
+const RECEIPTS_URL = '/inventory/receipts/'
 
 function getInventoryBalances(item: number, signal?: AbortSignal): Promise<Array<InventoryBalance>> {
   return fetchAsJson<Array<InventoryBalance>>(`/inventory/balances/?item=${item}`, signal)
@@ -60,14 +64,55 @@ async function setItemUnitConversionActive(pk: number, active: boolean): Promise
   return response.json() as Promise<ItemUnitConversion>
 }
 
+function getStockReceipts(filters: StockReceiptFilters, signal?: AbortSignal): Promise<Array<StockReceipt>> {
+  const params = new URLSearchParams()
+  if (filters.status) params.set('status', filters.status)
+  if (filters.seed_packet !== undefined) params.set('seed_packet', String(filters.seed_packet))
+  const query = params.size ? `?${params.toString()}` : ''
+  return fetchAsJson<Array<StockReceipt>>(`${RECEIPTS_URL}${query}`, signal)
+}
+
+async function createStockReceipt(receipt: StockReceiptWrite): Promise<StockReceipt> {
+  const response = await csrfPost(RECEIPTS_URL, receipt)
+  return response.json() as Promise<StockReceipt>
+}
+
+async function updateStockReceipt(pk: number, receipt: StockReceiptWrite): Promise<StockReceipt> {
+  const response = await csrfPatch(`${RECEIPTS_URL}${pk}/`, receipt)
+  return response.json() as Promise<StockReceipt>
+}
+
+// The action reads no body and there is no revision or availability digest to
+// echo back, unlike postInputApplication: posting a receipt only adds stock, so
+// no third party's view of what is on hand can have gone stale underneath it.
+async function postStockReceipt(pk: number): Promise<StockReceipt> {
+  const response = await csrfPost(`${RECEIPTS_URL}${pk}/post/`, {})
+  return response.json() as Promise<StockReceipt>
+}
+
+async function reverseStockReceipt(pk: number, reason: string): Promise<StockReceipt> {
+  const response = await csrfPost(`${RECEIPTS_URL}${pk}/reverse/`, { reason })
+  return response.json() as Promise<StockReceipt>
+}
+
+function deleteStockReceipt(pk: number): Promise<Response> {
+  return csrfDelete(`${RECEIPTS_URL}${pk}/`)
+}
+
 export {
   createInventoryItem,
   createItemUnitConversion,
+  createStockReceipt,
+  deleteStockReceipt,
   getInventoryBalances,
   getInventoryItems,
   getInventoryLocations,
   getInventoryUnits,
   getItemUnitConversions,
+  getStockReceipts,
+  postStockReceipt,
+  reverseStockReceipt,
   setInventoryItemActive,
-  setItemUnitConversionActive
+  setItemUnitConversionActive,
+  updateStockReceipt
 }
