@@ -10,7 +10,10 @@ const queryKeys = {
     units: ['inventory', 'units'] as const,
     locations: ['inventory', 'locations'] as const,
     items: (search: string, category: string, trackingMode: string, status: string) => ['inventory', 'items', search, category, trackingMode, status] as const,
-    conversions: (itemPk: number) => ['inventory', 'conversions', itemPk] as const
+    conversions: (itemPk: number) => ['inventory', 'conversions', itemPk] as const,
+    receiptsAll: ['inventory', 'receipts'] as const,
+    receipts: (status: string, seedPacket: string) => ['inventory', 'receipts', status, seedPacket] as const,
+    balances: (itemPk: number | '') => ['inventory', 'balances', itemPk] as const
   },
   garden: {
     all: ['garden'] as const,

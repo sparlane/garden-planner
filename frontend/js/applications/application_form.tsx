@@ -59,7 +59,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
     queryFn: ({ signal }) => getInventoryItems({ active: true }, signal)
   })
   const { data: balances = [] } = useQuery({
-    queryKey: [...queryKeys.inventory.all, 'balances', item],
+    queryKey: queryKeys.inventory.balances(item),
     queryFn: ({ signal }) => getInventoryBalances(Number(item), signal),
     enabled: item !== ''
   })
