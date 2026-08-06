@@ -12,16 +12,18 @@ from workspaces.models import Workspace, get_current_workspace
 from .models import (
     InventoryItem,
     InventoryLocation,
+    ItemUnitConversion,
     StockLot,
     StockMovement,
     StockReceipt,
+    StockReceiptLine,
     Stocktake,
 )
 from .units import UnitCode
 
 
-class LedgerRestTests(APITestCase):
-    """Ledger APIs are scoped, explicit, normalized, and append-only."""
+class LedgerRestFixture(APITestCase):
+    """Shared ledger fixture: one workspace, supplier, item, and two places."""
 
     location_url = '/inventory/locations/'
     receipt_url = '/inventory/receipts/'
@@ -127,6 +129,10 @@ class LedgerRestTests(APITestCase):
         )
         self.assertEqual(response.status_code, 201, response.data)
         return response.data
+
+
+class LedgerRestTests(LedgerRestFixture):
+    """Ledger APIs are scoped, explicit, normalized, and append-only."""
 
     def test_authentication_is_required_for_every_collection(self):
         """No ledger or balance data is anonymously readable."""
@@ -455,3 +461,268 @@ class LedgerRestTests(APITestCase):
             ).status_code,
             405,
         )
+
+
+class StockReceiptDraftTests(LedgerRestFixture):
+    """General receipt drafts normalize, edit, post, and exclude seed stock."""
+
+    def create_draft(self, **overrides):
+        """Create one draft receipt, returning its response body."""
+        response = self.client.post(
+            self.receipt_url,
+            self.receipt_payload(**overrides),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data
+
+    def line_payload(self, **overrides):
+        """Return one complete line, the only shape the editor ever sends."""
+        line = self.receipt_payload()['lines'][0]
+        line.update(overrides)
+        return line
+
+    def bag_conversion(self):
+        """Return a 20 litre package unit for the fixture's growing media."""
+        return ItemUnitConversion.objects.create(
+            workspace=self.workspace,
+            item=self.item,
+            label='20 litre bag',
+            multiplier=Decimal('20000'),
+        )
+
+    def test_draft_receipt_claims_no_balance_until_posted(self):
+        """A saved draft normalizes for review while moving no stock at all."""
+        created = self.create_draft()
+        self.assertEqual(created['status'], StockReceipt.Status.DRAFT)
+        self.assertEqual(created['lines'][0]['base_quantity'], '2000.000000000')
+        self.assertEqual(created['lines'][0]['base_unit'], UnitCode.MILLILITRE)
+        self.assertEqual(StockLot.objects.count(), 0)
+        self.assertEqual(StockMovement.objects.count(), 0)
+        self.assertEqual(
+            self.client.get(self.balance_url, {'item': self.item.pk}).data,
+            [],
+        )
+
+        posted = self.client.post(
+            f"{self.receipt_url}{created['pk']}/post/",
+            {},
+            format='json',
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        balances = self.client.get(self.balance_url, {'item': self.item.pk})
+        self.assertEqual(len(balances.data), 1)
+        self.assertEqual(balances.data[0]['physical_quantity'], '2000.000000000')
+        self.assertEqual(balances.data[0]['valuation'], '11.5000')
+        self.assertEqual(balances.data[0]['currency_code'], 'NZD')
+
+    def test_draft_lines_are_added_removed_and_replaced_before_posting(self):
+        """Line edits replace the whole set and preserve the submitted order."""
+        created = self.create_draft()
+        submitted = [
+            self.line_payload(quantity='3.000000000'),
+            self.line_payload(
+                quantity='500.000000000',
+                unit_code=UnitCode.MILLILITRE,
+                destination=self.growing.pk,
+            ),
+        ]
+        added = self.client.patch(
+            f"{self.receipt_url}{created['pk']}/",
+            {'lines': submitted},
+            format='json',
+        )
+        self.assertEqual(added.status_code, 200, added.data)
+        self.assertEqual(
+            [line['base_quantity'] for line in added.data['lines']],
+            ['3000.000000000', '500.000000000'],
+        )
+        self.assertEqual(
+            [line['destination'] for line in added.data['lines']],
+            [self.store.pk, self.growing.pk],
+        )
+
+        removed = self.client.patch(
+            f"{self.receipt_url}{created['pk']}/",
+            {'lines': [submitted[1]]},
+            format='json',
+        )
+        self.assertEqual(removed.status_code, 200, removed.data)
+        self.assertEqual(removed.data['lines'][0]['destination'], self.growing.pk)
+        self.assertEqual(
+            StockReceiptLine.objects.filter(receipt_id=created['pk']).count(),
+            1,
+        )
+
+    def test_receipt_lines_normalize_standard_units_and_item_conversions(self):
+        """One controlled unit or one item package unit, never both or neither."""
+        conversion = self.bag_conversion()
+        packaged = self.create_draft(
+            lines=[
+                self.line_payload(
+                    quantity='2.000000000',
+                    unit_code=None,
+                    unit_conversion=conversion.pk,
+                ),
+            ],
+        )
+        self.assertEqual(
+            packaged['lines'][0]['base_quantity'],
+            '40000.000000000',
+        )
+
+        for label, line in (
+            ('both', self.line_payload(unit_conversion=conversion.pk)),
+            ('neither', self.line_payload(unit_code=None)),
+            ('incompatible', self.line_payload(unit_code=UnitCode.GRAM)),
+        ):
+            with self.subTest(units=label):
+                rejected = self.client.post(
+                    self.receipt_url,
+                    self.receipt_payload(lines=[line]),
+                    format='json',
+                )
+                self.assertEqual(rejected.status_code, 400, rejected.data)
+
+    def test_unknown_quantity_lines_move_no_stock_and_zero_is_refused(self):
+        """An unknown packet stays truthful rather than claiming a zero balance."""
+        unknown = self.create_draft(
+            lines=[
+                self.line_payload(
+                    quantity=None,
+                    quantity_certainty='unknown',
+                ),
+            ],
+        )
+        self.assertIsNone(unknown['lines'][0]['base_quantity'])
+
+        for label, line in (
+            ('numbered unknown', self.line_payload(quantity_certainty='unknown')),
+            ('zero exact', self.line_payload(quantity='0.000000000')),
+        ):
+            with self.subTest(quantity=label):
+                rejected = self.client.post(
+                    self.receipt_url,
+                    self.receipt_payload(lines=[line]),
+                    format='json',
+                )
+                self.assertEqual(rejected.status_code, 400, rejected.data)
+                self.assertIn('quantity', rejected.data['lines'][0])
+
+        posted = self.client.post(
+            f"{self.receipt_url}{unknown['pk']}/post/",
+            {},
+            format='json',
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        lot = StockLot.objects.get(receipt_line__receipt_id=unknown['pk'])
+        self.assertIsNone(lot.initial_base_quantity)
+        self.assertEqual(StockMovement.objects.filter(lot=lot).count(), 0)
+        self.assertEqual(posted.data['movement_ids'], [])
+
+    def test_receipt_lines_reject_inactive_items_conversions_and_locations(self):
+        """Retired catalog entries stay visible in history but unselectable."""
+        conversion = self.bag_conversion()
+        cases = (
+            ('item', self.item, self.line_payload()),
+            (
+                'unit_conversion',
+                conversion,
+                self.line_payload(unit_code=None, unit_conversion=conversion.pk),
+            ),
+            ('destination', self.store, self.line_payload()),
+        )
+        for field, record, line in cases:
+            with self.subTest(field=field):
+                type(record).objects.filter(pk=record.pk).update(active=False)
+                rejected = self.client.post(
+                    self.receipt_url,
+                    self.receipt_payload(lines=[line]),
+                    format='json',
+                )
+                type(record).objects.filter(pk=record.pk).update(active=True)
+                self.assertEqual(rejected.status_code, 400, rejected.data)
+                self.assertIn(field, rejected.data['lines'][0])
+
+    def test_posted_receipts_reject_edit_delete_and_repost(self):
+        """Corrections go through reversal rather than rewriting the document."""
+        created, _posted, _lot = self.create_and_post_receipt()
+        detail = f"{self.receipt_url}{created['pk']}/"
+        self.assertEqual(
+            self.client.patch(detail, {'notes': 'Late'}, format='json').status_code,
+            400,
+        )
+        self.assertEqual(self.client.delete(detail).status_code, 400)
+        reposted = self.client.post(f'{detail}post/', {}, format='json')
+        self.assertEqual(reposted.status_code, 400, reposted.data)
+        self.assertIn('status', reposted.data)
+
+        reversed_response = self.client.post(
+            f'{detail}reverse/',
+            {'reason': 'Delivered to the wrong nursery'},
+            format='json',
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        self.assertEqual(
+            reversed_response.data['status'],
+            StockReceipt.Status.REVERSED,
+        )
+
+    def test_general_receipt_lines_reject_seed_and_serialized_items(self):
+        """Seeds and serialized assets keep their own receiving workflows."""
+        seed = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='API carrot seed',
+            category=InventoryItem.Category.SEED,
+            base_unit=UnitCode.SEED,
+        )
+        tray = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='API 40 cell tray',
+            category=InventoryItem.Category.TRAY,
+            tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
+            base_unit=UnitCode.EACH,
+        )
+        draft = self.create_draft()
+        for label, item in (('seed', seed), ('serialized', tray)):
+            line = self.line_payload(
+                item=item.pk,
+                unit_code=item.base_unit,
+                quantity='4.000000000',
+            )
+            with self.subTest(item=label, method='post'):
+                rejected = self.client.post(
+                    self.receipt_url,
+                    self.receipt_payload(lines=[line]),
+                    format='json',
+                )
+                self.assertEqual(rejected.status_code, 400, rejected.data)
+                self.assertIn('item', rejected.data['lines'][0])
+            with self.subTest(item=label, method='patch'):
+                rejected = self.client.patch(
+                    f"{self.receipt_url}{draft['pk']}/",
+                    {'lines': [line]},
+                    format='json',
+                )
+                self.assertEqual(rejected.status_code, 400, rejected.data)
+                self.assertIn('item', rejected.data['lines'][0])
+
+    def test_general_drafts_are_flagged_and_filterable_by_seed_packet(self):
+        """The general screen can ask for the drafts it is allowed to edit."""
+        created = self.create_draft()
+        self.assertIs(created['is_seed_packet_draft'], False)
+        listed = self.client.get(
+            self.receipt_url,
+            {'status': 'draft', 'seed_packet': 'false'},
+        )
+        self.assertEqual(
+            [receipt['pk'] for receipt in listed.data],
+            [created['pk']],
+        )
+        self.assertEqual(
+            self.client.get(self.receipt_url, {'seed_packet': 'true'}).data,
+            [],
+        )
+        invalid = self.client.get(self.receipt_url, {'seed_packet': 'maybe'})
+        self.assertEqual(invalid.status_code, 400)
+        self.assertIn('seed_packet', invalid.data)
