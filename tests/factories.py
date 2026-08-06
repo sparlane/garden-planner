@@ -12,7 +12,13 @@ from garden.models import (
     GardenRow,
     GardenSquare,
 )
-from inventory.models import InventoryLocation, InventoryUnit, StockLot, StockMovement
+from inventory.models import (
+    InventoryItem,
+    InventoryLocation,
+    InventoryUnit,
+    StockLot,
+    StockMovement,
+)
 from inventory.units import UnitCode
 from plantings.models import (
     GardenRowDirectSowPlanting,
@@ -109,6 +115,64 @@ def make_seed_packet(**overrides):
         values['seeds'] = make_seeds()
     values.update(overrides)
     return SeedPacket.objects.create(**values)
+
+
+def make_inventory_location(**overrides):
+    """Create a stock location that can hold and issue inventory."""
+    values = {
+        'name': _next_name('Location'),
+        'code': _next_name('LOC').replace(' ', '-').upper(),
+        'location_type': InventoryLocation.LocationType.STORAGE,
+    }
+    values.update(overrides)
+    return InventoryLocation.objects.create(**values)
+
+
+def make_inventory_item(**overrides):
+    """Create a lot-tracked catalog item measured in litres."""
+    values = {
+        'name': _next_name('Item'),
+        'category': InventoryItem.Category.GROWING_MEDIA,
+        'base_unit': UnitCode.LITRE,
+        'tracking_mode': InventoryItem.TrackingMode.LOT,
+        'default_usage_basis': InventoryItem.UsageBasis.MANUAL,
+    }
+    values.update(overrides)
+    return InventoryItem.objects.create(**values)
+
+
+def make_stock_lot(**overrides):
+    """Create a lot holding an opening balance at one location.
+
+    `quantity` and `location` shape the opening movement rather than the lot,
+    so a test can stock a known amount somewhere it can then draw from.
+    """
+    quantity = Decimal(overrides.pop('quantity', '100'))
+    location = overrides.pop('location', None)
+    values = {
+        'origin': StockLot.Origin.OPENING,
+        'received_on': date(2026, 1, 1),
+        'initial_base_quantity': quantity,
+        'acquisition_total': Decimal('0'),
+        'base_unit_cost': Decimal('0'),
+    }
+    if 'item' not in overrides:
+        values['item'] = make_inventory_item()
+    values.update(overrides)
+    workspace = values.setdefault('workspace', values['item'].workspace)
+    values.setdefault('currency_code', workspace.currency_code)
+    lot = StockLot.objects.create(**values)
+    if location is None:
+        location = make_inventory_location(workspace=workspace)
+    StockMovement.objects.create(
+        workspace=workspace,
+        lot=lot,
+        movement_type=StockMovement.MovementType.OPENING,
+        quantity=quantity,
+        destination=location,
+        occurred_at=timezone.now(),
+    )
+    return lot
 
 
 def make_garden_area(**overrides):
