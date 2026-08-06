@@ -15,7 +15,21 @@ from supplies.models import Supplier
 
 from .admin import WorkspaceAdmin
 from .current import get_current_workspace
-from .models import Workspace
+from .models import QUANTITY_DECIMAL_PLACES, QUANTITY_MAX_DIGITS, Workspace
+
+
+class LedgerPrecisionTests(TestCase):
+    """The restated quantity precision must track its definition of record."""
+
+    def test_quantity_precision_matches_inventory(self):
+        """Inventory cannot be imported here without closing a cycle."""
+        from inventory import models as inventory_models  # pylint: disable=import-outside-toplevel
+
+        self.assertEqual(QUANTITY_MAX_DIGITS, inventory_models.QUANTITY_MAX_DIGITS)
+        self.assertEqual(
+            QUANTITY_DECIMAL_PLACES,
+            inventory_models.QUANTITY_DECIMAL_PLACES,
+        )
 
 
 class CurrentWorkspaceTests(TestCase):
@@ -106,6 +120,41 @@ class WorkspaceEndpointTests(APITestCase):
         self.assertEqual(response.data['default_tax_rate'], '0.0000')
         self.assertEqual(response.data['timezone'], 'UTC')
         self.assertEqual(response.data['measurement_system'], 'metric')
+        self.assertEqual(response.data['override_tolerance_percent'], '5.0000')
+        self.assertEqual(response.data['override_tolerance_floor'], '0.000000000')
+
+    def test_patch_updates_the_override_tolerance(self):
+        """A deployment sets how far a confirmed input may drift unexplained."""
+        response = self.client.patch(
+            self.url,
+            {
+                'override_tolerance_percent': '2.5000',
+                'override_tolerance_floor': '0.050000000',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        workspace = Workspace.objects.get(pk=1)
+        self.assertEqual(workspace.override_tolerance_percent, Decimal('2.5'))
+        self.assertEqual(workspace.override_tolerance_floor, Decimal('0.05'))
+
+    def test_patch_validates_the_override_tolerance(self):
+        """A percentage outside nought to a hundred, or a negative floor."""
+        response = self.client.patch(
+            self.url,
+            {
+                'override_tolerance_percent': '101',
+                'override_tolerance_floor': '-1',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            set(response.data),
+            {'override_tolerance_percent', 'override_tolerance_floor'},
+        )
 
     def test_patch_updates_editable_settings(self):
         """Authenticated users share the ability to update the profile."""
