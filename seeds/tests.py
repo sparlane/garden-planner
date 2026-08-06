@@ -354,3 +354,28 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
             f"/seeds/packet-receipts/{posted['pk']}/",
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_seed_drafts_are_flagged_and_refused_by_the_general_receipt_api(self):
+        """The general receiving screen can neither see nor post a seed draft."""
+        draft = self.create_draft(QuantityCertainty.EXACT, '10')
+        receipt = StockReceipt.objects.get(seed_packet_draft__pk=draft['pk'])
+        detail = f'/inventory/receipts/{receipt.pk}/'
+
+        hidden = self.client.get(
+            '/inventory/receipts/',
+            {'seed_packet': 'false'},
+        )
+        self.assertNotIn(receipt.pk, [entry['pk'] for entry in hidden.data])
+        listed = self.client.get('/inventory/receipts/', {'seed_packet': 'true'})
+        self.assertEqual([entry['pk'] for entry in listed.data], [receipt.pk])
+        self.assertIs(listed.data[0]['is_seed_packet_draft'], True)
+
+        self.assertEqual(
+            self.client.patch(detail, {'notes': 'General edit'}, format='json').status_code,
+            400,
+        )
+        self.assertEqual(self.client.delete(detail).status_code, 400)
+        self.assertEqual(
+            self.client.post(f'{detail}post/', {}, format='json').status_code,
+            400,
+        )

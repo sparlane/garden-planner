@@ -153,6 +153,14 @@ class StockReceiptLineSerializer(
         destination = attrs.get('destination')
         if not item.active:
             raise ValidationError({'item': 'The item is inactive.'})
+        if item.category == InventoryItem.Category.SEED:
+            raise ValidationError({
+                'item': 'Receive seed packets through the seed receipt API.',
+            })
+        if item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+            raise ValidationError({
+                'item': 'Receive serialized items through their own workflow.',
+            })
         if conversion and not conversion.active:
             raise ValidationError(
                 {'unit_conversion': 'The conversion is inactive.'},
@@ -190,6 +198,7 @@ class StockReceiptSerializer(
 
     lines = StockReceiptLineSerializer(many=True, required=False)
     movement_ids = serializers.SerializerMethodField()
+    is_seed_packet_draft = serializers.SerializerMethodField()
 
     class Meta:
         model = StockReceipt
@@ -206,6 +215,7 @@ class StockReceiptSerializer(
             'created_by',
             'posted_at',
             'reversed_at',
+            'is_seed_packet_draft',
             'created',
             'updated',
             'lines',
@@ -216,6 +226,7 @@ class StockReceiptSerializer(
             'created_by',
             'posted_at',
             'reversed_at',
+            'is_seed_packet_draft',
             'created',
             'updated',
             'movement_ids',
@@ -234,6 +245,10 @@ class StockReceiptSerializer(
             .order_by('pk')
             .values_list('pk', flat=True)
         )
+
+    def get_is_seed_packet_draft(self, receipt):
+        """Name the drafts the seed workflow owns its own editor for."""
+        return hasattr(receipt, 'seed_packet_draft')
 
     def validate(self, attrs):
         """Apply workspace financial defaults to new draft documents."""
@@ -660,7 +675,11 @@ class StockReceiptViewSet(
 ):  # pylint: disable=too-many-ancestors
     """Edit draft receipts and explicitly post or reverse them."""
 
-    queryset = StockReceipt.objects.select_related('supplier', 'created_by').prefetch_related(
+    queryset = StockReceipt.objects.select_related(
+        'supplier',
+        'created_by',
+        'seed_packet_draft',
+    ).prefetch_related(
         'lines__item',
         'lines__unit_conversion',
         'lines__destination',
@@ -709,6 +728,12 @@ class StockReceiptViewSet(
             queryset = queryset.filter(received_date__gte=received_after)
         if received_before:
             queryset = queryset.filter(received_date__lte=received_before)
+        seed_packet = _parse_boolean(
+            self.request.query_params.get('seed_packet'),
+            'seed_packet',
+        )
+        if seed_packet is not None:
+            queryset = queryset.filter(seed_packet_draft__isnull=not seed_packet)
         return queryset
 
     @action(detail=True, methods=['post'])
