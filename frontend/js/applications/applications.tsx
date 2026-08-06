@@ -1,14 +1,21 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Col, Form, Row } from 'react-bootstrap'
+import { useSearchParams } from 'react-router'
 
 import { getInputApplications } from '../api/applications'
 import { getInventoryItems } from '../api/inventory'
 import { queryKeys } from '../query'
 import { InputApplicationStatus } from '../types/applications'
 import { ApplicationTable } from './application_list'
+import { InputApplicationForm } from './application_form'
 
 function InputApplicationsView() {
+  // The seed-tray screen is a separate bundle, so it deep links here with the
+  // tray it wants rather than embedding the form and duplicating it.
+  const [searchParams] = useSearchParams()
+  const trayParam = Number(searchParams.get('tray'))
+  const tray = Number.isInteger(trayParam) && trayParam > 0 ? trayParam : undefined
   const [status, setStatus] = React.useState<InputApplicationStatus | ''>('')
   const [item, setItem] = React.useState<number | ''>('')
   const [from, setFrom] = React.useState('')
@@ -27,6 +34,7 @@ function InputApplicationsView() {
     <main className="container py-3">
       <h1>Input applications</h1>
       <p>Every input that left stock, the exact lot it came from, and what it went on.</p>
+      {tray !== undefined && <InputApplicationForm targets={[]} tray={tray} title={`Apply an input to every cell of tray ${tray}`} />}
       <Row className="g-2 mb-3">
         <Col md={3}>
           <Form.Group controlId="application-filter-status">

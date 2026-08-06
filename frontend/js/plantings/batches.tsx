@@ -9,6 +9,9 @@ import { queryKeys } from '../query'
 import { formatDate, formatDateTime } from '../utils'
 import { PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
 import { HarvestForm } from './harvest_form'
+import { ApplicationTargetOption, InputApplicationForm } from '../applications/application_form'
+import { ApplicationTable } from '../applications/application_list'
+import { getInputApplications } from '../api/applications'
 import { FamilyTotals, HarvestTable } from './harvest_list'
 import { STATE_LABELS } from './lifecycle'
 
@@ -487,6 +490,33 @@ function BatchYield({ batch }: { batch: ProductionBatchDetail }) {
   )
 }
 
+function BatchInputs({ batch }: { batch: ProductionBatchDetail }) {
+  const { data: applications = [] } = useQuery({
+    queryKey: queryKeys.applications.list('', batch.pk, '', '', ''),
+    queryFn: ({ signal }) => getInputApplications({ batch: batch.pk }, signal)
+  })
+  // The batch itself is offered alongside its plants, so an input that covers
+  // the whole crop does not have to be attributed plant by plant.
+  const targets: Array<ApplicationTargetOption> = [
+    { key: `batch:${batch.pk}`, target_type: 'batch', pk: batch.pk, label: `Whole batch ${batch.code}` },
+    ...batch.current_locations.map((location) => ({
+      key: `specific_plant:${location.specific_plant}`,
+      target_type: 'specific_plant' as const,
+      pk: location.specific_plant,
+      label: `Plant ${location.specific_plant} @ ${location.label}`
+    }))
+  ]
+  return (
+    <Card className="mb-3">
+      <Card.Body>
+        <Card.Title>Inputs</Card.Title>
+        <InputApplicationForm targets={targets} batch={batch.pk} title="Apply an input to this batch" />
+        <ApplicationTable applications={applications} />
+      </Card.Body>
+    </Card>
+  )
+}
+
 function BatchHarvests({ batch }: { batch: ProductionBatchDetail }) {
   const { data: harvests = [] } = useQuery({
     queryKey: queryKeys.plantings.harvests(batch.pk, '', '', '', '', '', ''),
@@ -634,6 +664,7 @@ function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) 
         <BatchLifecycleStates batch={batch} />
         <BatchYield batch={batch} />
         <BatchHarvests batch={batch} />
+        <BatchInputs batch={batch} />
         <BatchLocations batch={batch} />
         <BatchHistory batch={batch} />
       </div>

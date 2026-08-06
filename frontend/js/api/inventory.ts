@@ -1,8 +1,21 @@
-import { InventoryItem, InventoryItemCreate, InventoryItemFilters, InventoryLocation, InventoryUnit, ItemUnitConversion, ItemUnitConversionCreate } from '../types/inventory'
+import {
+  InventoryBalance,
+  InventoryItem,
+  InventoryItemCreate,
+  InventoryItemFilters,
+  InventoryLocation,
+  InventoryUnit,
+  ItemUnitConversion,
+  ItemUnitConversionCreate
+} from '../types/inventory'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 const ITEMS_URL = '/inventory/items/'
 const CONVERSIONS_URL = '/inventory/conversions/'
+
+function getInventoryBalances(item: number, signal?: AbortSignal): Promise<Array<InventoryBalance>> {
+  return fetchAsJson<Array<InventoryBalance>>(`/inventory/balances/?item=${item}`, signal)
+}
 
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
   return fetchAsJson<Array<InventoryUnit>>('/inventory/units/', signal)
@@ -50,6 +63,7 @@ async function setItemUnitConversionActive(pk: number, active: boolean): Promise
 export {
   createInventoryItem,
   createItemUnitConversion,
+  getInventoryBalances,
   getInventoryItems,
   getInventoryLocations,
   getInventoryUnits,

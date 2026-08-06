@@ -118,7 +118,24 @@ interface ItemUnitConversionCreate {
   multiplier: string
 }
 
+interface InventoryBalance {
+  lot: number
+  lot_identifier: string
+  item: number
+  item_name: string
+  location: number
+  location_name: string
+  physical_quantity: string
+  reserved_quantity: string
+  available_quantity: string
+  base_unit: UnitCode
+  base_unit_cost: string | null
+  valuation: string | null
+  low_stock: boolean
+}
+
 export {
+  InventoryBalance,
   InventoryCategory,
   InventoryItem,
   InventoryItemCreate,

@@ -628,6 +628,18 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       <p>Notes: {seedTray.notes}</p>
       <Card className="mb-3">
         <Card.Body>
+          <Card.Title>Inputs</Card.Title>
+          <p className="mb-2">
+            Media and treatments applied to this tray are recorded against its cells. This screen is a separate bundle, so it links to the applications page rather than embedding
+            the form.
+          </p>
+          <Button href={`/#/applications?tray=${seedTray.pk}`} variant="outline-primary">
+            Apply an input to this tray
+          </Button>
+        </Card.Body>
+      </Card>
+      <Card className="mb-3">
+        <Card.Body>
           <Card.Title>Physical inventory</Card.Title>
           {seedTray.inventory.reconciliation_required && <Alert variant="warning">Opening cost and physical location require reconciliation.</Alert>}
           <dl className="row mb-2">

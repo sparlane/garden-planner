@@ -14,6 +14,8 @@ import { GardenSquarePlanting } from './types/plantings'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
 import { getHarvests, getPlantingGardenSquaresCurrent } from './api/plantings'
 import { HarvestForm, HarvestFormBatch, HarvestFormPlant } from './plantings/harvest_form'
+import { InputApplicationForm } from './applications/application_form'
+import { ConfirmGeometryForm } from './garden/geometry'
 import { HarvestTable } from './plantings/harvest_list'
 import { SelectOption } from './types/others'
 import { queryKeys } from './query'
@@ -225,6 +227,24 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: Gar
         <section className="garden-square-harvest">
           <h2 className="h5">Harvests from this square</h2>
           <SquareHarvests squarePk={square.pk} />
+        </section>
+
+        <section className="garden-square-harvest">
+          <h2 className="h5">Apply an input here</h2>
+          {!area.geometry_confirmed && <ConfirmGeometryForm area={area} />}
+          <InputApplicationForm
+            targets={[
+              {
+                key: `garden_square:${square.pk}`,
+                target_type: 'garden_square',
+                pk: square.pk,
+                label: square.name,
+                blocked: area.geometry_confirmed ? undefined : `${area.name} has no confirmed length unit`
+              }
+            ]}
+            defaultTargetKeys={[`garden_square:${square.pk}`]}
+            title="Apply an input to this square"
+          />
         </section>
       </Modal.Body>
       <Modal.Footer>

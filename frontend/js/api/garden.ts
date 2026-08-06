@@ -1,5 +1,5 @@
-import { GardenArea, GardenBed, GardenRow, GardenSquare } from '../types/garden'
-import { fetchAsJson } from '../utils'
+import { ConfirmGardenGeometry, GardenArea, GardenBed, GardenRow, GardenSquare } from '../types/garden'
+import { csrfPost, fetchAsJson } from '../utils'
 
 async function getGardenAreas(signal?: AbortSignal): Promise<Array<GardenArea>> {
   return fetchAsJson<Array<GardenArea>>('/garden/areas/', signal)
@@ -17,4 +17,8 @@ async function getGardenSquares(signal?: AbortSignal): Promise<Array<GardenSquar
   return fetchAsJson<Array<GardenSquare>>('/garden/squares/', signal)
 }
 
-export { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares }
+async function confirmGardenGeometry(areaPk: number, data: ConfirmGardenGeometry): Promise<Response> {
+  return csrfPost(`/garden/areas/${areaPk}/confirm-geometry/`, data)
+}
+
+export { confirmGardenGeometry, getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares }
