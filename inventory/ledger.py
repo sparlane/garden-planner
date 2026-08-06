@@ -575,6 +575,17 @@ def _linked_to_stocktake(movement):
     return bool(movement.stocktake_line_id)
 
 
+def _linked_to_application(movement):
+    """Return whether an input application posted this movement.
+
+    An application line owns the link, so this reads the reverse accessors
+    rather than a column here. That keeps the dependency pointing one way: the
+    apps that consume stock import inventory, and inventory imports none of
+    them.
+    """
+    return hasattr(movement, 'application_consumption') or hasattr(movement, 'application_waste')
+
+
 #: Documents that own the movements they post, keyed by the name a caller passes
 #: as ``document_kind``. A row one of these wrote may only be reversed through
 #: its own document, so the document restores every row it posted together
@@ -587,6 +598,10 @@ DOCUMENT_LINKS = {
     'stocktake': (
         _linked_to_stocktake,
         'Reverse stocktake movements through their stocktake.',
+    ),
+    'application': (
+        _linked_to_application,
+        'Reverse application movements through their application.',
     ),
 }
 
@@ -976,6 +991,18 @@ def post_stocktake(stocktake, user):
     )
     stocktake.refresh_from_db()
     return stocktake, movements
+
+
+@transaction.atomic
+def reverse_application_movements(workspace, movements, user, reason):
+    """Restore the stock one input application consumed and wasted.
+
+    The document itself lives outside this app, so it hands its movements in
+    and keeps ownership of its own status. Locking and per-row validation are
+    shared with receipts and stocktakes, which is what makes a partly reversed
+    document impossible: every row is checked before any reversal is written.
+    """
+    return _reverse_document_movements(workspace, movements, user, reason, 'application')
 
 
 @transaction.atomic
