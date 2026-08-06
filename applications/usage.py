@@ -243,6 +243,35 @@ def calculate_usage(inputs):
     return calculator(inputs)
 
 
+def override_required(calculated, applied, tolerance_percent, tolerance_floor):
+    """Return whether the gap between suggestion and fact must be explained.
+
+    Both bounds have to be exceeded. The percentage alone would demand prose
+    for a third of a millilitre on a small line, and the floor alone would let
+    a large line drift by a wide margin unremarked, so each one grounds the
+    other.
+
+    A manual line has no suggestion to differ from, so nothing is required.
+    """
+    if calculated is None:
+        return False
+    difference = abs(Decimal(applied) - Decimal(calculated))
+    if difference <= Decimal(tolerance_floor):
+        return False
+    allowed = Decimal(calculated) * Decimal(tolerance_percent) / Decimal('100')
+    return difference > allowed
+
+
+def workspace_override_required(workspace, calculated, applied):
+    """Apply one workspace's configured override tolerance."""
+    return override_required(
+        calculated,
+        applied,
+        workspace.override_tolerance_percent,
+        workspace.override_tolerance_floor,
+    )
+
+
 def item_usage_inputs(item, targets, basis=None, fill_factor=None):
     """Build calculation inputs from an item's configured usage.
 

@@ -18,6 +18,8 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'default_tax_rate',
             'timezone',
             'measurement_system',
+            'override_tolerance_percent',
+            'override_tolerance_floor',
             'created',
             'updated',
         ]

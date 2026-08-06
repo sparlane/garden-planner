@@ -8,7 +8,7 @@ from django.test import SimpleTestCase
 from inventory.models import InventoryItem
 from inventory.units import UnitCode
 
-from .usage import TargetInput, UsageInputs, calculate_usage
+from .usage import TargetInput, UsageInputs, calculate_usage, override_required
 
 
 def cell(volume, weight='1', label='Cell'):
@@ -244,3 +244,53 @@ class FixedAndManualUsageTests(SimpleTestCase):
                 basis=InventoryItem.UsageBasis.MANUAL,
                 base_unit='buckets',
             ))
+
+
+class OverrideToleranceTests(SimpleTestCase):
+    """When a confirmed quantity has to be explained."""
+
+    def required(self, calculated, applied, percent='5', floor='0'):
+        """Ask whether this difference needs a reason under these bounds."""
+        return override_required(
+            None if calculated is None else Decimal(calculated),
+            Decimal(applied),
+            Decimal(percent),
+            Decimal(floor),
+        )
+
+    def test_an_exact_match_needs_no_reason(self):
+        """Using exactly what was suggested explains itself."""
+        self.assertFalse(self.required('10', '10'))
+
+    def test_a_small_percentage_difference_needs_no_reason(self):
+        """Ordinary imprecision is not worth interrupting an operator for."""
+        self.assertFalse(self.required('10', '10.4'))
+
+    def test_a_large_percentage_difference_needs_a_reason(self):
+        """A material departure from the suggestion is what the audit wants."""
+        self.assertTrue(self.required('10', '11'))
+
+    def test_a_difference_either_way_counts(self):
+        """Using notably less is as interesting as using notably more."""
+        self.assertTrue(self.required('10', '9'))
+
+    def test_the_floor_grounds_the_percentage(self):
+        """A tiny line does not demand prose over a rounding-sized drift."""
+        self.assertTrue(self.required('0.1', '0.108'))
+        self.assertFalse(self.required('0.1', '0.108', floor='0.05'))
+
+    def test_the_floor_does_not_excuse_a_large_line(self):
+        """Past the floor, the percentage governs again."""
+        self.assertTrue(self.required('20', '21.6', floor='0.05'))
+
+    def test_a_difference_exactly_on_the_floor_needs_no_reason(self):
+        """The floor is the largest difference that passes unremarked."""
+        self.assertFalse(self.required('10', '10.05', floor='0.05'))
+
+    def test_a_zero_tolerance_requires_a_reason_for_any_difference(self):
+        """A workspace can demand every departure be explained."""
+        self.assertTrue(self.required('10', '10.000000001', percent='0'))
+
+    def test_a_manual_line_never_requires_a_reason(self):
+        """There is no suggestion to have departed from."""
+        self.assertFalse(self.required(None, '10', percent='0'))

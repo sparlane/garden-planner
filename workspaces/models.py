@@ -9,6 +9,14 @@ from django.core.validators import MaxValueValidator, MinValueValidator, RegexVa
 from django.db import models
 
 
+#: Ledger quantity precision, restated here rather than imported. Inventory
+#: depends on this module for workspace ownership, so importing its constants
+#: back would close a cycle. `inventory.models` is the definition of record and
+#: a test keeps the two in step.
+QUANTITY_MAX_DIGITS = 24
+QUANTITY_DECIMAL_PLACES = 9
+
+
 def validate_iana_timezone(value):
     """Require a timezone name understood by the system IANA database."""
     try:
@@ -68,16 +76,62 @@ class Workspace(models.Model):
         choices=MeasurementSystem.choices,
         default=MeasurementSystem.METRIC,
     )
+    override_tolerance_percent = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        default=Decimal('5'),
+        validators=[
+            MinValueValidator(Decimal('0')),
+            MaxValueValidator(Decimal('100')),
+        ],
+        help_text=(
+            'How far a confirmed input quantity may differ from the calculated '
+            'suggestion, as a percentage, before a reason is required.'
+        ),
+    )
+    override_tolerance_floor = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0'))],
+        help_text=(
+            'Smallest difference in an item base unit that can require a '
+            'reason, so a rounding-sized drift never does. Zero disables it.'
+        ),
+    )
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(override_tolerance_percent__gte=0, override_tolerance_percent__lte=100),
+                name='workspace_override_percent_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(override_tolerance_floor__gte=0),
+                name='workspace_override_floor_nonnegative',
+            ),
+        ]
 
     def __str__(self):
         return self.name
 
 
 def get_default_workspace_id():
-    """Return the configured workspace ID for direct ORM-created records."""
-    return get_current_workspace().pk
+    """Return the configured workspace ID for direct ORM-created records.
+
+    Only the primary key is touched, never the whole row. Migrations across
+    every app carry this as a column default and evaluate it while the schema
+    is mid-flight, so selecting all of Workspace would fail as soon as one
+    migration adds a column that the database has not reached yet.
+    """
+    workspace_id = settings.CURRENT_WORKSPACE_ID
+    if not Workspace.objects.filter(pk=workspace_id).exists():
+        raise ImproperlyConfigured(
+            f'CURRENT_WORKSPACE_ID={workspace_id} does not identify a workspace.'
+        )
+    return workspace_id
 
 
 def get_current_workspace():

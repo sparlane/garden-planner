@@ -32,7 +32,9 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     currency_code: workspace.currency_code,
     default_tax_rate: workspace.default_tax_rate,
     timezone: workspace.timezone,
-    measurement_system: workspace.measurement_system
+    measurement_system: workspace.measurement_system,
+    override_tolerance_percent: workspace.override_tolerance_percent,
+    override_tolerance_floor: workspace.override_tolerance_floor
   })
   const mutation = useMutation({
     mutationFn: updateWorkspace,
@@ -46,7 +48,9 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       currency_code: workspace.currency_code,
       default_tax_rate: workspace.default_tax_rate,
       timezone: workspace.timezone,
-      measurement_system: workspace.measurement_system
+      measurement_system: workspace.measurement_system,
+      override_tolerance_percent: workspace.override_tolerance_percent,
+      override_tolerance_floor: workspace.override_tolerance_floor
     })
   }, [workspace])
 
@@ -117,6 +121,33 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
             <option value="metric">Metric</option>
             <option value="imperial">Imperial</option>
           </Form.Select>
+        </Form.Group>
+        <Form.Group className="mb-3" controlId="workspace-override-percent">
+          <Form.Label>Input override tolerance (%)</Form.Label>
+          <Form.Control
+            type="number"
+            min="0"
+            max="100"
+            step="0.0001"
+            value={form.override_tolerance_percent}
+            onChange={(event) => updateField('override_tolerance_percent', event.target.value)}
+            aria-describedby="workspace-override-percent-help"
+          />
+          <Form.Text id="workspace-override-percent-help">How far a confirmed input quantity may differ from the calculated suggestion before a reason is required.</Form.Text>
+        </Form.Group>
+        <Form.Group className="mb-3" controlId="workspace-override-floor">
+          <Form.Label>Input override floor</Form.Label>
+          <Form.Control
+            type="number"
+            min="0"
+            step="0.000000001"
+            value={form.override_tolerance_floor}
+            onChange={(event) => updateField('override_tolerance_floor', event.target.value)}
+            aria-describedby="workspace-override-floor-help"
+          />
+          <Form.Text id="workspace-override-floor-help">
+            Smallest difference, in an item&apos;s own unit, that can require a reason. Zero disables it, so the percentage alone applies.
+          </Form.Text>
         </Form.Group>
         <Button type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? 'Saving…' : 'Save settings'}
