@@ -51,11 +51,11 @@ interface SeedPacket {
 interface SeedPacketReceiptCreate {
   seeds: number
   quantity_certainty: SeedQuantityCertainty
-  quantity?: string
+  quantity?: string | null
   line_price: string
   supplier_lot_reference?: string
   received_date: string
-  sow_by?: string
+  sow_by?: string | null
   supplier_reference?: string
   tax_rate?: string
   tax_recoverable?: boolean
