@@ -1,5 +1,5 @@
 import { Seed, SeedCreate, SeedPacket, SeedPacketDetails, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation } from '../types/seeds'
-import { csrfDelete, csrfPost, fetchAsJson } from '../utils'
+import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 function getSeeds(signal?: AbortSignal): Promise<Array<Seed>> {
   return fetchAsJson<Array<Seed>>('/seeds/seeds/', signal)
@@ -23,6 +23,11 @@ function getSeedPacketReceipts(signal?: AbortSignal): Promise<Array<SeedPacketRe
 
 async function createSeedPacketReceipt(receipt: SeedPacketReceiptCreate): Promise<SeedPacketReceiptDraft> {
   const response = await csrfPost('/seeds/packet-receipts/', receipt)
+  return response.json() as Promise<SeedPacketReceiptDraft>
+}
+
+async function updateSeedPacketReceipt(pk: number, receipt: SeedPacketReceiptCreate): Promise<SeedPacketReceiptDraft> {
+  const response = await csrfPatch(`/seeds/packet-receipts/${pk}/`, receipt)
   return response.json() as Promise<SeedPacketReceiptDraft>
 }
 
@@ -54,5 +59,6 @@ export {
   getSeedPacketsCurrent,
   getSeeds,
   postSeedPacketReceipt,
-  reconcileSeedPacket
+  reconcileSeedPacket,
+  updateSeedPacketReceipt
 }

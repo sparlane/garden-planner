@@ -19,11 +19,12 @@ import {
   getSeedPacketReceipts,
   getSeeds,
   postSeedPacketReceipt,
-  reconcileSeedPacket
+  reconcileSeedPacket,
+  updateSeedPacketReceipt
 } from './api/seeds'
 import { addSupplier, getSuppliers } from './api/supplies'
 import { queryKeys } from './query'
-import { formatQuantity } from './utils'
+import { ApiError, formatQuantity } from './utils'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -397,44 +398,82 @@ interface PacketReceiptFormProps {
   seeds: Array<Seed>
   suppliers: Array<Supplier>
   varieties: Array<PlantVariety>
-  onCreate: (data: SeedPacketReceiptCreate) => Promise<void>
+  draft?: SeedPacketReceiptDraft
+  onSave: (data: SeedPacketReceiptCreate) => Promise<void>
   onCancel: () => void
 }
 
-function PacketReceiptForm({ seeds, suppliers, varieties, onCreate, onCancel }: PacketReceiptFormProps) {
-  const [seedPk, setSeedPk] = React.useState<number>()
-  const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>('unknown')
-  const [quantity, setQuantity] = React.useState('')
-  const [price, setPrice] = React.useState('')
-  const [receivedDate, setReceivedDate] = React.useState(new Date().toISOString().slice(0, 10))
-  const [sowBy, setSowBy] = React.useState('')
-  const [supplierLot, setSupplierLot] = React.useState('')
-  const [notes, setNotes] = React.useState('')
+function PacketReceiptForm({ seeds, suppliers, varieties, draft, onSave, onCancel }: PacketReceiptFormProps) {
+  const [seedPk, setSeedPk] = React.useState<number | undefined>(draft?.seeds)
+  const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>(draft?.quantity_certainty ?? 'unknown')
+  const [quantity, setQuantity] = React.useState(draft?.quantity ? formatQuantity(draft.quantity) : '')
+  const [price, setPrice] = React.useState(draft?.line_price ?? '')
+  const [receivedDate, setReceivedDate] = React.useState(draft?.received_date ?? new Date().toISOString().slice(0, 10))
+  const [sowBy, setSowBy] = React.useState(draft?.sow_by ?? '')
+  const [supplierLot, setSupplierLot] = React.useState(draft?.supplier_lot_reference ?? '')
+  const [supplierReference, setSupplierReference] = React.useState(draft?.supplier_reference ?? '')
+  const [taxRate, setTaxRate] = React.useState(draft?.tax_rate ?? '')
+  const [taxRecoverable, setTaxRecoverable] = React.useState(draft?.tax_recoverable ?? false)
+  const [notes, setNotes] = React.useState(draft?.notes ?? '')
+  const [errors, setErrors] = React.useState<Record<string, string>>({})
+  const editing = draft !== undefined
+
+  function fieldError(field: string) {
+    return errors[field] && <Form.Text className="text-danger">{errors[field]}</Form.Text>
+  }
+
+  function showServerErrors(caught: unknown) {
+    if (!(caught instanceof ApiError) || typeof caught.body !== 'object' || caught.body === null) {
+      setErrors({ non_field_errors: caught instanceof Error ? caught.message : String(caught) })
+      return
+    }
+    setErrors(
+      Object.fromEntries(
+        Object.entries(caught.body as Record<string, unknown>).map(([field, value]) => {
+          const message = Array.isArray(value) ? value[0] : value
+          return [field, typeof message === 'string' ? message : String(message)]
+        })
+      )
+    )
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const selectedSeed = seedPk ?? seeds[0]?.pk
     if (!selectedSeed) return
+    setErrors({})
     const data: SeedPacketReceiptCreate = {
       seeds: selectedSeed,
       quantity_certainty: certainty,
       line_price: price,
       received_date: receivedDate
     }
-    if (certainty !== 'unknown') data.quantity = quantity
-    if (sowBy) data.sow_by = sowBy
-    if (supplierLot) data.supplier_lot_reference = supplierLot
-    if (notes) data.notes = notes
-    await onCreate(data)
+    data.quantity = certainty === 'unknown' ? null : quantity
+    data.sow_by = sowBy || null
+    data.supplier_lot_reference = supplierLot
+    data.supplier_reference = supplierReference
+    if (taxRate) data.tax_rate = taxRate
+    data.tax_recoverable = taxRecoverable
+    data.notes = notes
+    try {
+      await onSave(data)
+    } catch (caught) {
+      showServerErrors(caught)
+    }
   }
 
   return (
     <tr>
       <td colSpan={8}>
         <Form onSubmit={submit} className="row g-2 align-items-end">
+          {Object.keys(errors).length > 0 && (
+            <Alert variant="danger" className="mb-0">
+              {Object.values(errors).join(' ')}
+            </Alert>
+          )}
           <Form.Group className="col-md-3">
             <Form.Label>Seed catalog</Form.Label>
-            <Form.Select required value={seedPk ?? ''} onChange={(event) => setSeedPk(Number(event.target.value))}>
+            <Form.Select required disabled={editing} value={seedPk ?? ''} onChange={(event) => setSeedPk(Number(event.target.value))}>
               <option value="">Select…</option>
               {seeds.map((seed) => (
                 <option key={seed.pk} value={seed.pk}>
@@ -445,7 +484,14 @@ function PacketReceiptForm({ seeds, suppliers, varieties, onCreate, onCancel }: 
           </Form.Group>
           <Form.Group className="col-md-2">
             <Form.Label>Quantity certainty</Form.Label>
-            <Form.Select value={certainty} onChange={(event) => setCertainty(event.target.value as SeedQuantityCertainty)}>
+            <Form.Select
+              value={certainty}
+              onChange={(event) => {
+                const nextCertainty = event.target.value as SeedQuantityCertainty
+                setCertainty(nextCertainty)
+                if (nextCertainty === 'unknown') setQuantity('')
+              }}
+            >
               <option value="unknown">Unknown</option>
               <option value="estimated">Estimated</option>
               <option value="exact">Exact</option>
@@ -462,29 +508,50 @@ function PacketReceiptForm({ seeds, suppliers, varieties, onCreate, onCancel }: 
               value={quantity}
               onChange={(event) => setQuantity(event.target.value)}
             />
+            {fieldError('quantity')}
           </Form.Group>
           <Form.Group className="col-md-2">
             <Form.Label>Line price</Form.Label>
             <Form.Control required type="number" min="0" step="0.0001" value={price} onChange={(event) => setPrice(event.target.value)} />
+            {fieldError('line_price')}
           </Form.Group>
           <Form.Group className="col-md-2">
             <Form.Label>Received</Form.Label>
             <Form.Control required type="date" value={receivedDate} onChange={(event) => setReceivedDate(event.target.value)} />
+            {fieldError('received_date')}
           </Form.Group>
           <Form.Group className="col-md-2">
             <Form.Label>Sow by</Form.Label>
             <Form.Control type="date" value={sowBy} onChange={(event) => setSowBy(event.target.value)} />
+            {fieldError('sow_by')}
           </Form.Group>
           <Form.Group className="col-md-3">
             <Form.Label>Supplier lot/reference</Form.Label>
             <Form.Control value={supplierLot} onChange={(event) => setSupplierLot(event.target.value)} />
+            {fieldError('supplier_lot_reference')}
+          </Form.Group>
+          <Form.Group className="col-md-3">
+            <Form.Label>Supplier reference</Form.Label>
+            <Form.Control value={supplierReference} onChange={(event) => setSupplierReference(event.target.value)} />
+            {fieldError('supplier_reference')}
+          </Form.Group>
+          <Form.Group className="col-md-2">
+            <Form.Label>Tax rate</Form.Label>
+            <Form.Control type="number" min="0" step="0.0001" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} />
+            {fieldError('tax_rate')}
+          </Form.Group>
+          <Form.Group className="col-md-2">
+            <Form.Label>Tax</Form.Label>
+            <Form.Check type="checkbox" label="Recoverable" checked={taxRecoverable} onChange={(event) => setTaxRecoverable(event.target.checked)} />
+            {fieldError('tax_recoverable')}
           </Form.Group>
           <Form.Group className="col-md-4">
             <Form.Label>Notes</Form.Label>
             <Form.Control value={notes} onChange={(event) => setNotes(event.target.value)} />
+            {fieldError('notes')}
           </Form.Group>
           <div className="col-md-3">
-            <Button type="submit">Save draft</Button>{' '}
+            <Button type="submit">{editing ? 'Save changes' : 'Save draft'}</Button>{' '}
             <Button variant="secondary" onClick={onCancel}>
               Cancel
             </Button>
@@ -498,11 +565,12 @@ function PacketReceiptForm({ seeds, suppliers, varieties, onCreate, onCancel }: 
 interface ReceiptDraftRowProps {
   draft: SeedPacketReceiptDraft
   label: string
+  onEdit: (draft: SeedPacketReceiptDraft) => void
   onPost: (pk: number) => Promise<void>
   onCancel: (pk: number) => Promise<void>
 }
 
-function ReceiptDraftRow({ draft, label, onPost, onCancel }: ReceiptDraftRowProps) {
+function ReceiptDraftRow({ draft, label, onEdit, onPost, onCancel }: ReceiptDraftRowProps) {
   if (draft.status !== 'draft') return null
   return (
     <tr className="table-warning">
@@ -515,6 +583,9 @@ function ReceiptDraftRow({ draft, label, onPost, onCancel }: ReceiptDraftRowProp
       <td>{draft.line_price}</td>
       <td colSpan={2}>Draft — confirm these normalized receipt details before posting.</td>
       <td>
+        <Button size="sm" variant="outline-secondary" onClick={() => onEdit(draft)}>
+          Edit
+        </Button>{' '}
         <Button size="sm" onClick={() => onPost(draft.pk)}>
           Post receipt
         </Button>{' '}
@@ -587,6 +658,7 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
 function SeedStockTable() {
   const queryClient = useQueryClient()
   const [showReceipt, setShowReceipt] = React.useState(false)
+  const [editingDraft, setEditingDraft] = React.useState<SeedPacketReceiptDraft | null>(null)
   const { data: suppliers = [] } = useQuery({ queryKey: queryKeys.suppliers.all, queryFn: ({ signal }) => getSuppliers(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
   const { data: seeds = [] } = useQuery({ queryKey: queryKeys.seeds.catalog, queryFn: ({ signal }) => getSeeds(signal) })
@@ -596,6 +668,7 @@ function SeedStockTable() {
   const invalidateStock = () =>
     Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.seeds.packets.all }), queryClient.invalidateQueries({ queryKey: queryKeys.seeds.packetReceipts })])
   const createMutation = useMutation({ mutationFn: createSeedPacketReceipt, onSuccess: invalidateStock })
+  const updateMutation = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: SeedPacketReceiptCreate }) => updateSeedPacketReceipt(pk, data), onSuccess: invalidateStock })
   const postMutation = useMutation({ mutationFn: postSeedPacketReceipt, onSuccess: invalidateStock })
   const cancelMutation = useMutation({ mutationFn: cancelSeedPacketReceipt, onSuccess: invalidateStock })
   const reconcileMutation = useMutation({
@@ -606,6 +679,12 @@ function SeedStockTable() {
   async function createReceipt(data: SeedPacketReceiptCreate) {
     await createMutation.mutateAsync(data)
     setShowReceipt(false)
+  }
+
+  async function saveDraft(data: SeedPacketReceiptCreate) {
+    if (!editingDraft) return
+    await updateMutation.mutateAsync({ pk: editingDraft.pk, data })
+    setEditingDraft(null)
   }
 
   return (
@@ -627,16 +706,28 @@ function SeedStockTable() {
         </tr>
       </thead>
       <tbody>
-        {showReceipt && <PacketReceiptForm seeds={seeds} suppliers={suppliers} varieties={varieties} onCreate={createReceipt} onCancel={() => setShowReceipt(false)} />}
+        {showReceipt && <PacketReceiptForm seeds={seeds} suppliers={suppliers} varieties={varieties} onSave={createReceipt} onCancel={() => setShowReceipt(false)} />}
         {drafts.map((draft) => (
           <ReceiptDraftRow
             key={`draft-${draft.pk}`}
             draft={draft}
             label={seedLabel(draft.seeds, seeds, suppliers, varieties)}
+            onEdit={setEditingDraft}
             onPost={(pk) => postMutation.mutateAsync(pk).then(() => undefined)}
             onCancel={(pk) => cancelMutation.mutateAsync(pk).then(() => undefined)}
           />
         ))}
+        {editingDraft && (
+          <PacketReceiptForm
+            key={`edit-${editingDraft.pk}`}
+            seeds={seeds}
+            suppliers={suppliers}
+            varieties={varieties}
+            draft={editingDraft}
+            onSave={saveDraft}
+            onCancel={() => setEditingDraft(null)}
+          />
+        )}
         {packets.map((packet) => (
           <SeedPacketRow
             key={packet.pk}
