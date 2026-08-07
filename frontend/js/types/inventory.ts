@@ -184,6 +184,7 @@ interface StockReceipt {
   supplier_reference: string
   currency_code: string
   tax_rate: string
+  price_includes_tax: boolean
   tax_recoverable: boolean
   notes: string
   created_by: number | null
@@ -203,6 +204,7 @@ interface StockReceiptWrite {
   // Omit these two and the server applies the workspace defaults.
   currency_code?: string
   tax_rate?: string
+  price_includes_tax?: boolean
   tax_recoverable?: boolean
   notes?: string
   lines: Array<StockReceiptLineWrite>
