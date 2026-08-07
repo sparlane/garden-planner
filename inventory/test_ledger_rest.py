@@ -222,6 +222,32 @@ class LedgerRestTests(LedgerRestFixture):
             2,
         )
 
+    def test_inclusive_prices_are_stored_exclusive_and_keep_gross_cost(self):
+        """Inclusive supplier prices convert before canonical ledger storage."""
+        response = self.client.post(
+            self.receipt_url,
+            self.receipt_payload(
+                price_includes_tax=True,
+                lines=[{
+                    **self.receipt_payload()['lines'][0],
+                    'line_cost_ex_tax': '11.5000',
+                }],
+            ),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data['price_includes_tax'])
+        self.assertEqual(response.data['lines'][0]['line_cost_ex_tax'], '10.0000')
+
+        posted = self.client.post(
+            f"{self.receipt_url}{response.data['pk']}/post/",
+            {},
+            format='json',
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        lot = StockLot.objects.get(receipt_line__receipt_id=response.data['pk'])
+        self.assertEqual(lot.acquisition_total, Decimal('11.5000'))
+
     def test_draft_lines_can_be_replaced_and_invalid_selectors_are_rejected(self):
         """PATCH replaces draft lines without permitting foreign workspace IDs."""
         created = self.client.post(

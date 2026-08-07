@@ -465,6 +465,10 @@ class StockReceipt(WorkspaceOwnedModel):
             MaxValueValidator(Decimal('100')),
         ),
     )
+    price_includes_tax = models.BooleanField(
+        default=False,
+        help_text='Whether entered receipt prices include the receipt tax rate.',
+    )
     tax_recoverable = models.BooleanField(default=True)
     notes = models.TextField(blank=True, default='')
     created_by = models.ForeignKey(

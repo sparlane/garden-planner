@@ -2,7 +2,7 @@
 
 # pylint: disable=too-many-lines
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -210,6 +210,7 @@ class StockReceiptSerializer(
             'supplier_reference',
             'currency_code',
             'tax_rate',
+            'price_includes_tax',
             'tax_recoverable',
             'notes',
             'created_by',
@@ -268,6 +269,7 @@ class StockReceiptSerializer(
     def create(self, validated_data):
         """Create a draft and its normalized nested lines atomically."""
         lines = validated_data.pop('lines', [])
+        lines = self._canonical_lines(validated_data, lines)
         receipt = StockReceipt.objects.create(**validated_data)
         for line in lines:
             StockReceiptLine.objects.create(receipt=receipt, **line)
@@ -277,12 +279,37 @@ class StockReceiptSerializer(
     def update(self, instance, validated_data):
         """Update a draft, replacing nested lines only when supplied."""
         lines = validated_data.pop('lines', None)
+        if lines is not None:
+            lines = self._canonical_lines(
+                {
+                    **validated_data,
+                    'price_includes_tax': validated_data.get(
+                        'price_includes_tax',
+                        instance.price_includes_tax,
+                    ),
+                    'tax_rate': validated_data.get('tax_rate', instance.tax_rate),
+                },
+                lines,
+            )
         instance = super().update(instance, validated_data)
         if lines is not None:
             instance.lines.all().delete()
             for line in lines:
                 StockReceiptLine.objects.create(receipt=instance, **line)
         return instance
+
+    @staticmethod
+    def _canonical_lines(receipt_data, lines):
+        """Store line costs ex tax regardless of how the supplier quoted them."""
+        if not receipt_data.get('price_includes_tax', False):
+            return lines
+        rate = receipt_data.get('tax_rate', Decimal('0'))
+        divisor = Decimal('1') + rate / Decimal('100')
+        for line in lines:
+            line['line_cost_ex_tax'] = (
+                line['line_cost_ex_tax'] / divisor
+            ).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+        return lines
 
 
 class StockLotSerializer(serializers.ModelSerializer):
