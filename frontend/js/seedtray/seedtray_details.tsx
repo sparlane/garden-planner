@@ -1,3 +1,8 @@
+// This is an entry point, not a view imported by one, so it has to pull in the
+// stylesheet itself: esbuild emits a bundle's CSS only from what that bundle
+// imports, and `seedtray_detail.html` links the file this produces.
+import 'bootstrap/dist/css/bootstrap.css'
+
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
