@@ -2,9 +2,23 @@ import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { SeedTray, SeedTrayCell, SeedTrayModel } from '../types/seedtrays'
+import { CleanMediaDisposition, CleanPlantDisposition, CleanSeedDisposition, SeedTray, SeedTrayCell, SeedTrayGeneration, SeedTrayModel } from '../types/seedtrays'
 import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
-import { getSeedTrayModels, getSeedTrays, getSeedTrayCells, getSerializedUnitMovements, postSerializedUnitAction } from '../api/seedtrays'
+import {
+  cleanSeedTrayGeneration,
+  getSeedTrayCells,
+  getSeedTrayGenerationContents,
+  getSeedTrayGenerationCost,
+  getSeedTrayGenerations,
+  getSeedTrayModels,
+  getSeedTrays,
+  getSerializedUnitMovements,
+  openSeedTrayGeneration,
+  postSerializedUnitAction,
+  reopenSeedTrayGeneration,
+  reviewSeedTrayGeneration
+} from '../api/seedtrays'
+import { GenerationCleanForm, GenerationCostPanel } from './generation_clean'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
 import {
@@ -51,6 +65,15 @@ type MoveForm = BaseMoveForm & (GardenSquareMove | SeedTrayMove)
 type InventoryAction = 'transfer' | 'loss' | 'retire' | 'return' | 'reconcile-opening'
 
 type CellPlantingEntry = { cellPlantingPk: number; quantity: number; plantingPk: number }
+
+type CleanGenerationRequestPayload = {
+  reason: string
+  digest: string
+  plants: Array<CleanPlantDisposition>
+  seeds: Array<CleanSeedDisposition>
+  media: Array<CleanMediaDisposition>
+  open_next: boolean
+}
 
 function computeCellData(specificPlants: Array<SpecificPlant> | undefined, plantings: Array<SeedTrayPlanting> | undefined) {
   const { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting } = buildCellMaps(specificPlants, plantings)
@@ -389,6 +412,100 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
   </div>
 )
 
+type GenerationCardProps = {
+  generations: Array<SeedTrayGeneration>
+  active?: SeedTrayGeneration
+  busy: boolean
+  cleaning: boolean
+  onFill: () => void
+  onStartClean: () => void
+  onCancelClean: () => void
+  onReview: (generation: SeedTrayGeneration) => void
+  onReopen: (generation: SeedTrayGeneration) => void
+}
+
+const GenerationCard: React.FC<GenerationCardProps> = ({ generations, active, busy, cleaning, onFill, onStartClean, onCancelClean, onReview, onReopen }) => {
+  const closed = generations.filter((generation) => generation.status === 'closed')
+  const needsReview = active?.review_state === 'needs_review'
+
+  return (
+    <Card className="mb-3">
+      <Card.Body>
+        <Card.Title>Tray generation</Card.Title>
+        {active ? (
+          <>
+            <p className="mb-2">
+              Filled as <strong>{active.code}</strong> on {formatDateTime(active.opened_at)}. Media and sowings recorded from now on belong to this fill.
+            </p>
+            {active.notes && <p className="text-muted mb-2">{active.notes}</p>}
+            {needsReview && (
+              <Alert variant="warning">
+                <p className="mb-2">This fill was migrated from sowings recorded before generations existed, so it may cover more than one cultivation cycle.</p>
+                {active.review_details && <pre className="mb-2 small text-wrap">{active.review_details}</pre>}
+                <Button size="sm" variant="outline-dark" onClick={() => onReview(active)} disabled={busy}>
+                  Confirm this is one fill
+                </Button>
+              </Alert>
+            )}
+          </>
+        ) : (
+          <p className="mb-2 text-muted">The tray is empty. Fill it before sowing into it or applying media to its cells.</p>
+        )}
+        <div className="d-flex gap-2 flex-wrap">
+          {!active && (
+            <Button size="sm" onClick={onFill} disabled={busy}>
+              Fill this tray
+            </Button>
+          )}
+          {active && !cleaning && (
+            <Button size="sm" variant="warning" onClick={onStartClean} disabled={busy || needsReview}>
+              Clean this tray
+            </Button>
+          )}
+          {active && cleaning && (
+            <Button size="sm" variant="secondary" onClick={onCancelClean} disabled={busy}>
+              Cancel clean
+            </Button>
+          )}
+        </div>
+        {closed.length > 0 && (
+          <details className="mt-3">
+            <summary style={{ cursor: 'pointer' }}>Earlier fills ({closed.length})</summary>
+            <Table size="sm" responsive className="mt-2">
+              <thead>
+                <tr>
+                  <th>Fill</th>
+                  <th>Opened</th>
+                  <th>Cleaned</th>
+                  <th>Reason</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {closed.map((generation) => (
+                  <tr key={generation.pk}>
+                    <td>{generation.code}</td>
+                    <td>{formatDateTime(generation.opened_at)}</td>
+                    <td>{generation.closed_at ? formatDateTime(generation.closed_at) : ''}</td>
+                    <td>{generation.close_reason}</td>
+                    <td>
+                      {!active && (
+                        <Button size="sm" variant="outline-secondary" onClick={() => onReopen(generation)} disabled={busy}>
+                          Correct this clean
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </details>
+        )}
+      </Card.Body>
+    </Card>
+  )
+}
+
 function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const cache = useQueryClient()
   const [germinatingCellPlantingPk, setGerminatingCellPlantingPk] = React.useState<number>()
@@ -399,6 +516,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const [inventoryDestination, setInventoryDestination] = React.useState<number>()
   const [inventoryReason, setInventoryReason] = React.useState('')
   const [inventoryCost, setInventoryCost] = React.useState('0.0000')
+  const [cleaning, setCleaning] = React.useState(false)
   const seedTrayModelsQuery = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
@@ -437,6 +555,22 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     queryKey: queryKeys.garden.squares,
     queryFn: ({ signal }) => getGardenSquares(signal)
   })
+  const generationsQuery = useQuery({
+    queryKey: queryKeys.seedTrays.generations(seedTrayPk),
+    queryFn: ({ signal }) => getSeedTrayGenerations(seedTrayPk, signal)
+  })
+  const generations = generationsQuery.data ?? []
+  const activeGeneration = generations.find((generation) => generation.status === 'open')
+  const cleanContentsQuery = useQuery({
+    queryKey: queryKeys.seedTrays.generationContents(activeGeneration?.pk ?? 0),
+    queryFn: ({ signal }) => getSeedTrayGenerationContents(activeGeneration?.pk as number, signal),
+    enabled: cleaning && Boolean(activeGeneration)
+  })
+  const generationCostQuery = useQuery({
+    queryKey: queryKeys.seedTrays.generationCost(activeGeneration?.pk ?? 0),
+    queryFn: ({ signal }) => getSeedTrayGenerationCost(activeGeneration?.pk as number, signal),
+    enabled: Boolean(activeGeneration)
+  })
   const moveTrayPk = moveForm?.locationType === 'seed_tray_cell' ? moveForm.moveSeedTrayPk : undefined
   const moveCellsQuery = useQuery({
     queryKey: queryKeys.seedTrays.cells(moveTrayPk ?? 0),
@@ -468,6 +602,33 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const reverseMutation = useMutation({
     mutationFn: ({ plantPk, event, reason }: { plantPk: number; event: number; reason: string }) => reverseSpecificPlantEvent(plantPk, { event, reason }),
     onSuccess: (_event, variables) => invalidatePlantLifecycle(variables.plantPk)
+  })
+  // Filling, cleaning, and correcting all change which sowings and plants the
+  // tray shows, so each one revalidates the same family of keys.
+  function invalidateGenerations() {
+    return Promise.all([
+      cache.invalidateQueries({ queryKey: queryKeys.seedTrays.generationsAll }),
+      cache.invalidateQueries({ queryKey: queryKeys.seedTrays.trays }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.seedTray(seedTrayPk) }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlants(seedTrayPk) }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays })
+    ])
+  }
+  const fillMutation = useMutation({
+    mutationFn: ({ notes }: { notes: string }) => openSeedTrayGeneration(seedTrayPk, notes),
+    onSuccess: invalidateGenerations
+  })
+  const cleanMutation = useMutation({
+    mutationFn: ({ generation, request }: { generation: number; request: CleanGenerationRequestPayload }) => cleanSeedTrayGeneration(generation, request),
+    onSuccess: invalidateGenerations
+  })
+  const reopenMutation = useMutation({
+    mutationFn: ({ generation, reason }: { generation: number; reason: string }) => reopenSeedTrayGeneration(generation, reason),
+    onSuccess: invalidateGenerations
+  })
+  const reviewMutation = useMutation({
+    mutationFn: ({ generation, reason }: { generation: number; reason: string }) => reviewSeedTrayGeneration(generation, reason),
+    onSuccess: invalidateGenerations
   })
   const inventoryMutation = useMutation({
     mutationFn: ({ unit, action, data }: { unit: number; action: InventoryAction; data: object }) => postSerializedUnitAction(unit, action, data),
@@ -593,6 +754,49 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return square ? square.name : `Square #${location.garden_square}`
   }
 
+  async function handleFillTray() {
+    const notes = globalThis.prompt('What was the tray filled with? (optional)') ?? ''
+    await fillMutation.mutateAsync({ notes })
+  }
+
+  async function handleReviewGeneration(generation: SeedTrayGeneration) {
+    const reason = globalThis.prompt('What did you check to confirm this is one fill?')
+    if (!reason || !reason.trim()) return
+    await reviewMutation.mutateAsync({ generation: generation.pk, reason })
+  }
+
+  async function handleReopenGeneration(generation: SeedTrayGeneration) {
+    const reason = globalThis.prompt(`Why was cleaning ${generation.code} a mistake?`)
+    if (!reason || !reason.trim()) return
+    await reopenMutation.mutateAsync({ generation: generation.pk, reason })
+  }
+
+  async function handleCleanGeneration(request: {
+    reason: string
+    plants: Array<CleanPlantDisposition>
+    seeds: Array<CleanSeedDisposition>
+    media: Array<CleanMediaDisposition>
+    openNext: boolean
+  }) {
+    const contents = cleanContentsQuery.data
+    if (!activeGeneration || !contents) return
+    await cleanMutation.mutateAsync({
+      generation: activeGeneration.pk,
+      request: {
+        reason: request.reason,
+        // Echoed straight back from the contents this form was built on, so a
+        // tray that changed underneath the operator is refused rather than
+        // cleaned against decisions they never made.
+        digest: contents.digest,
+        plants: request.plants,
+        seeds: request.seeds,
+        media: request.media,
+        open_next: request.openNext
+      }
+    })
+    setCleaning(false)
+  }
+
   async function handleInventoryAction() {
     if (!seedTray || !inventoryAction) return
     const needsDestination = inventoryAction === 'transfer' || inventoryAction === 'return' || inventoryAction === 'reconcile-opening'
@@ -626,18 +830,58 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       </p>
       <p>Created: {formatDate(seedTray.created)}</p>
       <p>Notes: {seedTray.notes}</p>
+      <GenerationCard
+        generations={generations}
+        active={activeGeneration}
+        busy={fillMutation.isPending || cleanMutation.isPending || reopenMutation.isPending || reviewMutation.isPending}
+        cleaning={cleaning}
+        onFill={handleFillTray}
+        onStartClean={() => setCleaning(true)}
+        onCancelClean={() => setCleaning(false)}
+        onReview={handleReviewGeneration}
+        onReopen={handleReopenGeneration}
+      />
+      {cleaning &&
+        activeGeneration &&
+        (cleanContentsQuery.isPending ? (
+          <p className="text-muted">Reading what is still in the tray…</p>
+        ) : (
+          cleanContentsQuery.data && (
+            <GenerationCleanForm
+              contents={cleanContentsQuery.data}
+              locations={inventoryDestinations}
+              busy={cleanMutation.isPending}
+              onCancel={() => setCleaning(false)}
+              onConfirm={handleCleanGeneration}
+            />
+          )
+        ))}
       <Card className="mb-3">
         <Card.Body>
           <Card.Title>Inputs</Card.Title>
           <p className="mb-2">
-            Media and treatments applied to this tray are recorded against its cells. This screen is a separate bundle, so it links to the applications page rather than embedding
-            the form.
+            Media and treatments applied to this tray are recorded against its cells and attributed to the fill those cells are serving. This screen is a separate bundle, so it
+            links to the applications page rather than embedding the form.
           </p>
-          <Button href={`/#/applications?tray=${seedTray.pk}`} variant="outline-primary">
-            Apply an input to this tray
-          </Button>
+          {activeGeneration ? (
+            <Button href={`/#/applications?tray=${seedTray.pk}`} variant="outline-primary">
+              Apply an input to {activeGeneration.code}
+            </Button>
+          ) : (
+            <Alert variant="secondary" className="mb-0">
+              Fill the tray before applying media to its cells, so the media has a fill to belong to.
+            </Alert>
+          )}
         </Card.Body>
       </Card>
+      {activeGeneration && generationCostQuery.data && (
+        <Card className="mb-3">
+          <Card.Body>
+            <Card.Title>Media cost of {activeGeneration.code}</Card.Title>
+            <GenerationCostPanel breakdown={generationCostQuery.data} />
+          </Card.Body>
+        </Card>
+      )}
       <Card className="mb-3">
         <Card.Body>
           <Card.Title>Physical inventory</Card.Title>
