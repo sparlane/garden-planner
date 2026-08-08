@@ -31,4 +31,5 @@ urlpatterns = [
     path("inventory/", include('inventory.urls')),
     path("seedtrays/", include('seedtrays.urls')),
     path("applications/", include('applications.urls')),
+    path("costing/", include('costing.urls')),
 ]
