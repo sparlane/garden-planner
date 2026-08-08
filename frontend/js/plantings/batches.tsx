@@ -14,6 +14,7 @@ import { ApplicationTable } from '../applications/application_list'
 import { getInputApplications } from '../api/applications'
 import { FamilyTotals, HarvestTable } from './harvest_list'
 import { STATE_LABELS } from './lifecycle'
+import { BatchCosts } from './batch_costs'
 
 const STATUS_LABELS: Record<ProductionBatchStatus, string> = {
   planned: 'Planned',
@@ -665,6 +666,7 @@ function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) 
         <BatchYield batch={batch} />
         <BatchHarvests batch={batch} />
         <BatchInputs batch={batch} />
+        <BatchCosts batchPk={batch.pk} />
         <BatchLocations batch={batch} />
         <BatchHistory batch={batch} />
       </div>

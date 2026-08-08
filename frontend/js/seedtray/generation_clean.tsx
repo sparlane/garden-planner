@@ -10,7 +10,7 @@ import {
   SeedDispositionChoice,
   SeedTrayGenerationContents
 } from '../types/seedtrays'
-import { formatDateTime, formatMeasure, formatQuantity } from '../utils'
+import { formatDateTime, formatMeasure, formatMoney } from '../utils'
 
 const PLANT_OUTCOMES: Array<{ value: CleanPlantOutcome; label: string }> = [
   { value: 'failed', label: 'Failed' },
@@ -329,25 +329,15 @@ const GenerationCostPanel: React.FC<GenerationCostPanelProps> = ({ breakdown }) 
     {breakdown.unknown_cost && <Alert variant="warning">Some media came from a lot with no recorded unit cost, so these totals understate the real figure.</Alert>}
     <dl className="row mb-2">
       <dt className="col-sm-4">Media applied</dt>
-      <dd className="col-sm-8">
-        {formatQuantity(breakdown.applied_cost)} {breakdown.currency_code}
-      </dd>
+      <dd className="col-sm-8">{formatMoney(breakdown.applied_cost, breakdown.currency_code)}</dd>
       <dt className="col-sm-4">Reclaimed into stock</dt>
-      <dd className="col-sm-8">
-        {formatQuantity(breakdown.recovered_cost)} {breakdown.currency_code}
-      </dd>
+      <dd className="col-sm-8">{formatMoney(breakdown.recovered_cost, breakdown.currency_code)}</dd>
       <dt className="col-sm-4">Reaching seedlings</dt>
-      <dd className="col-sm-8">
-        {formatQuantity(breakdown.allocated_cost)} {breakdown.currency_code}
-      </dd>
+      <dd className="col-sm-8">{formatMoney(breakdown.allocated_cost, breakdown.currency_code)}</dd>
       <dt className="col-sm-4">In cells with no plant yet</dt>
-      <dd className="col-sm-8">
-        {formatQuantity(breakdown.unallocated_cost)} {breakdown.currency_code}
-      </dd>
+      <dd className="col-sm-8">{formatMoney(breakdown.unallocated_cost, breakdown.currency_code)}</dd>
       <dt className="col-sm-4">Production loss</dt>
-      <dd className="col-sm-8">
-        {formatQuantity(breakdown.production_loss)} {breakdown.currency_code}
-      </dd>
+      <dd className="col-sm-8">{formatMoney(breakdown.production_loss, breakdown.currency_code)}</dd>
     </dl>
     {breakdown.plants.length > 0 && (
       <Table size="sm" responsive>
@@ -361,9 +351,7 @@ const GenerationCostPanel: React.FC<GenerationCostPanelProps> = ({ breakdown }) 
           {breakdown.plants.map((row) => (
             <tr key={row.plant}>
               <td>#{row.plant}</td>
-              <td>
-                {formatQuantity(row.cost, 'Unknown')} {breakdown.currency_code}
-              </td>
+              <td>{formatMoney(row.cost, breakdown.currency_code, 'Unknown')}</td>
             </tr>
           ))}
         </tbody>
