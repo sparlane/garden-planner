@@ -278,18 +278,15 @@ class CombineAndLossTests(SimpleTestCase):
         self.assertEqual(losses[0].weight, Decimal('30'))
         self.assertIsNone(losses[0].cell_id)
 
-    def test_loss_shares_stay_distinct_from_each_other(self):
-        """Two retired cells are two losses, not one merged figure."""
+    def test_retired_cells_become_one_loss_carrying_all_their_weight(self):
+        """Which cells were retired stays readable in the reversals."""
         unresolved = cell_volume_shares([
             StubTarget(1, 9, Decimal('1'), 30),
             StubTarget(2, 9, Decimal('1'), 10),
         ])
-        losses = combine(loss_shares(unresolved))
-        self.assertEqual(len(losses), 2)
-        self.assertEqual(
-            _total([share.weight for share in losses]),
-            Decimal('40'),
-        )
+        losses = loss_shares(unresolved)
+        self.assertEqual(len(losses), 1)
+        self.assertEqual(losses[0].weight, Decimal('40'))
 
     def test_money_quantum_is_the_stored_currency_precision(self):
         """The exactness guarantee is stated in the unit the column keeps."""

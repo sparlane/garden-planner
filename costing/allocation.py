@@ -245,6 +245,26 @@ def whole_source_share(basis=CostAllocation.Basis.DIRECT):
     return [_pool_share(Decimal('1'), basis)]
 
 
+def unattributable_share(basis=CostAllocation.Basis.DIRECT):
+    """Return the share for cost that could never reach an individual plant.
+
+    A direct-sown row produces a crop rather than a set of seedlings, so its
+    seed cost has no plant to land on and never will. That is not the same as
+    an unresolved pool waiting for a germination, and it is emphatically not a
+    loss — reporting a Garden workspace's whole harvest as waste would be the
+    opposite of true. It stays its own figure, for task 46 to reconcile against
+    the yields those sowings actually produced.
+    """
+    return [
+        Share(
+            key=('unattributed', POOL),
+            target_type=CostAllocation.TargetType.UNATTRIBUTED,
+            weight=Decimal('1'),
+            basis=basis,
+        ),
+    ]
+
+
 def loss_shares(shares):
     """Turn unresolved shares into production loss, keeping their weights.
 
@@ -252,17 +272,22 @@ def loss_shares(shares):
     nothing ever claimed are both cost the batch incurred and never recovered.
     Dropping them would understate what the crop cost; leaving them on the cell
     would imply a seedling that does not exist.
+
+    Every retired share of one source becomes one loss layer rather than one per
+    cell. Which cells were retired stays readable in the reversals that replaced
+    them, and a single figure is what a report of the batch's loss actually
+    wants.
     """
-    return [
+    return combine([
         share._replace(
-            key=('production_loss', share.key),
+            key=('production_loss', POOL),
             target_type=CostAllocation.TargetType.PRODUCTION_LOSS,
             cell_id=None,
             generation_id=None,
             plant_id=None,
         )
         for share in shares
-    ]
+    ])
 
 
 def _pool_share(weight, basis):

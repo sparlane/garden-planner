@@ -552,6 +552,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     _require_reason(request.reason)
     generation = lock_generation(generation)
     _require_cleanable(generation)
+    batches = _lock_generation_batches(generation)
     occurred_at = request.occurred_at or timezone.now()
 
     contents = generation_contents(generation)
@@ -617,6 +618,8 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     _record_event(generation, user, EventType.CLOSED, occurred_at, request.reason)
     generation.refresh_from_db()
 
+    _reallocate(batches, user, 'generation_closed')
+
     following = None
     if request.open_next:
         following = open_generation(generation.tray, user, occurred_at)
@@ -648,6 +651,7 @@ def reopen_generation(generation, user, reason):
             ),
         })
     occurred_at = timezone.now()
+    batches = _lock_generation_batches(generation)
     _reverse_recovered_stock(generation, user, reason)
     _reverse_close_outcomes(generation, user, reason, occurred_at)
     SeedTrayGeneration.objects.filter(pk=generation.pk).update(
@@ -659,7 +663,37 @@ def reopen_generation(generation, user, reason):
     )
     _record_event(generation, user, EventType.REOPENED, occurred_at, reason)
     generation.refresh_from_db()
+    _reallocate(batches, user, 'generation_closed')
     return generation
+
+
+def _lock_generation_batches(generation):
+    """Lock the crops this fill was raising, plants first, before anything else.
+
+    Cleaning a tray resolves plants, writes residuals, and then reposts the cost
+    those residuals took out of the cells. All three touch the same rows, so the
+    whole set is taken here in one place and in the canonical order rather than
+    accumulated piecemeal as the clean proceeds.
+    """
+    from plantings.batches import lock_batch_with_plants  # pylint: disable=import-outside-toplevel
+    from plantings.models import ProductionBatch  # pylint: disable=import-outside-toplevel
+
+    batch_ids = sorted({
+        batch_id
+        for batch_id in generation.sowings.values_list('batch_id', flat=True)
+        if batch_id is not None
+    })
+    return [
+        lock_batch_with_plants(batch)
+        for batch in ProductionBatch.objects.filter(pk__in=batch_ids).order_by('pk')
+    ]
+
+
+def _reallocate(batches, user, trigger):
+    """Bring each affected crop's cost allocations back in step with the fill."""
+    from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel
+
+    return reallocate_batches(batches, user, trigger)
 
 
 def _reverse_recovered_stock(generation, user, reason):

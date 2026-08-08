@@ -14,6 +14,7 @@ from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
+from .batches import lock_batch_with_plants
 from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
 from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
@@ -498,6 +499,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
                     ]
                 }) from exc
             validated_data['cell_planting'] = cell_planting
+            batch = lock_batch_with_plants(cell_planting.seed_tray_planting.batch)
             plant = SpecificPlant.objects.create(**validated_data)
             SpecificPlantLocation.objects.create(
                 specific_plant=plant,
@@ -505,7 +507,15 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
                 seed_tray_cell=plant.cell_planting.cell,
                 started=plant.germinated,
             )
-            record_germination_event(plant, self.context['request'].user)
+            user = self.context['request'].user
+            record_germination_event(plant, user)
+            # A new seedling re-divides whatever its cell was carrying, so the
+            # subledger is brought back in step here rather than drifting until
+            # somebody asks for a report. Imported inside the call because
+            # costing reads this module's app.
+            from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+
+            reallocate_batch(batch, user, 'germination')
         return plant
 
 

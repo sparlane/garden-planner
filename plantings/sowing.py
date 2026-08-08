@@ -25,6 +25,19 @@ from .models import (
 )
 
 
+def _reallocate(planting, user, trigger):
+    """Bring the batch's cost allocations back in step with this sowing.
+
+    Imported inside the call because costing reads plantings, applications, and
+    seedtrays; importing it at module level would close the cycle. The
+    reallocation is idempotent, so calling it from every sowing write costs
+    nothing when nothing changed.
+    """
+    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+
+    reallocate_batch(planting.batch, user, trigger)
+
+
 def _planting_link(planting):
     """Return the explicit audit-link field for one concrete sowing."""
     if isinstance(planting, GardenRowDirectSowPlanting):
@@ -70,15 +83,22 @@ def post_sowing_consumption(planting, user):
         **_planting_link(planting),
     )
     packet.stock_lot.item.mark_stock_history_started(movement.occurred_at)
+    _reallocate(planting, user, 'sowing_posted')
     return posting
 
 
-def _current_consumption(planting):
-    """Return the latest unreplaced consumption posting."""
+def current_sowing_consumption(planting):
+    """Return the posting that says what this sowing currently drew.
+
+    A correction leaves the original posting, its reversal, and the replacement
+    all on file. Only the replacement is unreplaced and of type consumption —
+    the reversal is a reversal — so this is the one row that still describes
+    what the sowing took out of stock, which is what costing allocates.
+    """
     return planting.stock_postings.filter(
         movement__movement_type=StockMovement.MovementType.CONSUMPTION,
         replacement__isnull=True,
-    ).select_related('movement__lot').order_by('-created', '-pk').first()
+    ).select_related('movement__lot__item').order_by('-created', '-pk').first()
 
 
 def _validate_tray_quantity(planting, quantity):
@@ -103,7 +123,7 @@ def correct_sowing_consumption(
     planting = type(planting).objects.select_for_update().select_related(
         'seeds_used',
     ).get(pk=planting.pk)
-    current = _current_consumption(planting)
+    current = current_sowing_consumption(planting)
     if current is None:
         raise ValidationError({
             'planting': 'Historical sowings without stock postings cannot be corrected.',
@@ -147,6 +167,7 @@ def correct_sowing_consumption(
     planting.quantity = corrected_quantity
     planting.save(update_fields=['seeds_used', 'quantity'])
     packet.stock_lot.item.mark_stock_history_started(replacement.occurred_at)
+    _reallocate(planting, user, 'sowing_corrected')
     return {
         'planting': planting,
         'original_movement': current.movement_id,
