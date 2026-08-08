@@ -15,6 +15,7 @@ from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
+from .generation_rest import TrayGenerationSowingSerializerMixin
 from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
@@ -120,7 +121,7 @@ class SeedTrayCellPlantingNestedSerializer(CurrentWorkspaceSerializerMixin, seri
         return data
 
 
-class SeedTrayPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedTrayPlantingSerializer(TrayGenerationSowingSerializerMixin, BatchedSowingSerializerMixin, PostedSowingSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):  # pylint: disable=too-many-ancestors
     """
     Serializer for SeedTrayPlanting
     """
@@ -131,14 +132,19 @@ class SeedTrayPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSeria
         model = SeedTrayPlanting
         fields = [
             'pk', 'planted', 'seeds_used', 'batch', 'new_batch', 'quantity',
-            'seed_tray', 'location', 'removed', 'notes', 'cell_plantings',
+            'seed_tray', 'generation', 'location', 'removed', 'notes',
+            'cell_plantings',
         ]
-        extra_kwargs = {'batch': {'required': False}}
+        extra_kwargs = {
+            'batch': {'required': False},
+            'generation': {'required': False},
+        }
 
     workspace_field_lookups = {
         'seeds_used': 'workspace',
         'batch': 'workspace',
         'seed_tray': 'workspace',
+        'generation': 'tray__workspace',
     }
 
     def _get_effective_cell_plantings(self, data):
@@ -230,6 +236,9 @@ class SeedTrayPlantingSerializer(BatchedSowingSerializerMixin, PostedSowingSeria
         self._validate_stock_fields(data)
         cell_plantings = self._get_effective_cell_plantings(data)
         self._validate_cell_allocations(data, cell_plantings)
+        # After the cell rules, because a sowing that names only its cells has
+        # its tray derived there and the generation follows from the tray.
+        self._validate_generation(data)
 
         return data
 

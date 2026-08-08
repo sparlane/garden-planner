@@ -15,6 +15,7 @@ from tests.factories import (
     make_inventory_location,
     make_seed_tray,
     make_seed_tray_cell,
+    make_seed_tray_generation,
     make_seed_tray_model,
     make_stock_lot,
 )
@@ -39,6 +40,7 @@ class ApplicationRESTTestCase(RESTContractTestCase):
         self.lot = make_stock_lot(item=self.media, location=self.location, quantity='50')
         model = make_seed_tray_model(cell_size_ml=40, x_cells=24, y_cells=1)
         self.tray = make_seed_tray(model=model)
+        self.generation = make_seed_tray_generation(tray=self.tray)
         self.cells = [
             make_seed_tray_cell(tray=self.tray, x_position=index)
             for index in range(24)

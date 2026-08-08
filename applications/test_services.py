@@ -14,6 +14,8 @@ from inventory.models import InventoryItem, StockMovement
 from inventory.units import UnitCode
 from plantings.lifecycle import EventType, OutcomeRequest, record_bulk_outcome
 from plantings.models import ProductionBatch
+from seedtrays.generations import open_generation_for
+from seedtrays.models import SeedTrayGeneration
 from tests.factories import (
     make_garden_bed,
     make_garden_geometry_confirmation,
@@ -24,6 +26,7 @@ from tests.factories import (
     make_seed_tray,
     make_seed_tray_cell,
     make_seed_tray_cell_planting,
+    make_seed_tray_generation,
     make_seed_tray_model,
     make_specific_plant,
     make_stock_lot,
@@ -83,9 +86,14 @@ class ApplicationServiceMixin:
         return LineRequest(**values)
 
     def tray_cells(self, count=24, cell_size_ml=40):
-        """Create one tray and `count` cells of a known volume."""
+        """Create one filled tray and `count` cells of a known volume.
+
+        The tray is filled because media goes into a fill, not into bare cells;
+        an unfilled tray is refused, which `GenerationTargetTests` covers.
+        """
         model = make_seed_tray_model(cell_size_ml=cell_size_ml, x_cells=count, y_cells=1)
         tray = make_seed_tray(model=model)
+        make_seed_tray_generation(tray=tray)
         return [make_seed_tray_cell(tray=tray, x_position=index) for index in range(count)]
 
     def cell_targets(self, cells):
@@ -564,3 +572,96 @@ class ApplicationStateTests(ApplicationServiceMixin, TestCase):
             digest=state['availability_digest'],
         )
         self.assertEqual(application.status, InputApplication.Status.POSTED)
+
+
+class GenerationTargetTests(ApplicationServiceMixin, TestCase):
+    """Media applied to a cell is attributed to the fill using that cell."""
+
+    def test_a_cell_target_records_the_fill_it_went_into(self):
+        """The cell says where; the generation says which crop was there."""
+        cells = self.tray_cells()
+        generation = open_generation_for(cells[0].tray)
+
+        application = self.draft([self.media_line(self.cell_targets(cells))])
+
+        targets = application.lines.get().targets.all()
+        self.assertTrue(targets)
+        for target in targets:
+            with self.subTest(target=target.pk):
+                self.assertEqual(target.seed_tray_generation_id, generation.pk)
+
+    def test_an_unfilled_tray_cannot_receive_media(self):
+        """Attributing media to a fill nobody recorded is the ambiguity itself."""
+        model = make_seed_tray_model(cell_size_ml=40, x_cells=2, y_cells=1)
+        tray = make_seed_tray(model=model)
+        cells = [make_seed_tray_cell(tray=tray, x_position=index) for index in range(2)]
+
+        with self.assertRaises(ValidationError) as caught:
+            self.draft([self.media_line(self.cell_targets(cells))])
+
+        self.assertIn('no open generation', ' '.join(caught.exception.messages))
+
+    def test_a_whole_tray_shortcut_records_the_same_fill(self):
+        """The expansion goes through the same measurement, so it must agree."""
+        cells = self.tray_cells()
+        generation = open_generation_for(cells[0].tray)
+
+        application = self.draft([self.media_line(cells_for_tray(cells[0].tray))])
+
+        recorded = set(
+            application.lines.get().targets.values_list(
+                'seed_tray_generation_id',
+                flat=True,
+            )
+        )
+        self.assertEqual(recorded, {generation.pk})
+
+    def test_a_target_of_another_kind_records_no_fill(self):
+        """A batch or a garden square has no tray fill to attribute."""
+        application = self.draft([LineRequest(
+            item=self.media,
+            lot=self.lot,
+            applied_quantity=Decimal('1'),
+            unit_code=UnitCode.LITRE,
+            usage_basis=InventoryItem.UsageBasis.MANUAL,
+            targets=(TargetRequest(TargetType.BATCH, self.batch),),
+        )])
+
+        target = application.lines.get().targets.get()
+        self.assertIsNone(target.seed_tray_generation_id)
+
+    def test_a_draft_cannot_be_posted_after_its_tray_is_cleaned(self):
+        """Posting would charge this media to a crop no longer in the tray."""
+        cells = self.tray_cells()
+        generation = open_generation_for(cells[0].tray)
+        application = self.draft([self.media_line(self.cell_targets(cells))])
+        SeedTrayGeneration.objects.filter(pk=generation.pk).update(
+            status=SeedTrayGeneration.Status.CLOSED,
+            closed_at=timezone.now(),
+        )
+
+        with self.assertRaises(ValidationError) as caught:
+            post_application(application, None)
+
+        self.assertIn('have been cleaned', ' '.join(caught.exception.messages))
+        application.refresh_from_db()
+        self.assertEqual(application.status, InputApplication.Status.DRAFT)
+
+    def test_a_posted_document_keeps_the_fill_it_named(self):
+        """Cleaning the tray afterwards must not repoint the history."""
+        cells = self.tray_cells()
+        generation = open_generation_for(cells[0].tray)
+        application = self.draft([self.media_line(self.cell_targets(cells))])
+        application, _ = post_application(application, None)
+        SeedTrayGeneration.objects.filter(pk=generation.pk).update(
+            status=SeedTrayGeneration.Status.CLOSED,
+            closed_at=timezone.now(),
+        )
+
+        recorded = set(
+            application.lines.get().targets.values_list(
+                'seed_tray_generation_id',
+                flat=True,
+            )
+        )
+        self.assertEqual(recorded, {generation.pk})

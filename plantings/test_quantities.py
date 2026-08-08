@@ -14,7 +14,7 @@ from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
-from tests.factories import make_batch_for_packet, make_seed_tray
+from tests.factories import make_batch_for_packet, make_seed_tray, make_seed_tray_generation
 from .models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -75,6 +75,7 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
             cell_size_ml=40,
         )
         self.tray = make_seed_tray(model=tray_model)
+        make_seed_tray_generation(tray=self.tray)
         self.cell = SeedTrayCell.objects.create(
             tray=self.tray,
             x_position=0,
@@ -668,6 +669,7 @@ class ConcurrentGerminationTests(TransactionTestCase):
             cell_size_ml=40,
         )
         tray = make_seed_tray(model=tray_model)
+        make_seed_tray_generation(tray=tray)
         cell = SeedTrayCell.objects.create(
             tray=tray,
             x_position=0,

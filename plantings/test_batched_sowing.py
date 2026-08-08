@@ -10,6 +10,7 @@ from tests.factories import (
     make_seed_tray,
     make_seed_tray_cell,
     make_seed_tray_cell_planting,
+    make_seed_tray_generation,
     make_seed_tray_planting,
     make_specific_plant,
 )
@@ -34,6 +35,7 @@ class BatchedSowingRESTTests(RESTContractTestCase):
         self.row = make_garden_row()
         self.square = make_garden_square()
         self.tray = make_seed_tray()
+        make_seed_tray_generation(tray=self.tray)
         self.cell = make_seed_tray_cell(tray=self.tray)
         self.batch = make_batch_for_packet(self.packet)
 
