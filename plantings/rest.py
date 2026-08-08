@@ -20,6 +20,7 @@ from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
+from .register_rest import register_register_routes
 from .sowing import correct_sowing_consumption, post_sowing_consumption
 
 
@@ -988,3 +989,4 @@ router.register(r'seedtray-data/(?P<seed_tray_pk>[^/.]+)/specificplants', Specif
 router.register(r'specificplants/(?P<specific_plant_pk>[^/.]+)/locations', SpecificPlantLocationByPlantViewSet, basename='specificplant-locations')
 register_lifecycle_routes(router)
 register_harvest_routes(router)
+register_register_routes(router)

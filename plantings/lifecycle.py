@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
-from django.db.models import Case, F, OuterRef, Q, Subquery, Value, When
+from django.db.models import Case, F, OuterRef, Subquery, Value, When
 from django.utils import timezone
 
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
@@ -250,11 +250,6 @@ def with_lifecycle_state(queryset):
             ),
         )
     )
-
-
-def lifecycle_state_filter(states):
-    """Return the annotation filter that selects the named derived states."""
-    return Q(lifecycle_state__in=list(states))
 
 
 def plant_lifecycle_summary(plant):

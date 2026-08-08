@@ -1,6 +1,8 @@
 """Reusable REST helpers for the single-workspace deployment boundary."""
 
-from .models import get_current_workspace
+from rest_framework.exceptions import PermissionDenied
+
+from .models import Workspace, get_current_workspace
 
 
 class CurrentWorkspaceSerializerMixin:  # pylint: disable=too-few-public-methods
@@ -47,3 +49,27 @@ class CurrentWorkspaceViewSetMixin:
             serializer.save(workspace=self.get_current_workspace())
         else:
             super().perform_create(serializer)
+
+
+class RequireWorkspaceModeMixin:  # pylint: disable=too-few-public-methods
+    """Serve a route only while the workspace presents the profile it belongs to.
+
+    The mode is a presentation choice over one set of records, so this refuses
+    a request rather than hiding data: a Garden workspace has plants, it simply
+    has no nursery to run them through. Enforcing it on the server as well as
+    in the navigation keeps a bookmarked or scripted URL honest.
+    """
+
+    required_workspace_modes = ()
+
+    def initial(self, request, *args, **kwargs):
+        """Check the profile before the view does any work for the request."""
+        super().initial(request, *args, **kwargs)
+        workspace = get_current_workspace()
+        if workspace.mode not in self.required_workspace_modes:
+            profiles = ' or '.join(
+                Workspace.Mode(mode).label for mode in self.required_workspace_modes
+            )
+            raise PermissionDenied(
+                f'This feature is available in the {profiles} profile.',
+            )
