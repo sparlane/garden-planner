@@ -109,6 +109,7 @@ class InputApplicationTargetSerializer(serializers.ModelSerializer):
             'target',
             'label',
             'weight',
+            'seed_tray_generation',
             'cell_volume_ml',
             'area_m2',
         ]

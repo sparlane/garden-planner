@@ -8,6 +8,7 @@ from tests.factories import (
     make_seed_tray,
     make_seed_tray_cell,
     make_seed_tray_cell_planting,
+    make_seed_tray_generation,
     make_seed_tray_planting,
     make_specific_plant,
     make_specific_plant_location,
@@ -26,6 +27,7 @@ class PlantingRESTContractTests(RESTContractTestCase):
         self.row = make_garden_row()
         self.square = make_garden_square()
         self.tray = make_seed_tray()
+        make_seed_tray_generation(tray=self.tray)
         self.cell = make_seed_tray_cell(tray=self.tray)
         self.tray_planting = make_seed_tray_planting(
             seeds_used=self.packet,
@@ -200,6 +202,7 @@ class PlantingRESTContractTests(RESTContractTestCase):
     def test_filtered_routes_only_expose_parent_resources(self):
         """Filtered collection and detail routes enforce their URL parent."""
         other_tray = make_seed_tray()
+        make_seed_tray_generation(tray=other_tray)
         other_cell = make_seed_tray_cell(tray=other_tray)
         other_planting = make_seed_tray_planting(
             seed_tray=other_tray,

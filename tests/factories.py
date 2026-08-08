@@ -393,13 +393,23 @@ def _sowing_values(overrides, defaults):
 
 
 def make_seed_tray_planting(**overrides):
-    """Create a seed-tray planting and its related seed and tray graph."""
+    """Create a seed-tray planting and its related seed and tray graph.
+
+    An open generation on the tray is joined when there is one, and none is
+    opened when there is not, so a test that never filled its tray keeps the
+    unlinked shape sowings had before generations existed.
+    """
     values = _sowing_values(overrides, {
         'quantity': 2,
         'notes': 'Shared test tray planting',
     })
     if 'seed_tray' not in values:
         values['seed_tray'] = make_seed_tray()
+    if 'generation' not in values and values['seed_tray'] is not None:
+        values['generation'] = SeedTrayGeneration.objects.filter(
+            tray=values['seed_tray'],
+            status=SeedTrayGeneration.Status.OPEN,
+        ).first()
     return SeedTrayPlanting.objects.create(**values)
 
 

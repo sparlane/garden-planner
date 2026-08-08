@@ -35,7 +35,8 @@ from inventory.models import InventoryItem, StockMovement
 from plantings.batches import batch_specific_plants, lock_batch
 from plantings.lifecycle import is_final, lifecycle_summaries
 from plantings.models import ProductionBatch, SpecificPlant
-from seedtrays.models import SeedTrayCell
+from seedtrays.generations import require_open_generation
+from seedtrays.models import SeedTrayCell, SeedTrayGeneration
 
 from .models import InputApplication, InputApplicationLine, InputApplicationTarget
 from .usage import TargetInput, UsageInputs, calculate_usage, workspace_override_required
@@ -97,6 +98,7 @@ class TargetSnapshot(NamedTuple):
     cell_volume_ml: object = None
     area_m2: object = None
     label: str = ''
+    seed_tray_generation: object = None
 
     def as_usage_input(self):
         """Return the pure-calculation view of this target."""
@@ -135,7 +137,13 @@ def measure_target(request):
             raise ValidationError({
                 'targets': f'Tray model {target.tray.model} has no recorded cell volume.',
             })
-        return snapshot._replace(cell_volume_ml=volume)
+        # The cell says where this went; the generation says which crop was
+        # using it. Both are frozen here, because a tray cleaned afterwards
+        # would otherwise leave this document pointing at the next crop's fill.
+        return snapshot._replace(
+            cell_volume_ml=volume,
+            seed_tray_generation=require_open_generation(target.tray, field='targets'),
+        )
     if request.target_type in {
         TargetType.GARDEN_AREA,
         TargetType.GARDEN_BED,
@@ -160,6 +168,7 @@ def stored_snapshot(row):
         cell_volume_ml=row.cell_volume_ml,
         area_m2=row.area_m2,
         label=row.label,
+        seed_tray_generation=row.seed_tray_generation,
     )
 
 
@@ -247,6 +256,28 @@ def _validate_plants(application, plant_ids):
             'targets': (
                 f'These plants did not come from batch '
                 f'{application.batch.code}: {missing}.'
+            ),
+        })
+
+
+def _validate_generations(application):
+    """Refuse a draft whose tray was cleaned while it sat unposted.
+
+    The generation was frozen when the draft was built. Posting against a fill
+    that has since been emptied would charge this media to a crop that is no
+    longer in the tray, so the document has to be rebuilt against the new fill.
+    """
+    closed = sorted(
+        SeedTrayGeneration.objects.filter(
+            application_targets__line__application=application,
+            status=SeedTrayGeneration.Status.CLOSED,
+        ).values_list('code', flat=True).distinct()
+    )
+    if closed:
+        raise ValidationError({
+            'targets': (
+                f'These tray generations have been cleaned since this draft was '
+                f'built: {", ".join(closed)}. Rebuild it against the current fill.'
             ),
         })
 
@@ -464,6 +495,7 @@ def _create_line(application, request):
             cell_volume_ml=snapshot.cell_volume_ml,
             area_m2=snapshot.area_m2,
             label=snapshot.label,
+            seed_tray_generation=snapshot.seed_tray_generation,
             **{snapshot.target_type: snapshot.target},
         )
     return line
@@ -503,6 +535,7 @@ def post_application(application, user, revision=None, digest=None):
 
     _validate_batch(batch, application.applied_at)
     _validate_plants(application, plant_ids)
+    _validate_generations(application)
     _require_current(application, lines, revision, digest)
 
     movements = []
