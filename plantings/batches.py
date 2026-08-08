@@ -163,6 +163,30 @@ def lock_batch(batch):
     return ProductionBatch.objects.select_for_update().get(pk=batch.pk)
 
 
+def lock_batch_with_plants(batch):
+    """Lock every plant of one batch in key order, then the batch itself.
+
+    Anything that writes a row referencing a plant takes a key-share lock on
+    that plant through the foreign key, and anything writing a row referencing
+    the batch takes one on the batch. A transaction holding the batch
+    exclusively while reaching for a plant therefore deadlocks against one
+    holding the plant while reaching for the batch, which is why
+    `harvests.record_harvest` and `applications.services.post_application`
+    already take plants first and `test_harvest_concurrency` proves it.
+
+    The whole set is locked rather than the plants a caller happens to name,
+    because a caller holding a subset and then asking for the rest could be
+    holding plant five while another transaction holds plant one and wants five.
+    """
+    list(
+        SpecificPlant.objects
+        .select_for_update(of=('self',))
+        .filter(cell_planting__seed_tray_planting__batch=batch)
+        .order_by('pk')
+    )
+    return lock_batch(batch)
+
+
 def _require_status(batch, allowed, action):
     """Reject a lifecycle action that its current status does not permit."""
     if batch.status not in allowed:
@@ -227,8 +251,14 @@ def create_and_activate_batch(workspace, user, request, actual_start=None):
 
 @transaction.atomic
 def finalize_batch_output(batch, user, reason=''):
-    """Declare that no further seedlings will come from this batch."""
-    batch = lock_batch(batch)
+    """Declare that no further seedlings will come from this batch.
+
+    This is also where production cost stops being provisional. Saying no
+    further seedling is coming is exactly what turns a cell that raised nothing,
+    and any cost still waiting to be claimed, into production loss, so the
+    subledger is frozen in the same transaction that makes the statement.
+    """
+    batch = lock_batch_with_plants(batch)
     _require_status(batch, {ProductionBatch.Status.ACTIVE}, 'finalize its output')
     if batch_sowing_count(batch) == 0:
         raise ValidationError({
@@ -247,6 +277,11 @@ def finalize_batch_output(batch, user, reason=''):
     batch.output_finalized_at = timezone.now()
     batch.save()
     _record_transition(batch, previous_status, user, reason)
+    # Imported here because costing reads plantings, applications, and
+    # seedtrays; importing it at module level would close the cycle.
+    from costing.services import finalize_batch_costs  # pylint: disable=import-outside-toplevel
+
+    finalize_batch_costs(batch, user, reason)
     return batch
 
 
@@ -352,7 +387,12 @@ def validate_batch_for_sowing(batch, packet, workspace):
 
 @transaction.atomic
 def lock_batch_for_sowing(batch, packet, workspace):
-    """Lock and revalidate a batch so work cannot attach after finalization."""
-    locked = lock_batch(batch)
+    """Lock and revalidate a batch so work cannot attach after finalization.
+
+    Plants come first for the reason `lock_batch_with_plants` explains: posting
+    the sowing's cost allocations later in this transaction writes rows that
+    reference them.
+    """
+    locked = lock_batch_with_plants(batch)
     validate_batch_for_sowing(locked, packet, workspace)
     return locked

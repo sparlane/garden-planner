@@ -68,8 +68,12 @@ SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual')
 TARGET_FIELDS = ('seed_tray_cell', 'specific_plant')
 
 #: Target types that name no individual thing. A batch pool is cost that has not
-#: reached a cell or a plant yet; production loss is cost that never will.
-POOL_TARGET_TYPES = ('batch_pool', 'production_loss')
+#: reached a cell or a plant yet; production loss is cost that never will; and
+#: unattributed cost never could, because the batch produced something this
+#: subledger does not individualise — a direct-sown row is a crop, not a set of
+#: seedlings. Calling that last one a loss would report a Garden workspace's
+#: entire harvest as waste, so it stays its own honest figure.
+POOL_TARGET_TYPES = ('batch_pool', 'production_loss', 'unattributed')
 
 
 class CostAllocationRun(WorkspaceOwnedModel):
@@ -171,6 +175,7 @@ class CostAllocation(WorkspaceOwnedModel):
         SPECIFIC_PLANT = 'specific_plant', 'Plant'
         BATCH_POOL = 'batch_pool', 'Unresolved batch pool'
         PRODUCTION_LOSS = 'production_loss', 'Production loss'
+        UNATTRIBUTED = 'unattributed', 'Not attributable to a plant'
 
     class Basis(models.TextChoices):
         """How this layer's share of the source was arrived at."""

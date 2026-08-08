@@ -32,7 +32,7 @@ from inventory.ledger import (
     reverse_application_movements,
 )
 from inventory.models import InventoryItem, StockMovement
-from plantings.batches import batch_specific_plants, lock_batch
+from plantings.batches import batch_specific_plants, lock_batch_with_plants
 from plantings.lifecycle import is_final, lifecycle_summaries
 from plantings.models import ProductionBatch, SpecificPlant
 from seedtrays.generations import require_open_generation
@@ -240,6 +240,37 @@ def _plant_ids(application):
         InputApplicationTarget.objects
         .filter(line__application=application, specific_plant__isnull=False)
         .values_list('specific_plant_id', flat=True)
+    )
+
+
+def affected_batches(application):
+    """Return every batch whose production cost this document changes.
+
+    Three ways in: the header names one, a line names one, or a line names a
+    cell of a tray fill that a batch was sown into. The fills matter because one
+    lot of media can go into a tray whose cells are serving two crops, and each
+    of them carries its own share of it.
+    """
+    from plantings.models import SeedTrayPlanting  # pylint: disable=import-outside-toplevel
+
+    targets = InputApplicationTarget.objects.filter(line__application=application)
+    batch_ids = set(
+        targets.filter(batch__isnull=False).values_list('batch_id', flat=True)
+    )
+    generation_ids = set(
+        targets.filter(seed_tray_generation__isnull=False)
+        .values_list('seed_tray_generation_id', flat=True)
+    )
+    if generation_ids:
+        batch_ids.update(
+            SeedTrayPlanting.objects
+            .filter(generation_id__in=generation_ids)
+            .values_list('batch_id', flat=True)
+        )
+    if application.batch_id:
+        batch_ids.add(application.batch_id)
+    return list(
+        ProductionBatch.objects.filter(pk__in=sorted(batch_ids)).order_by('pk')
     )
 
 
@@ -525,6 +556,11 @@ def post_application(application, user, revision=None, digest=None):
     the batch row. Sowing establishes batch before lot. Extending the same
     chain rather than inventing one is what keeps this compatible with both.
 
+    Every batch this document reaches is locked with its full plant set, not
+    only the plants the document names. Posting the cost allocations at the end
+    writes rows referencing any plant of those batches, so holding a subset here
+    and asking for the rest there is the inversion that deadlocks.
+
     Every lock names `of=('self',)`. The batch is nullable, so selecting it
     alongside builds an outer join, and PostgreSQL refuses to lock across the
     nullable side of one. Only this document's own row needs holding anyway.
@@ -538,9 +574,17 @@ def post_application(application, user, revision=None, digest=None):
         raise ValidationError({'status': 'Only draft applications can be posted.'})
 
     plant_ids = _plant_ids(application)
-    if plant_ids:
-        list(SpecificPlant.objects.select_for_update().filter(pk__in=plant_ids).order_by('pk'))
-    batch = lock_batch(application.batch) if application.batch_id else None
+    affected = affected_batches(application)
+    if affected:
+        locked = [lock_batch_with_plants(row) for row in affected]
+    else:
+        locked = []
+        if plant_ids:
+            list(SpecificPlant.objects.select_for_update().filter(pk__in=plant_ids).order_by('pk'))
+    batch = next(
+        (row for row in locked if row.pk == application.batch_id),
+        None,
+    )
     lines = list(application.lines.select_related('item', 'lot').prefetch_related('targets'))
     if not lines:
         raise ValidationError({'lines': 'Add at least one application line.'})
@@ -562,6 +606,7 @@ def post_application(application, user, revision=None, digest=None):
         updated=posted_at,
     )
     application.refresh_from_db()
+    _reallocate(locked, user, 'application_posted')
     return application, movements
 
 
@@ -632,6 +677,17 @@ def _post_movement(application, line, user, posting):
     )
 
 
+def _reallocate(batches, user, trigger):
+    """Bring every affected batch's cost allocations back in step.
+
+    Imported inside the call because costing reads applications, plantings, and
+    seedtrays; importing it at module level would close the cycle.
+    """
+    from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel
+
+    return reallocate_batches(batches, user, trigger)
+
+
 def _posted_movement_filter(application):
     """Match every movement this document's lines posted, of either kind."""
     return Q(application_consumption__application=application) | Q(application_waste__application=application)
@@ -651,6 +707,7 @@ def reverse_application(application, user, reason):
     ).get(pk=application.pk)
     if application.status != InputApplication.Status.POSTED:
         raise ValidationError({'status': 'Only posted applications can be reversed.'})
+    affected = [lock_batch_with_plants(row) for row in affected_batches(application)]
     movements = list(
         StockMovement.objects.select_for_update(of=('self',))
         .select_related('lot__item', 'workspace', 'source', 'destination')
@@ -667,6 +724,7 @@ def reverse_application(application, user, reason):
         updated=reversed_at,
     )
     application.refresh_from_db()
+    _reallocate(affected, user, 'application_reversed')
     return application
 
 
