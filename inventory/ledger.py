@@ -180,6 +180,17 @@ def _validate_location(location, workspace, field_name, require_active=True):
         raise ValidationError({field_name: 'The location is inactive.'})
 
 
+def balance_is_known(lot):
+    """Return whether this lot's balance is a figure worth enforcing.
+
+    Sowing already depends on the answer being no for an unopened packet: the
+    packet is truthfully sowable and its container goes negative as seed comes
+    out of it. Anything that has to take stock back out of such a lot cannot be
+    held to a figure that was never known in the first place.
+    """
+    return lot.quantity_certainty != QuantityCertainty.UNKNOWN
+
+
 def _validate_source_balance(lot, source, quantity):
     """Reject an outbound effect that exceeds physical stock at its source."""
     available = physical_balance(lot, source)
@@ -631,7 +642,7 @@ def _validate_reversible(original, reason, document_kind=None):
     for kind, (is_linked, message) in DOCUMENT_LINKS.items():
         if kind != document_kind and is_linked(original):
             raise ValidationError({'movement': message})
-    if original.destination_id:
+    if original.destination_id and balance_is_known(original.lot):
         _validate_source_balance(
             original.lot,
             original.destination,
@@ -659,6 +670,7 @@ def _create_reversal(original, user, reason, occurred_at):
         reason=reason,
         reference=f'Reversal of movement {original.pk}',
         reversal_of=original,
+        enforce_source_balance=balance_is_known(original.lot),
     ))
 
 
