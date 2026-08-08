@@ -586,6 +586,11 @@ def _linked_to_application(movement):
     return hasattr(movement, 'application_consumption') or hasattr(movement, 'application_waste')
 
 
+def _linked_to_tray_generation(movement):
+    """Return whether cleaning a seed-tray generation posted this movement."""
+    return hasattr(movement, 'tray_generation_residual')
+
+
 #: Documents that own the movements they post, keyed by the name a caller passes
 #: as ``document_kind``. A row one of these wrote may only be reversed through
 #: its own document, so the document restores every row it posted together
@@ -602,6 +607,10 @@ DOCUMENT_LINKS = {
     'application': (
         _linked_to_application,
         'Reverse application movements through their application.',
+    ),
+    'tray_generation': (
+        _linked_to_tray_generation,
+        'Reverse tray-generation movements through their generation.',
     ),
 }
 
@@ -1003,6 +1012,18 @@ def reverse_application_movements(workspace, movements, user, reason):
     document impossible: every row is checked before any reversal is written.
     """
     return _reverse_document_movements(workspace, movements, user, reason, 'application')
+
+
+@transaction.atomic
+def reverse_tray_generation_movements(workspace, movements, user, reason):
+    """Take back the stock a mistaken tray clean recovered.
+
+    Cleaning a generation only moves stock for a remainder the operator put
+    physically back on the shelf. Correcting that clean has to take those exact
+    quantities out again, which is the same all-or-nothing document reversal
+    receipts, stocktakes, and applications already share.
+    """
+    return _reverse_document_movements(workspace, movements, user, reason, 'tray_generation')
 
 
 @transaction.atomic
