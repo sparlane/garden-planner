@@ -42,15 +42,21 @@ from .models import (
 
 
 def latest_plantings_state():
-    """Return the newest migration state for the plantings app.
+    """Return the newest migration state for the whole project.
 
     Backfill tests rewind the schema and must restore it completely, so the
     target is resolved from the migration graph instead of a pinned name that
     every later migration would silently invalidate.
+
+    Every app's leaf is included, not just this one's. Rewinding plantings also
+    unapplies the migrations of the apps that depend on it — `applications`
+    builds on `plantings.0024_harvest` — and restoring only the plantings leaf
+    leaves their tables dropped for the rest of the process, which surfaces much
+    later as an unrelated test failing on a missing relation.
     """
     executor = MigrationExecutor(connection)
     executor.loader.build_graph()
-    return list(executor.loader.graph.leaf_nodes('plantings'))
+    return list(executor.loader.graph.leaf_nodes())
 
 
 class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instance-attributes
