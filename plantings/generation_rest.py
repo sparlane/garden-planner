@@ -7,10 +7,12 @@ rather than more of any of those.
 """
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import models
+from django.shortcuts import get_object_or_404
 from rest_framework import serializers
 
 from seedtrays.generations import require_open_generation
-from seedtrays.models import SeedTrayGeneration
+from seedtrays.models import SeedTray, SeedTrayGeneration
 
 
 def _model_errors(error):
@@ -18,6 +20,58 @@ def _model_errors(error):
     if hasattr(error, 'message_dict'):
         return error.message_dict
     return error.messages
+
+
+class TrayGenerationFilterMixin:
+    """Show the tray as it is now, with its earlier fills behind a filter.
+
+    Cleaning a tray archives what was in it. That archive is this filter and
+    nothing else: no row is deleted, and `history=true` or an explicit
+    `generation` brings any closed fill straight back. Sowings recorded before
+    generations existed have no fill to hide behind, so they stay visible.
+    """
+
+    #: How this viewset reaches a generation from the rows it lists.
+    generation_lookup = 'generation'
+    _parent_seed_tray = None
+
+    def get_parent_seed_tray(self):
+        """Resolve the nested tray inside the current workspace."""
+        if self._parent_seed_tray is None:
+            self._parent_seed_tray = get_object_or_404(
+                SeedTray,
+                pk=self.kwargs['seed_tray_pk'],
+                workspace=self.get_current_workspace(),
+            )
+        return self._parent_seed_tray
+
+    def filter_by_generation(self, queryset, tray):
+        """Narrow one tray's rows to the fill the client asked to see."""
+        query = self.request.query_params
+        requested = query.get('generation')
+        if requested is not None:
+            try:
+                generation = int(requested)
+            except ValueError as exc:
+                raise serializers.ValidationError({
+                    'generation': 'Use an integer generation ID.',
+                }) from exc
+            return queryset.filter(**{self.generation_lookup: generation})
+        history = query.get('history')
+        if history is not None:
+            if history not in {'true', 'false'}:
+                raise serializers.ValidationError({'history': 'Use true or false.'})
+            if history == 'true':
+                return queryset
+        active = SeedTrayGeneration.objects.filter(
+            tray=tray,
+            status=SeedTrayGeneration.Status.OPEN,
+        ).values_list('pk', flat=True)
+        visible = models.Q(**{f'{self.generation_lookup}__in': list(active)})
+        # A sowing recorded before generations existed has no fill to hide
+        # behind, so hiding it would lose it rather than archive it.
+        unknown = models.Q(**{f'{self.generation_lookup}__isnull': True})
+        return queryset.filter(visible | unknown)
 
 
 class TrayGenerationSowingSerializerMixin:  # pylint: disable=too-few-public-methods

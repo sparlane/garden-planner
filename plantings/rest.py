@@ -10,12 +10,11 @@ from django.utils import timezone
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from seedtrays.models import SeedTray
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
-from .generation_rest import TrayGenerationSowingSerializerMixin
+from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
 from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
@@ -823,6 +822,7 @@ class SeedTrayPlantingViewSet(
 
 
 class SeedTrayPlantingViewSeedTraySet(
+    TrayGenerationFilterMixin,
     SowingCorrectionViewSetMixin,
     ProtectedSeedTrayPlantingDestroyMixin,
     CurrentWorkspaceViewSetMixin,
@@ -833,20 +833,13 @@ class SeedTrayPlantingViewSeedTraySet(
     """
     queryset = SeedTrayPlanting.objects.all()
     serializer_class = SeedTrayPlantingSerializer
-    _parent_seed_tray = None
-
-    def get_parent_seed_tray(self):
-        """Resolve the nested tray inside the current workspace."""
-        if self._parent_seed_tray is None:
-            self._parent_seed_tray = get_object_or_404(
-                SeedTray,
-                pk=self.kwargs['seed_tray_pk'],
-                workspace=self.get_current_workspace(),
-            )
-        return self._parent_seed_tray
 
     def get_queryset(self):
-        return super().get_queryset().filter(seed_tray=self.get_parent_seed_tray())
+        tray = self.get_parent_seed_tray()
+        return self.filter_by_generation(
+            super().get_queryset().filter(seed_tray=tray),
+            tray,
+        )
 
     def perform_create(self, serializer):
         serializer.save(
@@ -895,33 +888,24 @@ class SpecificPlantViewSet(PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixi
         return Response(SpecificPlantLocationSerializer(location).data, status=status.HTTP_201_CREATED)
 
 
-class SpecificPlantBySeedTrayViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlant filtered by SeedTray
     """
     queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'lifecycle_events')
     serializer_class = SpecificPlantSerializer
-    _parent_seed_tray = None
-
-    def get_parent_seed_tray(self):
-        """Resolve the filtered tray inside the current workspace."""
-        if self._parent_seed_tray is None:
-            self._parent_seed_tray = get_object_or_404(
-                SeedTray,
-                pk=self.kwargs['seed_tray_pk'],
-                workspace=self.get_current_workspace(),
-            )
-        return self._parent_seed_tray
+    generation_lookup = 'cell_planting__seed_tray_planting__generation'
 
     def get_queryset(self):
-        tray_pk = self.get_parent_seed_tray().pk
+        tray = self.get_parent_seed_tray()
         queryset = super().get_queryset()
         currently_here = queryset.filter(
-            locations__seed_tray_cell__tray__pk=tray_pk,
+            locations__seed_tray_cell__tray__pk=tray.pk,
             locations__ended__isnull=True,
         )
-        originated_here = queryset.filter(
-            cell_planting__seed_tray_planting__seed_tray__pk=tray_pk,
+        originated_here = self.filter_by_generation(
+            queryset.filter(cell_planting__seed_tray_planting__seed_tray__pk=tray.pk),
+            tray,
         )
         return (currently_here | originated_here).distinct()
 

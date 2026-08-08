@@ -25,7 +25,8 @@ from inventory.units import UnitCode
 from supplies.models import Supplier
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
-from .models import SeedTrayModel, SeedTray, SeedTrayCell
+from .generations import open_generation_for
+from .models import SeedTrayModel, SeedTray, SeedTrayCell, SeedTrayGeneration
 
 
 class SeedTrayModelSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -68,13 +69,37 @@ class SeedTraySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSeria
     Serializer for a Seed Tray
     """
     inventory = InventoryUnitSerializer(source='inventory_unit', read_only=True)
+    active_generation = serializers.SerializerMethodField()
+    generation_review_required = serializers.SerializerMethodField()
 
     class Meta:
         model = SeedTray
-        fields = ['pk', 'model', 'inventory_unit', 'inventory', 'created', 'notes']
-        read_only_fields = ['inventory_unit', 'inventory', 'created']
+        fields = [
+            'pk', 'model', 'inventory_unit', 'inventory', 'created', 'notes',
+            'active_generation', 'generation_review_required',
+        ]
+        read_only_fields = [
+            'inventory_unit', 'inventory', 'created',
+            'active_generation', 'generation_review_required',
+        ]
 
     workspace_field_lookups = {'model': 'workspace'}
+
+    def _open_generation(self, tray):
+        """Return the fill this tray is currently using, or None if empty."""
+        return open_generation_for(tray)
+
+    def get_active_generation(self, tray):
+        """Report which fill the tray is on, so a screen can say `empty`."""
+        generation = self._open_generation(tray)
+        return generation.pk if generation else None
+
+    def get_generation_review_required(self, tray):
+        """Flag a migrated fill an operator has not confirmed yet."""
+        generation = self._open_generation(tray)
+        if generation is None:
+            return False
+        return generation.review_state == SeedTrayGeneration.ReviewState.NEEDS_REVIEW
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """A created tray keeps the model that defined its generated cell grid."""
