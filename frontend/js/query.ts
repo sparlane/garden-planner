@@ -46,7 +46,11 @@ const queryKeys = {
     models: ['seedTrays', 'models'] as const,
     trays: ['seedTrays', 'trays'] as const,
     movements: (unitPk: number) => ['seedTrays', 'movements', unitPk] as const,
-    cells: (trayPk: number) => ['seedTrays', 'cells', trayPk] as const
+    cells: (trayPk: number) => ['seedTrays', 'cells', trayPk] as const,
+    generationsAll: ['seedTrays', 'generations'] as const,
+    generations: (trayPk: number) => ['seedTrays', 'generations', trayPk] as const,
+    generationContents: (generationPk: number) => ['seedTrays', 'generations', 'contents', generationPk] as const,
+    generationCost: (generationPk: number) => ['seedTrays', 'generations', 'cost', generationPk] as const
   },
   plantings: {
     all: ['plantings'] as const,

@@ -1,5 +1,18 @@
 import { SerializedStockMovement } from '../types/inventory'
-import { SeedTray, SeedTrayCell, SeedTrayFilters, SeedTrayModel, SeedTrayModelCreate, SeedTrayReceiptCreate, SeedTrayReceiptResponse } from '../types/seedtrays'
+import {
+  CleanGenerationRequest,
+  CleanGenerationResponse,
+  GenerationCostBreakdown,
+  SeedTray,
+  SeedTrayCell,
+  SeedTrayFilters,
+  SeedTrayGeneration,
+  SeedTrayGenerationContents,
+  SeedTrayModel,
+  SeedTrayModelCreate,
+  SeedTrayReceiptCreate,
+  SeedTrayReceiptResponse
+} from '../types/seedtrays'
 import { csrfPost, fetchAsJson } from '../utils'
 
 function getSeedTrayModels(signal?: AbortSignal): Promise<Array<SeedTrayModel>> {
@@ -37,4 +50,51 @@ async function postSerializedUnitAction(unitPk: number, action: 'transfer' | 'lo
   await csrfPost(`/inventory/serialized-units/${unitPk}/${action}/`, data)
 }
 
-export { addSeedTrayModel, getSeedTrayCells, getSeedTrayModels, getSeedTrays, getSerializedUnitMovements, postSerializedUnitAction, receiveSeedTrays }
+function getSeedTrayGenerations(trayPk: number, signal?: AbortSignal): Promise<Array<SeedTrayGeneration>> {
+  return fetchAsJson<Array<SeedTrayGeneration>>(`/seedtrays/seedtraygenerations/?tray=${trayPk}`, signal)
+}
+
+async function openSeedTrayGeneration(trayPk: number, notes: string): Promise<SeedTrayGeneration> {
+  const response = await csrfPost('/seedtrays/seedtraygenerations/', { tray: trayPk, notes })
+  return response.json() as Promise<SeedTrayGeneration>
+}
+
+function getSeedTrayGenerationContents(generationPk: number, signal?: AbortSignal): Promise<SeedTrayGenerationContents> {
+  return fetchAsJson<SeedTrayGenerationContents>(`/seedtrays/seedtraygenerations/${generationPk}/contents/`, signal)
+}
+
+async function cleanSeedTrayGeneration(generationPk: number, request: CleanGenerationRequest): Promise<CleanGenerationResponse> {
+  const response = await csrfPost(`/seedtrays/seedtraygenerations/${generationPk}/close/`, request)
+  return response.json() as Promise<CleanGenerationResponse>
+}
+
+async function reopenSeedTrayGeneration(generationPk: number, reason: string): Promise<SeedTrayGeneration> {
+  const response = await csrfPost(`/seedtrays/seedtraygenerations/${generationPk}/reopen/`, { reason })
+  return response.json() as Promise<SeedTrayGeneration>
+}
+
+async function reviewSeedTrayGeneration(generationPk: number, reason: string): Promise<SeedTrayGeneration> {
+  const response = await csrfPost(`/seedtrays/seedtraygenerations/${generationPk}/review/`, { reason })
+  return response.json() as Promise<SeedTrayGeneration>
+}
+
+function getSeedTrayGenerationCost(generationPk: number, signal?: AbortSignal): Promise<GenerationCostBreakdown> {
+  return fetchAsJson<GenerationCostBreakdown>(`/seedtrays/seedtraygenerations/${generationPk}/cost-breakdown/`, signal)
+}
+
+export {
+  addSeedTrayModel,
+  cleanSeedTrayGeneration,
+  getSeedTrayCells,
+  getSeedTrayGenerationContents,
+  getSeedTrayGenerationCost,
+  getSeedTrayGenerations,
+  getSeedTrayModels,
+  getSeedTrays,
+  getSerializedUnitMovements,
+  openSeedTrayGeneration,
+  postSerializedUnitAction,
+  receiveSeedTrays,
+  reopenSeedTrayGeneration,
+  reviewSeedTrayGeneration
+}
