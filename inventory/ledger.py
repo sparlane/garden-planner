@@ -105,6 +105,57 @@ def quantize_quantity(value):
     return Decimal(value).quantize(QUANTITY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
+def quantize_money(value):
+    """Return a money amount at the precision the money columns store.
+
+    Deliberately not the same precision as a lot's `base_unit_cost`, which
+    carries twelve places. A unit cost is a rate that has to survive being
+    multiplied by a large quantity without losing significance; an amount is a
+    figure that gets reported and summed, and holding it at anything finer than
+    `MONEY_DECIMAL_PLACES` would mean storing digits the column cannot keep.
+    """
+    return None if value is None else Decimal(value).quantize(
+        MONEY_QUANTUM,
+        rounding=ROUND_HALF_UP,
+    )
+
+
+def distribute_exactly(total, weights, quantum=MONEY_QUANTUM):
+    """Split `total` in proportion to `weights`, losing nothing to rounding.
+
+    Each share is floored to `quantum` and the shortfall is then handed out one
+    step at a time, largest fractional part first. The parts therefore always
+    sum back to exactly `total`. Rounding each share independently would leave a
+    remainder that has to be either dropped, which understates the cost, or
+    absorbed into one arbitrary share, which misreports it.
+
+    Ties go to the earlier weight, so the same inputs always produce the same
+    split and a recalculation does not churn the ledger.
+
+    A `total` of None means the source cost is unknown, and every share of an
+    unknown is unknown too — never zero.
+    """
+    weights = [Decimal(weight) for weight in weights]
+    if any(weight < 0 for weight in weights):
+        raise ValidationError({'weights': 'A share weight cannot be negative.'})
+    basis = sum(weights, Decimal('0'))
+    if basis <= 0:
+        raise ValidationError({'weights': 'At least one share must be positive.'})
+    if total is None:
+        return [None] * len(weights)
+    total = Decimal(total).quantize(quantum, rounding=ROUND_HALF_UP)
+    exact = [total * weight / basis for weight in weights]
+    parts = [value.quantize(quantum, rounding=ROUND_DOWN) for value in exact]
+    steps = int((total - sum(parts, Decimal('0'))) / quantum)
+    order = sorted(
+        range(len(weights)),
+        key=lambda index: (parts[index] - exact[index], index),
+    )
+    for index in order[:steps]:
+        parts[index] += quantum
+    return parts
+
+
 def normalize_quantity(
     item,
     quantity,
@@ -423,14 +474,8 @@ def _receipt_acquisition_cost(receipt, line):
 
 
 def _serialized_unit_costs(total, quantity):
-    """Split a receipt total exactly at stored currency precision."""
-    count = int(quantity)
-    share = (total / count).quantize(MONEY_QUANTUM, rounding=ROUND_DOWN)
-    remainder_steps = int((total - (share * count)) / MONEY_QUANTUM)
-    return [
-        share + (MONEY_QUANTUM if index < remainder_steps else Decimal('0'))
-        for index in range(count)
-    ]
+    """Split a receipt total evenly across its units, losing no cent."""
+    return distribute_exactly(total, [Decimal('1')] * int(quantity))
 
 
 def _validate_serialized_receipt_line(line):
