@@ -25,14 +25,16 @@ from .models import SeedTrayGeneration, SeedTrayGenerationEvent
 
 
 def latest_seedtrays_state():
-    """Return the newest migration state for the seedtrays app.
+    """Return the newest migration state for the whole project.
 
     Resolved from the graph rather than pinned by name, so a later migration
-    cannot leave the database half-migrated for the rest of the run.
+    cannot leave the database half-migrated for the rest of the run, and every
+    app's leaf is included because rewinding one app also unapplies the
+    migrations of the apps that depend on it.
     """
     executor = MigrationExecutor(connection)
     executor.loader.build_graph()
-    return list(executor.loader.graph.leaf_nodes('seedtrays'))
+    return list(executor.loader.graph.leaf_nodes())
 
 
 class LegacyGenerationBackfillTests(TransactionTestCase):
