@@ -16,12 +16,15 @@ import { ApiErrorAlert } from './api_error_alert.js'
 import { queryClient, queryKeys } from './query.js'
 import { SeedTrayDetails } from './seedtray/seedtray_details.js'
 import { getWorkspace } from './api/workspace.js'
+import { Workspace } from './types/workspace.js'
 import { WorkspaceModeRoute, WorkspaceSettings } from './workspace.js'
 import { InventoryCatalog } from './inventory.js'
 import { InventoryReceiptsView } from './inventory/receipts.js'
 import { InputApplicationsView } from './applications/applications.js'
 import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
+import { NurseryRegisterView } from './plantings/register.js'
+import { PlantDetailView } from './plantings/plant_detail.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -43,6 +46,17 @@ function ProductionBatchDetailRoute() {
   }
 
   return <ProductionBatchDetailView batchPk={batchPk} />
+}
+
+function PlantDetailRoute({ workspace }: { workspace: Workspace }) {
+  const { plantId } = useParams()
+  const plantPk = Number(plantId)
+
+  if (!plantId || !Number.isInteger(plantPk) || plantPk <= 0) {
+    return <div>Plant not found.</div>
+  }
+
+  return <PlantDetailView plantPk={plantPk} workspace={workspace} />
 }
 
 function FrontEndPage() {
@@ -81,6 +95,15 @@ function FrontEndPage() {
         <Route path="/plantings/batches/:batchId" element={<ProductionBatchDetailRoute />} />
         <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
         <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
+        <Route
+          path="/plantings/register"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <NurseryRegisterView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route path="/plantings/plants/:plantId" element={<PlantDetailRoute workspace={workspace} />} />
         <Route path="/plantings/harvests" element={<HarvestsView />} />
         <Route path="/plantings/yield" element={<YieldReportView />} />
         <Route path="/inventory" element={<InventoryCatalog />} />
