@@ -240,6 +240,24 @@ function formatMeasure(value: string | number | null | undefined, unit: string, 
   return quantity === '' ? fallback : `${quantity} ${unit}`
 }
 
+// Money arrives as a fixed four-decimal string ("1.0800") from a DECIMAL(18, 4)
+// column, and carries the currency it was recorded in. Unlike a quantity it is
+// not trimmed all the way: two decimal places are kept even when they are zero,
+// because "1.1" reads as an incomplete price where "1.10" reads as a price. The
+// places beyond the second are only shown when they carry a digit, so sub-cent
+// unit costs stay exact without padding every ordinary figure. Operates on the
+// string throughout — parsing to a number would reintroduce exactly the float
+// artifacts the decimal column exists to avoid.
+function formatMoney(value: string | number | null | undefined, currencyCode: string, fallback = ''): string {
+  if (value === null || value === undefined || value === '') return fallback
+  const text = String(value)
+  if (!/^-?\d+(\.\d+)?$/.test(text)) return text
+  const [whole, fraction = ''] = text.split('.')
+  const padded = fraction.padEnd(2, '0')
+  const trimmed = padded.length > 2 ? padded.replace(/0+$/, '') : padded
+  return `${whole}.${trimmed.padEnd(2, '0')} ${currencyCode}`
+}
+
 export {
   ApiError,
   csrfDelete,
@@ -252,5 +270,6 @@ export {
   formatDateTime,
   formatDateRange,
   formatQuantity,
-  formatMeasure
+  formatMeasure,
+  formatMoney
 }
