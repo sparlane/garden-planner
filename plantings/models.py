@@ -17,7 +17,7 @@ from inventory.models import (
 from inventory.units import UnitCode
 from plants.models import PlantVariety
 from seeds.models import SeedPacket
-from seedtrays.models import SeedTray, SeedTrayCell
+from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayGeneration
 from garden.models import GardenRow, GardenSquare
 from workspaces.models import WorkspaceOwnedModel
 
@@ -210,9 +210,22 @@ class GardenSquareDirectSowPlanting(Planting):
 class SeedTrayPlanting(Planting):
     """
     Planting into a seed tray
+
+    The generation names the fill of the tray this sowing went into, so media
+    applied to one cultivation cycle is never attributed to seedlings raised in
+    the same cells during another. It is nullable because sowings recorded
+    before generations existed have no truthful answer, and because a sowing
+    can still be recorded without naming a tray at all.
     """
     location = models.CharField(max_length=1024, null=True, blank=True)
     seed_tray = models.ForeignKey(SeedTray, on_delete=models.PROTECT, null=True, blank=True)
+    generation = models.ForeignKey(
+        SeedTrayGeneration,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='sowings',
+    )
 
     class Meta:
         constraints = [
@@ -220,7 +233,19 @@ class SeedTrayPlanting(Planting):
                 condition=models.Q(quantity__gte=1),
                 name='seed_tray_quantity_gte_1',
             ),
+            models.CheckConstraint(
+                condition=(models.Q(generation__isnull=True) | models.Q(seed_tray__isnull=False)),
+                name='seed_tray_generation_requires_tray',
+            ),
         ]
+
+    def clean(self):
+        """Keep a sowing's generation on the tray the sowing names."""
+        super().clean()
+        if self.generation_id and self.generation.tray_id != self.seed_tray_id:
+            raise ValidationError({
+                'generation': 'The generation belongs to a different tray.',
+            })
 
 
 class SeedTrayCellPlanting(models.Model):

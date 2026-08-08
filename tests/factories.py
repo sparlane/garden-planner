@@ -35,7 +35,13 @@ from plantings.models import (
 )
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
-from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayModel
+from seedtrays.models import (
+    SeedTray,
+    SeedTrayCell,
+    SeedTrayGeneration,
+    SeedTrayGenerationEvent,
+    SeedTrayModel,
+)
 from supplies.models import Supplier
 
 
@@ -318,6 +324,29 @@ def make_seed_tray_cell(**overrides):
         values['tray'] = make_seed_tray()
     values.update(overrides)
     return SeedTrayCell.objects.create(**values)
+
+
+def make_seed_tray_generation(**overrides):
+    """Create an open tray generation and its opening event."""
+    values = dict(overrides)
+    if 'tray' not in values:
+        values['tray'] = make_seed_tray()
+    tray = values['tray']
+    sequence = values.setdefault(
+        'sequence',
+        SeedTrayGeneration.objects.filter(tray=tray).count() + 1,
+    )
+    values.setdefault('code', f'TRAY-{tray.pk}-{sequence}')
+    values.setdefault('opened_at', timezone.now())
+    values.setdefault('notes', 'Shared test generation')
+    generation = SeedTrayGeneration.objects.create(**values)
+    SeedTrayGenerationEvent.objects.create(
+        generation=generation,
+        event_type=SeedTrayGenerationEvent.EventType.OPENED,
+        occurred_at=generation.opened_at,
+        reason='Created for tests.',
+    )
+    return generation
 
 
 def make_production_batch(**overrides):

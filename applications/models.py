@@ -35,7 +35,7 @@ from inventory.models import (
 )
 from inventory.units import UnitCode
 from plantings.models import ProductionBatch, SpecificPlant
-from seedtrays.models import SeedTrayCell
+from seedtrays.models import SeedTrayCell, SeedTrayGeneration
 from workspaces.models import WorkspaceOwnedModel
 
 
@@ -402,6 +402,11 @@ class InputApplicationTarget(models.Model):
     There is no generic foreign key here. Each supported target has its own
     column and a check constraint requires exactly one of them, which keeps the
     relationship enforceable by the database and protected against deletion.
+
+    ``seed_tray_generation`` is not one of those targets. A cell stays the thing
+    the input physically went on and the thing whose volume the calculation
+    measured; the generation records which fill of that tray was using it, which
+    is the identity costing needs and the cell alone cannot supply.
     """
 
     class TargetType(models.TextChoices):
@@ -489,6 +494,14 @@ class InputApplicationTarget(models.Model):
         validators=[MinValueValidator(POSITIVE_FACTOR)],
         help_text='Share of this target that received the input.',
     )
+    seed_tray_generation = models.ForeignKey(
+        SeedTrayGeneration,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='application_targets',
+        help_text='The tray fill this cell belonged to when the input was applied.',
+    )
     cell_volume_ml = models.PositiveIntegerField(null=True, blank=True)
     area_m2 = models.DecimalField(
         max_digits=AREA_MAX_DIGITS,
@@ -536,6 +549,10 @@ class InputApplicationTarget(models.Model):
                 condition=(models.Q(area_m2__isnull=True) | models.Q(area_m2__gt=0)),
                 name='application_target_positive_area',
             ),
+            models.CheckConstraint(
+                condition=(models.Q(seed_tray_generation__isnull=True) | models.Q(target_type='seed_tray_cell')),
+                name='application_target_generation_needs_cell',
+            ),
         ] + [
             models.UniqueConstraint(
                 fields=['line', field],
@@ -572,8 +589,18 @@ class InputApplicationTarget(models.Model):
             errors['target_type'] = 'The target does not match the declared type.'
         else:
             self._add_workspace_error(errors)
+        self._add_generation_errors(errors)
         if errors:
             raise ValidationError(errors)
+
+    def _add_generation_errors(self, errors):
+        """Require the recorded generation to be a fill of the cell's own tray."""
+        if self.seed_tray_generation_id is None:
+            return
+        if self.target_type != self.TargetType.SEED_TRAY_CELL:
+            errors['seed_tray_generation'] = 'Only a tray cell carries a generation.'
+        elif self.seed_tray_cell_id and self.seed_tray_generation.tray_id != self.seed_tray_cell.tray_id:
+            errors['seed_tray_generation'] = 'The generation belongs to a different tray.'
 
     def _add_workspace_error(self, errors):
         """Require the target to sit in the document's workspace.
