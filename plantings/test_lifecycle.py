@@ -22,12 +22,14 @@ from .lifecycle import (
     EventType,
     LifecycleState,
     OutcomeRequest,
+    lifecycle_summaries,
     plant_lifecycle_summary,
     record_bulk_outcome,
     record_germination_event,
     record_lifecycle_event,
     record_transplant_event,
     reverse_lifecycle_event,
+    with_lifecycle_state,
 )
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
 
@@ -96,6 +98,115 @@ class LifecycleStateDerivationTests(TestCase):
                 self.assertEqual(summary.final_outcome, event_type)
                 self.assertEqual(summary.final_outcome_at, occurred_at)
                 self.assertFalse(summary.sellable)
+
+
+class LifecycleStateAnnotationTests(TestCase):
+    """The database annotation answers exactly what the replay answers.
+
+    The register filters, counts, sorts, and pages by lifecycle state, which
+    the Python replay cannot do. Both derivations must therefore agree on every
+    shape of history, or a screen would disagree with the plant it is showing.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='annotator')
+
+    def germinated_plant(self, occurred_at):
+        """Create one plant whose germination is already on file."""
+        plant = make_specific_plant(germinated=occurred_at)
+        record_germination_event(plant, self.user)
+        return plant
+
+    def population(self):
+        """Build one plant per derived state, plus the awkward histories."""
+        start = timezone.now() - timedelta(days=30)
+        plants = {'unrecorded': make_specific_plant(germinated=start)}
+        plants['growing'] = self.germinated_plant(start)
+        plants['available'] = self.germinated_plant(start)
+        record_lifecycle_event(
+            plants['available'],
+            self.user,
+            OutcomeRequest(EventType.READY, occurred_at=start + timedelta(days=1)),
+        )
+        for name, (event_type, _) in zip(
+            ('retained', 'donated', 'failed', 'culled', 'harvested'),
+            FINAL_OUTCOMES,
+        ):
+            plant = self.germinated_plant(start)
+            make_specific_plant_location(specific_plant=plant, started=start)
+            record_lifecycle_event(
+                plant,
+                self.user,
+                OutcomeRequest(event_type, occurred_at=start + timedelta(days=2)),
+            )
+            plants[name] = plant
+
+        plants['transplanted'] = self.germinated_plant(start)
+        record_lifecycle_event(
+            plants['transplanted'],
+            self.user,
+            OutcomeRequest(EventType.READY, occurred_at=start + timedelta(days=1)),
+        )
+        record_transplant_event(
+            plants['transplanted'],
+            self.user,
+            start + timedelta(days=2),
+        )
+
+        plants['corrected'] = self.germinated_plant(start)
+        record_lifecycle_event(
+            plants['corrected'],
+            self.user,
+            OutcomeRequest(EventType.READY, occurred_at=start + timedelta(days=1)),
+        )
+        mistake = record_lifecycle_event(
+            plants['corrected'],
+            self.user,
+            OutcomeRequest(EventType.FAILED, occurred_at=start + timedelta(days=2)),
+        )
+        reverse_lifecycle_event(
+            mistake,
+            self.user,
+            'Recorded against the wrong plant.',
+            occurred_at=start + timedelta(days=3),
+        )
+        return plants
+
+    def annotated(self, plants):
+        """Return the annotated summary of every plant, keyed by primary key."""
+        queryset = with_lifecycle_state(
+            SpecificPlant.objects.filter(pk__in=[plant.pk for plant in plants]),
+        )
+        return {
+            row.pk: (row.lifecycle_state, row.sellable, row.final_outcome, row.final_outcome_at)
+            for row in queryset
+        }
+
+    def test_the_annotation_matches_the_replay_for_every_history(self):
+        """One vocabulary, two derivations, no drift between them."""
+        plants = self.population()
+        annotated = self.annotated(plants.values())
+        replayed = lifecycle_summaries([plant.pk for plant in plants.values()])
+        for name, plant in plants.items():
+            with self.subTest(history=name):
+                summary = replayed[plant.pk]
+                self.assertEqual(
+                    annotated[plant.pk],
+                    (summary.state, summary.sellable, summary.final_outcome, summary.final_outcome_at),
+                )
+
+    def test_the_population_exercises_every_derived_state(self):
+        """A new state cannot be added without being compared here."""
+        plants = self.population()
+        derived = {state for state, _, _, _ in self.annotated(plants.values()).values()}
+        self.assertEqual(derived, {state.value for state in LifecycleState})
+
+    def test_a_correction_returns_the_annotation_to_the_surviving_facts(self):
+        """A reversed outcome stops counting the moment it is corrected."""
+        plants = self.population()
+        annotated = self.annotated([plants['corrected']])[plants['corrected'].pk]
+        self.assertEqual(annotated, (LifecycleState.AVAILABLE, True, None, None))
 
 
 class LifecycleTransitionTests(TestCase):

@@ -11,6 +11,7 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
+from django.db.models import Case, F, OuterRef, Q, Subquery, Value, When
 from django.utils import timezone
 
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
@@ -177,6 +178,83 @@ def derive_state(events):
         final_outcome=outcome,
         final_outcome_at=outcome_at,
     )
+
+
+#: The facts `derive_state` reads. Every other event type records something that
+#: happened without changing the condition it leaves behind.
+STATE_EVENT_TYPES = tuple(STATE_AFTER)
+
+
+def effective_state_events(plant_ref):
+    """Return one plant's surviving state-changing facts, latest first.
+
+    This is the database's view of the same events `derive_state` replays: a
+    correction reverses its target, and `reversal__isnull` reads that reverse
+    relation, so a reversed fact and the correction itself are both excluded.
+    """
+    return (
+        PlantLifecycleEvent.objects
+        .filter(
+            plant=plant_ref,
+            event_type__in=STATE_EVENT_TYPES,
+            reversal__isnull=True,
+        )
+        .order_by('-occurred_at', '-pk')
+    )
+
+
+def with_lifecycle_state(queryset):
+    """Annotate derived lifecycle state onto a `SpecificPlant` queryset.
+
+    The replay in `derive_state` keeps the last surviving state-changing fact,
+    so taking the newest one here reaches the same answer while leaving the
+    result filterable, sortable, countable, and pageable in the database. The
+    two derivations share `STATE_AFTER`, `FINAL_STATES`, and `SELLABLE_STATES`
+    so neither can quietly describe a different vocabulary from the other.
+    """
+    events = effective_state_events(OuterRef('pk'))
+    return (
+        queryset
+        .annotate(
+            last_state_event=Subquery(events.values('event_type')[:1]),
+            last_state_at=Subquery(events.values('occurred_at')[:1]),
+        )
+        .annotate(
+            lifecycle_state=Case(
+                *[
+                    When(last_state_event=event_type, then=Value(state))
+                    for event_type, state in STATE_AFTER.items()
+                ],
+                default=Value(LifecycleState.GROWING),
+                output_field=models.CharField(),
+            ),
+        )
+        .annotate(
+            sellable=Case(
+                When(
+                    lifecycle_state__in=sorted(SELLABLE_STATES),
+                    then=Value(True),
+                ),
+                default=Value(False),
+                output_field=models.BooleanField(),
+            ),
+            final_outcome=Case(
+                When(lifecycle_state__in=sorted(FINAL_STATES), then=F('last_state_event')),
+                default=Value(None),
+                output_field=models.CharField(null=True),
+            ),
+            final_outcome_at=Case(
+                When(lifecycle_state__in=sorted(FINAL_STATES), then=F('last_state_at')),
+                default=Value(None),
+                output_field=models.DateTimeField(null=True),
+            ),
+        )
+    )
+
+
+def lifecycle_state_filter(states):
+    """Return the annotation filter that selects the named derived states."""
+    return Q(lifecycle_state__in=list(states))
 
 
 def plant_lifecycle_summary(plant):
