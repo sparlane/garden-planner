@@ -26,6 +26,7 @@ from .ledger import (
 from .models import (
     InventoryItem,
     InventoryLocation,
+    QuantityCertainty,
     StockLot,
     StockMovement,
     StockReceipt,
@@ -322,3 +323,88 @@ class LedgerServiceTests(TestCase):
                         ),
                     )
                 self.assertIn('reason', context.exception.message_dict)
+
+
+class UnknownQuantityReversalTests(TestCase):
+    """A lot of unknown quantity has no balance to hold a reversal to.
+
+    An unopened seed packet is truthfully sowable, so its container goes
+    negative as seed comes out of it. Anything that later has to take stock back
+    out of that container — correcting a return, say — cannot be measured
+    against a figure that was never known.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.user = get_user_model().objects.create_user(username='unknown-lot-user')
+        self.item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Unopened packet contents',
+            category=InventoryItem.Category.SEED,
+            base_unit=UnitCode.SEED,
+        )
+        self.container = InventoryLocation.objects.create(
+            workspace=self.workspace,
+            name='Seed packet',
+            code='PACKET-UNKNOWN',
+            location_type=InventoryLocation.LocationType.SEED_PACKET,
+        )
+        self.lot = StockLot.objects.create(
+            workspace=self.workspace,
+            item=self.item,
+            origin=StockLot.Origin.OPENING,
+            received_on=date(2026, 1, 1),
+            initial_base_quantity=None,
+            quantity_certainty=QuantityCertainty.UNKNOWN,
+            currency_code=self.workspace.currency_code,
+        )
+
+    def _put_back(self, quantity):
+        """Record seed going back into the packet it came out of."""
+        return post_stock_movement(self.workspace, self.user, MovementRequest(
+            lot=self.lot,
+            movement_type=StockMovement.MovementType.ADJUSTMENT_GAIN,
+            quantity=Decimal(quantity),
+            destination=self.container,
+            occurred_at=timezone.now(),
+            reason='Unsown seed returned.',
+        ))
+
+    def _sow(self, quantity):
+        """Take seed out of a packet whose contents were never counted."""
+        return post_stock_movement(self.workspace, self.user, MovementRequest(
+            lot=self.lot,
+            movement_type=StockMovement.MovementType.CONSUMPTION,
+            quantity=Decimal(quantity),
+            source=self.container,
+            occurred_at=timezone.now(),
+            reason='Sown.',
+            enforce_source_balance=False,
+        ))
+
+    def test_a_return_can_be_reversed_from_a_negative_container(self):
+        """The container is negative by design, not by error."""
+        self._sow('8')
+        gain = self._put_back('2')
+        self.assertEqual(physical_balance(self.lot, self.container), Decimal('-6'))
+
+        reversal = reverse_movement(gain, self.user, 'Recorded against the wrong sowing.')
+
+        self.assertEqual(reversal.movement_type, StockMovement.MovementType.REVERSAL)
+        self.assertEqual(physical_balance(self.lot, self.container), Decimal('-8'))
+
+    def test_a_counted_lot_still_has_its_balance_enforced(self):
+        """Relaxing the check where a figure exists would hide real errors."""
+        StockLot.objects.filter(pk=self.lot.pk).update(
+            quantity_certainty=QuantityCertainty.EXACT,
+            initial_base_quantity=Decimal('10'),
+        )
+        self.lot.refresh_from_db()
+        gain = self._put_back('2')
+        self._sow('5')
+
+        with self.assertRaises(ValidationError) as caught:
+            reverse_movement(gain, self.user, 'Wrong sowing.')
+
+        self.assertIn('quantity', caught.exception.message_dict)

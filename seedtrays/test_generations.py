@@ -634,6 +634,30 @@ class ReopenGenerationTests(GenerationContentsTestCase):
         self.assertEqual(residual.base_quantity, Decimal('0.080000000'))
         self.assertEqual(residual.disposition, Disposition.WASTE)
 
+    def test_returned_seed_is_taken_back_out_of_the_packet(self):
+        """An unopened packet's container is negative by design, not by error.
+
+        Sowing takes seed out of a container whose contents were never counted,
+        so the balance goes below zero. Correcting a clean that put seed back
+        has to be able to take it out again anyway.
+        """
+        sowing = self.sow(quantity=4, allocations=((0, 2),))
+        packet = sowing.seeds_used
+        generation, _ = self.close(seeds=(SeedDisposition(
+            sowing.pk,
+            2,
+            Disposition.RETURNED,
+            'Back in the packet.',
+        ),))
+        returned = physical_balance(packet.stock_lot, packet.storage_location)
+
+        reopen_generation(generation, self.user, 'Wrong tray.')
+
+        self.assertEqual(
+            physical_balance(packet.stock_lot, packet.storage_location),
+            returned - Decimal('2'),
+        )
+
     def test_a_closed_location_is_not_reopened(self):
         """Where a plant has been remains true; a replacement is recorded."""
         sowing = self.sow()
