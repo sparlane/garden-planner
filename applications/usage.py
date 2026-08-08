@@ -207,8 +207,13 @@ def _manual_usage(inputs):
     return _result(inputs, None, '', len(inputs.targets), None, 'Manual entry')
 
 
-def _result(inputs, basis_quantity, basis_unit, target_count, calculated, formula):
-    """Assemble one calculation, quantizing the suggestion for the ledger."""
+def _result(inputs, basis_quantity, basis_unit, target_count, calculated, formula):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """Assemble one calculation, quantizing the suggestion for the ledger.
+
+    The parameters are the fields of the value this builds, so there is no
+    smaller thing to group them into: that thing is `UsageCalculation`, which is
+    what comes back out.
+    """
     return UsageCalculation(
         basis=inputs.basis,
         basis_quantity=None if basis_quantity is None else quantize_quantity(basis_quantity),

@@ -1,4 +1,7 @@
 """Small dependency-free model builders shared by API tests."""
+# These deliberately mirror the shape of the real creation paths they stand
+# in for, so they read the same way; the overlap is the point.
+# pylint: disable=duplicate-code
 from datetime import date
 from decimal import Decimal
 from itertools import count
