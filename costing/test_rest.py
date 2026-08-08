@@ -78,6 +78,67 @@ class BatchCostBreakdownTests(CostingServiceTestCase):
         self.assertIsNotNone(data['last_run'])
         self.assertIn('trigger', data['last_run'])
 
+    def test_the_payload_carries_exactly_the_fields_the_screen_reads(self):
+        """This repository has no JavaScript test runner, so the contract that
+        `frontend/js/types/costing.ts` describes is pinned here instead. A field
+        renamed on either side fails this rather than rendering as undefined.
+        """
+        data = self.get_breakdown()
+        self.assertEqual(
+            sorted(data),
+            [
+                'batch',
+                'code',
+                'currency_code',
+                'final_total',
+                'last_run',
+                'layers',
+                'output_finalized_at',
+                'plants',
+                'provisional',
+                'provisional_total',
+                'status',
+                'totals',
+                'unknown_cost',
+            ],
+        )
+        self.assertEqual(
+            sorted(data['plants'][0]),
+            ['cost', 'disposition', 'plant', 'state'],
+        )
+        self.assertEqual(
+            sorted(data['layers'][0]),
+            [
+                'allocation',
+                'amount',
+                'application',
+                'application_line',
+                'base_quantity',
+                'base_unit',
+                'basis',
+                'basis_weight',
+                'currency_code',
+                'generation_residual',
+                'item',
+                'lot',
+                'movement',
+                'receipt_line',
+                'run',
+                'seed_tray_cell',
+                'seed_tray_generation',
+                'source',
+                'source_type',
+                'sowing_posting',
+                'specific_plant',
+                'target_type',
+                'unit_cost',
+            ],
+        )
+        self.assertEqual(
+            sorted(data['last_run']),
+            ['created', 'posted_count', 'reason', 'reversed_count', 'run', 'trigger'],
+        )
+
     def test_a_batch_in_another_workspace_is_not_visible(self):
         """The workspace boundary applies to costs like everything else."""
         response = self.client.get('/costing/batches/999999/')
@@ -102,6 +163,25 @@ class PlantCostBreakdownTests(CostingServiceTestCase):
         self.assertIsNone(response.data['final_value'])
         self.assertEqual(response.data['disposition'], 'plant_inventory')
         self.assertEqual(response.data['state'], 'growing')
+
+    def test_the_plant_payload_matches_its_typescript_contract(self):
+        """The other half of the shape `frontend/js/types/costing.ts` declares."""
+        response = self.client.get(f'/costing/plants/{self.plant.pk}/')
+        self.assertEqual(
+            sorted(response.data),
+            [
+                'batch',
+                'currency_code',
+                'disposition',
+                'final_value',
+                'layers',
+                'plant',
+                'provisional',
+                'provisional_value',
+                'state',
+                'unknown_cost',
+            ],
+        )
 
     def test_a_plant_layer_carries_its_basis(self):
         """How the share was arrived at is part of the audit, not a detail."""
