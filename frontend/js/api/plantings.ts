@@ -8,6 +8,9 @@ import {
   HarvestReportFilters,
   HarvestReportRow,
   ReverseHarvest,
+  NurseryRegisterFilters,
+  NurseryRegisterPage,
+  NurseryRegisterSelection,
   PlantLifecycleEvent,
   PlantOutcome,
   PlantOutcomeAction,
@@ -211,6 +214,35 @@ function getHarvestReport(filters: HarvestReportFilters, signal?: AbortSignal): 
   return fetchAsJson<Array<HarvestReportRow>>(`/plantings/harvest-report/${harvestQuery(filters)}`, signal)
 }
 
+// `state` repeats rather than joining, because the backend reads it with
+// getlist so that selecting two states asks for both rather than for neither.
+function registerQuery(filters: NurseryRegisterFilters): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === '') {
+      continue
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        query.append(key, entry)
+      }
+    } else {
+      query.set(key, String(value))
+    }
+  }
+  return query.size > 0 ? `?${query.toString()}` : ''
+}
+
+function getNurseryRegister(filters: NurseryRegisterFilters = {}, signal?: AbortSignal): Promise<NurseryRegisterPage> {
+  return fetchAsJson<NurseryRegisterPage>(`/plantings/register/${registerQuery(filters)}`, signal)
+}
+
+// Resolves a filter to the plants it currently selects. Bulk actions call this
+// at the moment they act, so a selection never goes stale on screen.
+function getNurseryRegisterSelection(filters: NurseryRegisterFilters = {}, signal?: AbortSignal): Promise<NurseryRegisterSelection> {
+  return fetchAsJson<NurseryRegisterSelection>(`/plantings/register/ids/${registerQuery(filters)}`, signal)
+}
+
 export {
   ProductionBatchFilters,
   getProductionBatches,
@@ -247,5 +279,7 @@ export {
   getHarvest,
   addHarvest,
   reverseHarvest,
-  getHarvestReport
+  getHarvestReport,
+  getNurseryRegister,
+  getNurseryRegisterSelection
 }

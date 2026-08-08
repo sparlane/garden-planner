@@ -299,6 +299,72 @@ interface SowingCorrection {
   reason: string
 }
 
+// The nursery plant register. Rows are a projection of current plants, so a
+// row carries where a plant is now rather than everywhere it has been.
+interface NurseryRegisterRow {
+  pk: number
+  batch: number
+  batch_code: string
+  variety: number
+  variety_name: string
+  plant_name: string
+  germinated: string
+  age_days: number
+  lifecycle_state: PlantLifecycleState
+  sellable: boolean
+  final_outcome: PlantLifecycleEventType | null
+  final_outcome_at: string | null
+  location_type: 'seed_tray_cell' | 'garden_square' | null
+  location_label: string
+  seed_tray: number | null
+  seed_tray_cell: number | null
+  garden_square: number | null
+  located_since: string | null
+  // Projected from the crop's maturity range, not an observed readiness date.
+  expected_ready_early: string | null
+  expected_ready_late: string | null
+  cost: string | null
+  currency_code: string
+}
+
+type NurseryRegisterOrdering = 'age' | '-age' | 'variety' | '-variety' | 'location' | '-location' | 'cost' | '-cost' | 'state' | '-state' | 'batch' | '-batch'
+
+// Keys are the query-parameter names the register endpoint validates.
+interface NurseryRegisterFilters {
+  variety?: number
+  batch?: number
+  state?: Array<PlantLifecycleState>
+  sellable?: boolean
+  germinated_from?: string
+  germinated_to?: string
+  location_type?: 'seed_tray_cell' | 'garden_square' | 'none'
+  seed_tray?: number
+  garden_square?: number
+  search?: string
+  ordering?: NurseryRegisterOrdering
+  page?: number
+  page_size?: number
+}
+
+// Counts describe the whole filtered selection, never the visible page.
+type NurseryRegisterTotals = Record<PlantLifecycleState, number> & {
+  total: number
+  unresolved: number
+}
+
+interface NurseryRegisterPage {
+  count: number
+  next: string | null
+  previous: string | null
+  totals: NurseryRegisterTotals
+  results: Array<NurseryRegisterRow>
+}
+
+interface NurseryRegisterSelection {
+  count: number
+  plants: Array<number>
+}
+
 // The five units a yield may be measured in. The backend rejects the seed and
 // area codes the inventory registry also publishes, so this list is the
 // contract rather than /inventory/units/.
@@ -433,6 +499,12 @@ export {
   PlantOutcomeAction,
   ReversePlantEvent,
   NewBatchInline,
+  NurseryRegisterFilters,
+  NurseryRegisterOrdering,
+  NurseryRegisterPage,
+  NurseryRegisterRow,
+  NurseryRegisterSelection,
+  NurseryRegisterTotals,
   Planting,
   ProductionBatch,
   ProductionBatchCell,

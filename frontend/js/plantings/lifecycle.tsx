@@ -47,8 +47,12 @@ const OUTCOME_ACTIONS: Array<{ action: PlantOutcomeAction; label: string; varian
   { action: 'donate', label: 'Donate', variant: 'outline-info' }
 ]
 
+function LifecycleStateBadge({ state }: { state: PlantLifecycleState }) {
+  return <Badge bg={STATE_VARIANTS[state]}>{STATE_LABELS[state]}</Badge>
+}
+
 function PlantLifecycleBadge({ plant }: { plant: SpecificPlant }) {
-  return <Badge bg={STATE_VARIANTS[plant.lifecycle_state]}>{STATE_LABELS[plant.lifecycle_state]}</Badge>
+  return <LifecycleStateBadge state={plant.lifecycle_state} />
 }
 
 function availableActions(plant: SpecificPlant): Array<{ action: PlantOutcomeAction; label: string; variant: string }> {
@@ -129,4 +133,4 @@ function PlantLifecycleHistory({ events, onReverse }: PlantLifecycleHistoryProps
   )
 }
 
-export { EVENT_LABELS, STATE_LABELS, PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons }
+export { EVENT_LABELS, STATE_LABELS, LifecycleStateBadge, PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons }

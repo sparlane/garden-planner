@@ -1,5 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 
+import { NurseryRegisterFilters } from './types/plantings'
+
 const queryKeys = {
   workspace: {
     all: ['workspace'] as const,
@@ -66,12 +68,16 @@ const queryKeys = {
     currentGardenSquares: ['plantings', 'currentGardenSquares'] as const,
     specificPlantsAll: ['plantings', 'specificPlants'] as const,
     specificPlants: (trayPk: number) => ['plantings', 'specificPlants', trayPk] as const,
+    specificPlantDetail: (plantPk: number) => ['plantings', 'specificPlants', 'detail', plantPk] as const,
     plantLifecycleAll: ['plantings', 'plantLifecycle'] as const,
     plantLifecycle: (plantPk: number) => ['plantings', 'plantLifecycle', plantPk] as const,
     harvestsAll: ['plantings', 'harvests'] as const,
     harvests: (batch: number | '', variety: number | '', square: number | '', row: number | '', status: string, from: string, to: string) =>
       ['plantings', 'harvests', batch, variety, square, row, status, from, to] as const,
     harvest: (harvestPk: number) => ['plantings', 'harvests', 'detail', harvestPk] as const,
+    registerAll: ['plantings', 'register'] as const,
+    register: (filters: NurseryRegisterFilters) => ['plantings', 'register', filters] as const,
+    registerSelection: (filters: NurseryRegisterFilters) => ['plantings', 'register', 'ids', filters] as const,
     harvestReportAll: ['plantings', 'harvestReport'] as const,
     harvestReport: (groupBy: string, batch: number | '', variety: number | '', from: string, to: string) =>
       ['plantings', 'harvestReport', groupBy, batch, variety, from, to] as const
