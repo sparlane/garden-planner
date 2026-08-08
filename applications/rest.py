@@ -1,6 +1,9 @@
 """REST surface for drafting, previewing, posting, and reversing applications."""
 
-# pylint: disable=duplicate-code
+# Most serializers here are action payloads rather than writable resources, so
+# they implement neither of DRF's `create` and `update`; `ActionSerializer`
+# refuses both once on their behalf.
+# pylint: disable=duplicate-code,abstract-method
 
 from decimal import Decimal
 

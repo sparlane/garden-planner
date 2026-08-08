@@ -48,10 +48,11 @@ from .services import (
 TargetType = InputApplicationTarget.TargetType
 
 
-class ApplicationServiceMixin:
+class ApplicationServiceTestCase(TestCase):
     """Stock, a batch, and helpers for building one document."""
 
     def setUp(self):
+        """Stock one media lot and open a batch every case draws on."""
         super().setUp()
         self.workspace = Workspace.objects.get(pk=1)
         self.location = make_inventory_location()
@@ -101,7 +102,7 @@ class ApplicationServiceMixin:
         return [TargetRequest(TargetType.SEED_TRAY_CELL, cell) for cell in cells]
 
 
-class DraftApplicationTests(ApplicationServiceMixin, TestCase):
+class DraftApplicationTests(ApplicationServiceTestCase):
     """Assembling a draft freezes every measurement it calculates from."""
 
     def test_a_draft_records_the_calculation(self):
@@ -160,7 +161,7 @@ class DraftApplicationTests(ApplicationServiceMixin, TestCase):
         self.assertIn('targets', caught.exception.message_dict)
 
 
-class PostApplicationTests(ApplicationServiceMixin, TestCase):
+class PostApplicationTests(ApplicationServiceTestCase):
     """Posting turns a confirmed draft into ledger movements."""
 
     def test_posting_consumes_the_confirmed_quantity(self):
@@ -266,7 +267,7 @@ class PostApplicationTests(ApplicationServiceMixin, TestCase):
         self.assertIn('batch', caught.exception.message_dict)
 
 
-class PlantTargetTests(ApplicationServiceMixin, TestCase):
+class PlantTargetTests(ApplicationServiceTestCase):
     """Applying an input to individual plants."""
 
     def setUp(self):
@@ -341,7 +342,7 @@ class PlantTargetTests(ApplicationServiceMixin, TestCase):
         self.assertIn('targets', caught.exception.message_dict)
 
 
-class SurfaceAreaTargetTests(ApplicationServiceMixin, TestCase):
+class SurfaceAreaTargetTests(ApplicationServiceTestCase):
     """Applying a treatment over measured ground."""
 
     def setUp(self):
@@ -408,7 +409,7 @@ class SurfaceAreaTargetTests(ApplicationServiceMixin, TestCase):
         self.assertEqual(movements[0].quantity, Decimal('8.000000000'))
 
 
-class SnapshotDurabilityTests(ApplicationServiceMixin, TestCase):
+class SnapshotDurabilityTests(ApplicationServiceTestCase):
     """A posted document cannot be rewritten by a later configuration edit."""
 
     def test_editing_the_tray_model_leaves_the_document_alone(self):
@@ -442,7 +443,7 @@ class SnapshotDurabilityTests(ApplicationServiceMixin, TestCase):
         self.assertEqual(state['lines'][0]['calculated_base_quantity'], Decimal('0.960000000'))
 
 
-class ReverseApplicationTests(ApplicationServiceMixin, TestCase):
+class ReverseApplicationTests(ApplicationServiceTestCase):
     """Reversal restores stock and keeps the document readable."""
 
     def posted(self, **overrides):
@@ -507,7 +508,7 @@ class ReverseApplicationTests(ApplicationServiceMixin, TestCase):
         self.assertIn('status', caught.exception.message_dict)
 
 
-class ApplicationStateTests(ApplicationServiceMixin, TestCase):
+class ApplicationStateTests(ApplicationServiceTestCase):
     """What a preview reports and what posting revalidates against."""
 
     def test_state_reports_availability_before_and_after(self):
@@ -574,7 +575,7 @@ class ApplicationStateTests(ApplicationServiceMixin, TestCase):
         self.assertEqual(application.status, InputApplication.Status.POSTED)
 
 
-class GenerationTargetTests(ApplicationServiceMixin, TestCase):
+class GenerationTargetTests(ApplicationServiceTestCase):
     """Media applied to a cell is attributed to the fill using that cell."""
 
     def test_a_cell_target_records_the_fill_it_went_into(self):

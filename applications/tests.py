@@ -39,10 +39,11 @@ def _next_workspace_name():
     return f'Other workspace {next(_WORKSPACES)}'
 
 
-class ApplicationFixtureMixin:
+class ApplicationFixtureTestCase(TestCase):
     """Shared draft, line, and target builders."""
 
     def setUp(self):
+        """Stock one lot at one location for every case to draw on."""
         super().setUp()
         self.location = make_inventory_location()
         self.item = make_inventory_item()
@@ -101,7 +102,7 @@ class ApplicationFixtureMixin:
         return InputApplicationTarget.objects.create(**values)
 
 
-class InputApplicationTests(ApplicationFixtureMixin, TestCase):
+class InputApplicationTests(ApplicationFixtureTestCase):
     """Rules governing the document header."""
 
     def test_an_application_starts_as_a_draft(self):
@@ -173,7 +174,7 @@ class InputApplicationTests(ApplicationFixtureMixin, TestCase):
             )
 
 
-class InputApplicationLineTests(ApplicationFixtureMixin, TestCase):
+class InputApplicationLineTests(ApplicationFixtureTestCase):
     """Rules governing one item drawn from one exact lot."""
 
     def test_a_line_records_the_lot_it_drew_from(self):
@@ -243,7 +244,7 @@ class InputApplicationLineTests(ApplicationFixtureMixin, TestCase):
         self.assertIn('item', caught.exception.message_dict)
 
 
-class InputApplicationTargetTests(ApplicationFixtureMixin, TestCase):
+class InputApplicationTargetTests(ApplicationFixtureTestCase):
     """Rules governing what a line was applied to."""
 
     def test_target_fields_match_the_declared_choices(self):

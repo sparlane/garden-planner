@@ -89,6 +89,19 @@ class ApplicationRequest(NamedTuple):
     lines: tuple = ()
 
 
+class Posting(NamedTuple):
+    """One ledger row a line is about to write: what, how much, and why.
+
+    A line posts consumption and, when there is any, waste. Both draw on the
+    same lot from the same location at the same moment, so only these three
+    differ between them.
+    """
+
+    movement_type: str
+    quantity: object
+    reason: str = ''
+
+
 class TargetSnapshot(NamedTuple):
     """One target with whatever it measured at the moment it was read."""
 
@@ -581,24 +594,18 @@ def _post_line(application, line, user):
         raise ValidationError({
             'lines': f'Line {line.pk}: serialized stock moves through unit actions.',
         })
-    movements = [_post_movement(
-        application,
-        line,
-        user,
-        StockMovement.MovementType.CONSUMPTION,
-        line.applied_base_quantity,
-        line.override_reason,
-    )]
+    movements = [_post_movement(application, line, user, Posting(
+        movement_type=StockMovement.MovementType.CONSUMPTION,
+        quantity=line.applied_base_quantity,
+        reason=line.override_reason,
+    ))]
     line.consumption_movement = movements[0]
     if line.waste_base_quantity > 0:
-        movements.append(_post_movement(
-            application,
-            line,
-            user,
-            StockMovement.MovementType.WASTE,
-            line.waste_base_quantity,
-            line.waste_reason,
-        ))
+        movements.append(_post_movement(application, line, user, Posting(
+            movement_type=StockMovement.MovementType.WASTE,
+            quantity=line.waste_base_quantity,
+            reason=line.waste_reason,
+        )))
         line.waste_movement = movements[1]
     InputApplicationLine.objects.filter(pk=line.pk).update(
         consumption_movement=line.consumption_movement,
@@ -608,18 +615,18 @@ def _post_line(application, line, user):
     return movements
 
 
-def _post_movement(application, line, user, movement_type, quantity, reason):
+def _post_movement(application, line, user, posting):
     """Append one ledger row for this line."""
     return post_stock_movement(
         application.workspace,
         user,
         MovementRequest(
             lot=line.lot,
-            movement_type=movement_type,
-            quantity=quantity,
+            movement_type=posting.movement_type,
+            quantity=posting.quantity,
             source=application.source_location,
             occurred_at=application.applied_at,
-            reason=reason,
+            reason=posting.reason,
             reference=f'application:{application.pk} line:{line.pk}',
         ),
     )
