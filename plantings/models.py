@@ -558,6 +558,140 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
         raise ValidationError('Plant lifecycle events cannot be deleted.')
 
 
+class BulkPlantOperation(WorkspaceOwnedModel):
+    """One confirmed bulk action shared by independently audited plants."""
+
+    class Action(models.TextChoices):
+        """Actions currently backed by plant domain records."""
+
+        GERMINATE = 'germinate', 'Germinate'
+        MOVE = 'move', 'Move or transplant'
+        READY = 'ready', 'Ready'
+        RETAIN = 'retain', 'Retain'
+        DONATE = 'donate', 'Donate'
+        FAIL = 'fail', 'Fail'
+        CULL = 'cull', 'Cull'
+        FINISH_HARVEST = 'finish_harvest', 'Finish harvest'
+
+    class Atomicity(models.TextChoices):
+        """How conflicts in a confirmed selection are handled."""
+
+        ALL_OR_NOTHING = 'all_or_nothing', 'All or nothing'
+        ELIGIBLE_ONLY = 'eligible_only', 'Eligible only'
+
+    idempotency_key = models.UUIDField()
+    request_digest = models.CharField(max_length=64, editable=False)
+    action = models.CharField(max_length=24, choices=Action.choices)
+    atomicity = models.CharField(max_length=20, choices=Atomicity.choices)
+    occurred_at = models.DateTimeField()
+    reason = models.TextField(blank=True, default='')
+    selection_source = models.JSONField(blank=True, default=dict)
+    action_payload = models.JSONField(blank=True, default=dict)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created', '-pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'idempotency_key'],
+                name='bulk_plant_operation_idempotent',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.action} on {self.created}'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Bulk plant operations are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Bulk plant operations cannot be deleted.')
+
+
+class BulkPlantOperationResult(WorkspaceOwnedModel):
+    """The result one bulk operation produced for one concrete plant."""
+
+    class Status(models.TextChoices):
+        """Whether this member changed or was excluded by eligible-only mode."""
+
+        APPLIED = 'applied', 'Applied'
+        SKIPPED = 'skipped', 'Skipped'
+
+    operation = models.ForeignKey(
+        BulkPlantOperation,
+        on_delete=models.PROTECT,
+        related_name='results',
+    )
+    plant = models.ForeignKey(
+        SpecificPlant,
+        on_delete=models.PROTECT,
+        related_name='bulk_operation_results',
+    )
+    status = models.CharField(max_length=12, choices=Status.choices)
+    errors = models.JSONField(blank=True, default=list)
+    lifecycle_event = models.ForeignKey(
+        PlantLifecycleEvent,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='bulk_operation_results',
+    )
+    location = models.ForeignKey(
+        SpecificPlantLocation,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='bulk_operation_results',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['plant_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['operation', 'plant'],
+                name='bulk_plant_operation_result_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.operation_id}: plant {self.plant_id} {self.status}'
+
+    def clean(self):
+        """Keep the operation, plant, and produced records in one workspace."""
+        super().clean()
+        errors = {}
+        if self.operation_id and self.operation.workspace_id != self.workspace_id:
+            errors['operation'] = 'The operation belongs to a different workspace.'
+        if self.plant_id and self.plant.workspace_id != self.workspace_id:
+            errors['plant'] = 'The plant belongs to a different workspace.'
+        if self.lifecycle_event_id and self.lifecycle_event.plant_id != self.plant_id:
+            errors['lifecycle_event'] = 'The event belongs to a different plant.'
+        if self.location_id and self.location.specific_plant_id != self.plant_id:
+            errors['location'] = 'The location belongs to a different plant.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Bulk plant operation results are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Bulk plant operation results cannot be deleted.')
+
+
 #: The measurement units a crop yield may be recorded in. Seed units describe
 #: what went in rather than what came out, and an area is not a yield, so
 #: neither appears here.
