@@ -9,7 +9,8 @@ const queryKeys = {
   },
   locations: {
     all: ['locations'] as const,
-    list: (active: boolean) => ['locations', 'list', active] as const
+    list: (status: string) => ['locations', 'list', status] as const,
+    occupancy: (pk: number) => ['locations', 'occupancy', pk] as const
   },
   inventory: {
     all: ['inventory'] as const,

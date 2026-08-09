@@ -253,8 +253,8 @@ function SeedTraysTable() {
     queryFn: ({ signal }) => getSuppliers(signal)
   })
   const { data: locations = [] } = useQuery({
-    queryKey: queryKeys.locations.list(true),
-    queryFn: ({ signal }) => getLocations(signal)
+    queryKey: queryKeys.locations.list('active'),
+    queryFn: ({ signal }) => getLocations(signal, true)
   })
   const trayMutation = useMutation({
     mutationFn: ({ model, receipt }: { model: number; receipt: SeedTrayReceiptCreate }) => receiveSeedTrays(model, receipt),

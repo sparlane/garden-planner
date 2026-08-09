@@ -23,8 +23,8 @@ function InventoryReceiptsView() {
     queryFn: ({ signal }) => getInventoryItems({ active: true }, signal)
   })
   const { data: locations = [] } = useQuery({
-    queryKey: queryKeys.locations.list(true),
-    queryFn: ({ signal }) => getLocations(signal)
+    queryKey: queryKeys.locations.list('active'),
+    queryFn: ({ signal }) => getLocations(signal, true)
   })
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,

@@ -91,6 +91,35 @@ def location_occupancy(location, subtree=False):
     )
 
 
+#: Singular forms of the capacity bases, for messages an operator reads.
+_BASIS_NOUNS = {
+    Location.CapacityBasis.TRAYS: 'tray',
+    Location.CapacityBasis.CONTAINERS: 'container',
+    Location.CapacityBasis.PLANTS: 'plant',
+    Location.CapacityBasis.AREA: 'area',
+}
+
+
+def _counted_in(basis, count):
+    """Name a basis in the number the sentence is about."""
+    noun = _BASIS_NOUNS.get(basis, basis)
+    return noun if count == 1 else f'{noun}s'
+
+
+def _plain(value):
+    """Render a capacity without the trailing zeros of its stored scale.
+
+    A bench that holds two trays should say two, not 2.000. Decimal's own `g`
+    format keeps the stored scale, and stripping zeros unconditionally would
+    turn 100 into 1, so the decimal point has to be there before anything is
+    removed.
+    """
+    text = f'{value:f}'
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
 def capacity_chain(location):
     """Return the location and its ancestors that actually limit anything.
 
@@ -132,9 +161,16 @@ def check_capacity(destination, contribution, override_reason='', lock=True):
             continue
         adding = contribution.of(basis)
         if not adding:
+            # A mismatch is only an error at the place being chosen: putting a
+            # loose pot on a bench counted in trays is a category error worth
+            # saying out loud. An ancestor counted in something else simply
+            # does not constrain this — a greenhouse measured in trays has no
+            # opinion about a potted plant standing on one of its benches.
+            if limit.pk != destination.pk:
+                continue
             raise ValidationError({
                 'destination': (
-                    f'{limit.name} is measured in {limit.get_capacity_basis_display().lower()}, '
+                    f'{limit.name} is measured in {_counted_in(basis, 2)}, '
                     'which this does not occupy.'
                 ),
             })
@@ -144,8 +180,8 @@ def check_capacity(destination, contribution, override_reason='', lock=True):
         if used + adding > limit.capacity_value:
             raise ValidationError({
                 'destination': (
-                    f'{limit.name} holds {limit.capacity_value:g} '
-                    f'{limit.get_capacity_basis_display().lower()} and already has {used}. '
+                    f'{limit.name} holds {_plain(limit.capacity_value)} '
+                    f'{_counted_in(basis, limit.capacity_value)} and already has {used}. '
                     'Record a reason to place this anyway.'
                 ),
             })

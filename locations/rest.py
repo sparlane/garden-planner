@@ -20,6 +20,11 @@ from .occupancy import blocking_occupancy, location_occupancy
 LEGACY_TRAY_CODE = 'SYSTEM-TRAY-UNKNOWN'
 
 
+def _decimal_string(value):
+    """Render an optional decimal the way every other endpoint renders one."""
+    return None if value is None else str(value)
+
+
 def is_system_managed(location):
     """Return whether a workflow rather than an operator owns this location."""
     if location is None:
@@ -159,10 +164,12 @@ class LocationViewSet(
         return Response({
             'location': location.pk,
             'capacity_basis': location.capacity_basis,
-            'capacity_value': location.capacity_value,
+            # Decimals travel as strings, as they do everywhere else in this
+            # API, so the frontend never parses one into a float artifact.
+            'capacity_value': _decimal_string(location.capacity_value),
             'here': here._asdict(),
             'subtree': below._asdict(),
-            'remaining': remaining,
+            'remaining': _decimal_string(remaining),
         })
 
     def perform_destroy(self, instance):
