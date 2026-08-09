@@ -25,12 +25,13 @@ import {
 } from '../api/seedtrays'
 import { GenerationCleanForm, GenerationCostPanel } from './generation_clean'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
-import { PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
+import { BulkPlantOperationRequest, PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
 import {
   getPlantingSeedTray,
   getSpecificPlantsBySeedTray,
   getSpecificPlantLifecycleEvents,
-  addSpecificPlant,
+  postBulkPlantOperation,
+  previewBulkPlantOperation,
   moveSpecificPlant,
   postSpecificPlantOutcome,
   reverseSpecificPlantEvent
@@ -263,17 +264,24 @@ const PlantLifecycleRow: React.FC<PlantLifecycleRowProps> = ({ plant, locationLa
 
 type GerminationFormProps = {
   cellPlantingPk: number
+  quantity: number
   date: string
   notes: string
   onChangeDate: (value: string) => void
+  onChangeQuantity: (value: number) => void
   onChangeNotes: (value: string) => void
   onSave: () => void
   onCancel: () => void
 }
 
-const GerminationForm: React.FC<GerminationFormProps> = ({ cellPlantingPk, date, notes, onChangeDate, onChangeNotes, onSave, onCancel }) => (
+const GerminationForm: React.FC<GerminationFormProps> = ({ cellPlantingPk, quantity, date, notes, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => (
   <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 400 }}>
     <h5>Record Germination (cell planting #{cellPlantingPk})</h5>
+    <div>
+      <label>
+        Quantity: <input type="number" min={1} max={5000} value={quantity} onChange={(e) => onChangeQuantity(Number(e.target.value))} />
+      </label>
+    </div>
     <div>
       <label>
         Date: <input type="datetime-local" value={date} onChange={(e) => onChangeDate(e.target.value)} />
@@ -285,8 +293,8 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ cellPlantingPk, date,
       </label>
     </div>
     <div style={{ marginTop: 8 }}>
-      <Button variant="success" onClick={onSave} disabled={!date}>
-        Save
+      <Button variant="success" onClick={onSave} disabled={!date || quantity < 1}>
+        Review and save
       </Button>{' '}
       <Button variant="secondary" onClick={onCancel}>
         Cancel
@@ -515,6 +523,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const cache = useQueryClient()
   const [germinatingCellPlantingPk, setGerminatingCellPlantingPk] = React.useState<number>()
   const [germinationDate, setGerminationDate] = React.useState(localDatetimeInputValue())
+  const [germinationQuantity, setGerminationQuantity] = React.useState(1)
   const [germinationNotes, setGerminationNotes] = React.useState('')
   const [moveForm, setMoveForm] = React.useState<MoveForm>()
   const [inventoryAction, setInventoryAction] = React.useState<InventoryAction>()
@@ -583,7 +592,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     enabled: Boolean(moveTrayPk)
   })
   const germinationMutation = useMutation({
-    mutationFn: addSpecificPlant,
+    mutationFn: postBulkPlantOperation,
     onSuccess: () =>
       Promise.all([
         cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlants(seedTrayPk) }),
@@ -681,12 +690,29 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     if (!germinatingCellPlantingPk) return
     const parsedDate = parseLocalDatetimeInput(germinationDate)
     if (!parsedDate) return
-    await germinationMutation.mutateAsync({
-      cell_planting: germinatingCellPlantingPk,
-      germinated: parsedDate.toISOString(),
-      notes: germinationNotes || undefined
-    })
+    const request: BulkPlantOperationRequest = {
+      idempotency_key: globalThis.crypto.randomUUID(),
+      action: 'germinate',
+      atomicity: 'all_or_nothing',
+      occurred_at: parsedDate.toISOString(),
+      reason: germinationNotes,
+      plants: [],
+      selection_source: { mode: 'cell_planting', cell_planting: germinatingCellPlantingPk },
+      action_payload: {
+        cell_planting: germinatingCellPlantingPk,
+        quantity: germinationQuantity,
+        notes: germinationNotes
+      }
+    }
+    const review = await previewBulkPlantOperation(request)
+    if (review.conflicts > 0) {
+      globalThis.alert(review.source?.conflicts.join(' ') || 'This germination cannot be recorded.')
+      return
+    }
+    if (!globalThis.confirm(`Create ${review.eligible} individually tracked plant${review.eligible === 1 ? '' : 's'}?`)) return
+    await germinationMutation.mutateAsync(request)
     setGerminatingCellPlantingPk(undefined)
+    setGerminationQuantity(1)
     setGerminationNotes('')
   }
 
@@ -1092,9 +1118,11 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       {germinatingCellPlantingPk && (
         <GerminationForm
           cellPlantingPk={germinatingCellPlantingPk}
+          quantity={germinationQuantity}
           date={germinationDate}
           notes={germinationNotes}
           onChangeDate={setGerminationDate}
+          onChangeQuantity={setGerminationQuantity}
           onChangeNotes={setGerminationNotes}
           onSave={handleRecordGermination}
           onCancel={() => setGerminatingCellPlantingPk(undefined)}
