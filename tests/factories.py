@@ -17,12 +17,12 @@ from garden.models import (
 )
 from inventory.models import (
     InventoryItem,
-    InventoryLocation,
     InventoryUnit,
     StockLot,
     StockMovement,
 )
 from inventory.units import UnitCode
+from locations.models import Location
 from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -126,15 +126,15 @@ def make_seed_packet(**overrides):
     return SeedPacket.objects.create(**values)
 
 
-def make_inventory_location(**overrides):
-    """Create a stock location that can hold and issue inventory."""
+def make_location(**overrides):
+    """Create a physical location that can hold stock, trays, or plants."""
     values = {
         'name': _next_name('Location'),
         'code': _next_name('LOC').replace(' ', '-').upper(),
-        'location_type': InventoryLocation.LocationType.STORAGE,
+        'location_type': Location.LocationType.STORAGE,
     }
     values.update(overrides)
-    return InventoryLocation.objects.create(**values)
+    return Location.objects.create(**values)
 
 
 def make_inventory_item(**overrides):
@@ -172,7 +172,7 @@ def make_stock_lot(**overrides):
     values.setdefault('currency_code', workspace.currency_code)
     lot = StockLot.objects.create(**values)
     if location is None:
-        location = make_inventory_location(workspace=workspace)
+        location = make_location(workspace=workspace)
     StockMovement.objects.create(
         workspace=workspace,
         lot=lot,
@@ -278,12 +278,12 @@ def make_seed_tray(**overrides):
     values.update(overrides)
     tray_model = values['model']
     workspace = values.get('workspace', tray_model.workspace)
-    location, _created = InventoryLocation.objects.get_or_create(
+    location, _created = Location.objects.get_or_create(
         workspace=workspace,
         code='TEST-TRAY-STOCK',
         defaults={
             'name': 'Test tray stock',
-            'location_type': InventoryLocation.LocationType.STORAGE,
+            'location_type': Location.LocationType.STORAGE,
         },
     )
     lot = StockLot.objects.create(

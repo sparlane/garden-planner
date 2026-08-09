@@ -7,7 +7,8 @@ import json
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from inventory.models import InventoryLocation, InventoryUnit, StockMovement
+from inventory.models import InventoryUnit, StockMovement
+from locations.models import Location
 from plantings.models import SeedTrayPlanting
 from tests.api import RESTContractTestCase
 from tests.factories import (
@@ -63,10 +64,10 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
             },
         )
         supplier = make_supplier()
-        location = InventoryLocation.objects.create(
+        location = Location.objects.create(
             name='Receipt store',
             code='RECEIPT-STORE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
         response = self.client.post(
             f"/seedtrays/seedtraymodels/{tray_model['pk']}/receive/",
@@ -162,10 +163,10 @@ class SeedTrayCellIntegrityTests(TestCase):
         self.tray = make_seed_tray(model=self.tray_model)
         self.other_tray = make_seed_tray(model=self.other_model)
         self.supplier = make_supplier()
-        self.location = InventoryLocation.objects.create(
+        self.location = Location.objects.create(
             name='Tray receiving',
             code='TRAY-RECEIVING',
-            location_type=InventoryLocation.LocationType.RECEIVING,
+            location_type=Location.LocationType.RECEIVING,
         )
 
     def test_detail_view_requires_login(self):
@@ -258,10 +259,10 @@ class SeedTrayCellIntegrityTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('unit', response.data)
 
-        destination = InventoryLocation.objects.create(
+        destination = Location.objects.create(
             name='Growing bench',
             code='GROWING-BENCH',
-            location_type=InventoryLocation.LocationType.GROWING,
+            location_type=Location.LocationType.GROWING,
         )
         response = self.client.post(
             f'/inventory/serialized-units/{unit.pk}/transfer/',

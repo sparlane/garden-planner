@@ -29,7 +29,7 @@ from seeds.services import ensure_packet_inventory_identity
 from tests.factories import (
     make_batch_for_packet,
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_seed_packet,
     make_seed_tray,
     make_seed_tray_cell,
@@ -185,7 +185,7 @@ class GenerationContentsTestCase(TestCase):  # pylint: disable=too-many-instance
         super().setUp()
         self.workspace = Workspace.objects.get(pk=1)
         self.user = get_user_model().objects.create_user('cleaner', password='x')
-        self.location = make_inventory_location()
+        self.location = make_location()
         self.media_item = make_inventory_item(
             base_unit=UnitCode.LITRE,
             default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,

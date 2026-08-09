@@ -9,13 +9,13 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 
+from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
 
 from .ledger import unit_physical_state
 from .models import (
     InventoryItem,
-    InventoryLocation,
     InventoryUnit,
     InventoryUnitReconciliation,
     StockLot,
@@ -45,17 +45,17 @@ class SerializedInventoryTests(TestCase):
             base_unit=UnitCode.EACH,
             tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
         )
-        self.store = InventoryLocation.objects.create(
+        self.store = Location.objects.create(
             workspace=self.workspace,
             name='Tray store',
             code='TRAY-STORE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
-        self.growing = InventoryLocation.objects.create(
+        self.growing = Location.objects.create(
             workspace=self.workspace,
             name='Propagation house',
             code='PROP-HOUSE',
-            location_type=InventoryLocation.LocationType.GROWING,
+            location_type=Location.LocationType.GROWING,
         )
 
     def create_receipt(self, quantity='3', cost='10.0000'):
@@ -192,11 +192,11 @@ class SerializedInventoryTests(TestCase):
 
     def test_legacy_opening_reconciliation_sets_cost_and_location_once(self):
         """Unknown opening facts become audited without rewriting the opening."""
-        unknown = InventoryLocation.objects.create(
+        unknown = Location.objects.create(
             workspace=self.workspace,
             name='Unknown tray location',
             code='SYSTEM-TRAY-UNKNOWN',
-            location_type=InventoryLocation.LocationType.ADJUSTMENT,
+            location_type=Location.LocationType.ADJUSTMENT,
         )
         lot = StockLot.objects.create(
             workspace=self.workspace,

@@ -7,10 +7,11 @@ from typing import NamedTuple
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from locations.models import Location
 from workspaces.models import get_current_workspace
 
 from .ledger import MONEY_QUANTUM, physical_balance
-from .models import InventoryLocation, StockLot, StockMovement
+from .models import StockLot, StockMovement
 from .rest_query import parse_boolean, parse_date, parse_integer
 
 
@@ -89,7 +90,7 @@ class BalanceView(APIView):
                 location_ids[movement['lot_id']].add(movement['destination_id'])
         locations = {
             location.pk: location
-            for location in InventoryLocation.objects.filter(
+            for location in Location.objects.filter(
                 workspace=workspace,
                 pk__in={pk for values in location_ids.values() for pk in values},
             )

@@ -51,11 +51,11 @@ function initialDecisions(contents: SeedTrayGenerationContents): CleanDecisions 
   }
 }
 
-type InventoryLocationOption = { pk: number; name: string }
+type LocationOption = { pk: number; name: string }
 
 type GenerationCleanFormProps = {
   contents: SeedTrayGenerationContents
-  locations: Array<InventoryLocationOption>
+  locations: Array<LocationOption>
   busy: boolean
   onCancel: () => void
   onConfirm: (request: { reason: string; plants: Array<CleanPlantDisposition>; seeds: Array<CleanSeedDisposition>; media: Array<CleanMediaDisposition>; openNext: boolean }) => void

@@ -41,7 +41,7 @@ import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
 import { getGardenSquares } from '../api/garden'
-import { getInventoryLocations } from '../api/inventory'
+import { getLocations } from '../api/locations'
 import { queryClient, queryKeys } from '../query'
 
 interface SeedTrayDetailsProps {
@@ -532,8 +532,8 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   })
   const selectedSeedTray = seedTraysQuery.data?.find((tray) => tray.pk === seedTrayPk)
   const inventoryLocationsQuery = useQuery({
-    queryKey: queryKeys.inventory.locations,
-    queryFn: ({ signal }) => getInventoryLocations(signal)
+    queryKey: queryKeys.locations.list(true),
+    queryFn: ({ signal }) => getLocations(signal)
   })
   const inventoryMovementsQuery = useQuery({
     queryKey: queryKeys.seedTrays.movements(selectedSeedTray?.inventory_unit ?? 0),

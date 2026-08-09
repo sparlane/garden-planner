@@ -35,7 +35,7 @@ from plantings.lifecycle import (
 from plantings.models import ProductionBatch, SowingStockPosting, SpecificPlant
 from tests.factories import (
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_specific_plant,
     make_specific_plant_location,
     make_stock_lot,
@@ -72,7 +72,7 @@ class CostingConcurrencyTestCase(TransactionTestCase):
         record_germination_event(plant, self.user)
         make_specific_plant_location(specific_plant=plant)
         sowing = plant.cell_planting.seed_tray_planting
-        location = make_inventory_location(workspace=sowing.workspace)
+        location = make_location(workspace=sowing.workspace)
         lot = make_stock_lot(
             item=make_inventory_item(
                 workspace=sowing.workspace,

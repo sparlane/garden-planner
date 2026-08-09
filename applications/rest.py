@@ -18,12 +18,12 @@ from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
 from inventory.ledger import quantize_quantity
 from inventory.models import (
     InventoryItem,
-    InventoryLocation,
     InventoryUnit,
     ItemUnitConversion,
     StockLot,
 )
 from inventory.rest_query import parse_datetime, parse_integer
+from locations.models import Location
 from plantings.models import ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTray, SeedTrayCell
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
@@ -250,7 +250,7 @@ class ApplicationDraftSerializer(CurrentWorkspaceSerializerMixin, ActionSerializ
 
     applied_at = serializers.DateTimeField()
     source_location = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
     )
     batch = serializers.PrimaryKeyRelatedField(
         queryset=ProductionBatch.objects.all(),

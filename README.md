@@ -195,11 +195,15 @@ API endpoints (examples)
   - GET /seeds/seeds/ — list Seeds entries
   - GET /seeds/packets/ — list non-empty SeedPacket (current stock)
   - POST /seeds/packets/empty/ — mark a SeedPacket empty
+- Locations:
+  - GET /locations/ — list the physical places the workspace uses, filterable by `active` and `location_type`
+  - POST /locations/ — name a new place; PATCH `{"active": false}` retires one that stock has passed through
 - REST routers are registered in each app (see `*.rest.py` files) and wired into the Django URL config.
 
 Project layout (high level)
 - gp/ — Django project settings and WSGI/ASGI entry points
 - frontend/ — JS React components and build configuration
+- locations/ — the shared catalog of physical places, referenced by stock, trays, and plants
 - garden/, plants/, seeds/, plantings/, supplies/ — Django apps with models, views, rest.py, urls
 - setup-venv.sh, setup-db.sh, build-frontend.sh, start-wsgi.sh — helper scripts
 - requirements.txt, package.json — dependency manifests

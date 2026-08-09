@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
 
@@ -25,7 +26,6 @@ from .ledger import (
 )
 from .models import (
     InventoryItem,
-    InventoryLocation,
     QuantityCertainty,
     StockLot,
     StockMovement,
@@ -57,17 +57,17 @@ class LedgerServiceTests(TestCase):
             category=InventoryItem.Category.GROWING_MEDIA,
             base_unit=UnitCode.MILLILITRE,
         )
-        self.store = InventoryLocation.objects.create(
+        self.store = Location.objects.create(
             workspace=self.workspace,
             name='Store',
             code='STORE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
-        self.growing = InventoryLocation.objects.create(
+        self.growing = Location.objects.create(
             workspace=self.workspace,
             name='Propagation house',
             code='PROP',
-            location_type=InventoryLocation.LocationType.GROWING,
+            location_type=Location.LocationType.GROWING,
         )
 
     def make_receipt(self, **overrides):
@@ -159,11 +159,11 @@ class LedgerServiceTests(TestCase):
         """An invalid later line prevents every lot and movement from posting."""
         receipt = self.make_receipt()
         self.add_receipt_line(receipt)
-        inactive = InventoryLocation.objects.create(
+        inactive = Location.objects.create(
             workspace=self.workspace,
             name='Closed store',
             code='CLOSED',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
             active=False,
         )
         self.add_receipt_line(receipt, destination=inactive)
@@ -344,11 +344,11 @@ class UnknownQuantityReversalTests(TestCase):
             category=InventoryItem.Category.SEED,
             base_unit=UnitCode.SEED,
         )
-        self.container = InventoryLocation.objects.create(
+        self.container = Location.objects.create(
             workspace=self.workspace,
             name='Seed packet',
             code='PACKET-UNKNOWN',
-            location_type=InventoryLocation.LocationType.SEED_PACKET,
+            location_type=Location.LocationType.SEED_PACKET,
         )
         self.lot = StockLot.objects.create(
             workspace=self.workspace,
