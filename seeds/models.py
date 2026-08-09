@@ -9,7 +9,6 @@ from django.db import models
 
 from inventory.models import (
     InventoryItem,
-    InventoryLocation,
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
     QuantityCertainty,
@@ -17,6 +16,7 @@ from inventory.models import (
     StockMovement,
     StockReceipt,
 )
+from locations.models import Location
 from plants.models import PlantVariety
 from supplies.models import Supplier
 from workspaces.models import WorkspaceOwnedModel
@@ -56,7 +56,7 @@ class SeedPacket(WorkspaceOwnedModel):
         related_name='seed_packet',
     )
     storage_location = models.OneToOneField(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -85,7 +85,7 @@ class SeedPacketReceiptDraft(WorkspaceOwnedModel):
         related_name='seed_packet_draft',
     )
     storage_location = models.OneToOneField(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         related_name='seed_packet_draft',
     )

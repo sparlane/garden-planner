@@ -9,12 +9,12 @@ from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
 
+from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import Workspace, get_current_workspace
 
 from .models import (
     InventoryItem,
-    InventoryLocation,
     InventoryUnit,
     QuantityCertainty,
     StockLot,
@@ -46,11 +46,11 @@ class LedgerModelTests(TestCase):
             base_unit=UnitCode.MILLILITRE,
             reorder_level=Decimal('1000'),
         )
-        self.location = InventoryLocation.objects.create(
+        self.location = Location.objects.create(
             workspace=self.workspace,
             name='Main store',
             code='STORE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
 
     def make_opening_lot(self, **overrides):
@@ -71,11 +71,11 @@ class LedgerModelTests(TestCase):
     def test_location_code_and_lot_identifier_are_workspace_scoped(self):
         """Operational identifiers can repeat only across workspace boundaries."""
         with self.assertRaises(ValidationError):
-            InventoryLocation.objects.create(
+            Location.objects.create(
                 workspace=self.workspace,
                 name='Duplicate store',
                 code='STORE',
-                location_type=InventoryLocation.LocationType.STORAGE,
+                location_type=Location.LocationType.STORAGE,
             )
 
         first = self.make_opening_lot(identifier='KNOWN-LOT')
@@ -129,11 +129,11 @@ class LedgerModelTests(TestCase):
         self.assertIn('base_quantity', context.exception.message_dict)
 
         other = Workspace.objects.create(name='Foreign receipt workspace')
-        foreign_location = InventoryLocation.objects.create(
+        foreign_location = Location.objects.create(
             workspace=other,
             name='Foreign store',
             code='STORE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
         line.base_quantity = Decimal('2000')
         line.destination = foreign_location
@@ -374,11 +374,11 @@ class LedgerModelTests(TestCase):
         self.assertEqual(line.normalized_quantity(), Decimal('0'))
 
         other = Workspace.objects.create(name='Foreign count workspace')
-        foreign_location = InventoryLocation.objects.create(
+        foreign_location = Location.objects.create(
             workspace=other,
             name='Foreign count store',
             code='COUNT',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
         line.location = foreign_location
         with self.assertRaises(ValidationError) as context:

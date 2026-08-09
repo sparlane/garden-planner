@@ -19,7 +19,7 @@ from inventory.models import InventoryItem, StockMovement
 from inventory.units import UnitCode
 from tests.factories import (
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_stock_lot,
 )
 
@@ -31,7 +31,7 @@ class ApplicationMovementOwnershipTests(TestCase):
 
     def setUp(self):
         super().setUp()
-        self.location = make_inventory_location()
+        self.location = make_location()
         self.item = make_inventory_item()
         self.lot = make_stock_lot(item=self.item, location=self.location, quantity='50')
         self.application = InputApplication.objects.create(

@@ -2,7 +2,8 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Col, Form, Row } from 'react-bootstrap'
 
-import { getInventoryItems, getInventoryLocations, getInventoryUnits, getStockReceipts } from '../api/inventory'
+import { getInventoryItems, getInventoryUnits, getStockReceipts } from '../api/inventory'
+import { getLocations } from '../api/locations'
 import { getSuppliers } from '../api/supplies'
 import { queryKeys } from '../query'
 import { StockReceiptStatus } from '../types/inventory'
@@ -22,8 +23,8 @@ function InventoryReceiptsView() {
     queryFn: ({ signal }) => getInventoryItems({ active: true }, signal)
   })
   const { data: locations = [] } = useQuery({
-    queryKey: queryKeys.inventory.locations,
-    queryFn: ({ signal }) => getInventoryLocations(signal)
+    queryKey: queryKeys.locations.list(true),
+    queryFn: ({ signal }) => getLocations(signal)
   })
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,

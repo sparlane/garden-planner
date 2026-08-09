@@ -21,7 +21,7 @@ from tests.factories import (
     make_garden_geometry_confirmation,
     make_garden_square,
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_production_batch,
     make_seed_tray,
     make_seed_tray_cell,
@@ -55,7 +55,7 @@ class ApplicationServiceTestCase(TestCase):
         """Stock one media lot and open a batch every case draws on."""
         super().setUp()
         self.workspace = Workspace.objects.get(pk=1)
-        self.location = make_inventory_location()
+        self.location = make_location()
         self.media = make_inventory_item(
             base_unit=UnitCode.LITRE,
             default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,

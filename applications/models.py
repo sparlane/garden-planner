@@ -27,13 +27,13 @@ from inventory.models import (
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
     InventoryItem,
-    InventoryLocation,
     InventoryUnit,
     ItemUnitConversion,
     StockLot,
     StockMovement,
 )
 from inventory.units import UnitCode
+from locations.models import Location
 from plantings.models import ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration
 from workspaces.models import WorkspaceOwnedModel
@@ -100,7 +100,7 @@ class InputApplication(WorkspaceOwnedModel):
     )
     applied_at = models.DateTimeField()
     source_location = models.ForeignKey(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         related_name='input_applications',
     )

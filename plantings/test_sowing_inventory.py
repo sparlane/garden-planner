@@ -14,11 +14,11 @@ from rest_framework.test import APITestCase
 
 from inventory.ledger import OpeningBalanceRequest, post_opening_balance
 from inventory.models import (
-    InventoryLocation,
     QuantityCertainty,
     StockMovement,
 )
 from inventory.units import UnitCode
+from locations.models import Location
 from seeds.models import SeedPacket, Seeds
 from seeds.services import (
     create_seed_inventory_item,
@@ -283,11 +283,11 @@ class ConcurrentSowingInventoryTests(TransactionTestCase):
         item = create_seed_inventory_item(workspace, seeds, UnitCode.SEED)
         seeds.inventory_item = item
         seeds.save(update_fields=['inventory_item'])
-        location = InventoryLocation.objects.create(
+        location = Location.objects.create(
             workspace=workspace,
             name='Concurrent packet',
             code='CONCURRENT-SEED-PACKET',
-            location_type=InventoryLocation.LocationType.SEED_PACKET,
+            location_type=Location.LocationType.SEED_PACKET,
         )
         lot, _movement = post_opening_balance(
             workspace,

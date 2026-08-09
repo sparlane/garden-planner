@@ -4,7 +4,8 @@ import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { createStockReceipt, getItemUnitConversions, updateStockReceipt } from '../api/inventory'
 import { ApiError, formatMeasure, formatQuantity } from '../utils'
-import { InventoryItem, InventoryLocation, InventoryUnit, QuantityCertainty, StockReceipt, StockReceiptLine, StockReceiptLineWrite, UnitCode } from '../types/inventory'
+import { InventoryItem, InventoryUnit, QuantityCertainty, StockReceipt, StockReceiptLine, StockReceiptLineWrite, UnitCode } from '../types/inventory'
+import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
 import { queryKeys } from '../query'
 import { documentErrors, invalidateReceipts, lineFieldErrors, localErrorMessage } from './receipt_list'
@@ -96,7 +97,7 @@ function linePayload(line: ReceiptLineDraft): StockReceiptLineWrite {
   }
 }
 
-function receivableLocations(locations: Array<InventoryLocation>) {
+function receivableLocations(locations: Array<Location>) {
   // Seed packet containers are system-managed, and SYSTEM-TRAY-UNKNOWN exists
   // only so the tray migration had somewhere to put unplaced assets.
   return locations.filter((location) => location.location_type !== 'seed_packet' && location.code !== 'SYSTEM-TRAY-UNKNOWN')
@@ -110,7 +111,7 @@ interface LineRowProps {
   line: ReceiptLineDraft
   index: number
   items: Array<InventoryItem>
-  locations: Array<InventoryLocation>
+  locations: Array<Location>
   units: Array<InventoryUnit>
   errors: Record<string, string>
   removable: boolean
@@ -249,7 +250,7 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
 interface ReceiptEditorProps {
   receipt?: StockReceipt
   items: Array<InventoryItem>
-  locations: Array<InventoryLocation>
+  locations: Array<Location>
   suppliers: Array<Supplier>
   units: Array<InventoryUnit>
   onClosed: () => void

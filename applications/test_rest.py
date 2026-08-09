@@ -12,7 +12,7 @@ from inventory.units import UnitCode
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_seed_tray,
     make_seed_tray_cell,
     make_seed_tray_generation,
@@ -32,7 +32,7 @@ class ApplicationRESTTestCase(RESTContractTestCase):
 
     def setUp(self):
         super().setUp()
-        self.location = make_inventory_location()
+        self.location = make_location()
         self.media = make_inventory_item(
             base_unit=UnitCode.LITRE,
             default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,
@@ -323,7 +323,7 @@ class ApplicationIsolationTests(ApplicationRESTTestCase):
         """A document cannot consume stock it does not own."""
         other = Workspace.objects.create(name='Other workspace')
         item = make_inventory_item(workspace=other)
-        location = make_inventory_location(workspace=other)
+        location = make_location(workspace=other)
         lot = make_stock_lot(item=item, location=location)
 
         response = self.client.post(
@@ -339,7 +339,7 @@ class ApplicationIsolationTests(ApplicationRESTTestCase):
         InputApplication.objects.create(
             workspace=other,
             applied_at=timezone.now(),
-            source_location=make_inventory_location(workspace=other),
+            source_location=make_location(workspace=other),
         )
         self.create_draft()
 

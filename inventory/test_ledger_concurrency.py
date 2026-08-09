@@ -11,6 +11,7 @@ from django.db import close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
+from locations.models import Location
 from workspaces.models import Workspace, get_current_workspace
 
 from .ledger import (
@@ -21,7 +22,7 @@ from .ledger import (
     post_stock_movement,
     post_unit_movement,
 )
-from .models import InventoryItem, InventoryLocation, InventoryUnit, StockLot, StockMovement
+from .models import InventoryItem, Location, InventoryUnit, StockLot, StockMovement
 from .units import UnitCode
 
 
@@ -52,11 +53,11 @@ class ConcurrentLedgerTests(TransactionTestCase):
             category=InventoryItem.Category.PACKAGING,
             base_unit=UnitCode.EACH,
         )
-        location = InventoryLocation.objects.create(
+        location = Location.objects.create(
             workspace=workspace,
             name='Concurrency store',
             code='CONCURRENT',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
         lot, _movement = post_opening_balance(
             workspace,
@@ -78,7 +79,7 @@ class ConcurrentLedgerTests(TransactionTestCase):
         close_old_connections()
         workspace = get_current_workspace()
         lot = StockLot.objects.get(pk=self.lot_pk)
-        location = InventoryLocation.objects.get(pk=self.location_pk)
+        location = Location.objects.get(pk=self.location_pk)
         user = get_user_model().objects.get(pk=self.user.pk)
         try:
             post_stock_movement(
@@ -142,17 +143,17 @@ class ConcurrentSerializedUnitTests(TransactionTestCase):
             base_unit=UnitCode.EACH,
             tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
         )
-        source = InventoryLocation.objects.create(
+        source = Location.objects.create(
             workspace=workspace,
             name='Unit source',
             code='UNIT-SOURCE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
-        destination = InventoryLocation.objects.create(
+        destination = Location.objects.create(
             workspace=workspace,
             name='Unit destination',
             code='UNIT-DESTINATION',
-            location_type=InventoryLocation.LocationType.GROWING,
+            location_type=Location.LocationType.GROWING,
         )
         lot = StockLot.objects.create(
             workspace=workspace,
@@ -189,7 +190,7 @@ class ConcurrentSerializedUnitTests(TransactionTestCase):
         close_old_connections()
         workspace = get_current_workspace()
         unit = InventoryUnit.objects.get(pk=self.unit_pk)
-        destination = InventoryLocation.objects.get(pk=self.destination_pk)
+        destination = Location.objects.get(pk=self.destination_pk)
         user = get_user_model().objects.get(pk=self.user.pk)
         try:
             post_unit_movement(

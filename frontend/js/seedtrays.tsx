@@ -6,11 +6,12 @@ import { Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
-import { InventoryLocation, SerializedPhysicalState } from './types/inventory'
+import { SerializedPhysicalState } from './types/inventory'
+import { Location } from './types/locations'
 import { Supplier } from './types/suppliers'
 import { SeedTrayModel, SeedTrayModelCreate, SeedTrayReceiptCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, receiveSeedTrays } from './api/seedtrays'
-import { getInventoryLocations } from './api/inventory'
+import { getLocations } from './api/locations'
 import { getSuppliers } from './api/supplies'
 import { formatDate } from './utils'
 import { queryKeys } from './query'
@@ -130,7 +131,7 @@ interface SeedTrayReceiveProps {
   done: () => void
   models: Array<SeedTrayModel>
   suppliers: Array<Supplier>
-  locations: Array<InventoryLocation>
+  locations: Array<Location>
   receiveTrays: (model: number, data: SeedTrayReceiptCreate) => Promise<void>
 }
 
@@ -252,8 +253,8 @@ function SeedTraysTable() {
     queryFn: ({ signal }) => getSuppliers(signal)
   })
   const { data: locations = [] } = useQuery({
-    queryKey: queryKeys.inventory.locations,
-    queryFn: ({ signal }) => getInventoryLocations(signal)
+    queryKey: queryKeys.locations.list(true),
+    queryFn: ({ signal }) => getLocations(signal)
   })
   const trayMutation = useMutation({
     mutationFn: ({ model, receipt }: { model: number; receipt: SeedTrayReceiptCreate }) => receiveSeedTrays(model, receipt),
@@ -264,7 +265,7 @@ function SeedTraysTable() {
     return models
   }, {})
 
-  const locationsMap = locations.reduce<Record<number, InventoryLocation>>((result, entry) => {
+  const locationsMap = locations.reduce<Record<number, Location>>((result, entry) => {
     result[entry.pk] = entry
     return result
   }, {})

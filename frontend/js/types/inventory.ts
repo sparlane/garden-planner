@@ -14,17 +14,6 @@ interface InventoryUnit {
 
 type SerializedPhysicalState = 'available' | 'quarantined' | 'lost' | 'retired' | 'dispatched' | 'returned'
 
-interface InventoryLocation {
-  pk: number
-  name: string
-  code: string
-  location_type: 'receiving' | 'storage' | 'growing' | 'dispatch' | 'quarantine' | 'adjustment' | 'seed_packet'
-  active: boolean
-  notes: string
-  created: string
-  updated: string
-}
-
 interface SerializedInventoryUnit {
   pk: number
   item: number
@@ -221,7 +210,6 @@ export {
   InventoryItem,
   InventoryItemCreate,
   InventoryItemFilters,
-  InventoryLocation,
   InventoryTrackingMode,
   InventoryUnit,
   InventoryUsageBasis,

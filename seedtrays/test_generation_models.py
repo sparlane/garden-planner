@@ -20,7 +20,7 @@ from plantings.models import SeedTrayPlanting
 from seeds.services import ensure_packet_inventory_identity
 from tests.factories import (
     make_batch_for_packet,
-    make_inventory_location,
+    make_location,
     make_seed_packet,
     make_seed_tray,
     make_seed_tray_cell,
@@ -266,7 +266,7 @@ class SeedTrayGenerationResidualTests(TestCase):
                             lot=self.lot,
                             movement_type=StockMovement.MovementType.ADJUSTMENT_GAIN,
                             quantity=Decimal('1'),
-                            destination=make_inventory_location(),
+                            destination=make_location(),
                             occurred_at=timezone.now(),
                         ),
                     ),

@@ -15,7 +15,7 @@ from inventory.units import UnitCode
 from tests.factories import (
     make_garden_square,
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_production_batch,
     make_seed_tray,
     make_seed_tray_cell,
@@ -45,7 +45,7 @@ class ApplicationFixtureTestCase(TestCase):
     def setUp(self):
         """Stock one lot at one location for every case to draw on."""
         super().setUp()
-        self.location = make_inventory_location()
+        self.location = make_location()
         self.item = make_inventory_item()
         self.lot = make_stock_lot(item=self.item, location=self.location, quantity='50')
 
@@ -80,7 +80,7 @@ class ApplicationFixtureTestCase(TestCase):
         direction a cross-workspace mistake actually arrives from.
         """
         other = Workspace.objects.create(name=_next_workspace_name())
-        location = make_inventory_location(workspace=other)
+        location = make_location(workspace=other)
         item = make_inventory_item(workspace=other)
         lot = make_stock_lot(item=item, location=location)
         application = InputApplication.objects.create(
@@ -147,7 +147,7 @@ class InputApplicationTests(ApplicationFixtureTestCase):
 
     def test_an_inactive_source_location_is_refused(self):
         """Stock cannot be drawn from a location that is out of service."""
-        retired = make_inventory_location(active=False)
+        retired = make_location(active=False)
         with self.assertRaises(ValidationError) as caught:
             self.make_application(source_location=retired)
         self.assertIn('source_location', caught.exception.message_dict)
@@ -159,7 +159,7 @@ class InputApplicationTests(ApplicationFixtureTestCase):
             InputApplication.objects.create(
                 workspace=other,
                 applied_at=timezone.now(),
-                source_location=make_inventory_location(workspace=other),
+                source_location=make_location(workspace=other),
                 batch=make_production_batch(),
             )
         self.assertIn('batch', caught.exception.message_dict)

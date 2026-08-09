@@ -4,7 +4,8 @@ import { Alert, Badge, Button, Form, Table } from 'react-bootstrap'
 
 import { deleteStockReceipt, postStockReceipt, reverseStockReceipt } from '../api/inventory'
 import { formatMeasure } from '../utils'
-import { InventoryItem, InventoryLocation, StockReceipt, StockReceiptLine } from '../types/inventory'
+import { InventoryItem, StockReceipt, StockReceiptLine } from '../types/inventory'
+import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
 import { queryKeys } from '../query'
 
@@ -191,7 +192,7 @@ function LineQuantity({ line }: { line: StockReceiptLine }) {
 interface ReceiptLinesTableProps {
   receipt: StockReceipt
   items: Array<InventoryItem>
-  locations: Array<InventoryLocation>
+  locations: Array<Location>
 }
 
 function ReceiptLinesTable({ receipt, items, locations }: ReceiptLinesTableProps) {
@@ -231,7 +232,7 @@ function ReceiptLinesTable({ receipt, items, locations }: ReceiptLinesTableProps
 interface ReceiptTableProps {
   receipts: Array<StockReceipt>
   items: Array<InventoryItem>
-  locations: Array<InventoryLocation>
+  locations: Array<Location>
   suppliers: Array<Supplier>
   onEdit: (pk: number) => void
   onCancelled: (pk: number) => void

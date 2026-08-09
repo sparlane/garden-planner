@@ -3,7 +3,6 @@ import {
   InventoryItem,
   InventoryItemCreate,
   InventoryItemFilters,
-  InventoryLocation,
   InventoryUnit,
   ItemUnitConversion,
   ItemUnitConversionCreate,
@@ -23,10 +22,6 @@ function getInventoryBalances(item: number, signal?: AbortSignal): Promise<Array
 
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
   return fetchAsJson<Array<InventoryUnit>>('/inventory/units/', signal)
-}
-
-function getInventoryLocations(signal?: AbortSignal): Promise<Array<InventoryLocation>> {
-  return fetchAsJson<Array<InventoryLocation>>('/inventory/locations/?active=true', signal)
 }
 
 function getInventoryItems(filters: InventoryItemFilters, signal?: AbortSignal): Promise<Array<InventoryItem>> {
@@ -106,7 +101,6 @@ export {
   deleteStockReceipt,
   getInventoryBalances,
   getInventoryItems,
-  getInventoryLocations,
   getInventoryUnits,
   getItemUnitConversions,
   getStockReceipts,

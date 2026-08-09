@@ -10,6 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from locations.models import Location
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
@@ -23,7 +24,7 @@ from .ledger import (
     unit_is_in_use,
     unit_physical_state,
 )
-from .models import InventoryLocation, InventoryUnit, StockLot, StockMovement
+from .models import InventoryUnit, StockLot, StockMovement
 from .rest_query import parse_boolean, parse_integer
 
 
@@ -145,7 +146,7 @@ class UnitMovementActionSerializer(
     """Validate a destination and audit metadata for one unit action."""
 
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
         allow_null=True,
         required=False,
     )
@@ -167,7 +168,7 @@ class UnitReconciliationActionSerializer(
         min_value=Decimal('0'),
     )
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
     )
     occurred_at = serializers.DateTimeField(required=False)
     reason = serializers.CharField(allow_blank=False, trim_whitespace=True)

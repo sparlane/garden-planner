@@ -16,12 +16,12 @@ from rest_framework_nested import routers
 from inventory.ledger import post_receipt, unit_is_in_use, unit_physical_state
 from inventory.models import (
     InventoryItem,
-    InventoryLocation,
     StockReceipt,
     StockReceiptLine,
 )
 from inventory.serialized_rest import InventoryUnitSerializer
 from inventory.units import UnitCode
+from locations.models import Location
 from supplies.models import Supplier
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
@@ -127,7 +127,7 @@ class SeedTrayReceiptSerializer(
         min_value=Decimal('0'),
     )
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
     )
     tax_rate = serializers.DecimalField(
         max_digits=7,

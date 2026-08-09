@@ -6,12 +6,13 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.db.models import ProtectedError, Q
+from django.db.models import Q
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from locations.models import Location
 from workspaces.models import get_current_workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -32,7 +33,6 @@ from .ledger import (
 )
 from .models import (
     InventoryItem,
-    InventoryLocation,
     ItemUnitConversion,
     QuantityCertainty,
     StockLot,
@@ -64,38 +64,6 @@ def _run_domain_action(function, *args):
         return function(*args)
     except DjangoValidationError as exc:
         raise ValidationError(_model_errors(exc)) from exc
-
-
-class InventoryLocationSerializer(serializers.ModelSerializer):
-    """Serialize one current-workspace physical inventory location."""
-
-    class Meta:
-        model = InventoryLocation
-        fields = [
-            'pk',
-            'name',
-            'code',
-            'location_type',
-            'active',
-            'notes',
-            'created',
-            'updated',
-        ]
-        read_only_fields = ['created', 'updated']
-
-    def validate(self, attrs):
-        """Reserve packet-container locations for the seed workflow."""
-        if self.instance and self.instance.code == 'SYSTEM-TRAY-UNKNOWN':
-            raise ValidationError({
-                'location': 'The legacy tray location is system-managed.',
-            })
-        current_type = getattr(self.instance, 'location_type', None)
-        requested_type = attrs.get('location_type', current_type)
-        if requested_type == InventoryLocation.LocationType.SEED_PACKET:
-            raise ValidationError({
-                'location_type': 'Seed packet locations are system-managed.',
-            })
-        return attrs
 
 
 class StockReceiptLineSerializer(
@@ -544,12 +512,12 @@ class MovementActionSerializer(
         required=False,
     )
     source = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
         allow_null=True,
         required=False,
     )
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
         allow_null=True,
         required=False,
     )
@@ -588,7 +556,7 @@ class AdjustmentActionSerializer(MovementActionSerializer):  # pylint: disable=a
 
     direction = serializers.ChoiceField(choices=['gain', 'loss'])
     location = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
     )
     reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
     workspace_field_lookups = {
@@ -616,7 +584,7 @@ class OpeningBalanceActionSerializer(
         required=False,
     )
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
     )
     acquisition_total = serializers.DecimalField(
         max_digits=18,
@@ -656,44 +624,6 @@ class OpeningBalanceActionSerializer(
         except DjangoValidationError as exc:
             raise ValidationError(_model_errors(exc)) from exc
         return attrs
-
-
-class InventoryLocationViewSet(
-    CurrentWorkspaceViewSetMixin,
-    viewsets.ModelViewSet,
-):  # pylint: disable=too-many-ancestors
-    """Configure active physical locations without deleting used history."""
-
-    queryset = InventoryLocation.objects.all()
-    serializer_class = InventoryLocationSerializer
-    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        active = _parse_boolean(self.request.query_params.get('active'), 'active')
-        if active is not None:
-            queryset = queryset.filter(active=active)
-        location_type = self.request.query_params.get('location_type')
-        if location_type:
-            if location_type not in InventoryLocation.LocationType.values:
-                raise ValidationError(
-                    {'location_type': 'Select a valid location type.'},
-                )
-            queryset = queryset.filter(location_type=location_type)
-        return queryset
-
-    def perform_destroy(self, instance):
-        seed_packet = instance.location_type == InventoryLocation.LocationType.SEED_PACKET
-        if seed_packet or instance.code == 'SYSTEM-TRAY-UNKNOWN':
-            raise ValidationError({
-                'location': 'This inventory location is system-managed.',
-            })
-        try:
-            instance.delete()
-        except ProtectedError as exc:
-            raise ValidationError(
-                {'location': 'Used locations must be deactivated, not deleted.'},
-            ) from exc
 
 
 class StockReceiptViewSet(
@@ -1058,7 +988,6 @@ def register_ledger_routes(router):
     """Attach ledger viewsets to the inventory API router."""
     from .serialized_rest import InventoryUnitViewSet  # pylint: disable=import-outside-toplevel
 
-    router.register(r'locations', InventoryLocationViewSet)
     router.register(r'receipts', StockReceiptViewSet)
     router.register(r'lots', StockLotViewSet)
     router.register(r'serialized-units', InventoryUnitViewSet)

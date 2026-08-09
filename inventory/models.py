@@ -11,6 +11,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator, RegexVa
 from django.db import models
 from django.utils import timezone
 
+from locations.models import Location
 from workspaces.models import WorkspaceOwnedModel
 
 from .ledger_validation import movement_validation_errors
@@ -385,45 +386,6 @@ class ItemUnitConversion(WorkspaceOwnedModel):
         )
 
 
-class InventoryLocation(WorkspaceOwnedModel):
-    """A physical or operational place that can hold stock."""
-
-    class LocationType(models.TextChoices):
-        """Controlled location roles used by stock workflows."""
-
-        RECEIVING = 'receiving', 'Receiving'
-        STORAGE = 'storage', 'Storage'
-        GROWING = 'growing', 'Nursery or growing area'
-        DISPATCH = 'dispatch', 'Customer dispatch'
-        QUARANTINE = 'quarantine', 'Quarantine'
-        ADJUSTMENT = 'adjustment', 'Adjustment'
-        SEED_PACKET = 'seed_packet', 'Seed packet'
-
-    name = models.CharField(max_length=255)
-    code = models.CharField(max_length=64)
-    location_type = models.CharField(max_length=16, choices=LocationType.choices)
-    active = models.BooleanField(default=True)
-    notes = models.TextField(blank=True, default='')
-    created = models.DateTimeField(auto_now_add=True)
-    updated = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['name', 'pk']
-        constraints = [
-            models.UniqueConstraint(
-                fields=['workspace', 'code'],
-                name='inventory_location_workspace_code_unique',
-            ),
-        ]
-
-    def __str__(self):
-        return self.name
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-
 class StockReceipt(WorkspaceOwnedModel):
     """A supplier document whose lines create exact stock lots when posted."""
 
@@ -569,7 +531,7 @@ class StockReceiptLine(models.Model):
         validators=[MinValueValidator(Decimal('0'))],
     )
     destination = models.ForeignKey(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         related_name='receipt_lines',
     )
@@ -789,7 +751,7 @@ class InventoryUnit(WorkspaceOwnedModel):
     )
     currency_code = models.CharField(max_length=3)
     current_location = models.ForeignKey(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -977,7 +939,7 @@ class StocktakeLine(models.Model):
         related_name='stocktake_lines',
     )
     location = models.ForeignKey(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         related_name='stocktake_lines',
     )
@@ -1116,14 +1078,14 @@ class StockMovement(WorkspaceOwnedModel):
         validators=[MinValueValidator(POSITIVE_DECIMAL)],
     )
     source = models.ForeignKey(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name='outgoing_stock_movements',
     )
     destination = models.ForeignKey(
-        InventoryLocation,
+        Location,
         on_delete=models.PROTECT,
         null=True,
         blank=True,

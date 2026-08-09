@@ -18,7 +18,6 @@ from inventory.ledger import (
 )
 from inventory.models import (
     InventoryItem,
-    InventoryLocation,
     QuantityCertainty,
     StockMovement,
     StockReceipt,
@@ -27,6 +26,7 @@ from inventory.models import (
 )
 from inventory.units import UnitCode
 
+from locations.models import Location
 from .models import (
     SeedPacket,
     SeedPacketQuantityReconciliation,
@@ -63,11 +63,11 @@ def set_seed_inventory_unit(seeds, base_unit):
 
 def _packet_location(workspace):
     token = uuid4().hex.upper()
-    return InventoryLocation.objects.create(
+    return Location.objects.create(
         workspace=workspace,
         name=f'Seed packet {token[:8]}',
         code=f'SEED-PACKET-{token}',
-        location_type=InventoryLocation.LocationType.SEED_PACKET,
+        location_type=Location.LocationType.SEED_PACKET,
         notes='System-managed seed packet container.',
     )
 

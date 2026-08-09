@@ -25,7 +25,7 @@ from tests.api import RESTContractTestCase
 from tests.factories import (
     make_batch_for_packet,
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_seed_packet,
     make_seed_tray,
     make_seed_tray_cell,
@@ -171,7 +171,7 @@ class GenerationCleanContractTests(GenerationRESTTestCase):
 
     def setUp(self):
         super().setUp()
-        self.location = make_inventory_location()
+        self.location = make_location()
         self.media_item = make_inventory_item(
             base_unit=UnitCode.LITRE,
             default_usage_basis=InventoryItem.UsageBasis.CELL_VOLUME,

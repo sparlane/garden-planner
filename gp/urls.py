@@ -28,6 +28,7 @@ urlpatterns = [
     path("seeds/", include('seeds.urls')),
     path("plantings/", include('plantings.urls')),
     path("supplies/", include('supplies.urls')),
+    path("locations/", include('locations.urls')),
     path("inventory/", include('inventory.urls')),
     path("seedtrays/", include('seedtrays.urls')),
     path("applications/", include('applications.urls')),

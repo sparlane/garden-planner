@@ -38,7 +38,7 @@ from seeds.models import SeedPacket
 from tests.factories import (
     make_batch_for_packet,
     make_inventory_item,
-    make_inventory_location,
+    make_location,
     make_plant_variety,
     make_seed_tray,
     make_seed_tray_cell,
@@ -74,7 +74,7 @@ class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-
         self.user = get_user_model().objects.create_user(username='costing')
         self.client.force_authenticate(self.user)
         self.workspace = Workspace.objects.get(pk=1)
-        self.location = make_inventory_location()
+        self.location = make_location()
         model = make_seed_tray_model(
             cell_size_ml=self.CELL_SIZE_ML,
             x_cells=self.CELL_COUNT,

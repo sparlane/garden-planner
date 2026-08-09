@@ -19,8 +19,8 @@ from rest_framework.response import Response
 from rest_framework_nested import routers
 
 from inventory.ledger import quantize_quantity
-from inventory.models import InventoryLocation
 from inventory.rest_query import parse_integer
+from locations.models import Location
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .generation_costs import generation_cost_breakdown
@@ -99,7 +99,7 @@ class SeedDispositionSerializer(CurrentWorkspaceSerializerMixin, ActionSerialize
     disposition = serializers.CharField()
     reason = serializers.CharField(required=False, allow_blank=True, default='')
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
         required=False,
         allow_null=True,
         default=None,
@@ -116,7 +116,7 @@ class MediaDispositionSerializer(CurrentWorkspaceSerializerMixin, ActionSerializ
     disposition = serializers.CharField()
     reason = serializers.CharField(required=False, allow_blank=True, default='')
     destination = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryLocation.objects.all(),
+        queryset=Location.objects.all(),
         required=False,
         allow_null=True,
         default=None,

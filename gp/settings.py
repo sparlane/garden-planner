@@ -42,6 +42,7 @@ if not SECRET_KEY:
 
 INSTALLED_APPS = [
     "workspaces",
+    "locations",
     "inventory",
     "plants",
     "seeds",

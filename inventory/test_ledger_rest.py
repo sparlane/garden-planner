@@ -6,12 +6,12 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import Workspace, get_current_workspace
 
 from .models import (
     InventoryItem,
-    InventoryLocation,
     ItemUnitConversion,
     StockLot,
     StockMovement,
@@ -25,7 +25,6 @@ from .units import UnitCode
 class LedgerRestFixture(APITestCase):
     """Shared ledger fixture: one workspace, supplier, item, and two places."""
 
-    location_url = '/inventory/locations/'
     receipt_url = '/inventory/receipts/'
     lot_url = '/inventory/lots/'
     balance_url = '/inventory/balances/'
@@ -54,17 +53,17 @@ class LedgerRestFixture(APITestCase):
             base_unit=UnitCode.MILLILITRE,
             reorder_level=Decimal('250'),
         )
-        self.store = InventoryLocation.objects.create(
+        self.store = Location.objects.create(
             workspace=self.workspace,
             name='API store',
             code='API-STORE',
-            location_type=InventoryLocation.LocationType.STORAGE,
+            location_type=Location.LocationType.STORAGE,
         )
-        self.growing = InventoryLocation.objects.create(
+        self.growing = Location.objects.create(
             workspace=self.workspace,
             name='API growing house',
             code='API-GROW',
-            location_type=InventoryLocation.LocationType.GROWING,
+            location_type=Location.LocationType.GROWING,
         )
 
     def receipt_payload(self, **overrides):
@@ -138,7 +137,6 @@ class LedgerRestTests(LedgerRestFixture):
         """No ledger or balance data is anonymously readable."""
         self.client.force_authenticate(user=None)
         for url in (
-            self.location_url,
             self.receipt_url,
             self.lot_url,
             self.balance_url,
@@ -147,40 +145,6 @@ class LedgerRestTests(LedgerRestFixture):
         ):
             with self.subTest(url=url):
                 self.assertEqual(self.client.get(url).status_code, 403)
-
-    def test_locations_are_filterable_and_used_locations_cannot_be_deleted(self):
-        """Unused places may be removed while ledger places require deactivation."""
-        created = self.client.post(
-            self.location_url,
-            {
-                'name': 'Temporary receiving',
-                'code': 'TEMP-RECV',
-                'location_type': InventoryLocation.LocationType.RECEIVING,
-            },
-            format='json',
-        )
-        self.assertEqual(created.status_code, 201, created.data)
-        self.assertEqual(
-            self.client.delete(
-                f"{self.location_url}{created.data['pk']}/",
-            ).status_code,
-            204,
-        )
-
-        opening = self.create_opening()
-        response = self.client.delete(f'{self.location_url}{self.store.pk}/')
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('location', response.data)
-        self.assertEqual(opening['movement']['destination'], self.store.pk)
-
-        filtered = self.client.get(
-            self.location_url,
-            {'active': 'true', 'location_type': 'growing'},
-        )
-        self.assertEqual(
-            [location['pk'] for location in filtered.data],
-            [self.growing.pk],
-        )
 
     def test_nested_receipt_normalizes_posts_and_reverses(self):
         """Receipt actions preserve display data, provenance, and inverse history."""
