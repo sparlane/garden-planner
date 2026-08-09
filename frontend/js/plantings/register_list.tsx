@@ -52,6 +52,17 @@ function LocationCell({ row }: { row: NurseryRegisterRow }) {
   )
 }
 
+// Where the plant is physically standing, which for a plant in a tray is
+// wherever the tray has been wheeled. Shown beside the location rather than
+// instead of it: "cell B4 of tray 12" and "Bench A" are both true, and an
+// operator walking the greenhouse needs the second to find the first.
+function StandingAtCell({ row }: { row: NurseryRegisterRow }) {
+  if (row.standing_at === null) {
+    return <span className="text-muted">—</span>
+  }
+  return <>{row.standing_at_label}</>
+}
+
 // Projected from the crop's maturity range, so a variety that records only one
 // end of that range still says something useful rather than nothing.
 function ReadyCell({ row }: { row: NurseryRegisterRow }) {
@@ -92,6 +103,7 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
           <th>Age</th>
           <th>Expected ready</th>
           <th>Where</th>
+          <th>Standing in</th>
           <th>Cost</th>
         </tr>
       </thead>
@@ -128,6 +140,9 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
             </td>
             <td>
               <LocationCell row={row} />
+            </td>
+            <td>
+              <StandingAtCell row={row} />
             </td>
             <td>{formatMoney(row.cost, row.currency_code, 'Not costed')}</td>
           </tr>

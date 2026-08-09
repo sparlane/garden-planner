@@ -394,3 +394,41 @@ class ConcurrentPlacementTests(TransactionTestCase):
             ).count(),
             1,
         )
+
+
+class AncestorBasisTests(OccupancyFixture):
+    """An ancestor measured in something else does not forbid a placement."""
+
+    def test_a_greenhouse_counted_in_trays_admits_a_potted_plant_on_its_bench(self):
+        """It has no opinion about pots; it simply does not count them."""
+        greenhouse = self.bench(Location.CapacityBasis.TRAYS, Decimal('2'))
+        bench = self.bench(Location.CapacityBasis.PLANTS, Decimal('4'), parent=greenhouse)
+
+        check_capacity(bench, plant_contribution(), lock=False)
+
+    def test_the_chosen_place_still_refuses_what_it_cannot_measure(self):
+        """A category error at the destination is worth saying out loud."""
+        bench = self.bench(Location.CapacityBasis.TRAYS, Decimal('4'))
+
+        with self.assertRaises(ValidationError) as caught:
+            check_capacity(bench, plant_contribution(), lock=False)
+        self.assertIn('destination', caught.exception.message_dict)
+
+    def test_a_capacity_message_names_a_plain_number(self):
+        """"Holds 2 trays" reads like a person; "holds 2.000 trays" does not."""
+        bench = self.bench(Location.CapacityBasis.TRAYS, Decimal('2'))
+        self.tray_at(bench)
+        self.tray_at(bench)
+
+        with self.assertRaises(ValidationError) as caught:
+            check_capacity(bench, tray_contribution(0), lock=False)
+        self.assertIn('holds 2 trays', str(caught.exception.message_dict['destination']))
+
+    def test_a_capacity_message_counts_in_the_number_it_is_about(self):
+        """"Holds 1 plants" is the kind of thing software says, not a person."""
+        bench = self.bench(Location.CapacityBasis.PLANTS, Decimal('1'))
+        self.stand_plant(bench)
+
+        with self.assertRaises(ValidationError) as caught:
+            check_capacity(bench, plant_contribution(), lock=False)
+        self.assertIn('holds 1 plant and', str(caught.exception.message_dict['destination']))

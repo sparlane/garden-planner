@@ -2,6 +2,7 @@ import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-bootstrap'
 
+import { getLocations } from '../api/locations'
 import { getNurseryRegister, getProductionBatches } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
 import { queryKeys } from '../query'
@@ -16,6 +17,7 @@ const ORDERING_OPTIONS: Array<{ value: NurseryRegisterOrdering; label: string }>
   { value: 'age', label: 'Oldest first' },
   { value: 'variety', label: 'Crop A–Z' },
   { value: 'location', label: 'Location' },
+  { value: 'standing_at', label: 'Where it is standing' },
   { value: 'state', label: 'State' },
   { value: 'batch', label: 'Batch' },
   { value: '-cost', label: 'Most expensive first' }
@@ -24,6 +26,7 @@ const ORDERING_OPTIONS: Array<{ value: NurseryRegisterOrdering; label: string }>
 const LOCATION_OPTIONS: Array<{ value: NonNullable<NurseryRegisterFilters['location_type']>; label: string }> = [
   { value: 'seed_tray_cell', label: 'In a seed tray' },
   { value: 'garden_square', label: 'Planted out' },
+  { value: 'location', label: 'Standing on its own' },
   { value: 'none', label: 'Not placed anywhere' }
 ]
 
@@ -95,6 +98,7 @@ function NurseryRegisterView() {
   const [batch, setBatch] = React.useState<number | ''>('')
   const [states, setStates] = React.useState<Array<PlantLifecycleState>>([])
   const [locationType, setLocationType] = React.useState<NurseryRegisterFilters['location_type'] | ''>('')
+  const [location, setLocation] = React.useState<number | ''>('')
   const [germinatedFrom, setGerminatedFrom] = React.useState('')
   const [germinatedTo, setGerminatedTo] = React.useState('')
   const [ordering, setOrdering] = React.useState<NurseryRegisterOrdering>('-age')
@@ -107,6 +111,7 @@ function NurseryRegisterView() {
     batch: batch === '' ? undefined : batch,
     state: states.length > 0 ? states : undefined,
     location_type: locationType === '' ? undefined : locationType,
+    location: location === '' ? undefined : location,
     germinated_from: germinatedFrom || undefined,
     germinated_to: germinatedTo || undefined,
     ordering,
@@ -131,6 +136,10 @@ function NurseryRegisterView() {
   const { data: batches = [] } = useQuery({
     queryKey: queryKeys.plantings.batches('active', '', '', false),
     queryFn: ({ signal }) => getProductionBatches({ status: 'active' }, signal)
+  })
+  const { data: locations = [] } = useQuery({
+    queryKey: queryKeys.locations.list('active'),
+    queryFn: ({ signal }) => getLocations(signal, true)
   })
   const { data: register, isPending } = useQuery({
     queryKey: queryKeys.plantings.register(filters),
@@ -195,6 +204,20 @@ function NurseryRegisterView() {
                 </option>
               ))}
             </Form.Select>
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-standing-in">
+            <Form.Label>Standing in</Form.Label>
+            <Form.Select value={location} onChange={(event) => narrow(setLocation)(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Any location</option>
+              {locations.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.full_name}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Text muted>Includes anything on a bench or bay inside the place you pick.</Form.Text>
           </Form.Group>
         </Col>
         <Col md={3}>

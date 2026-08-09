@@ -532,8 +532,8 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   })
   const selectedSeedTray = seedTraysQuery.data?.find((tray) => tray.pk === seedTrayPk)
   const inventoryLocationsQuery = useQuery({
-    queryKey: queryKeys.locations.list(true),
-    queryFn: ({ signal }) => getLocations(signal)
+    queryKey: queryKeys.locations.list('active'),
+    queryFn: ({ signal }) => getLocations(signal, true)
   })
   const inventoryMovementsQuery = useQuery({
     queryKey: queryKeys.seedTrays.movements(selectedSeedTray?.inventory_unit ?? 0),
