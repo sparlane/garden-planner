@@ -171,15 +171,16 @@ def _current_locations(batch):
     locations = SpecificPlantLocation.objects.filter(
         specific_plant__cell_planting__seed_tray_planting__batch=batch,
         ended__isnull=True,
-    ).select_related('seed_tray_cell', 'garden_square').order_by('pk')
+    ).select_related('seed_tray_cell', 'garden_square', 'location').order_by('pk')
     return [
         {
             'specific_plant': location.specific_plant_id,
             'location_type': location.location_type,
             'seed_tray_cell': location.seed_tray_cell_id,
             'garden_square': location.garden_square_id,
+            'location': location.location_id,
             'started': location.started,
-            'label': str(location.seed_tray_cell or location.garden_square),
+            'label': str(location.seed_tray_cell or location.garden_square or location.location),
         }
         for location in locations
     ]

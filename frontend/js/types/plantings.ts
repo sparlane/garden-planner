@@ -85,9 +85,10 @@ interface ProductionBatchSowing {
 
 interface ProductionBatchLocation {
   specific_plant: number
-  location_type: 'seed_tray_cell' | 'garden_square'
+  location_type: PlantPlacementType
   seed_tray_cell: number | null
   garden_square: number | null
+  location: number | null
   started: string
   label: string
 }
@@ -205,32 +206,41 @@ interface GardenSquarePlanting {
   maturity_date_late?: string
 }
 
+// Where a plant is. A plant in a tray records the cell rather than the bench
+// the tray stands on, because the tray's own placement already says that.
+type PlantPlacementType = 'seed_tray_cell' | 'garden_square' | 'location'
+
 interface SpecificPlantLocation {
   pk: number
   specific_plant: number
-  location_type: 'seed_tray_cell' | 'garden_square'
+  location_type: PlantPlacementType
   seed_tray_cell?: number
   garden_square?: number
+  location?: number
   started: string
   ended?: string
   notes?: string
+  override_reason: string
 }
 
 interface SpecificPlantLocationCreate {
   specific_plant: number
-  location_type: 'seed_tray_cell' | 'garden_square'
+  location_type: PlantPlacementType
   seed_tray_cell?: number
   garden_square?: number
+  location?: number
   started: string
   notes?: string
 }
 
 interface SpecificPlantMove {
-  location_type: 'seed_tray_cell' | 'garden_square'
+  location_type: PlantPlacementType
   seed_tray_cell?: number
   garden_square?: number
+  location?: number
   started?: string
   notes?: string
+  override_reason?: string
 }
 
 type PlantLifecycleEventType = 'germinated' | 'ready' | 'transplanted' | 'retained' | 'failed' | 'culled' | 'donated' | 'harvest_finished' | 'corrected'
@@ -528,6 +538,7 @@ export {
   SpecificPlant,
   SpecificPlantCreate,
   SpecificPlantDetail,
+  PlantPlacementType,
   SpecificPlantLocation,
   SpecificPlantLocationCreate,
   SpecificPlantMove,
