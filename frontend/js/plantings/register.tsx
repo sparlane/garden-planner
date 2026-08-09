@@ -5,10 +5,12 @@ import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-b
 import { getLocations } from '../api/locations'
 import { getNurseryRegister, getProductionBatches } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
+import { getSeedTrayGenerations, getSeedTrays } from '../api/seedtrays'
 import { queryKeys } from '../query'
 import { NurseryRegisterFilters, NurseryRegisterOrdering, NurseryRegisterTotals, PlantLifecycleState } from '../types/plantings'
 import { STATE_LABELS } from './lifecycle'
 import { EMPTY_SELECTION, RegisterSelection, RegisterTable } from './register_list'
+import { BulkOperationPanel } from './bulk_operations'
 
 const PAGE_SIZE = 50
 
@@ -99,6 +101,8 @@ function NurseryRegisterView() {
   const [states, setStates] = React.useState<Array<PlantLifecycleState>>([])
   const [locationType, setLocationType] = React.useState<NurseryRegisterFilters['location_type'] | ''>('')
   const [location, setLocation] = React.useState<number | ''>('')
+  const [seedTray, setSeedTray] = React.useState<number | ''>('')
+  const [generation, setGeneration] = React.useState<number | ''>('')
   const [germinatedFrom, setGerminatedFrom] = React.useState('')
   const [germinatedTo, setGerminatedTo] = React.useState('')
   const [ordering, setOrdering] = React.useState<NurseryRegisterOrdering>('-age')
@@ -112,6 +116,8 @@ function NurseryRegisterView() {
     state: states.length > 0 ? states : undefined,
     location_type: locationType === '' ? undefined : locationType,
     location: location === '' ? undefined : location,
+    seed_tray: seedTray === '' ? undefined : seedTray,
+    generation: generation === '' ? undefined : generation,
     germinated_from: germinatedFrom || undefined,
     germinated_to: germinatedTo || undefined,
     ordering,
@@ -141,6 +147,15 @@ function NurseryRegisterView() {
     queryKey: queryKeys.locations.list('active'),
     queryFn: ({ signal }) => getLocations(signal, true)
   })
+  const { data: seedTrays = [] } = useQuery({
+    queryKey: queryKeys.seedTrays.trays,
+    queryFn: ({ signal }) => getSeedTrays(signal)
+  })
+  const { data: generations = [] } = useQuery({
+    queryKey: queryKeys.seedTrays.generations(seedTray || 0),
+    queryFn: ({ signal }) => getSeedTrayGenerations(seedTray as number, signal),
+    enabled: seedTray !== ''
+  })
   const { data: register, isPending } = useQuery({
     queryKey: queryKeys.plantings.register(filters),
     queryFn: ({ signal }) => getNurseryRegister(filters, signal)
@@ -162,6 +177,38 @@ function NurseryRegisterView() {
           <Form.Group controlId="register-search">
             <Form.Label>Search</Form.Label>
             <Form.Control type="search" placeholder="Plant number, batch code, or crop" value={search} onChange={(event) => narrow(setSearch)(event.target.value)} />
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-seed-tray">
+            <Form.Label>Tray</Form.Label>
+            <Form.Select
+              value={seedTray}
+              onChange={(event) => {
+                narrow(setSeedTray)(event.target.value === '' ? '' : Number(event.target.value))
+                setGeneration('')
+              }}
+            >
+              <option value="">Any tray</option>
+              {seedTrays.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  Tray #{entry.pk}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-generation">
+            <Form.Label>Tray fill</Form.Label>
+            <Form.Select value={generation} disabled={seedTray === ''} onChange={(event) => narrow(setGeneration)(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Any fill</option>
+              {generations.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.code}
+                </option>
+              ))}
+            </Form.Select>
           </Form.Group>
         </Col>
         <Col md={3}>
@@ -256,6 +303,9 @@ function NurseryRegisterView() {
 
       {register !== undefined && <RegisterTotals totals={register.totals} />}
       {register !== undefined && <SelectionBar selection={selection} matching={register.count} setSelection={setSelection} />}
+      {(selection.mode === 'filter' || selection.ids.length > 0) && (
+        <BulkOperationPanel selection={selection} filters={filters} locations={locations} setSelection={setSelection} />
+      )}
 
       {isPending ? (
         <div>Loading plants…</div>

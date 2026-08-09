@@ -355,6 +355,7 @@ interface NurseryRegisterFilters {
   germinated_to?: string
   location_type?: PlantPlacementType | 'none'
   seed_tray?: number
+  generation?: number
   garden_square?: number
   // Matches the location or anything below it, so a greenhouse answers for
   // the bays inside it.
@@ -382,6 +383,70 @@ interface NurseryRegisterPage {
 interface NurseryRegisterSelection {
   count: number
   plants: Array<number>
+}
+
+type BulkPlantAction = 'germinate' | 'move' | 'ready' | 'retain' | 'donate' | 'fail' | 'cull' | 'finish_harvest'
+type BulkPlantAtomicity = 'all_or_nothing' | 'eligible_only'
+
+interface BulkPlantOperationRequest {
+  idempotency_key?: string
+  action: BulkPlantAction
+  atomicity: BulkPlantAtomicity
+  occurred_at: string
+  reason?: string
+  plants: Array<number>
+  selection_source?: Record<string, unknown>
+  action_payload?: Record<string, unknown>
+}
+
+interface BulkPlantPreviewRow {
+  plant: number
+  eligible: boolean
+  conflicts: Array<string>
+  before: { lifecycle_state: PlantLifecycleState }
+  after: { lifecycle_state: PlantLifecycleState; location_type: PlantPlacementType | null }
+}
+
+interface BulkPlantPreview {
+  action: BulkPlantAction
+  selected: number
+  eligible: number
+  conflicts: number
+  plants: Array<BulkPlantPreviewRow>
+  capacity: Array<{
+    location: number
+    basis: string
+    capacity: string
+    used: number
+    available: number
+  }>
+  source?: {
+    cell_planting: number
+    quantity: number
+    conflicts: Array<string>
+  }
+}
+
+interface BulkPlantOperationResult {
+  plant: number
+  status: 'applied' | 'skipped'
+  errors: Array<string>
+  lifecycle_event: number | null
+  location: number | null
+}
+
+interface BulkPlantOperation {
+  pk: number
+  idempotency_key: string
+  action: BulkPlantAction
+  atomicity: BulkPlantAtomicity
+  occurred_at: string
+  reason: string
+  selection_source: Record<string, unknown>
+  action_payload: Record<string, unknown>
+  created_by: number | null
+  created: string
+  results: Array<BulkPlantOperationResult>
 }
 
 // The five units a yield may be measured in. The backend rejects the seed and
@@ -523,6 +588,11 @@ export {
   NurseryRegisterPage,
   NurseryRegisterRow,
   NurseryRegisterSelection,
+  BulkPlantAction,
+  BulkPlantAtomicity,
+  BulkPlantOperationRequest,
+  BulkPlantPreview,
+  BulkPlantOperation,
   NurseryRegisterTotals,
   Planting,
   ProductionBatch,

@@ -1,6 +1,9 @@
 import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
 import {
   BatchAction,
+  BulkPlantOperation,
+  BulkPlantOperationRequest,
+  BulkPlantPreview,
   BulkPlantOutcome,
   Harvest,
   HarvestCreate,
@@ -184,6 +187,14 @@ function postBulkPlantOutcome(data: BulkPlantOutcome): Promise<Array<PlantLifecy
   return csrfPost('/plantings/specificplants/bulk-outcome/', data).then((response) => response.json() as Promise<Array<PlantLifecycleEvent>>)
 }
 
+function previewBulkPlantOperation(data: BulkPlantOperationRequest): Promise<BulkPlantPreview> {
+  return csrfPost('/plantings/bulk-operations/preview/', data).then((response) => response.json() as Promise<BulkPlantPreview>)
+}
+
+function postBulkPlantOperation(data: BulkPlantOperationRequest): Promise<BulkPlantOperation> {
+  return csrfPost('/plantings/bulk-operations/', data).then((response) => response.json() as Promise<BulkPlantOperation>)
+}
+
 function harvestQuery(filters: HarvestFilters | HarvestReportFilters): string {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(filters)) {
@@ -275,6 +286,8 @@ export {
   postSpecificPlantOutcome,
   reverseSpecificPlantEvent,
   postBulkPlantOutcome,
+  previewBulkPlantOperation,
+  postBulkPlantOperation,
   getHarvests,
   getHarvest,
   addHarvest,
