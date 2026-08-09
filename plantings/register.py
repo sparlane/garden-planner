@@ -6,9 +6,9 @@ mutable plant table. Every row is derived from the source records, and one
 filter parser feeds both the rows and the whole-filter totals so a screen can
 never report counts that its own list disagrees with.
 
-Filters for growth stage, grade, container, nursery location, reservation, and
-quarantine are deliberately absent: nothing records those facts yet, and tasks
-54, 51, 44, and 56 each add their filter here when they add their model.
+Filters for growth stage, grade, container, reservation, and quarantine are
+deliberately absent: nothing records those facts yet, and tasks 54, 44, and 56
+each add their filter here when they add their model.
 """
 
 from typing import NamedTuple
@@ -19,6 +19,7 @@ from rest_framework.exceptions import ValidationError
 
 from costing.models import CostAllocation
 from inventory.rest_query import parse_boolean, parse_datetime, parse_integer
+from locations.models import Location
 
 from .lifecycle import FINAL_STATES, LifecycleState, with_lifecycle_state
 from .models import SpecificPlant, SpecificPlantLocation
@@ -28,6 +29,7 @@ from .models import SpecificPlant, SpecificPlantLocation
 LOCATION_TYPES = {
     SpecificPlantLocation.SEED_TRAY_CELL,
     SpecificPlantLocation.GARDEN_SQUARE,
+    SpecificPlantLocation.LOCATION,
 }
 UNPLACED = 'none'
 
@@ -37,6 +39,7 @@ ORDERINGS = {
     'age': ('germinated', 'pk'),
     'variety': ('variety_name', 'plant_name', 'pk'),
     'location': ('current_location_label', 'pk'),
+    'standing_at': ('standing_at_label', 'pk'),
     'cost': ('cost', 'pk'),
     'state': ('lifecycle_state', 'pk'),
     'batch': ('batch_code', 'pk'),
@@ -45,6 +48,10 @@ ORDERINGS = {
 DEFAULT_ORDERING = '-age'
 
 _BATCH = 'cell_planting__seed_tray_planting__batch'
+
+#: A tray stands somewhere as a serialized asset, and the plants in its cells
+#: stand there with it.
+_TRAY_LOCATION = 'seed_tray_cell__tray__inventory_unit__current_location'
 
 
 class RegisterFilters(NamedTuple):
@@ -59,6 +66,7 @@ class RegisterFilters(NamedTuple):
     location_type: object = None
     seed_tray: object = None
     garden_square: object = None
+    location: object = None
     search: str = ''
     ordering: str = DEFAULT_ORDERING
 
@@ -91,6 +99,7 @@ def parse_register_filters(query_params):
         location_type=location_type,
         seed_tray=parse_integer(query_params.get('seed_tray'), 'seed_tray'),
         garden_square=parse_integer(query_params.get('garden_square'), 'garden_square'),
+        location=parse_integer(query_params.get('location'), 'location'),
         search=(query_params.get('search') or '').strip(),
         ordering=ordering,
     )
@@ -149,10 +158,34 @@ def register_projection(workspace):
         current_garden_square_label=_current_location('garden_square__name'),
         located_since=_current_location('started'),
         cost=_plant_cost(),
+        direct_location=_current_location('location'),
+        direct_location_name=_current_location('location__name'),
+        direct_location_path=_current_location('location__path'),
+        tray_location=_current_location(_TRAY_LOCATION),
+        tray_location_name=_current_location(f'{_TRAY_LOCATION}__name'),
+        tray_location_path=_current_location(f'{_TRAY_LOCATION}__path'),
     ).annotate(
         current_location_label=Coalesce(
             'current_garden_square_label',
             'current_seed_tray_label',
+            'direct_location_name',
+            Value(''),
+            output_field=TextField(),
+        ),
+        # Where the plant is physically standing, which for a plant in a tray
+        # is wherever the tray has been wheeled. The tray's placement is the
+        # only record of that, so it is resolved here rather than copied onto
+        # every plant it carries.
+        standing_at=Coalesce('direct_location', 'tray_location'),
+        standing_at_label=Coalesce(
+            'direct_location_name',
+            'tray_location_name',
+            Value(''),
+            output_field=TextField(),
+        ),
+        standing_at_path=Coalesce(
+            'direct_location_path',
+            'tray_location_path',
             Value(''),
             output_field=TextField(),
         ),
@@ -198,9 +231,30 @@ def register_queryset(workspace, filters):
         queryset = queryset.filter(current_seed_tray=filters.seed_tray)
     if filters.garden_square is not None:
         queryset = queryset.filter(current_garden_square=filters.garden_square)
+    if filters.location is not None:
+        queryset = _standing_in(queryset, workspace, filters.location)
     if filters.search:
         queryset = _apply_search(queryset, filters.search)
     return queryset.order_by(*_ordering_fields(filters.ordering))
+
+
+def _standing_in(queryset, workspace, location_id):
+    """Select the plants standing at a location or anywhere below it.
+
+    Asking about a greenhouse means asking about its benches and their bays;
+    an operator standing in the doorway does not think of those as elsewhere.
+    Unknown ids match nothing rather than everything, because an empty path
+    prefix would select the whole register.
+    """
+    path = (
+        Location.objects
+        .filter(pk=location_id, workspace=workspace)
+        .values_list('path', flat=True)
+        .first()
+    )
+    if not path:
+        return queryset.none()
+    return queryset.filter(standing_at_path__startswith=path)
 
 
 def _ordering_fields(ordering):

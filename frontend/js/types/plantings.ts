@@ -324,11 +324,16 @@ interface NurseryRegisterRow {
   sellable: boolean
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
-  location_type: 'seed_tray_cell' | 'garden_square' | null
+  location_type: PlantPlacementType | null
   location_label: string
   seed_tray: number | null
   seed_tray_cell: number | null
   garden_square: number | null
+  location: number | null
+  // Where the plant is physically standing. For a plant in a tray that is
+  // wherever the tray has been wheeled, which is why it differs from location.
+  standing_at: number | null
+  standing_at_label: string
   located_since: string | null
   // Projected from the crop's maturity range, not an observed readiness date.
   expected_ready_early: string | null
@@ -337,7 +342,8 @@ interface NurseryRegisterRow {
   currency_code: string
 }
 
-type NurseryRegisterOrdering = 'age' | '-age' | 'variety' | '-variety' | 'location' | '-location' | 'cost' | '-cost' | 'state' | '-state' | 'batch' | '-batch'
+type NurseryRegisterOrdering =
+  'age' | '-age' | 'variety' | '-variety' | 'location' | '-location' | 'standing_at' | '-standing_at' | 'cost' | '-cost' | 'state' | '-state' | 'batch' | '-batch'
 
 // Keys are the query-parameter names the register endpoint validates.
 interface NurseryRegisterFilters {
@@ -347,9 +353,12 @@ interface NurseryRegisterFilters {
   sellable?: boolean
   germinated_from?: string
   germinated_to?: string
-  location_type?: 'seed_tray_cell' | 'garden_square' | 'none'
+  location_type?: PlantPlacementType | 'none'
   seed_tray?: number
   garden_square?: number
+  // Matches the location or anything below it, so a greenhouse answers for
+  // the bays inside it.
+  location?: number
   search?: string
   ordering?: NurseryRegisterOrdering
   page?: number
