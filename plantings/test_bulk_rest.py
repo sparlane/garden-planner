@@ -1,7 +1,12 @@
 """REST contract tests for reviewed bulk plant operations."""
 
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.db import close_old_connections
+from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
 from locations.models import Location
@@ -15,6 +20,7 @@ from tests.factories import (
 from workspaces.models import Workspace
 
 from .lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from .bulk_operations import BulkOperationConflict, concrete_request, execute_bulk_operation
 from .models import (
     BulkPlantOperation,
     PlantLifecycleEvent,
@@ -209,4 +215,82 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
                 ended__isnull=True,
             ).count(),
             3,
+        )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentBulkPlantOperationTests(TransactionTestCase):
+    """Overlapping confirmed work serializes at its plant and capacity locks."""
+
+    def _post_teardown(self):
+        """Restore the configured workspace removed by transactional flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = Workspace.objects.get()
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save(update_fields=['mode'])
+        self.user = get_user_model().objects.create_user(username='bulk-racer')
+        self.plants = [make_specific_plant() for _index in range(2)]
+        for plant in self.plants:
+            make_specific_plant_location(specific_plant=plant)
+        self.bench = make_location(
+            location_type=Location.LocationType.BENCH,
+            capacity_basis=Location.CapacityBasis.PLANTS,
+            capacity_value=1,
+        )
+
+    def _execute_move(self, plant_id):
+        """Move one plant from an independent database connection."""
+        close_old_connections()
+        workspace = Workspace.objects.get(pk=self.workspace.pk)
+        user = get_user_model().objects.get(pk=self.user.pk)
+        destination = Location.objects.get(pk=self.bench.pk)
+        request = concrete_request(
+            idempotency_key=uuid4(),
+            action=BulkPlantOperation.Action.MOVE,
+            atomicity=BulkPlantOperation.Atomicity.ELIGIBLE_ONLY,
+            occurred_at=timezone.now(),
+            reason='Race for the last space.',
+            plants=[plant_id],
+            selection_source={'mode': 'ids'},
+            action_payload={
+                'location_type': SpecificPlantLocation.LOCATION,
+                'location': destination,
+            },
+        )
+        try:
+            execute_bulk_operation(workspace, user, request)
+        except BulkOperationConflict:
+            result = 'rejected'
+        else:
+            result = 'applied'
+        close_old_connections()
+        return result
+
+    def test_only_one_overlapping_move_takes_the_last_space(self):
+        """Capacity is rechecked under a shared deterministic location lock."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(
+                future.result()
+                for future in [
+                    pool.submit(self._execute_move, self.plants[0].pk),
+                    pool.submit(self._execute_move, self.plants[1].pk),
+                ]
+            )
+
+        self.assertEqual(results, ['applied', 'rejected'])
+        self.assertEqual(BulkPlantOperation.objects.count(), 1)
+        self.assertEqual(
+            SpecificPlantLocation.objects.filter(
+                location=self.bench,
+                ended__isnull=True,
+            ).count(),
+            1,
         )
