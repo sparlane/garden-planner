@@ -18,6 +18,7 @@ from django.utils import timezone
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_garden_square,
+    make_location,
     make_plant_variety,
     make_production_batch,
     make_seed_packet,
@@ -29,6 +30,7 @@ from tests.factories import (
     make_specific_plant,
     make_specific_plant_location,
 )
+from locations.models import Location
 from workspaces.models import Workspace, get_current_workspace
 
 from .lifecycle import (
@@ -135,6 +137,41 @@ class RegisterContractTests(RegisterTestCase):
         self.assertEqual(row['variety_name'], batch.variety.name)
         self.assertEqual(row['lifecycle_state'], LifecycleState.GROWING)
         self.assertEqual(row['age_days'], 40)
+
+    def test_the_row_carries_exactly_the_fields_the_screen_reads(self):
+        """This repository has no JavaScript test runner, so the contract that
+        `frontend/js/types/plantings.ts` describes is pinned here instead. A
+        field renamed on either side fails this rather than rendering as
+        undefined.
+        """
+        self.make_plant()
+        self.assertEqual(sorted(self.page()['results'][0]), [
+            'age_days',
+            'batch',
+            'batch_code',
+            'cost',
+            'currency_code',
+            'expected_ready_early',
+            'expected_ready_late',
+            'final_outcome',
+            'final_outcome_at',
+            'garden_square',
+            'germinated',
+            'lifecycle_state',
+            'located_since',
+            'location',
+            'location_label',
+            'location_type',
+            'pk',
+            'plant_name',
+            'seed_tray',
+            'seed_tray_cell',
+            'sellable',
+            'standing_at',
+            'standing_at_label',
+            'variety',
+            'variety_name',
+        ])
 
     def test_a_garden_workspace_cannot_reach_the_register(self):
         """The Garden profile has plants but no nursery to run them through."""
@@ -296,6 +333,74 @@ class RegisterFilterTests(RegisterTestCase):
         self.assertEqual(self.row_ids(payload), [wanted.pk])
         self.assertEqual(payload['totals']['available'], 1)
 
+    def test_a_plant_standing_on_a_bench_is_found_under_it(self):
+        """A potted plant set down on a bench is standing on that bench."""
+        bench = make_location(location_type=Location.LocationType.BENCH)
+        standing = self.make_plant()
+        make_specific_plant_location(
+            specific_plant=standing,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=bench,
+            started=self.start,
+        )
+        self.make_plant()
+
+        payload = self.assert_filter_agrees(location=bench.pk)
+        self.assertEqual(self.row_ids(payload), [standing.pk])
+
+    def test_a_plant_in_a_tray_is_found_under_the_bench_the_tray_stands_on(self):
+        """The register answers what is standing there, not what is in a tray."""
+        bench = make_location(location_type=Location.LocationType.BENCH)
+        tray = make_seed_tray()
+        tray.inventory_unit.current_location = bench
+        tray.inventory_unit.save()
+        in_tray = self.make_plant(tray=tray)
+        make_specific_plant_location(
+            specific_plant=in_tray,
+            seed_tray_cell=in_tray.cell_planting.cell,
+            started=self.start,
+        )
+        self.make_plant()
+
+        payload = self.assert_filter_agrees(location=bench.pk)
+        self.assertEqual(self.row_ids(payload), [in_tray.pk])
+        self.assertEqual(payload['results'][0]['standing_at'], bench.pk)
+
+    def test_a_greenhouse_answers_for_the_bays_inside_it(self):
+        """Someone in the doorway does not think of its own bays as elsewhere."""
+        greenhouse = make_location(location_type=Location.LocationType.GREENHOUSE)
+        bay = make_location(
+            location_type=Location.LocationType.BAY,
+            parent=greenhouse,
+        )
+        deep = self.make_plant()
+        make_specific_plant_location(
+            specific_plant=deep,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=bay,
+            started=self.start,
+        )
+
+        payload = self.assert_filter_agrees(location=greenhouse.pk)
+        self.assertEqual(self.row_ids(payload), [deep.pk])
+
+    def test_an_unknown_location_selects_nothing_rather_than_everything(self):
+        """An empty path prefix would match the whole register."""
+        self.make_plant()
+        payload = self.assert_filter_agrees(location=99999)
+        self.assertEqual(self.row_ids(payload), [])
+
+    def test_another_workspace_s_location_selects_nothing(self):
+        """A location filter is scoped like every other read."""
+        other = Workspace.objects.create(name='Other nursery')
+        outsider = make_location(workspace=other)
+        self.make_plant()
+
+        payload = self.assert_filter_agrees(location=outsider.pk)
+        self.assertEqual(self.row_ids(payload), [])
+
     def test_bad_filter_values_blame_the_parameter_that_carried_them(self):
         """A typo in a query string should say which one it was."""
         for params, field in (
@@ -303,7 +408,7 @@ class RegisterFilterTests(RegisterTestCase):
             ({'state': 'sprouting'}, 'state'),
             ({'sellable': 'maybe'}, 'sellable'),
             ({'germinated_from': 'last week'}, 'germinated_from'),
-            ({'location_type': 'bench'}, 'location_type'),
+            ({'location_type': 'wheelbarrow'}, 'location_type'),
             ({'ordering': 'whim'}, 'ordering'),
         ):
             with self.subTest(params=params):

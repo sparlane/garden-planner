@@ -103,6 +103,13 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
         read_only=True,
         allow_null=True,
     )
+    location = serializers.IntegerField(
+        source='direct_location',
+        read_only=True,
+        allow_null=True,
+    )
+    standing_at = serializers.IntegerField(read_only=True, allow_null=True)
+    standing_at_label = serializers.CharField(read_only=True)
     located_since = serializers.DateTimeField(read_only=True, allow_null=True)
     expected_ready_early = serializers.SerializerMethodField()
     expected_ready_late = serializers.SerializerMethodField()
