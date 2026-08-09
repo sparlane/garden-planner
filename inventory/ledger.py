@@ -820,6 +820,31 @@ def _latest_effective_unit_movement(unit):
     )
 
 
+def _check_unit_destination_capacity(unit, destination, reason):
+    """Refuse to put a tray somewhere that has no room left for it.
+
+    Only trays occupy growing space; any other serialized asset simply sits
+    where it is put. The plants riding in the tray count too, because a bench
+    measured in plants is just as full whether they arrived loose or in a tray.
+
+    An overrun is allowed when the caller gave a reason, which the movement
+    already records — that is the audited override, not a separate field.
+    """
+    from locations.occupancy import check_capacity, tray_contribution  # pylint: disable=import-outside-toplevel
+
+    try:
+        tray = unit.seed_tray
+    except ObjectDoesNotExist:
+        return
+    from plantings.models import SpecificPlantLocation  # pylint: disable=import-outside-toplevel
+
+    riding = SpecificPlantLocation.objects.filter(
+        seed_tray_cell__tray=tray,
+        ended__isnull=True,
+    ).count()
+    check_capacity(destination, tray_contribution(riding), reason)
+
+
 @transaction.atomic
 def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-branches
     """Post one physical action against an exact locked serialized unit."""
@@ -872,6 +897,8 @@ def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-br
         if not destination:
             raise ValidationError({'destination': 'A return destination is required.'})
         source = None
+    if destination is not None:
+        _check_unit_destination_capacity(unit, destination, request.reason)
     movement = _create_movement(MovementEntry(
         workspace=workspace,
         user=user,

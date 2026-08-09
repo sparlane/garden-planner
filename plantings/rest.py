@@ -15,6 +15,7 @@ from django.utils import timezone
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from locations.occupancy import check_capacity, plant_contribution
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
@@ -676,6 +677,22 @@ def is_active_location_integrity_error(exc):
     return names_constraint or names_sqlite_column
 
 
+def _check_destination_capacity(destination, override_reason):
+    """Refuse a bench that is full, or that cannot measure a single plant.
+
+    Locks the destination and every capacitated ancestor before counting, so
+    two plants racing for the last space cannot both read it as free.
+    """
+    if not destination.active:
+        raise serializers.ValidationError({'location': 'The location is inactive.'})
+    try:
+        check_capacity(destination, plant_contribution(), override_reason)
+    except DjangoValidationError as exc:
+        raise serializers.ValidationError(
+            {'location': _model_errors(exc).get('destination', exc.messages)},
+        ) from exc
+
+
 def move_specific_plant(plant, move_data, user=None):
     """
     Move a plant by ending its active location and creating the new one atomically.
@@ -688,12 +705,15 @@ def move_specific_plant(plant, move_data, user=None):
     started = move_data.get('started') or timezone.now()
     move_payload = {**move_data, 'started': started}
     planted_out = move_payload.get('location_type') == SpecificPlantLocation.GARDEN_SQUARE
+    destination = move_payload.get('location')
     with transaction.atomic():
         plant = get_object_or_404(
             SpecificPlant.objects.select_for_update(),
             pk=plant.pk,
             workspace=plant.workspace,
         )
+        if destination is not None:
+            _check_destination_capacity(destination, move_payload.get('override_reason', ''))
         if planted_out:
             try:
                 record_transplant_event(plant, user, started)

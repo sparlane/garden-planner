@@ -2,7 +2,9 @@
 
 from django.db.models import ProtectedError
 from rest_framework import routers, serializers, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
 
 from inventory.rest_query import parse_boolean
 from workspaces.scoping import (
@@ -11,6 +13,7 @@ from workspaces.scoping import (
 )
 
 from .models import Location, location_full_name
+from .occupancy import blocking_occupancy, location_occupancy
 
 
 #: The migration-era holding location for trays whose real place is unknown.
@@ -79,7 +82,7 @@ class LocationSerializer(
         return len(location.ancestor_ids)
 
     def validate(self, attrs):
-        """Reserve packet-container locations for the seed workflow."""
+        """Reserve packet locations, and keep an occupied place open."""
         if self.instance and self.instance.code == LEGACY_TRAY_CODE:
             raise ValidationError({
                 'location': 'The legacy tray location is system-managed.',
@@ -90,7 +93,29 @@ class LocationSerializer(
             raise ValidationError({
                 'location_type': 'Seed packet locations are system-managed.',
             })
+        if self.instance and attrs.get('active') is False and self.instance.active:
+            self._reject_occupied_retirement()
         return attrs
+
+    def _reject_occupied_retirement(self):
+        """Refuse to retire a place while anything is still standing in it.
+
+        Retiring an occupied bench would leave trays and plants recorded at a
+        location no picker offers any more, which is how stock goes missing on
+        paper while sitting in plain sight.
+        """
+        still_there = blocking_occupancy(self.instance)
+        if still_there is not None:
+            raise ValidationError({
+                'active': (
+                    f'{self.instance.name} still holds {still_there.trays} trays and '
+                    f'{still_there.plants} plants. Move them before retiring it.'
+                ),
+            })
+        if self.instance.descendants().filter(active=True).exists():
+            raise ValidationError({
+                'active': 'Retire the locations inside this one first.',
+            })
 
 
 class LocationViewSet(
@@ -116,6 +141,29 @@ class LocationViewSet(
                 )
             queryset = queryset.filter(location_type=location_type)
         return queryset
+
+    @action(detail=True)
+    def occupancy(self, request, pk=None):  # pylint: disable=unused-argument
+        """Report what stands here, and what remains of any capacity.
+
+        Both the location itself and its whole subtree are reported, because a
+        greenhouse's own aisle and everything on its benches are different
+        answers to "what is in here" and an operator needs each of them.
+        """
+        location = self.get_object()
+        here = location_occupancy(location)
+        below = location_occupancy(location, subtree=True)
+        remaining = None
+        if location.capacity_basis in Location.ENFORCED_BASES:
+            remaining = location.capacity_value - below.of(location.capacity_basis)
+        return Response({
+            'location': location.pk,
+            'capacity_basis': location.capacity_basis,
+            'capacity_value': location.capacity_value,
+            'here': here._asdict(),
+            'subtree': below._asdict(),
+            'remaining': remaining,
+        })
 
     def perform_destroy(self, instance):
         if is_system_managed(instance):
