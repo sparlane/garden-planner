@@ -5,9 +5,12 @@ from rest_framework import routers, serializers, viewsets
 from rest_framework.exceptions import ValidationError
 
 from inventory.rest_query import parse_boolean
-from workspaces.scoping import CurrentWorkspaceViewSetMixin
+from workspaces.scoping import (
+    CurrentWorkspaceSerializerMixin,
+    CurrentWorkspaceViewSetMixin,
+)
 
-from .models import Location
+from .models import Location, location_full_name
 
 
 #: The migration-era holding location for trays whose real place is unknown.
@@ -18,12 +21,21 @@ def is_system_managed(location):
     """Return whether a workflow rather than an operator owns this location."""
     if location is None:
         return False
-    seed_packet = location.location_type == Location.LocationType.SEED_PACKET
-    return seed_packet or location.code == LEGACY_TRAY_CODE
+    return location.is_system_managed or location.code == LEGACY_TRAY_CODE
 
 
-class LocationSerializer(serializers.ModelSerializer):
+class LocationSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Serialize one current-workspace physical location."""
+
+    full_name = serializers.SerializerMethodField()
+    depth = serializers.SerializerMethodField()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._names = None
 
     class Meta:
         model = Location
@@ -32,12 +44,39 @@ class LocationSerializer(serializers.ModelSerializer):
             'name',
             'code',
             'location_type',
+            'parent',
+            'path',
+            'full_name',
+            'depth',
+            'display_order',
+            'capacity_basis',
+            'capacity_value',
             'active',
             'notes',
             'created',
             'updated',
         ]
-        read_only_fields = ['created', 'updated']
+        read_only_fields = ['path', 'full_name', 'depth', 'created', 'updated']
+
+    workspace_field_lookups = {'parent': 'workspace'}
+
+    def get_full_name(self, location):
+        """Name the place the way an operator says it out loud.
+
+        A bare "Bay 2" is ambiguous across three greenhouses, so the ancestors
+        travel with the name rather than being looked up separately.
+        """
+        if self._names is None:
+            self._names = dict(
+                Location.objects
+                .filter(workspace_id=location.workspace_id)
+                .values_list('pk', 'name'),
+            )
+        return location_full_name(location, self._names)
+
+    def get_depth(self, location):
+        """Report how deep this location sits, so a flat list can be indented."""
+        return len(location.ancestor_ids)
 
     def validate(self, attrs):
         """Reserve packet-container locations for the seed workflow."""
