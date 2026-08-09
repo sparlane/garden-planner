@@ -1,6 +1,11 @@
 """
 Rest for Plantings
 """
+
+# The app's main REST module, alongside the batch, harvest, lifecycle,
+# generation, and register modules it has already been split into.
+# pylint: disable=too-many-lines
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
@@ -345,12 +350,14 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
     """
     class Meta:
         model = SpecificPlantLocation
-        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'started', 'ended', 'notes']
+        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'started', 'ended', 'notes', 'override_reason']
+        read_only_fields = ['override_reason']
 
     workspace_field_lookups = {
         'specific_plant': 'workspace',
         'seed_tray_cell': 'tray__workspace',
         'garden_square': 'workspace',
+        'location': 'workspace',
     }
 
     def _get_effective_history_fields(self, data):
@@ -390,8 +397,7 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
         specific_plant, started, ended = self._get_effective_history_fields(data)
         validate_specific_plant_location(
             location_type=data.get('location_type', _FIELD_MISSING),
-            seed_tray_cell=data.get('seed_tray_cell', _FIELD_MISSING),
-            garden_square=data.get('garden_square', _FIELD_MISSING),
+            places=places_from(data),
             interval=(started, ended),
             instance=self.instance,
         )
@@ -427,21 +433,25 @@ class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.M
     """
     class Meta:
         model = SpecificPlantLocation
-        fields = ['location_type', 'seed_tray_cell', 'garden_square', 'started', 'notes']
+        fields = ['location_type', 'seed_tray_cell', 'garden_square', 'location', 'started', 'notes', 'override_reason']
         extra_kwargs = {
             'started': {'required': False},
+            'override_reason': {'required': False},
         }
 
     workspace_field_lookups = {
         'seed_tray_cell': 'tray__workspace',
         'garden_square': 'workspace',
+        'location': 'workspace',
     }
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         validate_specific_plant_location(
             location_type=data.get('location_type'),
-            seed_tray_cell=data.get('seed_tray_cell'),
-            garden_square=data.get('garden_square'),
+            places={
+                field_name: data.get(field_name)
+                for field_name in SpecificPlantLocation.LOCATION_FIELDS.values()
+            },
         )
         return data
 
@@ -551,32 +561,44 @@ class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializ
 _FIELD_MISSING = object()
 
 
+def places_from(data):
+    """Read every kind of place a plant can be out of request data.
+
+    Driven by the model's own field table so that adding a fourth kind of place
+    reaches the API without a second list needing to be remembered.
+    """
+    return {
+        field_name: data.get(field_name, _FIELD_MISSING)
+        for field_name in SpecificPlantLocation.LOCATION_FIELDS.values()
+    }
+
+
 def validate_specific_plant_location(
     *,
     location_type=None,
-    seed_tray_cell=None,
-    garden_square=None,
+    places=None,
     interval=None,
     instance=None,
 ):
     """
     Validate location fields, optionally defaulting omitted fields from an instance.
     """
+    supplied = dict(places or {})
     if instance is not None:
         if location_type is _FIELD_MISSING:
             location_type = instance.location_type
-        if seed_tray_cell is _FIELD_MISSING:
-            seed_tray_cell = instance.seed_tray_cell
-        if garden_square is _FIELD_MISSING:
-            garden_square = instance.garden_square
+        for field_name in SpecificPlantLocation.LOCATION_FIELDS.values():
+            if supplied.get(field_name, _FIELD_MISSING) is _FIELD_MISSING:
+                supplied[field_name] = getattr(instance, field_name)
         if interval is None:
             interval = (instance.started, instance.ended)
 
     location_data = {
         'location_type': None if location_type is _FIELD_MISSING else location_type,
-        'seed_tray_cell': None if seed_tray_cell is _FIELD_MISSING else seed_tray_cell,
-        'garden_square': None if garden_square is _FIELD_MISSING else garden_square,
     }
+    for field_name in SpecificPlantLocation.LOCATION_FIELDS.values():
+        value = supplied.get(field_name, _FIELD_MISSING)
+        location_data[field_name] = None if value is _FIELD_MISSING else value
     if interval is not None:
         location_data['started'], location_data['ended'] = interval
 
@@ -659,7 +681,9 @@ def move_specific_plant(plant, move_data, user=None):
     Move a plant by ending its active location and creating the new one atomically.
 
     A move into a garden square is also the moment the plant is planted out, so
-    the matching lifecycle fact is appended in the same transaction.
+    the matching lifecycle fact is appended in the same transaction. Only a
+    garden square counts: moving a plant onto a nursery bench is still nursery
+    work, and calling it planting out would close a production batch early.
     """
     started = move_data.get('started') or timezone.now()
     move_payload = {**move_data, 'started': started}
@@ -947,9 +971,8 @@ class SpecificPlantLocationViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelV
                 ended = timezone.now()
                 validate_specific_plant_location(
                     location_type=location.location_type,
-                    seed_tray_cell=location.seed_tray_cell,
-                    garden_square=location.garden_square,
                     interval=(location.started, ended),
+                    instance=location,
                 )
                 location.ended = ended
                 location.save(update_fields=['ended'])

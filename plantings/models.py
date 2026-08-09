@@ -15,6 +15,7 @@ from inventory.models import (
     StockMovement,
 )
 from inventory.units import UnitCode
+from locations.models import Location
 from plants.models import PlantVariety
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayGeneration
@@ -367,36 +368,54 @@ class SpecificPlant(WorkspaceOwnedModel):
 
 class SpecificPlantLocation(models.Model):
     """
-    Tracks where a specific plant has been — a seed tray cell or garden square —
-    and when it entered/left that location.
+    Tracks where a specific plant has been — a seed tray cell, a garden square,
+    or a location in the catalog — and when it entered/left that location.
+
+    A plant in a tray records the cell, not the bench the tray happens to stand
+    on: the tray's own placement already says that, and duplicating it here
+    would let the two disagree the moment a tray is moved. `location` is for a
+    plant standing somewhere in its own right, such as a potted plant on a
+    bench.
     """
     SEED_TRAY_CELL = 'seed_tray_cell'
     GARDEN_SQUARE = 'garden_square'
+    LOCATION = 'location'
     LOCATION_TYPE_CHOICES = [
         (SEED_TRAY_CELL, 'Seed Tray Cell'),
         (GARDEN_SQUARE, 'Garden Square'),
+        (LOCATION, 'Location'),
     ]
+
+    #: For each location type, the field that must be set and those that must
+    #: not be. One table drives both `clean()` and the API's field errors, so a
+    #: fourth kind of place cannot be added to one and forgotten in the other.
+    LOCATION_FIELDS = {
+        SEED_TRAY_CELL: 'seed_tray_cell',
+        GARDEN_SQUARE: 'garden_square',
+        LOCATION: 'location',
+    }
 
     specific_plant = models.ForeignKey(SpecificPlant, on_delete=models.CASCADE, related_name='locations')
     location_type = models.CharField(max_length=20, choices=LOCATION_TYPE_CHOICES)
     seed_tray_cell = models.ForeignKey(SeedTrayCell, on_delete=models.PROTECT, null=True, blank=True)
     garden_square = models.ForeignKey(GardenSquare, on_delete=models.PROTECT, null=True, blank=True)
+    location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='standing_plants')
     started = models.DateTimeField(default=timezone.now)
     ended = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
+    override_reason = models.TextField(blank=True, default='')
 
     def clean(self):
         super().clean()
-        if self.location_type == self.SEED_TRAY_CELL:
-            if self.seed_tray_cell is None:
-                raise ValidationError({'seed_tray_cell': 'Required when location_type is seed_tray_cell.'})
-            if self.garden_square is not None:
-                raise ValidationError({'garden_square': 'Must be blank when location_type is seed_tray_cell.'})
-        elif self.location_type == self.GARDEN_SQUARE:
-            if self.garden_square is None:
-                raise ValidationError({'garden_square': 'Required when location_type is garden_square.'})
-            if self.seed_tray_cell is not None:
-                raise ValidationError({'seed_tray_cell': 'Must be blank when location_type is garden_square.'})
+        required = self.LOCATION_FIELDS.get(self.location_type)
+        if required is not None:
+            if getattr(self, f'{required}_id') is None:
+                raise ValidationError({required: f'Required when location_type is {self.location_type}.'})
+            for field_name in self.LOCATION_FIELDS.values():
+                if field_name == required:
+                    continue
+                if getattr(self, f'{field_name}_id') is not None:
+                    raise ValidationError({field_name: f'Must be blank when location_type is {self.location_type}.'})
 
         if self.ended is not None and self.ended < self.started:
             raise ValidationError({'ended': 'Must be on or after started.'})
@@ -415,7 +434,7 @@ class SpecificPlantLocation(models.Model):
         ]
 
     def __str__(self):
-        loc = self.seed_tray_cell or self.garden_square
+        loc = self.seed_tray_cell or self.garden_square or self.location
         return f'Plant {self.specific_plant_id} @ {loc} from {self.started}'
 
 
