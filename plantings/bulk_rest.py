@@ -1,0 +1,212 @@
+"""REST preview, execution, and audit resources for bulk plant work."""
+
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework import serializers, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.response import Response
+
+from workspaces.models import Workspace
+from workspaces.scoping import (
+    CurrentWorkspaceSerializerMixin,
+    CurrentWorkspaceViewSetMixin,
+    RequireWorkspaceModeMixin,
+)
+
+from .bulk_operations import (
+    ACTION_EVENTS,
+    BulkOperationConflict,
+    concrete_request,
+    execute_bulk_operation,
+    preview_bulk_operation,
+)
+from .models import (
+    BulkPlantOperation,
+    BulkPlantOperationResult,
+    SeedTrayCellPlanting,
+)
+from .rest import SpecificPlantMoveSerializer
+
+
+MAX_BULK_PLANTS = 5000
+
+
+class GerminationPayloadSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.Serializer,
+):  # pylint: disable=abstract-method
+    """Validate the tray-cell source and number of plants observed."""
+
+    cell_planting = serializers.PrimaryKeyRelatedField(
+        queryset=SeedTrayCellPlanting.objects.all(),
+    )
+    quantity = serializers.IntegerField(min_value=1, max_value=MAX_BULK_PLANTS)
+    notes = serializers.CharField(allow_blank=True, required=False, default='')
+    workspace_field_lookups = {
+        'cell_planting': 'seed_tray_planting__workspace',
+    }
+
+    def create(self, validated_data):
+        raise NotImplementedError
+
+    def update(self, instance, validated_data):
+        raise NotImplementedError
+
+
+class BulkOperationRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Validate both previews and confirmed requests."""
+
+    idempotency_key = serializers.UUIDField(required=False)
+    action = serializers.ChoiceField(choices=BulkPlantOperation.Action.choices)
+    atomicity = serializers.ChoiceField(choices=BulkPlantOperation.Atomicity.choices)
+    occurred_at = serializers.DateTimeField(required=False)
+    reason = serializers.CharField(allow_blank=True, required=False, default='')
+    plants = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=True,
+        max_length=MAX_BULK_PLANTS,
+        required=False,
+        default=list,
+    )
+    selection_source = serializers.JSONField(required=False, default=dict)
+    action_payload = serializers.JSONField(required=False, default=dict)
+
+    def validate(self, attrs):
+        """Choose and validate the action-specific payload contract."""
+        action_name = attrs['action']
+        plants = attrs['plants']
+        payload = attrs['action_payload']
+        if action_name == BulkPlantOperation.Action.GERMINATE:
+            if plants:
+                raise ValidationError({'plants': 'Germination selects a cell allocation, not existing plants.'})
+            if attrs['atomicity'] != BulkPlantOperation.Atomicity.ALL_OR_NOTHING:
+                raise ValidationError({'atomicity': 'Germination is always all or nothing.'})
+            payload_serializer = GerminationPayloadSerializer(data=payload)
+        elif action_name == BulkPlantOperation.Action.MOVE:
+            if not plants:
+                raise ValidationError({'plants': 'Select at least one plant.'})
+            payload_serializer = SpecificPlantMoveSerializer(data=payload)
+        else:
+            if action_name not in ACTION_EVENTS:
+                raise ValidationError({'action': 'Select a supported action.'})
+            if not plants:
+                raise ValidationError({'plants': 'Select at least one plant.'})
+            if payload:
+                raise ValidationError({'action_payload': 'This action takes no additional fields.'})
+            attrs['action_payload'] = {}
+            return attrs
+        payload_serializer.is_valid(raise_exception=True)
+        attrs['action_payload'] = dict(payload_serializer.validated_data)
+        return attrs
+
+    def create(self, validated_data):
+        raise NotImplementedError
+
+    def update(self, instance, validated_data):
+        raise NotImplementedError
+
+
+class BulkPlantOperationResultSerializer(serializers.ModelSerializer):
+    """One concrete plant's independently linked result."""
+
+    class Meta:
+        model = BulkPlantOperationResult
+        fields = [
+            'plant',
+            'status',
+            'errors',
+            'lifecycle_event',
+            'location',
+        ]
+        read_only_fields = fields
+
+
+class BulkPlantOperationSerializer(serializers.ModelSerializer):
+    """A completed bulk operation and every selected plant's result."""
+
+    results = BulkPlantOperationResultSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = BulkPlantOperation
+        fields = [
+            'pk',
+            'idempotency_key',
+            'action',
+            'atomicity',
+            'occurred_at',
+            'reason',
+            'selection_source',
+            'action_payload',
+            'created_by',
+            'created',
+            'results',
+        ]
+        read_only_fields = fields
+
+
+def _domain_error(error):
+    """Translate a model/service validation error into a REST error."""
+    if hasattr(error, 'message_dict'):
+        return ValidationError(error.message_dict)
+    return ValidationError(error.messages)
+
+
+class BulkPlantOperationViewSet(
+    RequireWorkspaceModeMixin,
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ReadOnlyModelViewSet,
+):  # pylint: disable=too-many-ancestors
+    """Preview, execute, and read immutable Nursery bulk operations."""
+
+    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    queryset = BulkPlantOperation.objects.prefetch_related('results')
+    serializer_class = BulkPlantOperationSerializer
+
+    def _request_values(self, request, require_key):
+        serializer = BulkOperationRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = dict(serializer.validated_data)
+        if require_key and 'idempotency_key' not in values:
+            raise ValidationError({'idempotency_key': 'This field is required.'})
+        return concrete_request(**values)
+
+    @action(detail=False, methods=['post'])
+    def preview(self, request):
+        """Resolve eligibility and effects without writing an audit or plant fact."""
+        operation_request = self._request_values(request, require_key=False)
+        try:
+            preview = preview_bulk_operation(
+                self.get_current_workspace(),
+                operation_request,
+            )
+        except DjangoValidationError as exc:
+            raise _domain_error(exc) from exc
+        return Response(preview)
+
+    def create(self, request, *args, **kwargs):  # pylint: disable=unused-argument
+        """Execute a confirmed plan once and replay completed retries."""
+        operation_request = self._request_values(request, require_key=True)
+        try:
+            operation, replayed = execute_bulk_operation(
+                self.get_current_workspace(),
+                request.user,
+                operation_request,
+            )
+        except BulkOperationConflict as exc:
+            return Response(
+                {'detail': 'The bulk operation has conflicts.', **exc.preview},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except DjangoValidationError as exc:
+            raise _domain_error(exc) from exc
+        response_status = status.HTTP_200_OK if replayed else status.HTTP_201_CREATED
+        return Response(self.get_serializer(operation).data, status=response_status)
+
+
+def register_bulk_operation_routes(router):
+    """Attach bulk execution and audit endpoints to the planting router."""
+    router.register(
+        r'bulk-operations',
+        BulkPlantOperationViewSet,
+        basename='bulk-plant-operation',
+    )

@@ -316,7 +316,7 @@ def _require_chronology(events, occurred_at):
         })
 
 
-def _validate_outcome(plant, event_type, occurred_at):
+def validate_outcome(plant, event_type, occurred_at):
     """Check one plant admits a fact before anything is written."""
     events = _plant_events(plant)
     _require_chronology(events, occurred_at)
@@ -373,7 +373,7 @@ def record_lifecycle_event(plant, user, request):
     """Record one validated fact about a plant and close its location if final."""
     plant = _lock_plant(plant)
     request = request.at(timezone.now())
-    _validate_outcome(plant, request.event_type, request.occurred_at)
+    validate_outcome(plant, request.event_type, request.occurred_at)
     return _apply_outcome(plant, user, request)
 
 
@@ -395,7 +395,7 @@ def record_transplant_event(plant, user, occurred_at):
 
     Called from inside `move_specific_plant`, which already locks the plant.
     """
-    _validate_outcome(plant, EventType.TRANSPLANTED, occurred_at)
+    validate_outcome(plant, EventType.TRANSPLANTED, occurred_at)
     return _create_event(
         plant,
         user,
@@ -455,7 +455,7 @@ def record_bulk_outcome(plant_ids, user, request):
     errors = []
     for plant in plants:
         try:
-            _validate_outcome(plant, request.event_type, request.occurred_at)
+            validate_outcome(plant, request.event_type, request.occurred_at)
         except ValidationError as exc:
             errors.append(f'Plant {plant.pk}: {" ".join(exc.messages)}')
     if errors:

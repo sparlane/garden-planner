@@ -1033,3 +1033,13 @@ router.register(r'specificplants/(?P<specific_plant_pk>[^/.]+)/locations', Speci
 register_lifecycle_routes(router)
 register_harvest_routes(router)
 register_register_routes(router)
+
+
+def _register_bulk_routes():
+    """Import after the move serializer that bulk payload validation reuses."""
+    from .bulk_rest import register_bulk_operation_routes  # pylint: disable=import-outside-toplevel
+
+    register_bulk_operation_routes(router)
+
+
+_register_bulk_routes()

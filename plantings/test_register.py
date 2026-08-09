@@ -25,6 +25,7 @@ from tests.factories import (
     make_seed_tray,
     make_seed_tray_cell,
     make_seed_tray_cell_planting,
+    make_seed_tray_generation,
     make_seed_tray_model,
     make_seed_tray_planting,
     make_specific_plant,
@@ -288,6 +289,15 @@ class RegisterFilterTests(RegisterTestCase):
 
         nowhere = self.assert_filter_agrees(location_type='none')
         self.assertEqual(self.row_ids(nowhere), [unplaced.pk])
+
+    def test_a_generation_filter_selects_one_concrete_tray_fill(self):
+        """A reused tray does not make its previous fill part of today's work."""
+        generation = make_seed_tray_generation()
+        wanted = self.make_plant(tray=generation.tray)
+        self.make_plant()
+
+        payload = self.assert_filter_agrees(generation=generation.pk)
+        self.assertEqual(self.row_ids(payload), [wanted.pk])
 
     def test_a_finished_plant_leaves_its_location_behind(self):
         """An outcome that ends a location must stop reporting it as current."""

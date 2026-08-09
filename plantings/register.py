@@ -65,6 +65,7 @@ class RegisterFilters(NamedTuple):
     germinated_to: object = None
     location_type: object = None
     seed_tray: object = None
+    generation: object = None
     garden_square: object = None
     location: object = None
     search: str = ''
@@ -98,6 +99,7 @@ def parse_register_filters(query_params):
         germinated_to=parse_datetime(query_params.get('germinated_to'), 'germinated_to'),
         location_type=location_type,
         seed_tray=parse_integer(query_params.get('seed_tray'), 'seed_tray'),
+        generation=parse_integer(query_params.get('generation'), 'generation'),
         garden_square=parse_integer(query_params.get('garden_square'), 'garden_square'),
         location=parse_integer(query_params.get('location'), 'location'),
         search=(query_params.get('search') or '').strip(),
@@ -229,6 +231,10 @@ def register_queryset(workspace, filters):
         queryset = queryset.filter(current_location_type=filters.location_type)
     if filters.seed_tray is not None:
         queryset = queryset.filter(current_seed_tray=filters.seed_tray)
+    if filters.generation is not None:
+        queryset = queryset.filter(
+            cell_planting__seed_tray_planting__generation_id=filters.generation,
+        )
     if filters.garden_square is not None:
         queryset = queryset.filter(current_garden_square=filters.garden_square)
     if filters.location is not None:
