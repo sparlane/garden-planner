@@ -1,5 +1,6 @@
 """REST resources for label templates, printing, and scan resolution."""
 
+from datetime import timedelta
 from urllib.parse import unquote, urlparse
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -78,12 +79,21 @@ def _target_values(identity, code=None):
             'batch': planting.batch.code,
             'sowing_date': planting.planted.date().isoformat(),
         })
+        minimum = variety.maturity_days_min or variety.plant.maturity_days_min
+        maximum = variety.maturity_days_max or variety.plant.maturity_days_max
+        ready_dates = [
+            (target.germinated + timedelta(days=days)).date().isoformat()
+            for days in (minimum, maximum)
+            if days is not None
+        ]
+        if ready_dates:
+            values['expected_ready'] = ready_dates[0] if len(set(ready_dates)) == 1 else f'{ready_dates[0]} – {ready_dates[-1]}'
     elif key == ('plantings', 'productionbatch'):
         values.update({
             'display': target.code,
             'variety': target.variety.name,
             'batch': target.code,
-            'sowing_date': target.actual_start.date().isoformat() if target.actual_start else target.planned_start,
+            'sowing_date': target.actual_start.date().isoformat() if target.actual_start else (target.planned_start.isoformat() if target.planned_start else None),
         })
     elif key == ('seedtrays', 'seedtray'):
         open_generation = target.generations.filter(status='open').first()

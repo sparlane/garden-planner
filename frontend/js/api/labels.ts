@@ -9,6 +9,10 @@ function getLabelTemplates(signal?: AbortSignal): Promise<Array<LabelTemplate>> 
   return fetchAsJson<Array<LabelTemplate>>('/labels/templates/', signal)
 }
 
+function createLabelTemplate(data: Omit<LabelTemplate, 'pk' | 'built_in' | 'active'>): Promise<LabelTemplate> {
+  return csrfPost('/labels/templates/', data).then((response) => response.json() as Promise<LabelTemplate>)
+}
+
 function resolveLabel(value: string, signal?: AbortSignal): Promise<LabelResolution> {
   return fetchAsJson<LabelResolution>(`/labels/resolve/?value=${encodeURIComponent(value)}`, signal)
 }
@@ -25,4 +29,4 @@ function markLabelPrintJobPrinted(job: number): Promise<{ pk: number; printed_at
   return csrfPost(`/labels/print-jobs/${job}/printed/`, {}).then((response) => response.json() as Promise<{ pk: number; printed_at: string }>)
 }
 
-export { createLabelPrintJob, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel }
+export { createLabelPrintJob, createLabelTemplate, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel }
