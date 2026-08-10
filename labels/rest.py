@@ -146,12 +146,15 @@ def _resolution(code, workspace):
 
 
 class LabelTemplateSerializer(serializers.ModelSerializer):
+    """Validate reusable physical label layout configuration."""
+
     class Meta:
         model = LabelTemplate
         fields = ['pk', 'name', 'format', 'payload_mode', 'layout', 'fields', 'dimensions', 'built_in', 'active', 'created', 'updated']
         read_only_fields = ['pk', 'built_in', 'created', 'updated']
 
     def validate_fields(self, value):
+        """Require known fields once each in their desired display order."""
         if not isinstance(value, list) or not value or len(value) != len(set(value)):
             raise serializers.ValidationError('Choose a non-empty ordered list without duplicates.')
         unknown = set(value) - LABEL_FIELDS
@@ -160,6 +163,7 @@ class LabelTemplateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_dimensions(self, value):
+        """Require positive label dimensions and non-negative page spacing."""
         if not isinstance(value, dict):
             raise serializers.ValidationError('Dimensions must be an object.')
         unknown = set(value) - DIMENSION_FIELDS
@@ -185,7 +189,12 @@ class LabelTemplateSerializer(serializers.ModelSerializer):
         return attrs
 
 
-class LabelTemplateViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
+class LabelTemplateViewSet(
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
+    """Manage current-workspace print templates without deleting built-ins."""
+
     queryset = LabelTemplate.objects.all()
     serializer_class = LabelTemplateSerializer
 
@@ -197,6 +206,8 @@ class LabelTemplateViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
 
 
 class PrintTargetSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Validate the identities and template selected for one print operation."""
+
     identities = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False, max_length=5000)
     template = serializers.PrimaryKeyRelatedField(queryset=LabelTemplate.objects.all())
     payload_mode = serializers.ChoiceField(choices=LabelTemplate.PayloadMode.choices, required=False)
@@ -266,7 +277,12 @@ def _print_response(snapshot, items, job=None):
     }
 
 
-class LabelPrintJobViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):
+class LabelPrintJobViewSet(
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ReadOnlyModelViewSet,
+):  # pylint: disable=too-many-ancestors
+    """Preview, initiate, and inspect immutable physical print jobs."""
+
     queryset = LabelPrintJob.objects.prefetch_related('items')
 
     def list(self, request, *args, **kwargs):  # pylint: disable=unused-argument
@@ -283,6 +299,7 @@ class LabelPrintJobViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelV
 
     @action(detail=False, methods=['post'])
     def preview(self, request):
+        """Render print data without creating an audit record."""
         serializer = PrintTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         snapshot, items = _print_items(request, serializer.validated_data)
@@ -290,6 +307,7 @@ class LabelPrintJobViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelV
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):  # pylint: disable=unused-argument
+        """Freeze one print job and every code and target value it contains."""
         serializer = PrintTargetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
@@ -306,6 +324,7 @@ class LabelPrintJobViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelV
 
     @action(detail=True, methods=['post'])
     def printed(self, request, pk=None):  # pylint: disable=unused-argument
+        """Record the first time the operator initiates the browser print dialog."""
         job = self.get_object()
         if job.printed_at is None:
             job.printed_at = timezone.now()
@@ -314,10 +333,17 @@ class LabelPrintJobViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelV
 
 
 class ReasonSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Require an audit explanation for retiring a physical code."""
+
     reason = serializers.CharField(trim_whitespace=True, allow_blank=False)
 
 
-class LabelCodeViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):
+class LabelCodeViewSet(
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ReadOnlyModelViewSet,
+):  # pylint: disable=too-many-ancestors
+    """Resolve code history and expose explicit replacement or void actions."""
+
     queryset = LabelCode.objects.select_related('identity', 'identity__target_content_type', 'replacement')
 
     def retrieve(self, request, *args, **kwargs):  # pylint: disable=unused-argument
@@ -335,15 +361,20 @@ class LabelCodeViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewS
 
     @action(detail=True, methods=['post'])
     def replace(self, request, pk=None):  # pylint: disable=unused-argument
+        """Retire an active code and return its newly issued successor."""
         return self._retire(request, replace_code)
 
     @action(detail=True, methods=['post'])
     def void(self, request, pk=None):  # pylint: disable=unused-argument
+        """Retire an active code without issuing a successor."""
         return self._retire(request, void_code)
 
 
 class ResolveLabelView(APIView):
+    """Resolve a typed code or QR deep link inside the current workspace."""
+
     def get(self, request):
+        """Return an explicit safe outcome for every scanner input."""
         raw = request.query_params.get('value', '')
         parsed = urlparse(raw)
         if parsed.fragment:
