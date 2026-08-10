@@ -225,11 +225,10 @@ class ConcurrentBulkPlantOperationTests(TransactionTestCase):
     def _post_teardown(self):
         """Restore the configured workspace removed by transactional flushing."""
         super()._post_teardown()
-        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
-            Workspace.objects.create(
-                pk=settings.CURRENT_WORKSPACE_ID,
-                name='My Garden',
-            )
+        Workspace.objects.get_or_create(
+            pk=settings.CURRENT_WORKSPACE_ID,
+            defaults={'name': 'My Garden'},
+        )
 
     def setUp(self):
         super().setUp()
@@ -287,10 +286,8 @@ class ConcurrentBulkPlantOperationTests(TransactionTestCase):
 
         self.assertEqual(results, ['applied', 'rejected'])
         self.assertEqual(BulkPlantOperation.objects.count(), 1)
-        self.assertEqual(
-            SpecificPlantLocation.objects.filter(
-                location=self.bench,
-                ended__isnull=True,
-            ).count(),
-            1,
+        destination_occupants = SpecificPlantLocation.objects.filter(
+            location=self.bench,
+            ended__isnull=True,
         )
+        self.assertEqual(destination_occupants.count(), 1)
