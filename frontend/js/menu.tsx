@@ -90,6 +90,12 @@ function GPTopBar({ workspace }: GPTopBarProps) {
           <Nav.Link as={NavLink} to="/settings">
             Settings
           </Nav.Link>
+          <Nav.Link as={NavLink} to="/labels">
+            Labels
+          </Nav.Link>
+          <Nav.Link as={NavLink} to="/scan">
+            Scan
+          </Nav.Link>
         </Nav>
       </Navbar.Collapse>
     </Navbar>

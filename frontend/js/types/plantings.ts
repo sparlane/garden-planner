@@ -282,6 +282,7 @@ interface ReversePlantEvent {
 
 interface SpecificPlant {
   pk: number
+  label_code: string
   cell_planting: number
   batch: number
   germinated: string
@@ -313,6 +314,7 @@ interface SowingCorrection {
 // row carries where a plant is now rather than everywhere it has been.
 interface NurseryRegisterRow {
   pk: number
+  label_code: string | null
   batch: number
   batch_code: string
   variety: number

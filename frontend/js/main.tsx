@@ -26,6 +26,7 @@ import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/bat
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
 import { NurseryRegisterView } from './plantings/register.js'
 import { PlantDetailView } from './plantings/plant_detail.js'
+import { LabelsView, ScannerView } from './labels.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -111,6 +112,9 @@ function FrontEndPage() {
         <Route path="/inventory" element={<InventoryCatalog />} />
         <Route path="/inventory/receipts" element={<InventoryReceiptsView />} />
         <Route path="/applications" element={<InputApplicationsView />} />
+        <Route path="/labels" element={<LabelsView />} />
+        <Route path="/scan" element={<ScannerView />} />
+        <Route path="/scan/:code" element={<ScannerView />} />
         <Route
           path="/settings"
           element={
