@@ -49,7 +49,7 @@ ORDERINGS = {
 }
 DEFAULT_ORDERING = '-age'
 
-_BATCH = 'cell_planting__seed_tray_planting__batch'
+_BATCH = 'batch'
 
 #: A tray stands somewhere as a serialized asset, and the plants in its cells
 #: stand there with it.

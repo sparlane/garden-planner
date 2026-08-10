@@ -563,6 +563,98 @@ interface HarvestReportFilters {
   harvested_to?: string
 }
 
+type CohortLifecycleState = 'growing' | 'available' | 'retained' | 'depleted'
+
+interface CohortEvent {
+  pk: number
+  action: string
+  occurred_at: string
+  reason: string
+  quantity_before: number
+  quantity_delta: number
+  quantity_after: number
+  state_before: CohortLifecycleState
+  state_after: CohortLifecycleState
+  location_before: number | null
+  location_after: number | null
+  source_cohorts: Array<number>
+  created: string
+}
+
+interface PlantCohort {
+  pk: number
+  batch: number
+  batch_code: string
+  variety: number
+  variety_name: string
+  plant_name: string
+  source_sowing: number | null
+  quantity: number
+  lifecycle_state: CohortLifecycleState
+  location: number | null
+  location_name: string | null
+  observed_at: string
+  revision: number
+  notes: string
+  label_code: string
+  created: string
+  updated: string
+  events?: Array<CohortEvent>
+  promoted_plants?: Array<number>
+}
+
+interface CohortTotals {
+  cohort_count: number
+  quantity: number
+  growing: number
+  available: number
+  retained: number
+  depleted: number
+}
+
+interface CohortPage {
+  count: number
+  next: string | null
+  previous: string | null
+  results: Array<PlantCohort>
+  cohort_totals: CohortTotals
+}
+
+interface CohortFilters {
+  search?: string
+  batch?: number
+  variety?: number
+  location?: number
+  state?: CohortLifecycleState
+  active?: boolean
+  page?: number
+  page_size?: number
+}
+
+interface CohortAvailability {
+  cohort_quantity: number
+  individual_count: number
+  combined_total: number
+}
+
+interface CohortObservation {
+  batch: number
+  source_sowing?: number | null
+  quantity: number
+  location?: number | null
+  notes?: string
+  idempotency_key: string
+}
+
+interface CohortAction {
+  expected_revision: number
+  idempotency_key: string
+  quantity?: number
+  location?: number | null
+  disposition?: 'failed' | 'culled' | 'donated' | 'other'
+  reason?: string
+}
+
 export {
   BatchAction,
   BulkPlantOutcome,
@@ -623,5 +715,14 @@ export {
   SpecificPlantLocation,
   SpecificPlantLocationCreate,
   SpecificPlantMove,
-  SowingCorrection
+  SowingCorrection,
+  CohortAction,
+  CohortAvailability,
+  CohortEvent,
+  CohortFilters,
+  CohortLifecycleState,
+  CohortObservation,
+  CohortPage,
+  CohortTotals,
+  PlantCohort
 }

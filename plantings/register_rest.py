@@ -70,13 +70,13 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
 
     pk = serializers.IntegerField(read_only=True)
     batch = serializers.IntegerField(
-        source='cell_planting.seed_tray_planting.batch_id',
+        source='batch_id',
         read_only=True,
     )
     batch_code = serializers.CharField(read_only=True)
     label_code = serializers.CharField(read_only=True, allow_null=True)
     variety = serializers.IntegerField(
-        source='cell_planting.seed_tray_planting.batch.variety_id',
+        source='batch.variety_id',
         read_only=True,
     )
     variety_name = serializers.CharField(read_only=True)
@@ -141,7 +141,7 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     @staticmethod
     def _expected_ready(plant, field):
         """Offset germination by the variety's days, falling back to the crop."""
-        variety = plant.cell_planting.seed_tray_planting.batch.variety
+        variety = plant.batch.variety
         days = getattr(variety, field) or getattr(variety.plant, field)
         if days is None:
             return None

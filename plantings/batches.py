@@ -84,9 +84,7 @@ def batch_open_sowings(batch):
 
 def batch_specific_plants(batch):
     """Return every individual plant observed from this batch's sowings."""
-    return SpecificPlant.objects.filter(
-        cell_planting__seed_tray_planting__batch=batch,
-    )
+    return SpecificPlant.objects.filter(batch=batch)
 
 
 def batch_plants_with_active_location(batch):
@@ -181,7 +179,7 @@ def lock_batch_with_plants(batch):
     list(
         SpecificPlant.objects
         .select_for_update(of=('self',))
-        .filter(cell_planting__seed_tray_planting__batch=batch)
+        .filter(batch=batch)
         .order_by('pk')
     )
     return lock_batch(batch)

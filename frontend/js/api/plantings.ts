@@ -37,7 +37,13 @@ import {
   SpecificPlantDetail,
   SpecificPlantLocationCreate,
   SpecificPlantMove,
-  SowingCorrection
+  SowingCorrection,
+  CohortAction,
+  CohortAvailability,
+  CohortFilters,
+  CohortObservation,
+  CohortPage,
+  PlantCohort
 } from '../types/plantings'
 
 interface ProductionBatchFilters {
@@ -254,6 +260,34 @@ function getNurseryRegisterSelection(filters: NurseryRegisterFilters = {}, signa
   return fetchAsJson<NurseryRegisterSelection>(`/plantings/register/ids/${registerQuery(filters)}`, signal)
 }
 
+function cohortQuery(filters: CohortFilters): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  return query.size > 0 ? `?${query.toString()}` : ''
+}
+
+function getCohorts(filters: CohortFilters = {}, signal?: AbortSignal): Promise<CohortPage> {
+  return fetchAsJson<CohortPage>(`/plantings/cohorts/${cohortQuery(filters)}`, signal)
+}
+
+function getCohort(cohortPk: number, signal?: AbortSignal): Promise<PlantCohort> {
+  return fetchAsJson<PlantCohort>(`/plantings/cohorts/${cohortPk}/`, signal)
+}
+
+function getCohortAvailability(filters: CohortFilters = {}, signal?: AbortSignal): Promise<CohortAvailability> {
+  return fetchAsJson<CohortAvailability>(`/plantings/cohorts/availability/${cohortQuery(filters)}`, signal)
+}
+
+function observeCohort(data: CohortObservation): Promise<PlantCohort> {
+  return csrfPost('/plantings/cohorts/observe/', data).then((response) => response.json() as Promise<PlantCohort>)
+}
+
+function postCohortAction(cohortPk: number, actionName: string, data: CohortAction): Promise<PlantCohort | { operation: number; plants: Array<number> }> {
+  return csrfPost(`/plantings/cohorts/${cohortPk}/${actionName}/`, data).then((response) => response.json() as Promise<PlantCohort | { operation: number; plants: Array<number> }>)
+}
+
 export {
   ProductionBatchFilters,
   getProductionBatches,
@@ -294,5 +328,10 @@ export {
   reverseHarvest,
   getHarvestReport,
   getNurseryRegister,
-  getNurseryRegisterSelection
+  getNurseryRegisterSelection,
+  getCohorts,
+  getCohort,
+  getCohortAvailability,
+  observeCohort,
+  postCohortAction
 }
