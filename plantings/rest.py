@@ -473,6 +473,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
     sellable = serializers.SerializerMethodField()
     final_outcome = serializers.SerializerMethodField()
     final_outcome_at = serializers.SerializerMethodField()
+    label_code = serializers.SerializerMethodField()
 
     class Meta:
         model = SpecificPlant
@@ -482,12 +483,20 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
             'batch',
             'germinated',
             'notes',
+            'label_code',
             'locations',
         ] + PlantLifecycleSerializerMixin.LIFECYCLE_FIELDS
 
     workspace_field_lookups = {
         'cell_planting': 'seed_tray_planting__workspace',
     }
+
+    def get_label_code(self, plant):
+        """Return the immutable physical label code currently in use."""
+        from labels.services import ensure_identity  # pylint: disable=import-outside-toplevel
+
+        identity = ensure_identity(plant)
+        return identity.codes.get(status='active').code
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep a plant attached to the cell allocation it germinated from."""

@@ -33,4 +33,5 @@ urlpatterns = [
     path("seedtrays/", include('seedtrays.urls')),
     path("applications/", include('applications.urls')),
     path("costing/", include('costing.urls')),
+    path("labels/", include('labels.urls')),
 ]

@@ -1,0 +1,93 @@
+"""REST contract tests for label resolution and print auditing."""
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+
+from tests.factories import make_garden_area, make_specific_plant
+from workspaces.models import Workspace, get_current_workspace
+
+from .models import LabelCode, LabelPrintJob, LabelTemplate
+from .services import ensure_identity, replace_code, void_code
+
+
+class LabelResolutionTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('labels', password='secret')
+        self.client.force_login(self.user)
+        self.workspace = get_current_workspace()
+        self.identity = ensure_identity(make_specific_plant())
+        self.code = self.identity.codes.get(status=LabelCode.Status.ACTIVE)
+
+    def resolve(self, value):
+        return self.client.get('/labels/resolve/', {'value': value})
+
+    def test_bare_code_and_deep_link_resolve_to_the_same_plant(self):
+        bare = self.resolve(self.code.code)
+        linked = self.resolve(f'https://example.test/#/scan/{self.code.code}')
+        self.assertEqual(bare.status_code, 200)
+        self.assertEqual(linked.status_code, 200)
+        self.assertEqual(bare.data['status'], 'active')
+        self.assertEqual(bare.data['target']['object_id'], self.identity.target_object_id)
+        self.assertIn('bulk_select', bare.data['capabilities'])
+        self.assertEqual(linked.data['code'], bare.data['code'])
+
+    def test_unknown_replaced_void_and_wrong_workspace_are_explicit(self):
+        self.assertEqual(self.resolve('PLT-NOT-A-CODE').data['status'], 'unknown')
+        old = self.code.code
+        replacement = replace_code(self.code, self.user, 'Unreadable')
+        replaced = self.resolve(old)
+        self.assertEqual(replaced.data['status'], 'replaced')
+        self.assertEqual(replaced.data['current_code'], replacement.code)
+        void_code(replacement, self.user, 'No longer used')
+        self.assertEqual(self.resolve(replacement.code).data['status'], 'inactive')
+
+        other = Workspace.objects.create(name='Other labels')
+        foreign = ensure_identity(make_garden_area(workspace=other)).codes.get()
+        wrong = self.resolve(foreign.code)
+        self.assertEqual(wrong.data, {
+            'status': 'wrong_workspace',
+            'message': 'This code belongs to another workspace.',
+        })
+
+
+class LabelPrintJobTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('printer', password='secret')
+        self.client.force_login(self.user)
+        self.identity = ensure_identity(make_garden_area())
+        self.template = LabelTemplate.objects.get(
+            workspace=get_current_workspace(),
+            name='Single QR 100 × 50 mm',
+        )
+
+    def request(self):
+        return {'template': self.template.pk, 'identities': [self.identity.pk], 'payload_mode': 'url'}
+
+    def test_preview_is_not_audit_but_print_job_and_print_click_are(self):
+        preview = self.client.post('/labels/print-jobs/preview/', self.request(), content_type='application/json')
+        self.assertEqual(preview.status_code, 200)
+        self.assertIsNone(preview.data['job'])
+        self.assertEqual(LabelPrintJob.objects.count(), 0)
+
+        created = self.client.post('/labels/print-jobs/', self.request(), content_type='application/json')
+        self.assertEqual(created.status_code, 201)
+        self.assertIn('/#/scan/', created.data['items'][0]['payload'])
+        printed = self.client.post(f"/labels/print-jobs/{created.data['job']}/printed/", {}, content_type='application/json')
+        self.assertEqual(printed.status_code, 200)
+        self.assertIsNotNone(printed.data['printed_at'])
+
+        reprint = self.client.post('/labels/print-jobs/preview/', self.request(), content_type='application/json')
+        self.assertTrue(reprint.data['items'][0]['is_reprint'])
+
+    def test_code128_rejects_a_url_payload(self):
+        template = LabelTemplate.objects.get(
+            workspace=get_current_workspace(),
+            name='Roll Code 128 50 × 30 mm',
+        )
+        response = self.client.post(
+            '/labels/print-jobs/preview/',
+            {'template': template.pk, 'identities': [self.identity.pk], 'payload_mode': 'url'},
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('payload_mode', response.data)

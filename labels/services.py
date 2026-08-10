@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from .models import LabelCode, LabelIdentity
+from .models import LabelCode, LabelIdentity, LabelTemplate
 
 
 ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
@@ -18,11 +18,33 @@ TARGET_PREFIXES = {
     ('locations', 'location'): 'LOC',
     ('garden', 'gardenarea'): 'GAR',
 }
+DEFAULT_TEMPLATES = (
+    ('Single QR 100 × 50 mm', 'qr', 'url', 'single', {'label_width_mm': 100, 'label_height_mm': 50}),
+    ('A4 sheet QR 63.5 × 38.1 mm', 'qr', 'url', 'sheet', {'label_width_mm': 63.5, 'label_height_mm': 38.1, 'page_width_mm': 210, 'page_height_mm': 297, 'margin_mm': 7, 'gap_mm': 2}),
+    ('Roll Code 128 50 × 30 mm', 'code128', 'code', 'roll', {'label_width_mm': 50, 'label_height_mm': 30}),
+)
 
 
 def normalize_code(value):
     """Normalize scanner and keyboard input without accepting embedded spaces."""
     return str(value).strip().upper()
+
+
+def ensure_default_templates(workspace):
+    """Create the built-in presets for a newly added workspace."""
+    for name, format_name, payload_mode, layout, dimensions in DEFAULT_TEMPLATES:
+        LabelTemplate.objects.get_or_create(
+            workspace=workspace,
+            name=name,
+            defaults={
+                'format': format_name,
+                'payload_mode': payload_mode,
+                'layout': layout,
+                'fields': ['display', 'variety', 'batch', 'sowing_date', 'expected_ready', 'code', 'print_date'],
+                'dimensions': dimensions,
+                'built_in': True,
+            },
+        )
 
 
 def code_checksum(value):
