@@ -1,5 +1,9 @@
 """Workspace-scoped label identities and immutable print history."""
 
+# The timestamp, ordering, and workspace-unique-name fields intentionally
+# follow the same catalog convention as inventory and location records.
+# pylint: disable=duplicate-code
+
 from django.conf import settings
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
@@ -37,6 +41,8 @@ class LabelCode(WorkspaceOwnedModel):
     """One issued code; retirement changes its status but never its identity."""
 
     class Status(models.TextChoices):
+        """Whether this exact printed value may still be used."""
+
         ACTIVE = 'active', 'Active'
         REPLACED = 'replaced', 'Replaced'
         VOID = 'void', 'Void'
@@ -112,14 +118,20 @@ class LabelTemplate(WorkspaceOwnedModel):
     """A reusable physical layout and field selection."""
 
     class Format(models.TextChoices):
+        """Machine-readable symbol rendered on the label."""
+
         QR = 'qr', 'QR code'
         CODE128 = 'code128', 'Code 128'
 
     class PayloadMode(models.TextChoices):
+        """Information encoded inside a QR or linear barcode."""
+
         CODE = 'code', 'Bare code'
         URL = 'url', 'Application deep link'
 
     class Layout(models.TextChoices):
+        """Physical medium a template arranges labels upon."""
+
         SINGLE = 'single', 'Single label'
         SHEET = 'sheet', 'Sheet'
         ROLL = 'roll', 'Roll printer'

@@ -22,6 +22,7 @@ class LabelIssuanceTests(TestCase):
     """Every supported object receives one stable code automatically."""
 
     def test_supported_targets_receive_valid_unique_codes(self):
+        """Every currently label-worthy model receives its typed checked code."""
         targets = [
             make_specific_plant(),
             make_seed_tray(),
@@ -38,6 +39,7 @@ class LabelIssuanceTests(TestCase):
         self.assertEqual(len(codes), len(set(codes)))
 
     def test_repeated_issuance_reuses_the_same_identity_and_code(self):
+        """Saving or asking again must never silently rotate physical identity."""
         plant = make_specific_plant()
         first = ensure_identity(plant)
         original = first.codes.get().code
@@ -66,11 +68,14 @@ class LabelIssuanceTests(TestCase):
 
 
 class LabelCodeLifecycleTests(TestCase):
+    """Replacement and void actions retain the exact code operators saw."""
+
     def setUp(self):
         self.identity = ensure_identity(make_garden_area())
         self.code = self.identity.codes.get()
 
     def test_replace_preserves_the_old_code_and_issues_a_new_one(self):
+        """A damaged label remains resolvable while its successor becomes active."""
         replacement = replace_code(self.code, None, 'Damaged label')
         self.code.refresh_from_db()
         self.assertEqual(self.code.status, LabelCode.Status.REPLACED)
@@ -79,6 +84,7 @@ class LabelCodeLifecycleTests(TestCase):
         self.assertNotEqual(replacement.code, self.code.code)
 
     def test_void_requires_a_reason(self):
+        """An identity cannot disappear from operational use without an audit reason."""
         with self.assertRaises(ValidationError):
             void_code(self.code, None, '')
         void_code(self.code, None, 'Object was labelled in error')
