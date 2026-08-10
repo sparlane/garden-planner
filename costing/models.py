@@ -52,7 +52,7 @@ from inventory.models import (
     StockMovement,
 )
 from inventory.units import UnitCode
-from plantings.models import ProductionBatch, SowingStockPosting, SpecificPlant
+from plantings.models import PlantCohort, ProductionBatch, SowingStockPosting, SpecificPlant
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration, SeedTrayGenerationResidual
 from workspaces.models import WorkspaceOwnedModel
 
@@ -65,7 +65,7 @@ SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual')
 
 #: Columns that can hold the thing a layer is allocated to. Same naming trick as
 #: `SOURCE_FIELDS`, and kept in step with `CostAllocation.TargetType` by a test.
-TARGET_FIELDS = ('seed_tray_cell', 'specific_plant')
+TARGET_FIELDS = ('seed_tray_cell', 'specific_plant', 'plant_cohort')
 
 #: Target types that name no individual thing. A batch pool is cost that has not
 #: reached a cell or a plant yet; production loss is cost that never will; and
@@ -173,6 +173,7 @@ class CostAllocation(WorkspaceOwnedModel):
 
         SEED_TRAY_CELL = 'seed_tray_cell', 'Tray cell'
         SPECIFIC_PLANT = 'specific_plant', 'Plant'
+        PLANT_COHORT = 'plant_cohort', 'Plant cohort'
         BATCH_POOL = 'batch_pool', 'Unresolved batch pool'
         PRODUCTION_LOSS = 'production_loss', 'Production loss'
         UNATTRIBUTED = 'unattributed', 'Not attributable to a plant'
@@ -252,6 +253,13 @@ class CostAllocation(WorkspaceOwnedModel):
         blank=True,
         related_name='cost_allocations',
     )
+    plant_cohort = models.ForeignKey(
+        PlantCohort,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='cost_allocations',
+    )
     basis = models.CharField(max_length=16, choices=Basis.choices)
     basis_weight = models.DecimalField(
         max_digits=FACTOR_MAX_DIGITS,
@@ -294,6 +302,7 @@ class CostAllocation(WorkspaceOwnedModel):
         indexes = [
             models.Index(fields=['batch', 'target_type'], name='cost_allocation_batch_idx'),
             models.Index(fields=['specific_plant'], name='cost_allocation_plant_idx'),
+            models.Index(fields=['plant_cohort'], name='cost_allocation_cohort_idx'),
         ]
         constraints = [
             models.CheckConstraint(
@@ -416,6 +425,7 @@ class CostAllocation(WorkspaceOwnedModel):
             'batch': self.batch if self.batch_id else None,
             'movement': self.movement if self.movement_id else None,
             'specific_plant': self.specific_plant if self.specific_plant_id else None,
+            'plant_cohort': self.plant_cohort if self.plant_cohort_id else None,
             'seed_tray_generation': (
                 self.seed_tray_generation if self.seed_tray_generation_id else None
             ),

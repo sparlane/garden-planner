@@ -38,6 +38,7 @@ from .allocation import (
     cell_volume_shares,
     plant_shares,
     resolve_cells_to_plants,
+    resolve_unidentified_to_cohorts,
     seed_shares,
     unattributable_share,
     whole_source_share,
@@ -121,6 +122,22 @@ def plants_by_cell(batch):
     for plant_id, cell_id in rows:
         grouped.setdefault(cell_id, []).append(plant_id)
     return grouped
+
+
+def cohort_outputs(batch):
+    """Return anonymous quantities and promoted identities that share their cost."""
+    from plantings.models import PlantCohort  # pylint: disable=import-outside-toplevel
+
+    outputs = []
+    cohorts = PlantCohort.objects.filter(batch=batch).prefetch_related('promoted_plants')
+    for cohort in cohorts:
+        if cohort.quantity:
+            outputs.append(('cohort', cohort.pk, cohort.quantity))
+        outputs.extend(
+            ('plant', plant_id, 1)
+            for plant_id in cohort.promoted_plants.values_list('pk', flat=True)
+        )
+    return outputs
 
 
 def cell_batch_weights(generation_ids):
@@ -233,7 +250,7 @@ def batch_application_lines(batch, generation_ids):
     for lookup in (
         {'application__batch': batch},
         {'targets__batch': batch},
-        {'targets__specific_plant__cell_planting__seed_tray_planting__batch': batch},
+        {'targets__specific_plant__batch': batch},
         {'targets__seed_tray_generation_id__in': generation_ids},
     ):
         reaching.update(_posted_lines().filter(**lookup).values_list('pk', flat=True))
@@ -336,7 +353,7 @@ def _plant_reach(batch, line):
     mine = set(
         SpecificPlant.objects.filter(
             pk__in=named,
-            cell_planting__seed_tray_planting__batch=batch,
+            batch=batch,
         ).values_list('pk', flat=True)
     )
     ours = sorted(plant_id for plant_id in named if plant_id in mine)
@@ -372,7 +389,7 @@ def _plants_standing_in(batch, target):
         return []
     return list(
         SpecificPlantLocation.objects.filter(
-            specific_plant__cell_planting__seed_tray_planting__batch=batch,
+            specific_plant__batch=batch,
             ended__isnull=True,
             garden_square_id__in=squares,
         ).values_list('specific_plant_id', flat=True).order_by('specific_plant_id')
@@ -512,9 +529,10 @@ def batch_sources(batch):
     sources += application_sources(batch, generation_ids, cell_weights)
     sources += residual_sources(batch, generation_ids)
     observed = plants_by_cell(batch)
-    return [
-        source._replace(
-            shares=tuple(resolve_cells_to_plants(list(source.shares), observed)),
-        )
-        for source in sources
-    ]
+    outputs = cohort_outputs(batch)
+    resolved = []
+    for source in sources:
+        shares = resolve_cells_to_plants(list(source.shares), observed)
+        shares = resolve_unidentified_to_cohorts(shares, outputs)
+        resolved.append(source._replace(shares=tuple(shares)))
+    return resolved

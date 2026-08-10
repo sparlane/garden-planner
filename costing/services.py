@@ -116,6 +116,7 @@ def _layer_key(spec):
         spec['target_type'],
         spec.get('seed_tray_cell_id'),
         spec.get('specific_plant_id'),
+        spec.get('plant_cohort_id'),
     )
 
 
@@ -127,6 +128,7 @@ def _stored_key(row):
         row.target_type,
         row.seed_tray_cell_id,
         row.specific_plant_id,
+        row.plant_cohort_id,
     )
 
 
@@ -171,6 +173,7 @@ def intended_layers(batch):
                 'seed_tray_cell_id': part.share.cell_id,
                 'seed_tray_generation_id': part.share.generation_id,
                 'specific_plant_id': part.share.plant_id,
+                'plant_cohort_id': part.share.cohort_id,
                 'basis': part.share.basis,
                 'basis_weight': weight,
                 'base_quantity': part.base_quantity,
@@ -223,6 +226,7 @@ def _write_layer(run, spec, reversal_of=None):
         'seed_tray_cell_id': spec.get('seed_tray_cell_id'),
         'seed_tray_generation_id': spec.get('seed_tray_generation_id'),
         'specific_plant_id': spec.get('specific_plant_id'),
+        'plant_cohort_id': spec.get('plant_cohort_id'),
         'basis': spec['basis'],
         'basis_weight': spec['basis_weight'],
         'base_quantity': spec['base_quantity'],
@@ -245,6 +249,7 @@ def _spec_of(row):
         'seed_tray_cell_id': row.seed_tray_cell_id,
         'seed_tray_generation_id': row.seed_tray_generation_id,
         'specific_plant_id': row.specific_plant_id,
+        'plant_cohort_id': row.plant_cohort_id,
         'basis': row.basis,
         'basis_weight': row.basis_weight,
         'base_quantity': row.base_quantity,
@@ -275,6 +280,9 @@ def _frozen_plan(intended, stored):
         """Return whether a frozen batch still has to cancel this layer."""
         if row.target_type in UNRESOLVED_TARGETS:
             return True
+        if row.target_type == TargetType.PLANT_COHORT:
+            key = _stored_key(row)
+            return key not in intended or not _matches(row, intended[key])
         return (row.source_type, row.source_id) not in live_sources
 
     reverse = [row for row in stored.values() if retired(row)]
@@ -379,7 +387,7 @@ def plant_dispositions(batch):
     """Return each plant's derived state and the bucket its value belongs in."""
     plant_ids = list(
         SpecificPlant.objects
-        .filter(cell_planting__seed_tray_planting__batch=batch)
+        .filter(batch=batch)
         .order_by('pk').values_list('pk', flat=True)
     )
     return {
@@ -529,7 +537,7 @@ def batch_cost_breakdown(batch):
 def plant_cost_breakdown(plant):
     """Report what one seedling cost, from which inputs, and where it went."""
     batch = ProductionBatch.objects.get(
-        pk=plant.cell_planting.seed_tray_planting.batch_id,
+        pk=plant.batch_id,
     )
     rows = list(
         CostAllocation.objects

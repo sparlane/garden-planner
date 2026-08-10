@@ -202,7 +202,7 @@ class PlantCostViewSet(CurrentWorkspaceViewSetMixin, viewsets.GenericViewSet):
     """What one seedling cost, from which inputs, and where its value went."""
 
     queryset = SpecificPlant.objects.select_related(
-        'cell_planting__seed_tray_planting__batch',
+        'batch',
     ).order_by('pk')
     serializer_class = CostAllocationSerializer
 

@@ -26,6 +26,7 @@ from applications.models import InputApplicationTarget
 from inventory.models import InventoryItem, QuantityCertainty
 from inventory.units import UnitCode
 from plantings.batches import finalize_batch_output
+from plantings.cohorts import observe_cohort, promote_cohort
 from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
 from plantings.models import (
     SeedTrayCellPlanting,
@@ -265,6 +266,39 @@ class SingleSeedlingTests(CostingServiceTestCase):
         """Seed and media each arrive whole, without a rounding residue."""
         amounts = sorted(row.amount for row in self.effective())
         self.assertEqual(amounts, [Decimal('0.0800'), Decimal('1.0000')])
+
+
+class CohortCostTests(CostingServiceTestCase):
+    """Anonymous stock and promoted plants share one reconciled input value."""
+
+    def test_promotion_transfers_a_proportional_share_without_double_counting(self):
+        """Promotion moves value from anonymous stock to named plants exactly once."""
+        sowing = self.sow([(self.cells[0], 4)])
+        self.apply_media([self.cells[0]], '0.04')
+        cohort, _observed = observe_cohort(
+            self.workspace,
+            self.user,
+            batch=self.batch,
+            source_sowing=sowing,
+            quantity=4,
+            idempotency_key='12345678-1234-5678-1234-567812345678',
+        )
+        before = self.totals_by_target()
+        self.assertEqual(before[CostAllocation.TargetType.PLANT_COHORT], Decimal('1.0800'))
+
+        plants, _promoted = promote_cohort(
+            self.workspace,
+            self.user,
+            cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            quantity=1,
+            idempotency_key='22345678-1234-5678-1234-567812345678',
+            reason='Assign one sale plant.',
+        )
+        after = self.totals_by_target()
+        self.assertEqual(after[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
+        self.assertEqual(after[CostAllocation.TargetType.SPECIFIC_PLANT], Decimal('0.2700'))
+        self.assertEqual(plant_cost_breakdown(plants[0])['provisional_value'], '0.2700')
 
 
 class MultigermTests(CostingServiceTestCase):
