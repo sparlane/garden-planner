@@ -38,17 +38,20 @@ def backfill(apps, schema_editor):
             model=model_name.lower(),
         )
         for target in Model.objects.all().iterator():
-            identity = Identity.objects.create(
+            identity, _identity_created = Identity.objects.get_or_create(
                 workspace_id=target.workspace_id,
                 target_content_type=content_type,
                 target_object_id=target.pk,
-                target_snapshot={'display': str(target), 'pk': target.pk},
+                defaults={
+                    'target_snapshot': {'display': str(target), 'pk': target.pk},
+                },
             )
-            Code.objects.create(
-                workspace_id=target.workspace_id,
-                identity=identity,
-                code=new_code(prefix),
-            )
+            if not Code.objects.filter(identity=identity, status='active').exists():
+                Code.objects.create(
+                    workspace_id=target.workspace_id,
+                    identity=identity,
+                    code=new_code(prefix),
+                )
 
     presets = (
         ('Single QR 100 × 50 mm', 'qr', 'url', 'single', {'label_width_mm': 100, 'label_height_mm': 50}),
@@ -57,15 +60,17 @@ def backfill(apps, schema_editor):
     )
     for workspace in Workspace.objects.all():
         for name, format_name, payload_mode, layout, dimensions in presets:
-            Template.objects.create(
+            Template.objects.get_or_create(
                 workspace=workspace,
                 name=name,
-                format=format_name,
-                payload_mode=payload_mode,
-                layout=layout,
-                fields=['display', 'variety', 'batch', 'sowing_date', 'expected_ready', 'code', 'print_date'],
-                dimensions=dimensions,
-                built_in=True,
+                defaults={
+                    'format': format_name,
+                    'payload_mode': payload_mode,
+                    'layout': layout,
+                    'fields': ['display', 'variety', 'batch', 'sowing_date', 'expected_ready', 'code', 'print_date'],
+                    'dimensions': dimensions,
+                    'built_in': True,
+                },
             )
 
 

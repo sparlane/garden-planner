@@ -1,5 +1,8 @@
 """Behavioral tests for stable label identities and code lifecycle."""
 
+from importlib import import_module
+
+from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
@@ -47,6 +50,18 @@ class LabelIssuanceTests(TestCase):
                 target_object_id=plant.pk,
             ).count(),
             1,
+        )
+
+    def test_the_data_backfill_is_safe_when_another_migration_test_reapplies_it(self):
+        """Other apps' migration tests can legitimately execute this migration twice."""
+        make_specific_plant()
+        before = (LabelIdentity.objects.count(), LabelCode.objects.count())
+        migration = import_module('labels.migrations.0002_backfill_labels_and_templates')
+        migration.backfill(apps, None)
+        migration.backfill(apps, None)
+        self.assertEqual(
+            (LabelIdentity.objects.count(), LabelCode.objects.count()),
+            before,
         )
 
 
