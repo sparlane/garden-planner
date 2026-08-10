@@ -4,7 +4,7 @@ import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstr
 import { Link } from 'react-router'
 
 import { getLocations } from '../api/locations'
-import { getCohort, getCohortAvailability, getCohorts, getProductionBatches, observeCohort, postCohortAction } from '../api/plantings'
+import { getCohort, getCohortAvailability, getCohorts, getProductionBatches, mergeCohorts, observeCohort, postCohortAction } from '../api/plantings'
 import { queryClient, queryKeys } from '../query'
 import { CohortAction, CohortFilters, CohortLifecycleState, PlantCohort } from '../types/plantings'
 
@@ -122,10 +122,20 @@ function CohortRegisterView() {
   const [search, setSearch] = React.useState('')
   const [state, setState] = React.useState<CohortLifecycleState | ''>('')
   const [page, setPage] = React.useState(1)
+  const [selected, setSelected] = React.useState<Array<number>>([])
+  const [mergeReason, setMergeReason] = React.useState('')
   const filters: CohortFilters = { search: search || undefined, state: state || undefined, page, page_size: 50 }
   const { data, isPending } = useQuery({
     queryKey: queryKeys.plantings.cohorts(filters),
     queryFn: ({ signal }) => getCohorts(filters, signal)
+  })
+  const mergeMutation = useMutation({
+    mutationFn: mergeCohorts,
+    onSuccess: () => {
+      setSelected([])
+      setMergeReason('')
+      void queryClient.invalidateQueries({ queryKey: queryKeys.plantings.cohortsAll })
+    }
   })
   return (
     <main className="container py-3">
@@ -148,6 +158,30 @@ function CohortRegisterView() {
           </Form.Select>
         </Col>
       </Row>
+      {selected.length >= 2 && (
+        <Alert variant="light" className="d-flex gap-2 align-items-end">
+          <div className="flex-grow-1">
+            <strong>Merge {selected.length} cohorts</strong>
+            <div className="small text-muted">Cohort #{selected[0]} will keep the identity. Compatibility is rechecked when applied.</div>
+            <Form.Control className="mt-2" placeholder="Reason for merge" value={mergeReason} onChange={(event) => setMergeReason(event.target.value)} />
+          </div>
+          <Button
+            disabled={!mergeReason.trim() || mergeMutation.isPending}
+            onClick={() => {
+              const rows = data?.results.filter((entry) => selected.includes(entry.pk)) ?? []
+              mergeMutation.mutate({
+                target: selected[0],
+                sources: selected.slice(1),
+                revisions: Object.fromEntries(rows.map((entry) => [String(entry.pk), entry.revision])),
+                reason: mergeReason,
+                idempotency_key: crypto.randomUUID()
+              })
+            }}
+          >
+            Merge
+          </Button>
+        </Alert>
+      )}
       {isPending ? (
         <div>Loading cohorts…</div>
       ) : (
@@ -155,6 +189,7 @@ function CohortRegisterView() {
           <Table responsive hover>
             <thead>
               <tr>
+                <th aria-label="Select" />
                 <th>Cohort</th>
                 <th>Crop</th>
                 <th>Batch</th>
@@ -167,6 +202,14 @@ function CohortRegisterView() {
             <tbody>
               {data?.results.map((cohort) => (
                 <tr key={cohort.pk}>
+                  <td>
+                    <Form.Check
+                      aria-label={`Select cohort ${cohort.pk}`}
+                      disabled={cohort.quantity === 0}
+                      checked={selected.includes(cohort.pk)}
+                      onChange={(event) => setSelected(event.target.checked ? [...selected, cohort.pk] : selected.filter((pk) => pk !== cohort.pk))}
+                    />
+                  </td>
                   <td>
                     <Link to={`/plantings/cohorts/${cohort.pk}`}>#{cohort.pk}</Link>
                   </td>
@@ -202,6 +245,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
   const [actionName, setActionName] = React.useState('adjust')
   const [quantity, setQuantity] = React.useState(cohort.quantity)
   const [reason, setReason] = React.useState('')
+  const [location, setLocation] = React.useState<number | ''>(cohort.location ?? '')
   const [message, setMessage] = React.useState('')
   const mutation = useMutation({
     mutationFn: (payload: CohortAction) => postCohortAction(cohort.pk, actionName, payload),
@@ -211,6 +255,10 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.plantings.cohortsAll })
       void queryClient.invalidateQueries({ queryKey: queryKeys.plantings.cohort(cohort.pk) })
     }
+  })
+  const { data: locations = [] } = useQuery({
+    queryKey: queryKeys.locations.list('active'),
+    queryFn: ({ signal }) => getLocations(signal, true)
   })
   const needsQuantity = ['adjust', 'loss', 'split', 'promote'].includes(actionName)
   return (
@@ -224,6 +272,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
             expected_revision: cohort.revision,
             idempotency_key: crypto.randomUUID(),
             quantity: needsQuantity ? quantity : undefined,
+            location: actionName === 'move' && location !== '' ? location : undefined,
             reason
           })
         }}
@@ -238,12 +287,26 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
               <option value="promote">Promote to plant IDs</option>
               <option value="ready">Mark available</option>
               <option value="retain">Retain</option>
+              <option value="move">Move</option>
             </Form.Select>
           </Col>
           {needsQuantity && (
             <Col md={2}>
               <Form.Label>Quantity</Form.Label>
               <Form.Control type="number" min={actionName === 'adjust' ? 0 : 1} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+            </Col>
+          )}
+          {actionName === 'move' && (
+            <Col md={3}>
+              <Form.Label>Destination</Form.Label>
+              <Form.Select value={location} required onChange={(event) => setLocation(event.target.value === '' ? '' : Number(event.target.value))}>
+                <option value="">Select location</option>
+                {locations.map((entry) => (
+                  <option key={entry.pk} value={entry.pk}>
+                    {entry.full_name}
+                  </option>
+                ))}
+              </Form.Select>
             </Col>
           )}
           <Col md={5}>
@@ -298,6 +361,12 @@ function CohortDetailView({ cohortPk }: { cohortPk: number }) {
           <Card body>
             <div className="text-muted">Label</div>
             <div>{cohort.label_code}</div>
+          </Card>
+        </Col>
+        <Col md={3}>
+          <Card body>
+            <div className="text-muted">Production cost</div>
+            <div>{cohort.cost === null ? 'Unknown' : `${cohort.currency_code} ${cohort.cost}`}</div>
           </Card>
         </Col>
       </Row>

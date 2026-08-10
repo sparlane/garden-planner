@@ -69,6 +69,8 @@ class PlantCohortSerializer(serializers.ModelSerializer):
     plant_name = serializers.CharField(source='batch.variety.plant.name', read_only=True)
     location_name = serializers.CharField(source='location.name', read_only=True, allow_null=True)
     label_code = serializers.SerializerMethodField()
+    cost = serializers.SerializerMethodField()
+    currency_code = serializers.CharField(source='workspace.currency_code', read_only=True)
 
     class Meta:
         model = PlantCohort
@@ -76,6 +78,7 @@ class PlantCohortSerializer(serializers.ModelSerializer):
             'pk', 'batch', 'batch_code', 'variety', 'variety_name', 'plant_name',
             'source_sowing', 'quantity', 'lifecycle_state', 'location',
             'location_name', 'observed_at', 'revision', 'notes', 'label_code',
+            'cost', 'currency_code',
             'created', 'updated',
         ]
         read_only_fields = [
@@ -87,6 +90,16 @@ class PlantCohortSerializer(serializers.ModelSerializer):
         from labels.services import ensure_identity  # pylint: disable=import-outside-toplevel
 
         return ensure_identity(cohort).codes.get(status='active').code
+
+    def get_cost(self, cohort):
+        """Sum effective cohort layers while preserving unknown as unknown."""
+        rows = cohort.cost_allocations.filter(
+            reversal_of__isnull=True,
+            reversal__isnull=True,
+        )
+        if rows.filter(amount__isnull=True).exists():
+            return None
+        return rows.aggregate(total=Sum('amount'))['total']
 
 
 class CohortDetailSerializer(PlantCohortSerializer):

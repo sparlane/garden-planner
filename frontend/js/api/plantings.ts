@@ -41,6 +41,7 @@ import {
   CohortAction,
   CohortAvailability,
   CohortFilters,
+  CohortMerge,
   CohortObservation,
   CohortPage,
   PlantCohort
@@ -288,6 +289,10 @@ function postCohortAction(cohortPk: number, actionName: string, data: CohortActi
   return csrfPost(`/plantings/cohorts/${cohortPk}/${actionName}/`, data).then((response) => response.json() as Promise<PlantCohort | { operation: number; plants: Array<number> }>)
 }
 
+function mergeCohorts(data: CohortMerge): Promise<PlantCohort> {
+  return csrfPost('/plantings/cohorts/merge/', data).then((response) => response.json() as Promise<PlantCohort>)
+}
+
 export {
   ProductionBatchFilters,
   getProductionBatches,
@@ -333,5 +338,6 @@ export {
   getCohort,
   getCohortAvailability,
   observeCohort,
-  postCohortAction
+  postCohortAction,
+  mergeCohorts
 }
