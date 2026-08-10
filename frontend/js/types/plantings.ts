@@ -597,6 +597,8 @@ interface PlantCohort {
   revision: number
   notes: string
   label_code: string
+  cost: string | null
+  currency_code: string
   created: string
   updated: string
   events?: Array<CohortEvent>
@@ -653,6 +655,14 @@ interface CohortAction {
   location?: number | null
   disposition?: 'failed' | 'culled' | 'donated' | 'other'
   reason?: string
+}
+
+interface CohortMerge {
+  target: number
+  sources: Array<number>
+  revisions: Record<string, number>
+  reason: string
+  idempotency_key: string
 }
 
 export {
@@ -721,6 +731,7 @@ export {
   CohortEvent,
   CohortFilters,
   CohortLifecycleState,
+  CohortMerge,
   CohortObservation,
   CohortPage,
   CohortTotals,

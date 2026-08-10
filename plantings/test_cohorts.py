@@ -1,9 +1,12 @@
 """Cohort quantity, lineage, promotion, and REST contract tests."""
 
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.db import close_old_connections
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
 from tests.api import RESTContractTestCase
@@ -189,3 +192,58 @@ class CohortRESTTests(RESTContractTestCase):
         register = self.client.get('/plantings/register/', {'batch': self.batch.pk})
         self.assertEqual(register.status_code, 200, register.data)
         self.assertEqual(register.data['count'], 2)
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class CohortConcurrencyTests(TransactionTestCase):
+    """A stale writer cannot spend the same anonymous quantity twice."""
+
+    reset_sequences = True
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        Workspace.objects.get_or_create(
+            pk=settings.CURRENT_WORKSPACE_ID,
+            defaults={'name': 'My Garden'},
+        )
+
+    def setUp(self):
+        """Create one positive cohort whose initial revision both writers read."""
+        self.workspace = Workspace.objects.get()
+        batch = make_production_batch()
+        self.cohort, _operation = observe_cohort(
+            self.workspace,
+            None,
+            batch=batch,
+            quantity=10,
+            idempotency_key=uuid4(),
+        )
+
+    def split(self):
+        """Attempt one concurrent split on an isolated database connection."""
+        close_old_connections()
+        try:
+            split_cohort(
+                self.workspace,
+                None,
+                cohort_id=self.cohort.pk,
+                expected_revision=self.cohort.revision,
+                quantity=6,
+                idempotency_key=uuid4(),
+                reason='Concurrent split.',
+            )
+            return True
+        except ValidationError:
+            return False
+        finally:
+            close_old_connections()
+
+    def test_only_one_racing_split_uses_the_loaded_revision(self):
+        """Row locking admits one writer and makes the other revision stale."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _index: self.split(), range(2)))
+        self.assertEqual(sorted(results), [False, True])
+        self.cohort.refresh_from_db()
+        self.assertEqual(self.cohort.quantity, 4)
+        self.assertEqual(sum(PlantCohort.objects.values_list('quantity', flat=True)), 10)
