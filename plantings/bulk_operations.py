@@ -42,6 +42,7 @@ ACTION_EVENTS = {
 
 
 @dataclass(frozen=True)
+# pylint: disable-next=too-many-instance-attributes
 class BulkOperationRequest:
     """One validated preview or confirmed bulk-operation request."""
 
@@ -411,13 +412,15 @@ def execute_bulk_operation(workspace, user, request):
         return existing, True
     try:
         return _execute(workspace, user, request, digest)
-    except IntegrityError:
+    except IntegrityError as exc:
         existing = BulkPlantOperation.objects.get(
             workspace=workspace,
             idempotency_key=request.idempotency_key,
         )
         if existing.request_digest != digest:
-            raise ValidationError({'idempotency_key': 'That key was used for different work.'})
+            raise ValidationError({
+                'idempotency_key': 'That key was used for different work.',
+            }) from exc
         return existing, True
 
 

@@ -210,7 +210,7 @@ def _apply_search(queryset, search):
     return queryset.filter(matches)
 
 
-def register_queryset(workspace, filters):
+def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
     """Return the plants one validated filter set selects, in its order."""
     queryset = register_projection(workspace)
     if filters.variety is not None:
