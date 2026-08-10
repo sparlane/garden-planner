@@ -7,12 +7,20 @@ from garden.models import GardenArea
 from locations.models import Location
 from plantings.models import ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTray
+from workspaces.models import Workspace
 
 from .models import LabelIdentity
-from .services import ensure_identity, target_key
+from .services import ensure_default_templates, ensure_identity, target_key
 
 
 SUPPORTED_MODELS = (SpecificPlant, SeedTray, ProductionBatch, Location, GardenArea)
+
+
+@receiver(post_save, sender=Workspace)
+def create_workspace_label_templates(sender, instance, created, raw=False, **kwargs):  # pylint: disable=unused-argument
+    """Give every new workspace the same useful starting print layouts."""
+    if created and not raw:
+        ensure_default_templates(instance)
 
 
 @receiver(post_save, sender=SpecificPlant)

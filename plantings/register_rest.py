@@ -74,6 +74,7 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
         read_only=True,
     )
     batch_code = serializers.CharField(read_only=True)
+    label_code = serializers.CharField(read_only=True, allow_null=True)
     variety = serializers.IntegerField(
         source='cell_planting.seed_tray_planting.batch.variety_id',
         read_only=True,

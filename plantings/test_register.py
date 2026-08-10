@@ -158,6 +158,7 @@ class RegisterContractTests(RegisterTestCase):
             'final_outcome_at',
             'garden_square',
             'germinated',
+            'label_code',
             'lifecycle_state',
             'located_since',
             'location',
@@ -173,6 +174,11 @@ class RegisterContractTests(RegisterTestCase):
             'variety',
             'variety_name',
         ])
+
+    def test_label_code_search_finds_the_identified_plant(self):
+        plant = self.make_plant()
+        code = self.page()['results'][0]['label_code']
+        self.assertEqual(self.row_ids(self.page(search=code)), [plant.pk])
 
     def test_a_garden_workspace_cannot_reach_the_register(self):
         """The Garden profile has plants but no nursery to run them through."""

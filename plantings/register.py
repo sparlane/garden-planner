@@ -15,11 +15,13 @@ from typing import NamedTuple
 
 from django.db.models import Count, DecimalField, F, OuterRef, Q, Subquery, Sum, TextField, Value
 from django.db.models.functions import Coalesce
+from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
 
 from costing.models import CostAllocation
 from inventory.rest_query import parse_boolean, parse_datetime, parse_integer
 from locations.models import Location
+from labels.models import LabelCode
 
 from .lifecycle import FINAL_STATES, LifecycleState, with_lifecycle_state
 from .models import SpecificPlant, SpecificPlantLocation
@@ -144,6 +146,13 @@ def _plant_cost():
 
 def register_projection(workspace):
     """Return every plant in the workspace with its register columns."""
+    plant_content_type = ContentType.objects.get_for_model(SpecificPlant)
+    active_label = LabelCode.objects.filter(
+        workspace=workspace,
+        status=LabelCode.Status.ACTIVE,
+        identity__target_content_type=plant_content_type,
+        identity__target_object_id=OuterRef('pk'),
+    ).values('code')[:1]
     return with_lifecycle_state(
         SpecificPlant.objects
         .filter(workspace=workspace)
@@ -160,6 +169,7 @@ def register_projection(workspace):
         current_garden_square_label=_current_location('garden_square__name'),
         located_since=_current_location('started'),
         cost=_plant_cost(),
+        label_code=Subquery(active_label),
         direct_location=_current_location('location'),
         direct_location_name=_current_location('location__name'),
         direct_location_path=_current_location('location__path'),
@@ -202,7 +212,7 @@ def _apply_search(queryset, search):
     number wants that plant, not every crop whose catalog name happens to
     contain the same digit. Label codes join this once task 18 issues them.
     """
-    matches = Q(batch_code__icontains=search)
+    matches = Q(batch_code__icontains=search) | Q(label_code__iexact=search)
     if search.isdigit():
         matches |= Q(pk=int(search))
     else:
