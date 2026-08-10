@@ -1,7 +1,7 @@
 """
 Models for Plantings
 """
-# pylint: disable=duplicate-code
+# pylint: disable=duplicate-code,too-many-lines
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -358,12 +358,240 @@ class SpecificPlant(WorkspaceOwnedModel):
     A specific individual plant that has germinated from a seed tray cell.
     Created when germination is observed for a particular cell planting.
     """
-    cell_planting = models.ForeignKey(SeedTrayCellPlanting, on_delete=models.PROTECT, related_name='specific_plants')
+    cell_planting = models.ForeignKey(
+        SeedTrayCellPlanting,
+        on_delete=models.PROTECT,
+        related_name='specific_plants',
+        null=True,
+        blank=True,
+    )
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        related_name='specific_plants',
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    promoted_from_cohort = models.ForeignKey(
+        'PlantCohort',
+        on_delete=models.PROTECT,
+        related_name='promoted_plants',
+        null=True,
+        blank=True,
+        editable=False,
+    )
     germinated = models.DateTimeField(default=timezone.now)
     notes = models.TextField(null=True, blank=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(cell_planting__isnull=False, promoted_from_cohort__isnull=True),
+                    models.Q(cell_planting__isnull=True, promoted_from_cohort__isnull=False),
+                    _connector=models.Q.OR,
+                ),
+                name='specific_plant_exactly_one_origin',
+            ),
+        ]
+
+    def clean(self):
+        """Keep the durable batch and whichever origin raised this plant aligned."""
+        super().clean()
+        origins = [self.cell_planting_id is not None, self.promoted_from_cohort_id is not None]
+        if sum(origins) != 1:
+            raise ValidationError('A plant must have exactly one tray-cell or cohort origin.')
+        origin_batch_id = (
+            self.cell_planting.seed_tray_planting.batch_id
+            if self.cell_planting_id else self.promoted_from_cohort.batch_id
+        )
+        if self.batch_id is None:
+            setattr(self, 'batch_id', origin_batch_id)
+        elif self.batch_id != origin_batch_id:
+            raise ValidationError({'batch': 'The batch does not match the plant origin.'})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return f'Plant from {self.cell_planting} germinated {self.germinated}'
+        origin = self.cell_planting or f'cohort {self.promoted_from_cohort_id}'
+        return f'Plant from {origin} germinated {self.germinated}'
+
+
+class PlantCohort(WorkspaceOwnedModel):
+    """A homogeneous quantity of nursery plants managed under one identity."""
+
+    class LifecycleState(models.TextChoices):
+        """Commercial state shared by every plant represented by the cohort."""
+
+        GROWING = 'growing', 'Growing'
+        AVAILABLE = 'available', 'Available'
+        RETAINED = 'retained', 'Retained'
+        DEPLETED = 'depleted', 'Depleted'
+
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        related_name='cohorts',
+    )
+    source_sowing = models.ForeignKey(
+        SeedTrayPlanting,
+        on_delete=models.PROTECT,
+        related_name='cohorts',
+        null=True,
+        blank=True,
+    )
+    quantity = models.PositiveIntegerField(default=0, editable=False)
+    lifecycle_state = models.CharField(
+        max_length=16,
+        choices=LifecycleState.choices,
+        default=LifecycleState.GROWING,
+        editable=False,
+    )
+    location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        related_name='plant_cohorts',
+        null=True,
+        blank=True,
+    )
+    observed_at = models.DateTimeField(default=timezone.now, editable=False)
+    revision = models.PositiveBigIntegerField(default=1, editable=False)
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created', '-pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=0),
+                name='plant_cohort_quantity_nonnegative',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Cohort {self.pk}: {self.quantity} {self.batch.variety}'
+
+    def clean(self):
+        """Keep the batch, source sowing, and current location in one workspace."""
+        super().clean()
+        errors = {}
+        for field in ('batch', 'source_sowing', 'location'):
+            value = getattr(self, field, None)
+            if value is not None and value.workspace_id != self.workspace_id:
+                errors[field] = f'The {field.replace("_", " ")} belongs to another workspace.'
+        if self.source_sowing_id and self.source_sowing.batch_id != self.batch_id:
+            errors['source_sowing'] = 'The sowing belongs to a different batch.'
+        if self.quantity == 0 and self.lifecycle_state != self.LifecycleState.DEPLETED:
+            errors['lifecycle_state'] = 'An empty cohort must be depleted.'
+        if self.quantity > 0 and self.lifecycle_state == self.LifecycleState.DEPLETED:
+            errors['lifecycle_state'] = 'A positive cohort cannot be depleted.'
+        if errors:
+            raise ValidationError(errors)
+
+
+class CohortOperation(WorkspaceOwnedModel):
+    """One immutable command that changed one or more cohorts."""
+
+    class Action(models.TextChoices):
+        """Supported cohort facts and structural operations."""
+
+        OBSERVE = 'observe', 'Observe'
+        ADJUST = 'adjust', 'Count adjustment'
+        SPLIT = 'split', 'Split'
+        MERGE = 'merge', 'Merge'
+        MOVE = 'move', 'Move'
+        READY = 'ready', 'Ready'
+        RETAIN = 'retain', 'Retain'
+        LOSS = 'loss', 'Loss'
+        PROMOTE = 'promote', 'Promote'
+
+    idempotency_key = models.UUIDField()
+    action = models.CharField(max_length=16, choices=Action.choices)
+    occurred_at = models.DateTimeField(default=timezone.now)
+    reason = models.TextField(blank=True, default='')
+    payload = models.JSONField(blank=True, default=dict)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'idempotency_key'],
+                name='cohort_operation_workspace_idempotent',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Cohort operations are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Cohort operations cannot be deleted.')
+
+
+class CohortEvent(WorkspaceOwnedModel):
+    """The immutable before-and-after entry for one cohort in an operation."""
+
+    operation = models.ForeignKey(CohortOperation, on_delete=models.PROTECT, related_name='events')
+    cohort = models.ForeignKey(PlantCohort, on_delete=models.PROTECT, related_name='events')
+    quantity_before = models.PositiveIntegerField()
+    quantity_delta = models.IntegerField()
+    quantity_after = models.PositiveIntegerField()
+    state_before = models.CharField(max_length=16, choices=PlantCohort.LifecycleState.choices)
+    state_after = models.CharField(max_length=16, choices=PlantCohort.LifecycleState.choices)
+    location_before = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
+    location_after = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
+    source_cohorts = models.ManyToManyField(PlantCohort, blank=True, related_name='lineage_events')
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+        constraints = [
+            models.CheckConstraint(condition=models.Q(quantity_after__gte=0), name='cohort_event_after_nonnegative'),
+            models.UniqueConstraint(fields=['operation', 'cohort'], name='cohort_event_operation_cohort_unique'),
+        ]
+
+    def clean(self):
+        """Require arithmetic and ownership to match the containing operation."""
+        super().clean()
+        errors = {}
+        if self.quantity_before + self.quantity_delta != self.quantity_after:
+            errors['quantity_after'] = 'The event quantity does not reconcile.'
+        if self.operation_id and self.operation.workspace_id != self.workspace_id:
+            errors['operation'] = 'The operation belongs to another workspace.'
+        if self.cohort_id and self.cohort.workspace_id != self.workspace_id:
+            errors['cohort'] = 'The cohort belongs to another workspace.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Cohort events are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Cohort events cannot be deleted.')
 
 
 class SpecificPlantLocation(models.Model):
@@ -546,7 +774,7 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
 
     def plant_batch_id(self):
         """Return the batch that raised this event's plant."""
-        return self.plant.cell_planting.seed_tray_planting.batch_id
+        return self.plant.batch_id
 
     def save(self, *args, **kwargs):
         if self.pk:

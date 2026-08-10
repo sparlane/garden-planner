@@ -465,10 +465,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
     and the germination that started the plant's lifecycle history.
     """
     locations = SpecificPlantLocationSerializer(many=True, read_only=True)
-    batch = serializers.IntegerField(
-        source='cell_planting.seed_tray_planting.batch_id',
-        read_only=True,
-    )
+    batch = serializers.IntegerField(source='batch_id', read_only=True)
     lifecycle_state = serializers.SerializerMethodField()
     sellable = serializers.SerializerMethodField()
     final_outcome = serializers.SerializerMethodField()
