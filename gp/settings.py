@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "seedtrays",
     "applications",
     "costing",
+    "labels",
     "rest_framework",
     "django.contrib.admin",
     "django.contrib.auth",
