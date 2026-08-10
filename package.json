@@ -21,7 +21,9 @@
   "description": "",
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
+    "@zxing/browser": "^0.2.1",
     "bootstrap": "^5.3.3",
+    "bwip-js": "^4.11.2",
     "esbuild": "^0.28.0",
     "esbuild-config": "^1.0.1",
     "js-cookie": "^3.0.5",

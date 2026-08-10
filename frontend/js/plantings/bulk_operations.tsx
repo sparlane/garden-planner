@@ -28,9 +28,10 @@ interface BulkOperationPanelProps {
   filters: NurseryRegisterFilters
   locations: Array<Location>
   setSelection: (selection: RegisterSelection) => void
+  sourceLabels?: Array<string>
 }
 
-function BulkOperationPanel({ selection, filters, locations, setSelection }: BulkOperationPanelProps) {
+function BulkOperationPanel({ selection, filters, locations, setSelection, sourceLabels }: BulkOperationPanelProps) {
   const cache = useQueryClient()
   const [action, setAction] = React.useState<BulkPlantAction>('move')
   const [atomicity, setAtomicity] = React.useState<BulkPlantAtomicity | ''>('')
@@ -100,7 +101,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection }: Bul
       occurred_at: parsed.toISOString(),
       reason,
       plants: resolved.plants,
-      selection_source: selection.mode === 'filter' ? { mode: 'filter', filters } : { mode: 'ids' },
+      selection_source: sourceLabels ? { mode: 'scan', labels: sourceLabels } : selection.mode === 'filter' ? { mode: 'filter', filters } : { mode: 'ids' },
       action_payload: actionPayload()
     }
     previewMutation.mutate(reviewedRequest)

@@ -3,6 +3,11 @@ import { QueryClient } from '@tanstack/react-query'
 import { NurseryRegisterFilters } from './types/plantings'
 
 const queryKeys = {
+  labels: {
+    all: ['labels'] as const,
+    identities: ['labels', 'identities'] as const,
+    templates: ['labels', 'templates'] as const
+  },
   workspace: {
     all: ['workspace'] as const,
     current: ['workspace', 'current'] as const

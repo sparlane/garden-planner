@@ -5,7 +5,7 @@ from urllib.parse import unquote, urlparse
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
-from rest_framework import routers, serializers, status, viewsets
+from rest_framework import mixins, routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -61,6 +61,7 @@ def _target_values(identity, code=None):
     """Project useful label fields without making them a second source of truth."""
     target = identity.target
     values = dict(identity.target_snapshot)
+    values['identity'] = identity.pk
     values['target_type'] = identity.target_content_type.model
     values['object_id'] = identity.target_object_id
     values['code'] = code.code if code else None
@@ -203,6 +204,24 @@ class LabelTemplateViewSet(
             raise ValidationError({'template': 'Built-in templates cannot be deleted.'})
         instance.active = False
         instance.save(update_fields=['active', 'updated'])
+
+
+class LabelIdentityViewSet(CurrentWorkspaceViewSetMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
+    """List printable identities without exposing generic target internals."""
+
+    queryset = LabelIdentity.objects.select_related('target_content_type').prefetch_related('codes')
+
+    def list(self, request, *args, **kwargs):  # pylint: disable=unused-argument
+        queryset = self.get_queryset().filter(active=True)
+        target_type = request.query_params.get('target_type')
+        if target_type:
+            queryset = queryset.filter(target_content_type__model=target_type)
+        rows = []
+        for identity in queryset:
+            code = _active_code(identity)
+            if code:
+                rows.append(_target_values(identity, code))
+        return Response(rows)
 
 
 class PrintTargetSerializer(serializers.Serializer):  # pylint: disable=abstract-method
@@ -394,6 +413,7 @@ class ResolveLabelView(APIView):
 
 
 router = routers.SimpleRouter()
+router.register(r'identities', LabelIdentityViewSet, basename='label-identity')
 router.register(r'templates', LabelTemplateViewSet, basename='label-template')
 router.register(r'print-jobs', LabelPrintJobViewSet, basename='label-print-job')
 router.register(r'codes', LabelCodeViewSet, basename='label-code')
