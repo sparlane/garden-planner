@@ -43,6 +43,7 @@ class Share(NamedTuple):
     cell_id: object = None
     generation_id: object = None
     plant_id: object = None
+    cohort_id: object = None
 
 
 class Part(NamedTuple):
@@ -222,6 +223,44 @@ def resolve_cells_to_plants(shares, plants_by_cell):
     return combine(resolved)
 
 
+def resolve_unidentified_to_cohorts(shares, outputs):
+    """Move unresolved nursery cost to cohort stock and promoted plant IDs.
+
+    `outputs` contains one unit weight for every currently anonymous plant and
+    every concrete plant promoted from the batch's cohorts. Recalculation then
+    transfers value instead of layering a second cost on promotion.
+    """
+    if not outputs:
+        return shares
+    resolved = []
+    total = sum((Decimal(weight) for _kind, _target_id, weight in outputs), Decimal('0'))
+    for share in shares:
+        if share.target_type not in {
+                CostAllocation.TargetType.SEED_TRAY_CELL,
+                CostAllocation.TargetType.BATCH_POOL}:
+            resolved.append(share)
+            continue
+        for kind, target_id, weight in outputs:
+            portion = share.weight * Decimal(weight) / total
+            if kind == 'cohort':
+                resolved.append(Share(
+                    key=('cohort', target_id),
+                    target_type=CostAllocation.TargetType.PLANT_COHORT,
+                    weight=portion,
+                    basis=CostAllocation.Basis.PER_PLANT,
+                    cohort_id=target_id,
+                ))
+            else:
+                resolved.append(Share(
+                    key=('plant', target_id),
+                    target_type=CostAllocation.TargetType.SPECIFIC_PLANT,
+                    weight=portion,
+                    basis=CostAllocation.Basis.PER_PLANT,
+                    plant_id=target_id,
+                ))
+    return combine(resolved)
+
+
 def combine(shares):
     """Total the weights of shares that ended up in the same place.
 
@@ -285,6 +324,7 @@ def loss_shares(shares):
             cell_id=None,
             generation_id=None,
             plant_id=None,
+            cohort_id=None,
         )
         for share in shares
     ])

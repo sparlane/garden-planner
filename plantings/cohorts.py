@@ -96,6 +96,13 @@ def _save(cohort):
     cohort.save(update_fields=['quantity', 'lifecycle_state', 'location', 'revision', 'updated'])
 
 
+def _reallocate(batch, user, reason):
+    """Keep the append-only cost layers aligned with the changed output units."""
+    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+
+    reallocate_batch(batch, user, 'manual_recalculate', reason)
+
+
 @transaction.atomic
 def observe_cohort(workspace, user, *, batch, quantity, idempotency_key,
                    source_sowing=None, location=None, occurred_at=None, notes=''):
@@ -136,6 +143,7 @@ def observe_cohort(workspace, user, *, batch, quantity, idempotency_key,
         'state': PlantCohort.LifecycleState.GROWING,
         'location': None,
     })
+    _reallocate(batch, user, 'Cohort observed.')
     return cohort, operation
 
 
@@ -190,6 +198,7 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
     _save(cohort)
     operation = _operation(workspace, user, action, idempotency_key, occurred_at, reason, payload)
     _event(operation, cohort, before)
+    _reallocate(cohort.batch, user, reason or operation.get_action_display())
     return cohort, operation
 
 
@@ -237,6 +246,7 @@ def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
         'state': child.lifecycle_state,
         'location': None,
     }, sources=(source,))
+    _reallocate(source.batch, user, reason)
     return child, operation
 
 
@@ -284,6 +294,7 @@ def merge_cohorts(workspace, user, *, target_id, revisions, source_ids,
     _event(operation, target, snapshots[target.pk], sources=sources)
     for source in sources:
         _event(operation, source, snapshots[source.pk])
+    _reallocate(target.batch, user, reason)
     return target, operation
 
 
@@ -339,4 +350,5 @@ def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
     _event(operation, cohort, before)
     operation.payload = {**payload, 'plants': [plant.pk for plant in plants]}
     CohortOperation.objects.filter(pk=operation.pk).update(payload=operation.payload)
+    _reallocate(cohort.batch, user, reason)
     return plants, operation
