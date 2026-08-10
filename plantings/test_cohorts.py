@@ -155,3 +155,37 @@ class CohortRESTTests(RESTContractTestCase):
         self.assertEqual(adjusted.status_code, 200, adjusted.data)
         self.assertEqual(adjusted.data['quantity'], 8)
         self.assertEqual(len(adjusted.data['events']), 2)
+
+    def test_combined_availability_counts_promoted_plants_once(self):
+        """Moving units to concrete IDs leaves the combined total unchanged."""
+        observed = self.client.post('/plantings/cohorts/observe/', {
+            'batch': self.batch.pk,
+            'quantity': 9,
+            'location': self.location.pk,
+            'idempotency_key': str(uuid4()),
+        }, format='json')
+        cohort_id = observed.data['pk']
+        ready = self.client.post(f'/plantings/cohorts/{cohort_id}/ready/', {
+            'expected_revision': observed.data['revision'],
+            'idempotency_key': str(uuid4()),
+        }, format='json')
+        promoted = self.client.post(f'/plantings/cohorts/{cohort_id}/promote/', {
+            'expected_revision': ready.data['revision'],
+            'quantity': 2,
+            'reason': 'Give selected stock individual labels.',
+            'idempotency_key': str(uuid4()),
+        }, format='json')
+        self.assertEqual(promoted.status_code, 200, promoted.data)
+
+        availability = self.client.get('/plantings/cohorts/availability/', {
+            'batch': self.batch.pk,
+            'location': self.location.pk,
+        })
+        self.assertEqual(availability.data, {
+            'cohort_quantity': 7,
+            'individual_count': 2,
+            'combined_total': 9,
+        })
+        register = self.client.get('/plantings/register/', {'batch': self.batch.pk})
+        self.assertEqual(register.status_code, 200, register.data)
+        self.assertEqual(register.data['count'], 2)

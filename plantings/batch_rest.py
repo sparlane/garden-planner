@@ -169,7 +169,7 @@ def _batch_sowings(batch):
 def _current_locations(batch):
     """Describe where this batch's individual plants are living now."""
     locations = SpecificPlantLocation.objects.filter(
-        specific_plant__cell_planting__seed_tray_planting__batch=batch,
+        specific_plant__batch=batch,
         ended__isnull=True,
     ).select_related('seed_tray_cell', 'garden_square', 'location').order_by('pk')
     return [

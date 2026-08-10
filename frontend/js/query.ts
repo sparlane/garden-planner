@@ -1,6 +1,6 @@
 import { QueryClient } from '@tanstack/react-query'
 
-import { NurseryRegisterFilters } from './types/plantings'
+import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 
 const queryKeys = {
   labels: {
@@ -87,6 +87,10 @@ const queryKeys = {
     registerAll: ['plantings', 'register'] as const,
     register: (filters: NurseryRegisterFilters) => ['plantings', 'register', filters] as const,
     registerSelection: (filters: NurseryRegisterFilters) => ['plantings', 'register', 'ids', filters] as const,
+    cohortsAll: ['plantings', 'cohorts'] as const,
+    cohorts: (filters: CohortFilters) => ['plantings', 'cohorts', filters] as const,
+    cohort: (cohortPk: number) => ['plantings', 'cohorts', 'detail', cohortPk] as const,
+    cohortAvailability: (filters: CohortFilters) => ['plantings', 'cohorts', 'availability', filters] as const,
     harvestReportAll: ['plantings', 'harvestReport'] as const,
     harvestReport: (groupBy: string, batch: number | '', variety: number | '', from: string, to: string) =>
       ['plantings', 'harvestReport', groupBy, batch, variety, from, to] as const

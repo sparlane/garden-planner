@@ -26,6 +26,7 @@ from .cohorts import (
     split_cohort,
 )
 from .models import CohortEvent, CohortOperation, PlantCohort
+from .register import parse_register_filters, register_queryset
 
 
 class CohortPagination(PageNumberPagination):
@@ -181,7 +182,17 @@ class PlantCohortViewSet(
         params = self.request.query_params
         for name in ('batch', 'location', 'source_sowing'):
             if params.get(name):
-                queryset = queryset.filter(**{f'{name}_id': params[name]})
+                if name == 'location':
+                    location_model = PlantCohort._meta.get_field('location').remote_field.model
+                    path = location_model.objects.filter(
+                        workspace=self.get_current_workspace(), pk=params[name],
+                    ).values_list('path', flat=True).first()
+                    queryset = (
+                        queryset.filter(location__path__startswith=path)
+                        if path else queryset.none()
+                    )
+                else:
+                    queryset = queryset.filter(**{f'{name}_id': params[name]})
         if params.get('variety'):
             queryset = queryset.filter(batch__variety_id=params['variety'])
         if params.get('state'):
@@ -207,6 +218,26 @@ class PlantCohortViewSet(
             )
         response.data['cohort_totals'] = totals
         return response
+
+    @action(detail=False, methods=['get'])
+    def availability(self, request):
+        """Report anonymous and identified available stock under shared filters."""
+        cohorts = self.get_queryset().filter(
+            lifecycle_state=PlantCohort.LifecycleState.AVAILABLE,
+            quantity__gt=0,
+        )
+        params = request.query_params.copy()
+        params.setlist('state', ['available'])
+        individuals = register_queryset(
+            self.get_current_workspace(), parse_register_filters(params),
+        )
+        cohort_quantity = cohorts.aggregate(total=Sum('quantity'))['total'] or 0
+        individual_count = individuals.count()
+        return Response({
+            'cohort_quantity': cohort_quantity,
+            'individual_count': individual_count,
+            'combined_total': cohort_quantity + individual_count,
+        })
 
     @action(detail=False, methods=['post'])
     def observe(self, request):

@@ -26,6 +26,7 @@ import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/bat
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
 import { NurseryRegisterView } from './plantings/register.js'
 import { PlantDetailView } from './plantings/plant_detail.js'
+import { CohortDetailView, CohortRegisterView } from './plantings/cohorts.js'
 import { LabelsView, ScannerView } from './labels.js'
 
 function SeedTrayDetailsRoute() {
@@ -59,6 +60,13 @@ function PlantDetailRoute({ workspace }: { workspace: Workspace }) {
   }
 
   return <PlantDetailView plantPk={plantPk} workspace={workspace} />
+}
+
+function CohortDetailRoute() {
+  const { cohortId } = useParams()
+  const cohortPk = Number(cohortId)
+  if (!cohortId || !Number.isInteger(cohortPk) || cohortPk <= 0) return <div>Cohort not found.</div>
+  return <CohortDetailView cohortPk={cohortPk} />
 }
 
 function FrontEndPage() {
@@ -106,6 +114,22 @@ function FrontEndPage() {
           }
         />
         <Route path="/plantings/plants/:plantId" element={<PlantDetailRoute workspace={workspace} />} />
+        <Route
+          path="/plantings/cohorts"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <CohortRegisterView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/plantings/cohorts/:cohortId"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <CohortDetailRoute />
+            </WorkspaceModeRoute>
+          }
+        />
         <Route path="/plantings/harvests" element={<HarvestsView />} />
         <Route path="/plantings/yield" element={<YieldReportView />} />
         <Route path="/locations" element={<LocationsCatalog />} />

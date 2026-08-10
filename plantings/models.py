@@ -774,7 +774,7 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
 
     def plant_batch_id(self):
         """Return the batch that raised this event's plant."""
-        return self.plant.batch_id
+        return self.plant.batch_id or self.plant.cell_planting.seed_tray_planting.batch_id
 
     def save(self, *args, **kwargs):
         if self.pk:
