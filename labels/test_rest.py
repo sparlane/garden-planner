@@ -11,6 +11,8 @@ from .services import ensure_identity, replace_code, void_code
 
 
 class LabelResolutionTests(TestCase):
+    """Scans resolve safely without leaking records across workspaces."""
+
     def setUp(self):
         self.user = get_user_model().objects.create_user('labels', password='secret')
         self.client.force_login(self.user)
@@ -19,9 +21,11 @@ class LabelResolutionTests(TestCase):
         self.code = self.identity.codes.get(status=LabelCode.Status.ACTIVE)
 
     def resolve(self, value):
+        """Resolve one scanner value through the public endpoint."""
         return self.client.get('/labels/resolve/', {'value': value})
 
     def test_bare_code_and_deep_link_resolve_to_the_same_plant(self):
+        """Hardware scanners and phone cameras reach the same identity."""
         bare = self.resolve(self.code.code)
         linked = self.resolve(f'https://example.test/#/scan/{self.code.code}')
         self.assertEqual(bare.status_code, 200)
@@ -32,6 +36,7 @@ class LabelResolutionTests(TestCase):
         self.assertEqual(linked.data['code'], bare.data['code'])
 
     def test_unknown_replaced_void_and_wrong_workspace_are_explicit(self):
+        """Every unusable scan explains its condition without target leakage."""
         self.assertEqual(self.resolve('PLT-NOT-A-CODE').data['status'], 'unknown')
         old = self.code.code
         replacement = replace_code(self.code, self.user, 'Unreadable')
@@ -51,6 +56,8 @@ class LabelResolutionTests(TestCase):
 
 
 class LabelPrintJobTests(TestCase):
+    """Print previews and initiated jobs have distinct audit behavior."""
+
     def setUp(self):
         self.user = get_user_model().objects.create_user('printer', password='secret')
         self.client.force_login(self.user)
@@ -61,9 +68,11 @@ class LabelPrintJobTests(TestCase):
         )
 
     def request(self):
+        """Return one valid QR print selection."""
         return {'template': self.template.pk, 'identities': [self.identity.pk], 'payload_mode': 'url'}
 
     def test_preview_is_not_audit_but_print_job_and_print_click_are(self):
+        """Only initiated physical work enters immutable print history."""
         preview = self.client.post('/labels/print-jobs/preview/', self.request(), content_type='application/json')
         self.assertEqual(preview.status_code, 200)
         self.assertIsNone(preview.data['job'])
@@ -80,6 +89,7 @@ class LabelPrintJobTests(TestCase):
         self.assertTrue(reprint.data['items'][0]['is_reprint'])
 
     def test_code128_rejects_a_url_payload(self):
+        """Linear labels remain compact enough for practical scanners."""
         template = LabelTemplate.objects.get(
             workspace=get_current_workspace(),
             name='Roll Code 128 50 × 30 mm',

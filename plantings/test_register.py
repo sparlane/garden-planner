@@ -176,6 +176,7 @@ class RegisterContractTests(RegisterTestCase):
         ])
 
     def test_label_code_search_finds_the_identified_plant(self):
+        """The code from a plant's physical label resolves in ordinary search."""
         plant = self.make_plant()
         code = self.page()['results'][0]['label_code']
         self.assertEqual(self.row_ids(self.page(search=code)), [plant.pk])
