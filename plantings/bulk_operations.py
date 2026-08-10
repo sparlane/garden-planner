@@ -197,10 +197,11 @@ def _plant_preview(workspace, request, lock=False):
     capacity = []
     slots = None
     capacity_error = []
-    moves_to_location = all((
-        request.action == BulkPlantOperation.Action.MOVE,
-        request.action_payload['location_type'] == SpecificPlantLocation.LOCATION,
-    ))
+    moves_to_location = False
+    if request.action == BulkPlantOperation.Action.MOVE:
+        moves_to_location = (
+            request.action_payload['location_type'] == SpecificPlantLocation.LOCATION
+        )
     if moves_to_location:
         slots, capacity_error, capacity = _capacity_slots(
             request.action_payload['location'],
