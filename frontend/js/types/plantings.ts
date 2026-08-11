@@ -750,6 +750,128 @@ interface CohortMerge {
   idempotency_key: string
 }
 
+type NurseryPlanStatus = 'draft' | 'approved'
+type NurseryPlanDirection = 'backward' | 'forward'
+type NurseryDemandSource = 'confirmed_order' | 'forecast' | 'manual'
+
+interface NurseryPlanMilestone {
+  pk: number
+  stage: number
+  stage_name: string
+  sequence: number
+  planned_date: string
+  input_quantity: number
+  expected_output: number
+  location: number | null
+  location_name: string | null
+  capacity_basis: string
+  capacity_required: string
+}
+
+interface NurseryPlanRequirement {
+  pk: number
+  assumption: number
+  required_seeds: number
+  required_clusters: number
+  required_trays: number
+  expected_finished: number
+  sowing_date: string
+  expected_ready_from: string
+  expected_ready_until: string
+  assumption_snapshot: Record<string, unknown>
+  batch: number | null
+  milestones: Array<NurseryPlanMilestone>
+  inputs: Array<{ pk: number; item: number; item_name: string; quantity: string; base_unit: string }>
+}
+
+interface NurseryPlanDemand {
+  pk: number
+  plan: number
+  variety: number
+  variety_name: string
+  product_reference: string
+  target_quantity: number
+  ready_from: string
+  ready_until: string
+  source: NurseryDemandSource
+  priority: number
+  customer_reference: string
+  order_reference: string
+  source_line_reference: string
+  notes: string
+  requirement: NurseryPlanRequirement | null
+}
+
+interface NurseryPlanIssue {
+  pk: number
+  demand: number | null
+  kind: 'seed' | 'input' | 'tray' | 'capacity' | 'assumption'
+  message: string
+  required_quantity: string | null
+  available_quantity: string | null
+}
+
+interface NurseryProductionPlan {
+  pk: number
+  code: string
+  version: number
+  status: NurseryPlanStatus
+  direction: NurseryPlanDirection
+  sowing_date: string | null
+  supersedes: number | null
+  notes: string
+  approved_at: string | null
+  approved_by: number | null
+  created_by: number | null
+  created: string
+  updated: string
+  demand_lines: Array<NurseryPlanDemand>
+  issues: Array<NurseryPlanIssue>
+}
+
+interface NurseryPlanningStageAssumption {
+  pk: number
+  assumption: number
+  stage: number
+  stage_name: string
+  sequence: number
+  lead_days: number
+  loss_rate: string
+  location: number | null
+  location_name: string | null
+  capacity_basis: string
+  capacity_per_plant: string
+}
+
+interface NurseryPlanningAssumption {
+  pk: number
+  variety: number
+  variety_name: string
+  effective_from: string
+  effective_until: string | null
+  germination_rate: string
+  seeds_per_cluster: number
+  tray_density: number
+  notes: string
+  stages: Array<NurseryPlanningStageAssumption>
+  inputs: Array<{ pk: number; item: number; item_name: string; quantity_per_plant: string; base_unit: string }>
+  created: string
+}
+
+interface NurseryPlanVariance {
+  demand: number
+  batch: number | null
+  planned_sowing_date: string
+  actual_sowing_date: string | null
+  planned_seeds: number
+  actual_seeds: number
+  seed_variance: number
+  planned_output: number
+  current_output: number
+  output_variance: number
+  batch_status: ProductionBatchStatus | null
+}
+
 export {
   BatchAction,
   BulkPlantOutcome,
@@ -823,5 +945,16 @@ export {
   CohortObservation,
   CohortPage,
   CohortTotals,
-  PlantCohort
+  PlantCohort,
+  NurseryDemandSource,
+  NurseryPlanDirection,
+  NurseryPlanStatus,
+  NurseryPlanDemand,
+  NurseryPlanIssue,
+  NurseryPlanMilestone,
+  NurseryPlanRequirement,
+  NurseryPlanVariance,
+  NurseryPlanningAssumption,
+  NurseryPlanningStageAssumption,
+  NurseryProductionPlan
 }

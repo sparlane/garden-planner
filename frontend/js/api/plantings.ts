@@ -45,7 +45,12 @@ import {
   CohortObservation,
   CohortPage,
   PlantCohort,
-  GrowthCatalogValue
+  GrowthCatalogValue,
+  NurseryPlanDemand,
+  NurseryPlanVariance,
+  NurseryPlanningAssumption,
+  NurseryPlanningStageAssumption,
+  NurseryProductionPlan
 } from '../types/plantings'
 
 interface ProductionBatchFilters {
@@ -217,6 +222,38 @@ function saveGrowthCatalog(kind: 'growth-stages' | 'plant-grades', value: Partia
   return request.then((response) => response.json() as Promise<GrowthCatalogValue>)
 }
 
+function getPlanningAssumptions(signal?: AbortSignal): Promise<Array<NurseryPlanningAssumption>> {
+  return fetchAsJson<Array<NurseryPlanningAssumption>>('/plantings/planning-assumptions/', signal)
+}
+
+function addPlanningAssumption(data: object): Promise<NurseryPlanningAssumption> {
+  return csrfPost('/plantings/planning-assumptions/', data).then((response) => response.json() as Promise<NurseryPlanningAssumption>)
+}
+
+function addPlanningStageAssumption(data: object): Promise<NurseryPlanningStageAssumption> {
+  return csrfPost('/plantings/planning-stage-assumptions/', data).then((response) => response.json() as Promise<NurseryPlanningStageAssumption>)
+}
+
+function getProductionPlans(signal?: AbortSignal): Promise<Array<NurseryProductionPlan>> {
+  return fetchAsJson<Array<NurseryProductionPlan>>('/plantings/production-plans/', signal)
+}
+
+function addProductionPlan(data: object): Promise<NurseryProductionPlan> {
+  return csrfPost('/plantings/production-plans/', data).then((response) => response.json() as Promise<NurseryProductionPlan>)
+}
+
+function addPlanDemand(data: object): Promise<NurseryPlanDemand> {
+  return csrfPost('/plantings/production-plan-demand/', data).then((response) => response.json() as Promise<NurseryPlanDemand>)
+}
+
+function postPlanAction(planPk: number, actionName: 'calculate' | 'approve' | 'revise'): Promise<NurseryProductionPlan> {
+  return csrfPost(`/plantings/production-plans/${planPk}/${actionName}/`, {}).then((response) => response.json() as Promise<NurseryProductionPlan>)
+}
+
+function getPlanVariance(planPk: number, signal?: AbortSignal): Promise<Array<NurseryPlanVariance>> {
+  return fetchAsJson<Array<NurseryPlanVariance>>(`/plantings/production-plans/${planPk}/variance/`, signal)
+}
+
 function harvestQuery(filters: HarvestFilters | HarvestReportFilters): string {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(filters)) {
@@ -345,6 +382,14 @@ export {
   getGrowthStages,
   getPlantGrades,
   saveGrowthCatalog,
+  getPlanningAssumptions,
+  addPlanningAssumption,
+  addPlanningStageAssumption,
+  getProductionPlans,
+  addProductionPlan,
+  addPlanDemand,
+  postPlanAction,
+  getPlanVariance,
   getHarvests,
   getHarvest,
   addHarvest,
