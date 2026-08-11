@@ -685,7 +685,7 @@ def is_active_location_integrity_error(exc):
     return names_constraint or names_sqlite_column
 
 
-def _check_destination_capacity(destination, override_reason):
+def _check_destination_capacity(destination, override_reason, plant):
     """Refuse a bench that is full, or that cannot measure a single plant.
 
     Locks the destination and every capacitated ancestor before counting, so
@@ -694,7 +694,7 @@ def _check_destination_capacity(destination, override_reason):
     if not destination.active:
         raise serializers.ValidationError({'location': 'The location is inactive.'})
     try:
-        check_capacity(destination, plant_contribution(), override_reason)
+        check_capacity(destination, plant_contribution(plant), override_reason)
     except DjangoValidationError as exc:
         raise serializers.ValidationError(
             {'location': _model_errors(exc).get('destination', exc.messages)},
@@ -721,7 +721,9 @@ def move_specific_plant(plant, move_data, user=None):
             workspace=plant.workspace,
         )
         if destination is not None:
-            _check_destination_capacity(destination, move_payload.get('override_reason', ''))
+            _check_destination_capacity(
+                destination, move_payload.get('override_reason', ''), plant,
+            )
         if planted_out:
             try:
                 record_transplant_event(plant, user, started)

@@ -34,7 +34,7 @@ from inventory.models import (
 )
 from inventory.units import UnitCode
 from locations.models import Location
-from plantings.models import ProductionBatch, SpecificPlant
+from plantings.models import PlantCohort, ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration
 from workspaces.models import WorkspaceOwnedModel
 
@@ -57,6 +57,7 @@ TARGET_FIELDS = (
     'batch',
     'seed_tray_cell',
     'specific_plant',
+    'plant_cohort',
     'inventory_unit',
     'garden_area',
     'garden_bed',
@@ -419,6 +420,7 @@ class InputApplicationTarget(models.Model):
         BATCH = 'batch', 'Production batch'
         SEED_TRAY_CELL = 'seed_tray_cell', 'Tray cell'
         SPECIFIC_PLANT = 'specific_plant', 'Plant'
+        PLANT_COHORT = 'plant_cohort', 'Plant cohort'
         INVENTORY_UNIT = 'inventory_unit', 'Serialized unit'
         GARDEN_AREA = 'garden_area', 'Garden area'
         GARDEN_BED = 'garden_bed', 'Garden bed'
@@ -447,6 +449,13 @@ class InputApplicationTarget(models.Model):
     )
     specific_plant = models.ForeignKey(
         SpecificPlant,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='application_targets',
+    )
+    plant_cohort = models.ForeignKey(
+        PlantCohort,
         on_delete=models.PROTECT,
         null=True,
         blank=True,

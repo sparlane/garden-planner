@@ -77,14 +77,12 @@ class Location(WorkspaceOwnedModel):
         PLANTS = 'plants', 'Plants'
         AREA = 'area', 'Area'
 
-    #: Bases that a placement can currently be counted against. `area` is
-    #: recorded for planning but never enforced, because nothing in the system
-    #: records a footprint to measure against it yet; task 54's containers are
-    #: what would give plants a real size.
+    #: Bases that a placement can be measured against.
     ENFORCED_BASES = frozenset({
         CapacityBasis.TRAYS,
         CapacityBasis.CONTAINERS,
         CapacityBasis.PLANTS,
+        CapacityBasis.AREA,
     })
 
     #: Location types the system creates and retires for itself.

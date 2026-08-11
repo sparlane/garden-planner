@@ -80,6 +80,7 @@ class NurseryObservationSerializer(serializers.ModelSerializer):
             'container_size_label', 'container_volume_ml', 'container_footprint_m2',
             'height_cm', 'spread_cm', 'root_condition', 'expected_ready',
             'occurred_at', 'notes', 'corrects', 'created_by', 'created',
+            'input_application',
         ]
 
     def get_plants(self, observation):

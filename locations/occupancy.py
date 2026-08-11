@@ -13,6 +13,7 @@ already uses for `unit_is_in_use`, and the reason `.pylintrc` turns
 `cyclic-import` off.
 """
 
+from decimal import Decimal
 from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
@@ -26,6 +27,7 @@ class Occupancy(NamedTuple):
     trays: int = 0
     plants: int = 0
     containers: int = 0
+    area: Decimal = Decimal('0')
 
     def of(self, basis):
         """Return the count in the dimension a capacity basis measures."""
@@ -36,12 +38,13 @@ class Occupancy(NamedTuple):
             trays=self.trays + other.trays,
             plants=self.plants + other.plants,
             containers=self.containers + other.containers,
+            area=self.area + other.area,
         )
 
     @property
     def is_empty(self):
         """Return whether nothing at all is standing here."""
-        return not (self.trays or self.plants or self.containers)
+        return not (self.trays or self.plants or self.containers or self.area)
 
 
 #: What one placement adds to a location, per kind of thing being placed. A
@@ -52,21 +55,69 @@ def tray_contribution(plant_count):
     return Occupancy(trays=1, plants=plant_count, containers=0)
 
 
-def plant_contribution():
+def plant_contribution(plant=None):
     """Return what standing one plant somewhere adds.
 
-    One directly placed plant counts as one container until task 54 records
-    real containers and a single pot can hold several plants.
+    Legacy plants count as one container; observed assignments use their exact
+    container count and snapshotted footprint.
     """
-    return Occupancy(trays=0, plants=1, containers=1)
+    if plant is None:
+        return Occupancy(trays=0, plants=1, containers=1)
+    from plantings.growth import current_growth  # pylint: disable=import-outside-toplevel
+
+    growth = current_growth(plant)
+    if growth['container_observation'] is None:
+        return Occupancy(trays=0, plants=1, containers=1)
+    footprint = growth['container_footprint_m2']
+    area = Decimal('0') if footprint is None else footprint * growth['container_count']
+    return Occupancy(
+        trays=0, plants=1,
+        containers=growth['container_count'], area=area,
+    )
 
 
-def cohort_contribution(quantity):
+def cohort_contribution(quantity, cohort=None):
     """Return the measurable footprint of anonymous nursery stock."""
-    return Occupancy(trays=0, plants=quantity, containers=0)
+    if cohort is None:
+        return Occupancy(trays=0, plants=quantity, containers=0)
+    from plantings.growth import current_growth  # pylint: disable=import-outside-toplevel
+
+    growth = current_growth(cohort)
+    if growth['container_observation'] is None:
+        return Occupancy(trays=0, plants=quantity, containers=0)
+    footprint = growth['container_footprint_m2']
+    area = Decimal('0') if footprint is None else footprint * growth['container_count']
+    return Occupancy(
+        trays=0, plants=quantity,
+        containers=growth['container_count'], area=area,
+    )
 
 
-def location_occupancy(location, subtree=False):
+def _container_occupancy(plants, cohorts):
+    """Count each current shared assignment once across concrete targets."""
+    from plantings.growth import current_growth  # pylint: disable=import-outside-toplevel
+
+    seen = set()
+    containers = 0
+    area = Decimal('0')
+    legacy_plants = 0
+    for target in [*plants, *cohorts]:
+        growth = current_growth(target)
+        observation = growth['container_observation']
+        if observation is None:
+            if hasattr(target, 'germinated'):
+                legacy_plants += 1
+            continue
+        if observation.pk in seen:
+            continue
+        seen.add(observation.pk)
+        containers += growth['container_count']
+        if growth['container_footprint_m2'] is not None:
+            area += growth['container_footprint_m2'] * growth['container_count']
+    return containers + legacy_plants, area
+
+
+def location_occupancy(location, subtree=False):  # pylint: disable=too-many-locals
     """Count what is standing in a location, optionally including its children."""
     from plantings.models import PlantCohort, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
     from seedtrays.models import SeedTray  # pylint: disable=import-outside-toplevel
@@ -84,21 +135,23 @@ def location_occupancy(location, subtree=False):
         ended__isnull=True,
         **{f'seed_tray_cell__tray__inventory_unit__current_location__{lookup}': value},
     ).count()
-    standing_plants = SpecificPlantLocation.objects.filter(
+    standing_rows = SpecificPlantLocation.objects.filter(
         ended__isnull=True,
         **{f'location__{lookup}': value},
-    ).count()
-    cohort_plants = sum(
-        PlantCohort.objects.filter(
-            quantity__gt=0,
-            **{f'location__{lookup}': value},
-        ).values_list('quantity', flat=True)
-    )
+    ).select_related('specific_plant')
+    standing = [row.specific_plant for row in standing_rows]
+    cohorts = list(PlantCohort.objects.filter(
+        quantity__gt=0,
+        **{f'location__{lookup}': value},
+    ))
+    cohort_plants = sum(cohort.quantity for cohort in cohorts)
+    containers, area = _container_occupancy(standing, cohorts)
 
     return Occupancy(
         trays=tray_count,
-        plants=plants_in_trays + standing_plants + cohort_plants,
-        containers=standing_plants,
+        plants=plants_in_trays + len(standing) + cohort_plants,
+        containers=containers,
+        area=area,
     )
 
 

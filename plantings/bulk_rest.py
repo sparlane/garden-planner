@@ -6,6 +6,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from applications.rest import ApplicationDraftSerializer
+from inventory.models import InventoryItem
+from inventory.units import UnitCode
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -23,6 +26,8 @@ from .bulk_operations import (
 from .models import (
     BulkPlantOperation,
     BulkPlantOperationResult,
+    GrowthStage,
+    PlantGrade,
     SeedTrayCellPlanting,
 )
 from .rest import SpecificPlantMoveSerializer
@@ -53,6 +58,61 @@ class GerminationPayloadSerializer(
         raise NotImplementedError
 
 
+class NurseryFactPayloadSerializer(
+    CurrentWorkspaceSerializerMixin, serializers.Serializer,
+):  # pylint: disable=abstract-method
+    """Validate one stage or grade chosen for a reviewed plant selection."""
+
+    stage = serializers.PrimaryKeyRelatedField(
+        queryset=GrowthStage.objects.all(), required=False,
+    )
+    grade = serializers.PrimaryKeyRelatedField(
+        queryset=PlantGrade.objects.all(), required=False,
+    )
+    notes = serializers.CharField(allow_blank=True, required=False, default='')
+    workspace_field_lookups = {'stage': 'workspace', 'grade': 'workspace'}
+
+    def validate(self, attrs):  # pylint: disable=too-many-branches
+        field = self.context['field']
+        unwanted = 'grade' if field == 'stage' else 'stage'
+        if field not in attrs or unwanted in attrs:
+            raise ValidationError({field: f'Choose exactly one {field}.'})
+        return attrs
+
+
+class RepotPayloadSerializer(
+    CurrentWorkspaceSerializerMixin, serializers.Serializer,
+):  # pylint: disable=abstract-method
+    """Validate a container assignment and the stock document funding it."""
+
+    container_item = serializers.PrimaryKeyRelatedField(
+        queryset=InventoryItem.objects.all(),
+    )
+    container_count = serializers.IntegerField(min_value=1)
+    application = ApplicationDraftSerializer()
+    notes = serializers.CharField(allow_blank=True, required=False, default='')
+    workspace_field_lookups = {'container_item': 'workspace'}
+
+    def validate(self, attrs):
+        item = attrs['container_item']
+        if item.category != InventoryItem.Category.POT_CONTAINER:
+            raise ValidationError({'container_item': 'Choose a pot or container item.'})
+        if item.base_unit != UnitCode.EACH:
+            raise ValidationError({'container_item': 'Container stock must be measured in each.'})
+        matching = [
+            line for line in attrs['application']['lines']
+            if line['item'] == item
+        ]
+        if len(matching) != 1:
+            raise ValidationError({'application': 'Include exactly one line for the assigned container.'})
+        line = matching[0]
+        if line['applied_quantity'] != attrs['container_count'] or line.get('unit_code') != UnitCode.EACH:
+            raise ValidationError({'application': 'The container line must consume the assigned count in each.'})
+        if any(line.get('targets') or line.get('tray') for line in attrs['application']['lines']):
+            raise ValidationError({'application': 'Repot targets come from the reviewed plant selection.'})
+        return attrs
+
+
 class BulkOperationRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """Validate both previews and confirmed requests."""
 
@@ -71,7 +131,7 @@ class BulkOperationRequestSerializer(serializers.Serializer):  # pylint: disable
     selection_source = serializers.JSONField(required=False, default=dict)
     action_payload = serializers.JSONField(required=False, default=dict)
 
-    def validate(self, attrs):
+    def validate(self, attrs):  # pylint: disable=too-many-branches
         """Choose and validate the action-specific payload contract."""
         action_name = attrs['action']
         plants = attrs['plants']
@@ -86,6 +146,21 @@ class BulkOperationRequestSerializer(serializers.Serializer):  # pylint: disable
             if not plants:
                 raise ValidationError({'plants': 'Select at least one plant.'})
             payload_serializer = SpecificPlantMoveSerializer(data=payload)
+        elif action_name in {BulkPlantOperation.Action.STAGE, BulkPlantOperation.Action.GRADE}:
+            if not plants:
+                raise ValidationError({'plants': 'Select at least one plant.'})
+            field = 'stage' if action_name == BulkPlantOperation.Action.STAGE else 'grade'
+            model = GrowthStage if field == 'stage' else PlantGrade
+            payload_serializer = NurseryFactPayloadSerializer(data=payload, context={
+                'field': field,
+                'model': model,
+            })
+        elif action_name == BulkPlantOperation.Action.REPOT:
+            if not plants:
+                raise ValidationError({'plants': 'Select at least one plant.'})
+            if attrs['atomicity'] != BulkPlantOperation.Atomicity.ALL_OR_NOTHING:
+                raise ValidationError({'atomicity': 'Repotting is always all or nothing.'})
+            payload_serializer = RepotPayloadSerializer(data=payload)
         else:
             if action_name not in ACTION_EVENTS:
                 raise ValidationError({'action': 'Select a supported action.'})
@@ -117,6 +192,7 @@ class BulkPlantOperationResultSerializer(serializers.ModelSerializer):
             'errors',
             'lifecycle_event',
             'location',
+            'nursery_observation',
         ]
         read_only_fields = fields
 

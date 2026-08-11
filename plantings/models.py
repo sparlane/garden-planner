@@ -691,6 +691,10 @@ class NurseryObservation(WorkspaceOwnedModel):
     expected_ready = models.DateField(null=True, blank=True)
     occurred_at = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True, default='')
+    input_application = models.ForeignKey(
+        'applications.InputApplication', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='nursery_observations',
+    )
     corrects = models.OneToOneField(
         'self', on_delete=models.PROTECT, null=True, blank=True,
         related_name='correction',
@@ -708,7 +712,7 @@ class NurseryObservation(WorkspaceOwnedModel):
         """Validate snapshots, ownership, correction direction, and content."""
         super().clean()
         errors = {}
-        for field in ('stage', 'grade', 'container_item'):
+        for field in ('stage', 'grade', 'container_item', 'input_application'):
             value = getattr(self, field, None)
             if value is not None and value.workspace_id != self.workspace_id:
                 errors[field] = f'The {field.replace("_", " ")} belongs to another workspace.'
@@ -1004,6 +1008,9 @@ class BulkPlantOperation(WorkspaceOwnedModel):
 
         GERMINATE = 'germinate', 'Germinate'
         MOVE = 'move', 'Move or transplant'
+        STAGE = 'stage', 'Update growth stage'
+        GRADE = 'grade', 'Update grade'
+        REPOT = 'repot', 'Pot on or repot'
         READY = 'ready', 'Ready'
         RETAIN = 'retain', 'Retain'
         DONATE = 'donate', 'Donate'
@@ -1091,6 +1098,13 @@ class BulkPlantOperationResult(WorkspaceOwnedModel):
         blank=True,
         related_name='bulk_operation_results',
     )
+    nursery_observation = models.ForeignKey(
+        NurseryObservation,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='bulk_operation_results',
+    )
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1117,6 +1131,8 @@ class BulkPlantOperationResult(WorkspaceOwnedModel):
             errors['lifecycle_event'] = 'The event belongs to a different plant.'
         if self.location_id and self.location.specific_plant_id != self.plant_id:
             errors['location'] = 'The location belongs to a different plant.'
+        if self.nursery_observation_id and not self.nursery_observation.targets.filter(plant=self.plant).exists():
+            errors['nursery_observation'] = 'The observation does not include this plant.'
         if errors:
             raise ValidationError(errors)
 

@@ -123,6 +123,7 @@ def current_growth(target):
     current['container_name'] = ''
     current['container_size_label'] = ''
     current['container_footprint_m2'] = None
+    current['container_observation'] = None
     for row in rows:
         for field in OBSERVED_FIELDS:
             if current[field] is None and getattr(row, field) not in (None, ''):
@@ -135,6 +136,7 @@ def current_growth(target):
                         'container_name': row.container_name,
                         'container_size_label': row.container_size_label,
                         'container_footprint_m2': row.container_footprint_m2,
+                        'container_observation': row,
                     })
         if all(current[field] is not None for field in OBSERVED_FIELDS):
             break

@@ -24,7 +24,7 @@ from inventory.models import (
 )
 from inventory.rest_query import parse_datetime, parse_integer
 from locations.models import Location
-from plantings.models import ProductionBatch, SpecificPlant
+from plantings.models import PlantCohort, ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTray, SeedTrayCell
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
@@ -50,6 +50,7 @@ TARGET_SOURCES = {
     TargetType.BATCH: (ProductionBatch, 'workspace'),
     TargetType.SEED_TRAY_CELL: (SeedTrayCell, 'tray__workspace'),
     TargetType.SPECIFIC_PLANT: (SpecificPlant, 'workspace'),
+    TargetType.PLANT_COHORT: (PlantCohort, 'workspace'),
     TargetType.INVENTORY_UNIT: (InventoryUnit, 'workspace'),
     TargetType.GARDEN_AREA: (GardenArea, 'workspace'),
     TargetType.GARDEN_BED: (GardenBed, 'workspace'),
