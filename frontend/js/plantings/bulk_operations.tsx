@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { getGardenSquares } from '../api/garden'
-import { getNurseryRegisterSelection, postBulkPlantOperation, previewBulkPlantOperation } from '../api/plantings'
+import { getInventoryItems } from '../api/inventory'
+import { getGrowthStages, getNurseryRegisterSelection, getPlantGrades, postBulkPlantOperation, previewBulkPlantOperation } from '../api/plantings'
 import { getSeedTrayCells, getSeedTrays } from '../api/seedtrays'
 import { queryKeys } from '../query'
 import { Location } from '../types/locations'
@@ -13,6 +14,9 @@ import { EMPTY_SELECTION, RegisterSelection } from './register_list'
 
 const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
   { value: 'move', label: 'Move or transplant' },
+  { value: 'stage', label: 'Update growth stage' },
+  { value: 'grade', label: 'Update grade' },
+  { value: 'repot', label: 'Pot on or repot' },
   { value: 'ready', label: 'Mark ready' },
   { value: 'retain', label: 'Retain' },
   { value: 'donate', label: 'Donate' },
@@ -41,6 +45,12 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   const [destination, setDestination] = React.useState<number | ''>('')
   const [tray, setTray] = React.useState<number | ''>('')
   const [overrideReason, setOverrideReason] = React.useState('')
+  const [stage, setStage] = React.useState<number | ''>('')
+  const [grade, setGrade] = React.useState<number | ''>('')
+  const [container, setContainer] = React.useState<number | ''>('')
+  const [containerCount, setContainerCount] = React.useState(1)
+  const [sourceLocation, setSourceLocation] = React.useState<number | ''>('')
+  const [containerLot, setContainerLot] = React.useState<number | ''>('')
   const [request, setRequest] = React.useState<BulkPlantOperationRequest>()
   const [preview, setPreview] = React.useState<BulkPlantPreview>()
 
@@ -51,13 +61,35 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
     queryFn: ({ signal }) => getSeedTrayCells(tray as number, signal),
     enabled: destinationType === 'seed_tray_cell' && tray !== ''
   })
+  const stagesQuery = useQuery({ queryKey: ['growth-stages'], queryFn: ({ signal }) => getGrowthStages(signal) })
+  const gradesQuery = useQuery({ queryKey: ['plant-grades'], queryFn: ({ signal }) => getPlantGrades(signal) })
+  const containersQuery = useQuery({
+    queryKey: ['inventory', 'pot-containers'],
+    queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container', active: true }, signal)
+  })
 
   function invalidateReview() {
     setPreview(undefined)
     setRequest(undefined)
   }
 
-  function actionPayload(): Record<string, unknown> {
+  function actionPayload(appliedAt: string): Record<string, unknown> {
+    if (action === 'stage') return { stage, notes: reason }
+    if (action === 'grade') return { grade, notes: reason }
+    if (action === 'repot') {
+      return {
+        container_item: container,
+        container_count: containerCount,
+        notes: reason,
+        application: {
+          applied_at: appliedAt,
+          source_location: sourceLocation,
+          batch: null,
+          notes: reason,
+          lines: [{ item: container, lot: containerLot, applied_quantity: String(containerCount), unit_code: 'each' }]
+        }
+      }
+    }
     if (action !== 'move') return {}
     if (destinationType === 'location') {
       return { location_type: destinationType, location: destination, override_reason: overrideReason }
@@ -102,12 +134,16 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
       reason,
       plants: resolved.plants,
       selection_source: sourceLabels ? { mode: 'scan', labels: sourceLabels } : selection.mode === 'filter' ? { mode: 'filter', filters } : { mode: 'ids' },
-      action_payload: actionPayload()
+      action_payload: actionPayload(parsed.toISOString())
     }
     previewMutation.mutate(reviewedRequest)
   }
 
-  const moveIncomplete = action === 'move' && destination === ''
+  const actionIncomplete =
+    (action === 'move' && destination === '') ||
+    (action === 'stage' && stage === '') ||
+    (action === 'grade' && grade === '') ||
+    (action === 'repot' && (container === '' || sourceLocation === '' || containerLot === '' || containerCount < 1))
   return (
     <Card className="mb-3">
       <Card.Body>
@@ -119,6 +155,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
               value={action}
               onChange={(event) => {
                 setAction(event.target.value as BulkPlantAction)
+                if (event.target.value === 'repot') setAtomicity('all_or_nothing')
                 invalidateReview()
               }}
             >
@@ -236,7 +273,116 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
           </Row>
         )}
 
-        <Button className="mt-3" variant="outline-primary" disabled={moveIncomplete || previewMutation.isPending} onClick={review}>
+        {action === 'stage' && (
+          <Row className="g-2 mt-1">
+            <Col md={4}>
+              <Form.Label>New stage</Form.Label>
+              <Form.Select
+                value={stage}
+                onChange={(event) => {
+                  setStage(event.target.value ? Number(event.target.value) : '')
+                  invalidateReview()
+                }}
+              >
+                <option value="">Select stage</option>
+                {(stagesQuery.data ?? [])
+                  .filter((entry) => entry.active)
+                  .map((entry) => (
+                    <option key={entry.pk} value={entry.pk}>
+                      {entry.name}
+                    </option>
+                  ))}
+              </Form.Select>
+            </Col>
+          </Row>
+        )}
+        {action === 'grade' && (
+          <Row className="g-2 mt-1">
+            <Col md={4}>
+              <Form.Label>New grade</Form.Label>
+              <Form.Select
+                value={grade}
+                onChange={(event) => {
+                  setGrade(event.target.value ? Number(event.target.value) : '')
+                  invalidateReview()
+                }}
+              >
+                <option value="">Select grade</option>
+                {(gradesQuery.data ?? [])
+                  .filter((entry) => entry.active)
+                  .map((entry) => (
+                    <option key={entry.pk} value={entry.pk}>
+                      {entry.name}
+                    </option>
+                  ))}
+              </Form.Select>
+            </Col>
+          </Row>
+        )}
+        {action === 'repot' && (
+          <Row className="g-2 mt-1">
+            <Col md={3}>
+              <Form.Label>Container</Form.Label>
+              <Form.Select
+                value={container}
+                onChange={(event) => {
+                  setContainer(event.target.value ? Number(event.target.value) : '')
+                  invalidateReview()
+                }}
+              >
+                <option value="">Select container</option>
+                {(containersQuery.data ?? []).map((entry) => (
+                  <option key={entry.pk} value={entry.pk}>
+                    {entry.name} {entry.container_size_label}
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+            <Col md={2}>
+              <Form.Label>Container count</Form.Label>
+              <Form.Control
+                type="number"
+                min={1}
+                value={containerCount}
+                onChange={(event) => {
+                  setContainerCount(Number(event.target.value))
+                  invalidateReview()
+                }}
+              />
+            </Col>
+            <Col md={3}>
+              <Form.Label>Stock location</Form.Label>
+              <Form.Select
+                value={sourceLocation}
+                onChange={(event) => {
+                  setSourceLocation(event.target.value ? Number(event.target.value) : '')
+                  invalidateReview()
+                }}
+              >
+                <option value="">Select location</option>
+                {locations.map((entry) => (
+                  <option key={entry.pk} value={entry.pk}>
+                    {entry.full_name}
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+            <Col md={2}>
+              <Form.Label>Container lot ID</Form.Label>
+              <Form.Control
+                type="number"
+                min={1}
+                value={containerLot}
+                onChange={(event) => {
+                  setContainerLot(event.target.value ? Number(event.target.value) : '')
+                  invalidateReview()
+                }}
+              />
+            </Col>
+          </Row>
+        )}
+
+        <Button className="mt-3" variant="outline-primary" disabled={actionIncomplete || previewMutation.isPending} onClick={review}>
           {previewMutation.isPending ? 'Reviewing…' : 'Review changes'}
         </Button>
 
@@ -289,6 +435,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                 type="radio"
                 name="bulk-atomicity"
                 label="Apply eligible plants only"
+                disabled={action === 'repot'}
                 checked={atomicity === 'eligible_only'}
                 onChange={() => setAtomicity('eligible_only')}
               />

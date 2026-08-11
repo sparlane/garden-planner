@@ -2,10 +2,14 @@
 
 # DRF calls detail actions with a `pk` keyword even when `get_object()` resolves
 # it, so the required method signatures intentionally retain that argument.
-# pylint: disable=unused-argument
+# Serializer method names are prescribed by DRF and repeat their field names.
+# pylint: disable=unused-argument,missing-function-docstring,too-many-branches
+
+from datetime import timedelta
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Sum
+from django.db.models import DateField, DateTimeField, DurationField, ExpressionWrapper, F, IntegerField, OuterRef, Subquery, Sum, TextField, Value
+from django.db.models.functions import Now
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
@@ -25,7 +29,8 @@ from .cohorts import (
     promote_cohort,
     split_cohort,
 )
-from .models import CohortEvent, CohortOperation, PlantCohort
+from .growth import current_growth
+from .models import CohortEvent, CohortOperation, NurseryObservation, PlantCohort
 from .register import parse_register_filters, register_queryset
 
 
@@ -71,6 +76,15 @@ class PlantCohortSerializer(serializers.ModelSerializer):
     label_code = serializers.SerializerMethodField()
     cost = serializers.SerializerMethodField()
     currency_code = serializers.CharField(source='workspace.currency_code', read_only=True)
+    stage = serializers.SerializerMethodField()
+    stage_name = serializers.SerializerMethodField()
+    grade = serializers.SerializerMethodField()
+    grade_name = serializers.SerializerMethodField()
+    container = serializers.SerializerMethodField()
+    container_name = serializers.SerializerMethodField()
+    container_size = serializers.SerializerMethodField()
+    container_count = serializers.SerializerMethodField()
+    expected_ready = serializers.SerializerMethodField()
 
     class Meta:
         model = PlantCohort
@@ -79,6 +93,8 @@ class PlantCohortSerializer(serializers.ModelSerializer):
             'source_sowing', 'quantity', 'lifecycle_state', 'location',
             'location_name', 'observed_at', 'revision', 'notes', 'label_code',
             'cost', 'currency_code',
+            'stage', 'stage_name', 'grade', 'grade_name', 'container',
+            'container_name', 'container_size', 'container_count', 'expected_ready',
             'created', 'updated',
         ]
         read_only_fields = [
@@ -100,6 +116,63 @@ class PlantCohortSerializer(serializers.ModelSerializer):
         if rows.filter(amount__isnull=True).exists():
             return None
         return rows.aggregate(total=Sum('amount'))['total']
+
+    def get_stage(self, cohort):
+        if hasattr(cohort, 'current_stage'):
+            return cohort.current_stage
+        stage = self._growth(cohort)['stage']
+        return stage.pk if stage else None
+
+    def get_stage_name(self, cohort):
+        if hasattr(cohort, 'current_stage_name'):
+            return cohort.current_stage_name
+        stage = self._growth(cohort)['stage']
+        return stage.name if stage else None
+
+    def get_grade(self, cohort):
+        if hasattr(cohort, 'current_grade'):
+            return cohort.current_grade
+        grade = self._growth(cohort)['grade']
+        return grade.pk if grade else None
+
+    def get_grade_name(self, cohort):
+        if hasattr(cohort, 'current_grade_name'):
+            return cohort.current_grade_name
+        grade = self._growth(cohort)['grade']
+        return grade.name if grade else None
+
+    def get_container(self, cohort):
+        if hasattr(cohort, 'current_container'):
+            return cohort.current_container
+        item = self._growth(cohort)['container_item']
+        return item.pk if item else None
+
+    def get_container_name(self, cohort):
+        if hasattr(cohort, 'current_container_name'):
+            return cohort.current_container_name or None
+        return self._growth(cohort)['container_name'] or None
+
+    def get_container_size(self, cohort):
+        if hasattr(cohort, 'current_container_size'):
+            return cohort.current_container_size or None
+        return self._growth(cohort)['container_size_label'] or None
+
+    def get_container_count(self, cohort):
+        if hasattr(cohort, 'current_container_count'):
+            return cohort.current_container_count
+        return self._growth(cohort)['container_count']
+
+    def get_expected_ready(self, cohort):
+        if hasattr(cohort, 'current_expected_ready'):
+            return cohort.current_expected_ready
+        return self._growth(cohort)['expected_ready']
+
+    @staticmethod
+    def _growth(cohort):
+        """Replay only service-returned rows that do not carry list annotations."""
+        if not hasattr(cohort, '_serialized_growth'):
+            cohort._serialized_growth = current_growth(cohort)  # pylint: disable=protected-access
+        return cohort._serialized_growth  # pylint: disable=protected-access
 
 
 class CohortDetailSerializer(PlantCohortSerializer):
@@ -151,6 +224,7 @@ class CohortActionSerializer(
     occurred_at = serializers.DateTimeField(required=False)
     reason = serializers.CharField(required=False, allow_blank=True, default='')
     quantity = serializers.IntegerField(required=False, min_value=0)
+    container_count = serializers.IntegerField(required=False, min_value=1)
     location = serializers.PrimaryKeyRelatedField(
         queryset=PlantCohort._meta.get_field('location').remote_field.model.objects.all(),
         required=False,
@@ -187,11 +261,42 @@ class PlantCohortViewSet(
     ).prefetch_related('events__operation', 'events__source_cohorts', 'promoted_plants')
     pagination_class = CohortPagination
 
+    @staticmethod
+    def _observation(field, output_field=None, observed_field=None):
+        return Subquery(
+            NurseryObservation.objects.filter(
+                targets__cohort=OuterRef('pk'), correction__isnull=True,
+            ).exclude(
+                **{f'{observed_field or field}__isnull': True},
+            ).order_by('-occurred_at', '-pk').values(field)[:1],
+            output_field=output_field,
+        )
+
     def get_serializer_class(self):
         return CohortDetailSerializer if self.action == 'retrieve' else PlantCohortSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().annotate(
+            current_stage=self._observation('stage_id', IntegerField()),
+            current_stage_name=self._observation('stage__name', TextField()),
+            current_stage_days=self._observation('stage__target_days', IntegerField(), 'stage'),
+            current_stage_at=self._observation('occurred_at', DateTimeField(), 'stage'),
+            current_grade=self._observation('grade_id', IntegerField()),
+            current_grade_name=self._observation('grade__name', TextField()),
+            current_container=self._observation('container_item_id', IntegerField()),
+            current_container_name=self._observation('container_name', TextField(), 'container_item'),
+            current_container_size=self._observation('container_size_label', TextField(), 'container_item'),
+            current_container_count=self._observation('container_count', IntegerField(), 'container_item'),
+            current_expected_ready=self._observation('expected_ready', DateField()),
+        ).annotate(
+            stage_due_at=ExpressionWrapper(
+                F('current_stage_at') + ExpressionWrapper(
+                    F('current_stage_days') * Value(timedelta(days=1)),
+                    output_field=DurationField(),
+                ),
+                output_field=DateTimeField(),
+            ),
+        )
         params = self.request.query_params
         for name in ('batch', 'location', 'source_sowing'):
             if params.get(name):
@@ -210,6 +315,15 @@ class PlantCohortViewSet(
             queryset = queryset.filter(batch__variety_id=params['variety'])
         if params.get('state'):
             queryset = queryset.filter(lifecycle_state=params['state'])
+        for name in ('stage', 'grade', 'container'):
+            if params.get(name):
+                queryset = queryset.filter(**{f'current_{name}': params[name]})
+        if params.get('expected_ready_from'):
+            queryset = queryset.filter(current_expected_ready__gte=params['expected_ready_from'])
+        if params.get('expected_ready_to'):
+            queryset = queryset.filter(current_expected_ready__lte=params['expected_ready_to'])
+        if params.get('stage_overdue') == 'true':
+            queryset = queryset.filter(stage_due_at__lt=Now())
         if params.get('active') == 'true':
             queryset = queryset.filter(quantity__gt=0)
         if params.get('search'):
@@ -271,6 +385,7 @@ class PlantCohortViewSet(
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
         disposition = values.pop('disposition', None)
+        values.pop('container_count', None)
         try:
             changed, _operation_row = change_cohort(
                 self.get_current_workspace(), request.user,

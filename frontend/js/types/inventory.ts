@@ -66,6 +66,9 @@ interface InventoryItem {
   default_fixed_quantity: string | null
   stock_history_started_at: string | null
   reorder_level: string | null
+  container_size_label: string
+  container_volume_ml: number | null
+  container_footprint_m2: string | null
   created: string
   updated: string
 }
@@ -81,6 +84,9 @@ interface InventoryItemCreate {
   default_usage_rate?: string
   usage_rate_unit?: UnitCode
   default_fixed_quantity?: string
+  container_size_label?: string
+  container_volume_ml?: number
+  container_footprint_m2?: string
 }
 
 interface InventoryItemFilters {

@@ -9,7 +9,7 @@ import { queryKeys } from '../query'
 import { PlantCostBreakdown } from '../types/costing'
 import { SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
-import { formatDateTime, formatMoney } from '../utils'
+import { formatDate, formatDateTime, formatMoney } from '../utils'
 import { LifecycleStateBadge, PlantLifecycleHistory } from './lifecycle'
 
 function locationLabel(location: SpecificPlantLocation): string {
@@ -125,6 +125,62 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
       </p>
 
       <Row className="g-3">
+        {workspace.mode === 'nursery' && (
+          <Col md={6}>
+            <Card>
+              <Card.Header>Nursery growth</Card.Header>
+              <Card.Body>
+                <dl className="row mb-2">
+                  <dt className="col-sm-5">Stage</dt>
+                  <dd className="col-sm-7">{plant.growth.stage_name ?? 'Not recorded'}</dd>
+                  <dt className="col-sm-5">Grade</dt>
+                  <dd className="col-sm-7">{plant.growth.grade_name ?? 'Not graded'}</dd>
+                  <dt className="col-sm-5">Container</dt>
+                  <dd className="col-sm-7">
+                    {plant.growth.container_name === null
+                      ? 'Not recorded'
+                      : `${plant.growth.container_name} ${plant.growth.container_size ?? ''} × ${plant.growth.container_count}`}
+                  </dd>
+                  <dt className="col-sm-5">Expected ready</dt>
+                  <dd className="col-sm-7">{plant.growth.expected_ready === null ? 'Not recorded' : formatDate(plant.growth.expected_ready)}</dd>
+                  <dt className="col-sm-5">Measurements</dt>
+                  <dd className="col-sm-7">
+                    {plant.growth.height_cm ?? '—'} cm high / {plant.growth.spread_cm ?? '—'} cm spread
+                  </dd>
+                  <dt className="col-sm-5">Roots</dt>
+                  <dd className="col-sm-7">{plant.growth.root_condition || 'Not recorded'}</dd>
+                </dl>
+                {plant.nursery_observations.length > 0 && (
+                  <Table size="sm">
+                    <thead>
+                      <tr>
+                        <th>When</th>
+                        <th>Observation</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {plant.nursery_observations.map((entry) => (
+                        <tr key={entry.pk}>
+                          <td>{formatDateTime(entry.occurred_at)}</td>
+                          <td>
+                            {[entry.stage_name, entry.grade_name, entry.container_name, entry.notes].filter(Boolean).join(' · ')}
+                            {entry.photo_url && (
+                              <div>
+                                <a href={entry.photo_url} target="_blank" rel="noreferrer">
+                                  View photo
+                                </a>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                )}
+              </Card.Body>
+            </Card>
+          </Col>
+        )}
         <Col md={6}>
           <Card>
             <Card.Header>Lineage</Card.Header>

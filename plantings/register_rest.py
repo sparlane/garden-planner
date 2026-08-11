@@ -9,8 +9,6 @@ that change does not have to arrive first.
 
 # pylint: disable=duplicate-code
 
-from datetime import timedelta
-
 from rest_framework import mixins, serializers, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -112,8 +110,16 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     standing_at = serializers.IntegerField(read_only=True, allow_null=True)
     standing_at_label = serializers.CharField(read_only=True)
     located_since = serializers.DateTimeField(read_only=True, allow_null=True)
-    expected_ready_early = serializers.SerializerMethodField()
-    expected_ready_late = serializers.SerializerMethodField()
+    stage = serializers.IntegerField(source='current_stage', read_only=True, allow_null=True)
+    stage_name = serializers.CharField(source='current_stage_name', read_only=True, allow_null=True)
+    grade = serializers.IntegerField(source='current_grade', read_only=True, allow_null=True)
+    grade_name = serializers.CharField(source='current_grade_name', read_only=True, allow_null=True)
+    container = serializers.IntegerField(source='current_container', read_only=True, allow_null=True)
+    container_name = serializers.CharField(source='current_container_name', read_only=True, allow_null=True)
+    container_size = serializers.CharField(source='current_container_size', read_only=True, allow_null=True)
+    container_count = serializers.IntegerField(source='current_container_count', read_only=True, allow_null=True)
+    expected_ready = serializers.DateField(source='current_expected_ready', read_only=True, allow_null=True)
+    stage_overdue = serializers.SerializerMethodField()
     cost = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True, allow_null=True)
     currency_code = serializers.SerializerMethodField()
 
@@ -121,31 +127,13 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
         """Report how long this plant has been growing, in whole days."""
         return (timezone.now() - plant.germinated).days
 
-    def get_expected_ready_early(self, plant):
-        """Project the earliest ready date from the crop's maturity range.
-
-        A projection from catalog data, not a recorded readiness date; task 54
-        adds the observed one, and until then this is display only and neither
-        filterable nor sortable.
-        """
-        return self._expected_ready(plant, 'maturity_days_min')
-
-    def get_expected_ready_late(self, plant):
-        """Project the latest ready date from the crop's maturity range."""
-        return self._expected_ready(plant, 'maturity_days_max')
+    def get_stage_overdue(self, plant):
+        """Compare the current stage's configured due time with now."""
+        return plant.stage_due_at is not None and plant.stage_due_at < timezone.now()
 
     def get_currency_code(self, plant):  # pylint: disable=unused-argument
         """Name the currency the cost is expressed in, so it cannot separate."""
         return self.context['workspace'].currency_code
-
-    @staticmethod
-    def _expected_ready(plant, field):
-        """Offset germination by the variety's days, falling back to the crop."""
-        variety = plant.batch.variety
-        days = getattr(variety, field) or getattr(variety.plant, field)
-        if days is None:
-            return None
-        return plant.germinated + timedelta(days=days)
 
 
 class NurseryPlantRegisterViewSet(

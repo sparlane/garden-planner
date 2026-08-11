@@ -41,7 +41,7 @@ def ensure_default_templates(workspace):
                 'format': format_name,
                 'payload_mode': payload_mode,
                 'layout': layout,
-                'fields': ['display', 'variety', 'batch', 'sowing_date', 'expected_ready', 'code', 'print_date'],
+                'fields': ['display', 'variety', 'batch', 'stage', 'grade', 'container', 'expected_ready', 'code', 'print_date'],
                 'dimensions': dimensions,
                 'built_in': True,
             },

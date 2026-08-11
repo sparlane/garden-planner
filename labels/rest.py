@@ -1,6 +1,5 @@
 """REST resources for label templates, printing, and scan resolution."""
 
-from datetime import timedelta
 from urllib.parse import unquote, urlparse
 
 from django.core.exceptions import ValidationError as DjangoValidationError
@@ -13,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from plantings.lifecycle import derive_state
+from plantings.growth import current_growth
 from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
 
@@ -27,6 +27,10 @@ LABEL_FIELDS = {
     'sowing_date',
     'expected_ready',
     'quantity',
+    'stage',
+    'grade',
+    'container',
+    'container_count',
     'code',
     'print_date',
 }
@@ -81,15 +85,7 @@ def _target_values(identity, code=None):
             'batch': target.batch.code if target.batch_id else planting.batch.code,
             'sowing_date': planting.planted.date().isoformat() if planting else None,
         })
-        minimum = variety.maturity_days_min or variety.plant.maturity_days_min
-        maximum = variety.maturity_days_max or variety.plant.maturity_days_max
-        ready_dates = [
-            (target.germinated + timedelta(days=days)).date().isoformat()
-            for days in (minimum, maximum)
-            if days is not None
-        ]
-        if ready_dates:
-            values['expected_ready'] = ready_dates[0] if len(set(ready_dates)) == 1 else f'{ready_dates[0]} – {ready_dates[-1]}'
+        _add_growth_values(values, target)
     elif key == ('plantings', 'plantcohort'):
         values.update({
             'display': f'{target.batch.variety.name} — {target.quantity}',
@@ -98,6 +94,7 @@ def _target_values(identity, code=None):
             'sowing_date': target.source_sowing.planted.date().isoformat() if target.source_sowing else None,
             'quantity': target.quantity,
         })
+        _add_growth_values(values, target)
     elif key == ('plantings', 'productionbatch'):
         values.update({
             'display': target.code,
@@ -121,6 +118,20 @@ def _target_values(identity, code=None):
     elif key == ('garden', 'gardenarea'):
         values['display'] = target.name
     return values
+
+
+def _add_growth_values(values, target):
+    """Add effective Nursery observations to a printable target projection."""
+    growth = current_growth(target)
+    values.update({
+        'stage': growth['stage'].name if growth['stage'] else None,
+        'grade': growth['grade'].name if growth['grade'] else None,
+        'container': ' '.join(filter(None, (
+            growth['container_name'], growth['container_size_label'],
+        ))) or None,
+        'container_count': growth['container_count'],
+        'expected_ready': growth['expected_ready'].isoformat() if growth['expected_ready'] else None,
+    })
 
 
 def _target_active(identity):

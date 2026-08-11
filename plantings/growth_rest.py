@@ -79,7 +79,7 @@ class NurseryObservationSerializer(serializers.ModelSerializer):
             'container_item', 'container_count', 'container_name',
             'container_size_label', 'container_volume_ml', 'container_footprint_m2',
             'height_cm', 'spread_cm', 'root_condition', 'expected_ready',
-            'occurred_at', 'notes', 'corrects', 'created_by', 'created',
+            'photo_url', 'occurred_at', 'notes', 'corrects', 'created_by', 'created',
             'input_application',
         ]
 
@@ -106,6 +106,7 @@ class ObservationWriteSerializer(serializers.Serializer):  # pylint: disable=abs
     spread_cm = serializers.DecimalField(max_digits=12, decimal_places=3, required=False, allow_null=True)
     root_condition = serializers.CharField(max_length=255, required=False, allow_blank=True)
     expected_ready = serializers.DateField(required=False, allow_null=True)
+    photo_url = serializers.URLField(required=False, allow_blank=True)
     occurred_at = serializers.DateTimeField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True)
 

@@ -25,9 +25,10 @@ from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSeri
 from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
-from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
+from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, NurseryObservation, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 from .register_rest import register_register_routes
-from .growth_rest import register_growth_routes
+from .growth_rest import NurseryObservationSerializer, register_growth_routes
+from .growth import current_growth
 from .cohort_rest import register_cohort_routes
 from .sowing import correct_sowing_consumption, post_sowing_consumption
 
@@ -543,9 +544,40 @@ class SpecificPlantDetailSerializer(SpecificPlantSerializer):
     """Add the chronological lifecycle history one plant screen needs."""
 
     lifecycle_events = PlantLifecycleEventSerializer(many=True, read_only=True)
+    growth = serializers.SerializerMethodField()
+    nursery_observations = serializers.SerializerMethodField()
 
     class Meta(SpecificPlantSerializer.Meta):
-        fields = SpecificPlantSerializer.Meta.fields + ['lifecycle_events']
+        fields = SpecificPlantSerializer.Meta.fields + [
+            'lifecycle_events', 'growth', 'nursery_observations',
+        ]
+
+    def get_growth(self, plant):
+        """Expose current Nursery facts without making them mutable plant fields."""
+        growth = current_growth(plant)
+        return {
+            'stage': growth['stage'].pk if growth['stage'] else None,
+            'stage_name': growth['stage'].name if growth['stage'] else None,
+            'grade': growth['grade'].pk if growth['grade'] else None,
+            'grade_name': growth['grade'].name if growth['grade'] else None,
+            'container': growth['container_item'].pk if growth['container_item'] else None,
+            'container_name': growth['container_name'] or None,
+            'container_size': growth['container_size_label'] or None,
+            'container_count': growth['container_count'],
+            'height_cm': growth['height_cm'],
+            'spread_cm': growth['spread_cm'],
+            'root_condition': growth['root_condition'],
+            'expected_ready': growth['expected_ready'],
+        }
+
+    def get_nursery_observations(self, plant):
+        """Return effective and corrected facts in their immutable chronology."""
+        observations = (
+            NurseryObservation.objects.filter(targets__plant=plant)
+            .select_related('stage', 'grade', 'container_item', 'created_by')
+            .prefetch_related('targets')
+        )
+        return NurseryObservationSerializer(observations, many=True).data
 
 
 class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):

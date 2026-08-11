@@ -44,7 +44,8 @@ import {
   CohortMerge,
   CohortObservation,
   CohortPage,
-  PlantCohort
+  PlantCohort,
+  GrowthCatalogValue
 } from '../types/plantings'
 
 interface ProductionBatchFilters {
@@ -202,6 +203,20 @@ function postBulkPlantOperation(data: BulkPlantOperationRequest): Promise<BulkPl
   return csrfPost('/plantings/bulk-operations/', data).then((response) => response.json() as Promise<BulkPlantOperation>)
 }
 
+function getGrowthStages(signal?: AbortSignal): Promise<Array<GrowthCatalogValue>> {
+  return fetchAsJson<Array<GrowthCatalogValue>>('/plantings/growth-stages/', signal)
+}
+
+function getPlantGrades(signal?: AbortSignal): Promise<Array<GrowthCatalogValue>> {
+  return fetchAsJson<Array<GrowthCatalogValue>>('/plantings/plant-grades/', signal)
+}
+
+function saveGrowthCatalog(kind: 'growth-stages' | 'plant-grades', value: Partial<GrowthCatalogValue> & { name: string; code?: string }): Promise<GrowthCatalogValue> {
+  const path = `/plantings/${kind}/${value.pk === undefined ? '' : `${value.pk}/`}`
+  const request = value.pk === undefined ? csrfPost(path, value) : csrfPatch(path, value)
+  return request.then((response) => response.json() as Promise<GrowthCatalogValue>)
+}
+
 function harvestQuery(filters: HarvestFilters | HarvestReportFilters): string {
   const query = new URLSearchParams()
   for (const [key, value] of Object.entries(filters)) {
@@ -327,6 +342,9 @@ export {
   postBulkPlantOutcome,
   previewBulkPlantOperation,
   postBulkPlantOperation,
+  getGrowthStages,
+  getPlantGrades,
+  saveGrowthCatalog,
   getHarvests,
   getHarvest,
   addHarvest,

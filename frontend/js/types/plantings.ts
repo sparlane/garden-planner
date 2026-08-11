@@ -296,6 +296,43 @@ interface SpecificPlant {
 
 interface SpecificPlantDetail extends SpecificPlant {
   lifecycle_events: Array<PlantLifecycleEvent>
+  growth: NurseryGrowth
+  nursery_observations: Array<NurseryObservation>
+}
+
+interface GrowthCatalogValue {
+  pk: number
+  code: string
+  name: string
+  display_order: number
+  active: boolean
+  target_days?: number | null
+}
+
+interface NurseryGrowth {
+  stage: number | null
+  stage_name: string | null
+  grade: number | null
+  grade_name: string | null
+  container: number | null
+  container_name: string | null
+  container_size: string | null
+  container_count: number | null
+  height_cm: string | null
+  spread_cm: string | null
+  root_condition: string | null
+  expected_ready: string | null
+}
+
+interface NurseryObservation extends NurseryGrowth {
+  pk: number
+  plants: Array<number>
+  cohort: number | null
+  occurred_at: string
+  photo_url: string
+  notes: string
+  corrects: number | null
+  input_application: number | null
 }
 
 interface SpecificPlantCreate {
@@ -307,6 +344,7 @@ interface SpecificPlantCreate {
 interface SowingCorrection {
   seeds_used?: number
   quantity?: number
+  container_count?: number
   reason: string
 }
 
@@ -337,15 +375,37 @@ interface NurseryRegisterRow {
   standing_at: number | null
   standing_at_label: string
   located_since: string | null
-  // Projected from the crop's maturity range, not an observed readiness date.
-  expected_ready_early: string | null
-  expected_ready_late: string | null
+  stage: number | null
+  stage_name: string | null
+  stage_overdue: boolean
+  grade: number | null
+  grade_name: string | null
+  container: number | null
+  container_name: string | null
+  container_size: string | null
+  container_count: number | null
+  expected_ready: string | null
   cost: string | null
   currency_code: string
 }
 
 type NurseryRegisterOrdering =
-  'age' | '-age' | 'variety' | '-variety' | 'location' | '-location' | 'standing_at' | '-standing_at' | 'cost' | '-cost' | 'state' | '-state' | 'batch' | '-batch'
+  | 'age'
+  | '-age'
+  | 'variety'
+  | '-variety'
+  | 'location'
+  | '-location'
+  | 'standing_at'
+  | '-standing_at'
+  | 'cost'
+  | '-cost'
+  | 'state'
+  | '-state'
+  | 'batch'
+  | '-batch'
+  | 'expected_ready'
+  | '-expected_ready'
 
 // Keys are the query-parameter names the register endpoint validates.
 interface NurseryRegisterFilters {
@@ -362,6 +422,12 @@ interface NurseryRegisterFilters {
   // Matches the location or anything below it, so a greenhouse answers for
   // the bays inside it.
   location?: number
+  stage?: number
+  grade?: number
+  container?: number
+  expected_ready_from?: string
+  expected_ready_to?: string
+  stage_overdue?: boolean
   search?: string
   ordering?: NurseryRegisterOrdering
   page?: number
@@ -372,6 +438,9 @@ interface NurseryRegisterFilters {
 type NurseryRegisterTotals = Record<PlantLifecycleState, number> & {
   total: number
   unresolved: number
+  stage_counts: Record<string, number>
+  grade_counts: Record<string, number>
+  container_counts: Record<string, number>
 }
 
 interface NurseryRegisterPage {
@@ -387,7 +456,7 @@ interface NurseryRegisterSelection {
   plants: Array<number>
 }
 
-type BulkPlantAction = 'germinate' | 'move' | 'ready' | 'retain' | 'donate' | 'fail' | 'cull' | 'finish_harvest'
+type BulkPlantAction = 'germinate' | 'move' | 'stage' | 'grade' | 'repot' | 'ready' | 'retain' | 'donate' | 'fail' | 'cull' | 'finish_harvest'
 type BulkPlantAtomicity = 'all_or_nothing' | 'eligible_only'
 
 interface BulkPlantOperationRequest {
@@ -599,6 +668,15 @@ interface PlantCohort {
   label_code: string
   cost: string | null
   currency_code: string
+  stage: number | null
+  stage_name: string | null
+  grade: number | null
+  grade_name: string | null
+  container: number | null
+  container_name: string | null
+  container_size: string | null
+  container_count: number | null
+  expected_ready: string | null
   created: string
   updated: string
   events?: Array<CohortEvent>
@@ -629,6 +707,12 @@ interface CohortFilters {
   location?: number
   state?: CohortLifecycleState
   active?: boolean
+  stage?: number
+  grade?: number
+  container?: number
+  expected_ready_from?: string
+  expected_ready_to?: string
+  stage_overdue?: boolean
   page?: number
   page_size?: number
 }
@@ -652,6 +736,7 @@ interface CohortAction {
   expected_revision: number
   idempotency_key: string
   quantity?: number
+  container_count?: number
   location?: number | null
   disposition?: 'failed' | 'culled' | 'donated' | 'other'
   reason?: string
@@ -697,6 +782,9 @@ export {
   BulkPlantOperationRequest,
   BulkPlantPreview,
   BulkPlantOperation,
+  GrowthCatalogValue,
+  NurseryGrowth,
+  NurseryObservation,
   NurseryRegisterTotals,
   Planting,
   ProductionBatch,
