@@ -257,6 +257,14 @@ def affected_batches(application):
     batch_ids = set(
         targets.filter(batch__isnull=False).values_list('batch_id', flat=True)
     )
+    batch_ids.update(
+        targets.filter(specific_plant__isnull=False)
+        .values_list('specific_plant__batch_id', flat=True)
+    )
+    batch_ids.update(
+        targets.filter(plant_cohort__isnull=False)
+        .values_list('plant_cohort__batch_id', flat=True)
+    )
     generation_ids = set(
         targets.filter(seed_tray_generation__isnull=False)
         .values_list('seed_tray_generation_id', flat=True)

@@ -177,7 +177,7 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
     elif action == CohortOperation.Action.MOVE:
         if location is None:
             raise ValidationError({'location': 'A destination is required.'})
-        check_capacity(location, cohort_contribution(cohort.quantity))
+        check_capacity(location, cohort_contribution(cohort.quantity, cohort))
         cohort.location = location
     elif action == CohortOperation.Action.READY:
         if cohort.lifecycle_state != PlantCohort.LifecycleState.GROWING:

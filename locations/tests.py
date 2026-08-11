@@ -264,9 +264,9 @@ class LocationCapacityFieldTests(TestCase):
                 )
                 self.assertEqual(location.capacity_basis, basis)
 
-    def test_area_is_recorded_but_not_among_the_enforced_bases(self):
-        """Nothing records a footprint yet, so area cannot be compared to one."""
-        self.assertNotIn(
+    def test_area_is_an_enforced_capacity_basis(self):
+        """Container footprints make a bench's occupied area measurable."""
+        self.assertIn(
             Location.CapacityBasis.AREA,
             Location.ENFORCED_BASES,
         )

@@ -24,6 +24,7 @@ from workspaces.models import Workspace, get_current_workspace
 
 from .models import Location
 from .occupancy import (
+    Occupancy,
     check_capacity,
     location_occupancy,
     plant_contribution,
@@ -191,12 +192,15 @@ class CapacityBasisTests(OccupancyFixture):
         with self.assertRaises(ValidationError):
             check_capacity(bench, plant_contribution(), lock=False)
 
-    def test_an_area_bench_limits_nothing_yet(self):
-        """Nothing records a footprint, so area is planning data, not a rule."""
+    def test_an_area_bench_requires_and_limits_a_container_footprint(self):
+        """Area capacity is enforceable only for a measurable container."""
         bench = self.bench(Location.CapacityBasis.AREA, Decimal('0.5'))
 
-        check_capacity(bench, plant_contribution(), lock=False)
-        check_capacity(bench, tray_contribution(400), lock=False)
+        with self.assertRaises(ValidationError):
+            check_capacity(bench, plant_contribution(), lock=False)
+        check_capacity(bench, Occupancy(plants=1, containers=1, area=Decimal('0.4')), lock=False)
+        with self.assertRaises(ValidationError):
+            check_capacity(bench, Occupancy(plants=1, containers=1, area=Decimal('0.6')), lock=False)
 
     def test_an_untracked_bench_admits_anything(self):
         """A place with no declared measure limits nothing."""

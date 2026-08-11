@@ -1,7 +1,7 @@
 """Reviewed, idempotent bulk work over individually identified plants."""
 
 from dataclasses import dataclass
-from decimal import ROUND_FLOOR
+from decimal import Decimal, ROUND_FLOOR
 from hashlib import sha256
 import json
 
@@ -17,6 +17,7 @@ from .lifecycle import (
     EventType,
     LifecycleState,
     OutcomeRequest,
+    is_final,
     plant_lifecycle_summary,
     record_germination_event,
     record_lifecycle_event,
@@ -29,6 +30,7 @@ from .models import (
     SpecificPlant,
     SpecificPlantLocation,
 )
+from .growth import record_observation
 
 
 ACTION_EVENTS = {
@@ -75,6 +77,8 @@ def _json_value(value):
     """Turn validated model/date values into a stable JSON audit value."""
     if isinstance(value, models.Model):
         return value.pk
+    if isinstance(value, Decimal):
+        return str(value)
     if hasattr(value, 'isoformat'):
         return value.isoformat()
     if isinstance(value, dict):
@@ -114,6 +118,12 @@ def _plant_conflicts(plant, request):
                 raise ValidationError({'occurred_at': 'Move cannot start before the active location.'})
             if request.action_payload['location_type'] == SpecificPlantLocation.GARDEN_SQUARE:
                 validate_outcome(plant, EventType.TRANSPLANTED, request.occurred_at)
+        elif request.action in {
+            BulkPlantOperation.Action.STAGE,
+            BulkPlantOperation.Action.GRADE,
+            BulkPlantOperation.Action.REPOT,
+        } and is_final(plant_lifecycle_summary(plant).state):
+            raise ValidationError({'plants': 'Finished plants cannot receive nursery observations.'})
     except ValidationError as exc:
         return _errors(exc)
     return []
@@ -191,7 +201,7 @@ def _projected_state(request):
     }.get(event)
 
 
-def _plant_preview(workspace, request, lock=False):
+def _plant_preview(workspace, request, lock=False):  # pylint: disable=too-many-locals
     """Plan one action over concrete plants, optionally under execution locks."""
     plants = _load_plants(workspace, request.plants, lock)
     capacity = []
@@ -236,7 +246,7 @@ def _plant_preview(workspace, request, lock=False):
             },
         })
     eligible = sum(row['eligible'] for row in rows)
-    return {
+    preview = {
         'action': request.action,
         'selected': len(rows),
         'eligible': eligible,
@@ -244,6 +254,42 @@ def _plant_preview(workspace, request, lock=False):
         'plants': rows,
         'capacity': capacity,
     }
+    if request.action == BulkPlantOperation.Action.REPOT:
+        preview['application'] = _preview_repot_application(workspace, plants, request)
+    return preview
+
+
+def _application_request(workspace, plants, values):
+    """Build an application whose targets are the reviewed concrete plants."""
+    from applications.models import InputApplicationTarget  # pylint: disable=import-outside-toplevel
+    from applications.rest import _build_request  # pylint: disable=import-outside-toplevel,protected-access
+    from applications.services import TargetRequest  # pylint: disable=import-outside-toplevel
+
+    request = _build_request(workspace, values)
+    targets = tuple(
+        TargetRequest(
+            target_type=InputApplicationTarget.TargetType.SPECIFIC_PLANT,
+            target=plant,
+        )
+        for plant in plants
+    )
+    return request._replace(lines=tuple(
+        line._replace(targets=targets) for line in request.lines
+    ))
+
+
+def _preview_repot_application(workspace, plants, request):
+    """Use the posting service's calculations but roll its draft back."""
+    from applications.services import application_state, create_application_draft  # pylint: disable=import-outside-toplevel
+
+    with transaction.atomic():
+        draft = create_application_draft(
+            workspace, None,
+            _application_request(workspace, plants, request.action_payload['application']),
+        )
+        state = application_state(draft)
+        transaction.set_rollback(True)
+    return state
 
 
 def _germination_preview(workspace, request, lock=False):
@@ -312,6 +358,30 @@ def _apply_plant_operation(operation, user, request, preview):
         plant.pk: plant
         for plant in SpecificPlant.objects.filter(pk__in=rows).order_by('pk')
     }
+    eligible_plants = [plants[plant_id] for plant_id, row in rows.items() if row['eligible']]
+    observation = None
+    if request.action in {
+        BulkPlantOperation.Action.STAGE,
+        BulkPlantOperation.Action.GRADE,
+        BulkPlantOperation.Action.REPOT,
+    }:
+        values = {
+            'occurred_at': request.occurred_at,
+            'notes': request.action_payload.get('notes', '') or request.reason,
+        }
+        if request.action == BulkPlantOperation.Action.STAGE:
+            values['stage'] = request.action_payload['stage']
+        elif request.action == BulkPlantOperation.Action.GRADE:
+            values['grade'] = request.action_payload['grade']
+        else:
+            values.update(_post_repot_application(
+                operation.workspace, user, eligible_plants, request,
+            ))
+        observation = record_observation(
+            operation.workspace, user,
+            plant_ids=[plant.pk for plant in eligible_plants],
+            **values,
+        )
     for plant_id, row in rows.items():
         plant = plants[plant_id]
         if not row['eligible']:
@@ -327,7 +397,7 @@ def _apply_plant_operation(operation, user, request, preview):
         location = None
         if request.action == BulkPlantOperation.Action.MOVE:
             location = move_specific_plant(plant, _move_data(request), user=user)
-        else:
+        elif request.action in ACTION_EVENTS:
             event = record_lifecycle_event(
                 plant,
                 user,
@@ -345,7 +415,24 @@ def _apply_plant_operation(operation, user, request, preview):
             status=BulkPlantOperationResult.Status.APPLIED,
             lifecycle_event=event,
             location=location,
+            nursery_observation=observation,
         )
+
+
+def _post_repot_application(workspace, user, plants, request):
+    """Post exact potting inputs and return their container observation facts."""
+    from applications.services import create_application_draft, post_application  # pylint: disable=import-outside-toplevel
+
+    draft = create_application_draft(
+        workspace, user,
+        _application_request(workspace, plants, request.action_payload['application']),
+    )
+    posted, _movements = post_application(draft, user)
+    return {
+        'container_item': request.action_payload['container_item'],
+        'container_count': request.action_payload['container_count'],
+        'input_application': posted,
+    }
 
 
 def _apply_germination(operation, user, request):

@@ -9,10 +9,15 @@ from django.db import close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
+from applications.models import InputApplication
+from inventory.models import InventoryItem, StockMovement
+from inventory.units import UnitCode
 from locations.models import Location
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_location,
+    make_inventory_item,
+    make_stock_lot,
     make_seed_tray_cell_planting,
     make_specific_plant,
     make_specific_plant_location,
@@ -21,8 +26,10 @@ from workspaces.models import Workspace
 
 from .lifecycle import EventType, OutcomeRequest, record_lifecycle_event
 from .bulk_operations import BulkOperationConflict, concrete_request, execute_bulk_operation
+from .growth import current_growth
 from .models import (
     BulkPlantOperation,
+    GrowthStage,
     PlantLifecycleEvent,
     SpecificPlant,
     SpecificPlantLocation,
@@ -216,6 +223,60 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
             ).count(),
             3,
         )
+
+    def test_reviewed_stage_update_records_one_shared_observation(self):
+        """Bulk stage work links every independently audited result to its fact."""
+        stage = GrowthStage.objects.get(workspace=self.workspace, code='rooted')
+        payload = self.payload(
+            BulkPlantOperation.Action.STAGE,
+            action_payload={'stage': stage.pk, 'notes': 'Roots visible.'},
+        )
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        observation_ids = {row['nursery_observation'] for row in response.data['results']}
+        self.assertEqual(len(observation_ids), 1)
+        self.assertTrue(all(current_growth(plant)['stage'] == stage for plant in self.plants))
+
+    def test_repot_preview_rolls_back_and_confirmation_posts_stock_atomically(self):
+        """Review writes nothing while confirmation consumes the exact pot count."""
+        stockroom = make_location()
+        item = make_inventory_item(
+            category=InventoryItem.Category.POT_CONTAINER,
+            base_unit=UnitCode.EACH,
+            container_size_label='P9',
+            container_footprint_m2='0.008100',
+        )
+        lot = make_stock_lot(item=item, location=stockroom, quantity='10')
+        action_payload = {
+            'container_item': item.pk,
+            'container_count': 2,
+            'notes': 'Two shared pots.',
+            'application': {
+                'applied_at': timezone.now().isoformat(),
+                'source_location': stockroom.pk,
+                'batch': None,
+                'notes': 'Potting inputs.',
+                'lines': [{
+                    'item': item.pk,
+                    'lot': lot.pk,
+                    'applied_quantity': '2',
+                    'unit_code': UnitCode.EACH,
+                }],
+            },
+        }
+        payload = self.payload(BulkPlantOperation.Action.REPOT, action_payload=action_payload)
+        preview = self.client.post('/plantings/bulk-operations/preview/', payload, format='json')
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertFalse(InputApplication.objects.exists())
+
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(InputApplication.objects.get().status, InputApplication.Status.POSTED)
+        self.assertEqual(
+            StockMovement.objects.filter(movement_type=StockMovement.MovementType.CONSUMPTION).count(),
+            1,
+        )
+        self.assertEqual(current_growth(self.plants[0])['container_count'], 2)
 
 
 @skipUnlessDBFeature('has_select_for_update')
