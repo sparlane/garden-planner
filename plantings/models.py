@@ -2,6 +2,8 @@
 Models for Plantings
 """
 # pylint: disable=duplicate-code,too-many-lines
+from decimal import Decimal
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
@@ -450,6 +452,406 @@ class GrowthStage(WorkspaceOwnedModel):
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
+
+
+class NurseryPlanningAssumption(WorkspaceOwnedModel):
+    """Effective-dated yield and density assumptions for one variety."""
+
+    variety = models.ForeignKey(
+        PlantVariety, on_delete=models.PROTECT, related_name='nursery_planning_assumptions',
+    )
+    effective_from = models.DateField()
+    effective_until = models.DateField(null=True, blank=True)
+    germination_rate = models.DecimalField(
+        max_digits=7, decimal_places=6,
+        validators=[MinValueValidator(POSITIVE_DECIMAL), MaxValueValidator(1)],
+    )
+    seeds_per_cluster = models.PositiveIntegerField(default=1)
+    tray_density = models.PositiveIntegerField(
+        help_text='Seed clusters planned per tray.',
+    )
+    notes = models.TextField(blank=True, default='')
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['variety__name', '-effective_from', '-pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'variety', 'effective_from'],
+                name='nursery_assumption_variety_effective_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(germination_rate__gt=0, germination_rate__lte=1),
+                name='nursery_assumption_germination_rate_valid',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.variety} from {self.effective_from}'
+
+    def clean(self):
+        """Keep the effective range and variety inside the workspace."""
+        super().clean()
+        errors = {}
+        if self.variety_id and self.variety.workspace_id != self.workspace_id:
+            errors['variety'] = 'The variety belongs to another workspace.'
+        if self.effective_until and self.effective_until < self.effective_from:
+            errors['effective_until'] = 'The end date cannot precede the start date.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class NurseryPlanningStageAssumption(models.Model):
+    """Loss, timing, and space assumptions for one production stage."""
+
+    assumption = models.ForeignKey(
+        NurseryPlanningAssumption, on_delete=models.PROTECT, related_name='stages',
+    )
+    stage = models.ForeignKey(
+        GrowthStage, on_delete=models.PROTECT, related_name='planning_assumptions',
+    )
+    sequence = models.PositiveIntegerField()
+    lead_days = models.PositiveIntegerField()
+    loss_rate = models.DecimalField(
+        max_digits=7, decimal_places=6, default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('0.999999'))],
+    )
+    location = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='planning_stage_assumptions',
+    )
+    capacity_basis = models.CharField(
+        max_length=16, choices=Location.CapacityBasis.choices,
+        default=Location.CapacityBasis.PLANTS,
+    )
+    capacity_per_plant = models.DecimalField(
+        max_digits=18, decimal_places=6, default=Decimal('1'),
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+
+    class Meta:
+        ordering = ['sequence', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['assumption', 'sequence'], name='nursery_assumption_stage_sequence_unique',
+            ),
+            models.UniqueConstraint(
+                fields=['assumption', 'stage'], name='nursery_assumption_stage_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(loss_rate__gte=0, loss_rate__lt=1),
+                name='nursery_stage_loss_rate_valid',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.assumption_id and self.stage_id:
+            if self.stage.workspace_id != self.assumption.workspace_id:
+                errors['stage'] = 'The stage belongs to another workspace.'
+        if self.assumption_id and self.location_id:
+            if self.location.workspace_id != self.assumption.workspace_id:
+                errors['location'] = 'The location belongs to another workspace.'
+        if self.capacity_basis == Location.CapacityBasis.NONE:
+            errors['capacity_basis'] = 'Choose a measurable capacity basis.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class NurseryPlanningInputAssumption(models.Model):
+    """Expected physical input required for each plant entering production."""
+
+    assumption = models.ForeignKey(
+        NurseryPlanningAssumption, on_delete=models.PROTECT, related_name='inputs',
+    )
+    item = models.ForeignKey(
+        'inventory.InventoryItem', on_delete=models.PROTECT,
+        related_name='nursery_planning_assumptions',
+    )
+    quantity_per_plant = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS, decimal_places=QUANTITY_DECIMAL_PLACES,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+
+    class Meta:
+        ordering = ['item__name', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['assumption', 'item'], name='nursery_assumption_input_unique',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.assumption_id and self.item_id:
+            if self.item.workspace_id != self.assumption.workspace_id:
+                raise ValidationError({'item': 'The item belongs to another workspace.'})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class NurseryProductionPlan(WorkspaceOwnedModel):
+    """One immutable-on-approval version of a nursery production plan."""
+
+    class Status(models.TextChoices):
+        """Whether this version can still change."""
+
+        DRAFT = 'draft', 'Draft'
+        APPROVED = 'approved', 'Approved'
+
+    class Direction(models.TextChoices):
+        """Which date anchors milestone scheduling."""
+
+        BACKWARD = 'backward', 'Backward from ready window'
+        FORWARD = 'forward', 'Forward from sowing date'
+
+    code = models.CharField(max_length=64)
+    version = models.PositiveIntegerField(default=1)
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.DRAFT, editable=False,
+    )
+    direction = models.CharField(
+        max_length=16, choices=Direction.choices, default=Direction.BACKWARD,
+    )
+    sowing_date = models.DateField(null=True, blank=True)
+    supersedes = models.ForeignKey(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='revisions', editable=False,
+    )
+    notes = models.TextField(blank=True, default='')
+    approved_at = models.DateTimeField(null=True, blank=True, editable=False)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['code', '-version', '-pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'code', 'version'],
+                name='nursery_plan_workspace_code_version_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.code} v{self.version}'
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if not self.code.strip():
+            errors['code'] = 'A plan code is required.'
+        if self.direction == self.Direction.FORWARD and not self.sowing_date:
+            errors['sowing_date'] = 'A forward plan requires a sowing date.'
+        if self.supersedes_id:
+            if self.supersedes.workspace_id != self.workspace_id:
+                errors['supersedes'] = 'The previous version belongs to another workspace.'
+            elif self.supersedes.code != self.code:
+                errors['supersedes'] = 'A revision must retain the plan code.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk, status=self.Status.APPROVED).exists():
+            raise ValidationError('Approved plans are immutable; create a new version.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class NurseryPlanDemand(models.Model):
+    """One committed, forecast, or manual demand input kept distinct."""
+
+    class Source(models.TextChoices):
+        """Commercial certainty of one demand input."""
+
+        CONFIRMED_ORDER = 'confirmed_order', 'Confirmed order'
+        FORECAST = 'forecast', 'Forecast'
+        MANUAL = 'manual', 'Manual'
+
+    class Priority(models.IntegerChoices):
+        """Relative production urgency."""
+
+        LOW = 10, 'Low'
+        NORMAL = 20, 'Normal'
+        HIGH = 30, 'High'
+        URGENT = 40, 'Urgent'
+
+    plan = models.ForeignKey(
+        NurseryProductionPlan, on_delete=models.PROTECT, related_name='demand_lines',
+    )
+    variety = models.ForeignKey(
+        PlantVariety, on_delete=models.PROTECT, related_name='nursery_plan_demand',
+    )
+    product_reference = models.CharField(max_length=255, blank=True, default='')
+    target_quantity = models.PositiveIntegerField()
+    ready_from = models.DateField()
+    ready_until = models.DateField()
+    source = models.CharField(max_length=24, choices=Source.choices)
+    priority = models.IntegerField(choices=Priority.choices, default=Priority.NORMAL)
+    customer_reference = models.CharField(max_length=255, blank=True, default='')
+    order_reference = models.CharField(max_length=255, blank=True, default='')
+    source_line_reference = models.CharField(max_length=255, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ['-priority', 'ready_from', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['plan', 'source', 'source_line_reference'],
+                condition=~models.Q(source_line_reference=''),
+                name='nursery_plan_demand_source_line_unique',
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.plan_id and self.variety_id:
+            if self.variety.workspace_id != self.plan.workspace_id:
+                errors['variety'] = 'The variety belongs to another workspace.'
+        if self.ready_until < self.ready_from:
+            errors['ready_until'] = 'The ready window cannot end before it starts.'
+        if self.source == self.Source.CONFIRMED_ORDER and not self.order_reference:
+            errors['order_reference'] = 'Confirmed demand requires an order reference.'
+        if self.plan_id and self.plan.status == NurseryProductionPlan.Status.APPROVED:
+            errors['plan'] = 'Approved plan demand is immutable.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class NurseryPlanRequirement(models.Model):
+    """Calculated and approved snapshot for one demand line."""
+
+    demand = models.OneToOneField(
+        NurseryPlanDemand, on_delete=models.CASCADE, related_name='requirement',
+    )
+    assumption = models.ForeignKey(
+        NurseryPlanningAssumption, on_delete=models.PROTECT,
+        related_name='plan_requirements',
+    )
+    required_seeds = models.PositiveIntegerField()
+    required_clusters = models.PositiveIntegerField()
+    required_trays = models.PositiveIntegerField()
+    expected_finished = models.PositiveIntegerField()
+    sowing_date = models.DateField()
+    expected_ready_from = models.DateField()
+    expected_ready_until = models.DateField()
+    assumption_snapshot = models.JSONField(default=dict)
+    batch = models.OneToOneField(
+        ProductionBatch, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='planning_requirement',
+    )
+
+    class Meta:
+        ordering = ['sowing_date', 'pk']
+
+
+class NurseryPlanMilestone(models.Model):
+    """Calculated stage quantity, date, and capacity usage."""
+
+    requirement = models.ForeignKey(
+        NurseryPlanRequirement, on_delete=models.CASCADE, related_name='milestones',
+    )
+    stage = models.ForeignKey(
+        GrowthStage, on_delete=models.PROTECT, related_name='plan_milestones',
+    )
+    sequence = models.PositiveIntegerField()
+    planned_date = models.DateField()
+    input_quantity = models.PositiveIntegerField()
+    expected_output = models.PositiveIntegerField()
+    location = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='plan_milestones',
+    )
+    capacity_basis = models.CharField(max_length=16, choices=Location.CapacityBasis.choices)
+    capacity_required = models.DecimalField(max_digits=18, decimal_places=6)
+
+    class Meta:
+        ordering = ['planned_date', 'sequence', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['requirement', 'sequence'], name='nursery_plan_milestone_sequence_unique',
+            ),
+        ]
+
+
+class NurseryPlanInputRequirement(models.Model):
+    """Calculated item requirement retained with the plan version."""
+
+    requirement = models.ForeignKey(
+        NurseryPlanRequirement, on_delete=models.CASCADE, related_name='inputs',
+    )
+    item = models.ForeignKey(
+        'inventory.InventoryItem', on_delete=models.PROTECT,
+        related_name='nursery_plan_requirements',
+    )
+    quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS, decimal_places=QUANTITY_DECIMAL_PLACES,
+    )
+
+    class Meta:
+        ordering = ['item__name', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['requirement', 'item'], name='nursery_plan_input_requirement_unique',
+            ),
+        ]
+
+
+class NurseryPlanIssue(models.Model):
+    """One stock or capacity conflict found during the last calculation."""
+
+    class Kind(models.TextChoices):
+        """Resources that may prevent the plan from being fulfilled."""
+
+        SEED = 'seed', 'Seed shortage'
+        INPUT = 'input', 'Input shortage'
+        TRAY = 'tray', 'Tray shortage'
+        CAPACITY = 'capacity', 'Location capacity conflict'
+        ASSUMPTION = 'assumption', 'Missing assumption'
+
+    plan = models.ForeignKey(
+        NurseryProductionPlan, on_delete=models.CASCADE, related_name='issues',
+    )
+    demand = models.ForeignKey(
+        NurseryPlanDemand, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='issues',
+    )
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    message = models.TextField()
+    required_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS, decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+    available_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS, decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+
+    class Meta:
+        ordering = ['kind', 'pk']
 
 
 class PlantGrade(WorkspaceOwnedModel):
