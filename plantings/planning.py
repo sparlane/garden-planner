@@ -27,6 +27,13 @@ from .models import (
     NurseryPlanningAssumption,
     NurseryProductionPlan,
     PlantCohort,
+    ProductionBatch,
+)
+
+
+OPEN_BATCH_STATUSES = (
+    ProductionBatch.Status.PLANNED,
+    ProductionBatch.Status.ACTIVE,
 )
 
 
@@ -141,23 +148,43 @@ def _add_issue(plan, demand, kind, message, required=None, available=None):
 
 def _stock_issues(plan, demand, requirement, assumption):
     seed_available = _seed_balance(plan.workspace, demand.variety)
-    if seed_available < requirement.required_seeds:
+    seed_required = NurseryPlanRequirement.objects.filter(
+        demand__plan=plan, demand__variety=demand.variety,
+    ).aggregate(total=Sum('required_seeds'))['total'] or 0
+    seed_required += NurseryPlanRequirement.objects.filter(
+        demand__plan__workspace=plan.workspace,
+        demand__plan__status=NurseryProductionPlan.Status.APPROVED,
+        demand__variety=demand.variety,
+        batch__status__in=OPEN_BATCH_STATUSES,
+    ).exclude(demand__plan=plan).aggregate(total=Sum('required_seeds'))['total'] or 0
+    if seed_available < seed_required:
         _add_issue(
             plan, demand, NurseryPlanIssue.Kind.SEED,
             f'Only {seed_available} seeds are recorded as available.',
-            requirement.required_seeds, seed_available,
+            seed_required, seed_available,
         )
     for row in assumption.inputs.all():
         quantity = Decimal(requirement.required_clusters) * row.quantity_per_plant
         NurseryPlanInputRequirement.objects.create(
             requirement=requirement, item=row.item, quantity=quantity,
         )
+        required = NurseryPlanInputRequirement.objects.filter(
+            requirement__demand__plan=plan, item=row.item,
+        ).aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+        required += NurseryPlanInputRequirement.objects.filter(
+            requirement__demand__plan__workspace=plan.workspace,
+            requirement__demand__plan__status=NurseryProductionPlan.Status.APPROVED,
+            requirement__batch__status__in=OPEN_BATCH_STATUSES,
+            item=row.item,
+        ).exclude(requirement__demand__plan=plan).aggregate(
+            total=Sum('quantity'),
+        )['total'] or Decimal('0')
         available = _item_balance(plan.workspace, row.item)
-        if available < quantity:
+        if available < required:
             _add_issue(
                 plan, demand, NurseryPlanIssue.Kind.INPUT,
                 f'Only {available} {row.item.base_unit} of {row.item.name} is available.',
-                quantity, available,
+                required, available,
             )
 
 
@@ -172,17 +199,18 @@ def _tray_issue(plan, demand, requirement):
             not unit_is_in_use(tray.inventory_unit),
         ))
     )
-    other_planned = NurseryPlanRequirement.objects.filter(
+    planned = NurseryPlanRequirement.objects.filter(
         demand__plan__workspace=plan.workspace,
-        demand__plan__status=NurseryProductionPlan.Status.APPROVED,
         sowing_date=requirement.sowing_date,
-    ).exclude(demand__plan=plan).aggregate(total=Sum('required_trays'))['total'] or 0
-    available -= other_planned
-    if available < requirement.required_trays:
+    ).filter(Q(demand__plan=plan) | Q(
+        demand__plan__status=NurseryProductionPlan.Status.APPROVED,
+        batch__status__in=OPEN_BATCH_STATUSES,
+    )).aggregate(total=Sum('required_trays'))['total'] or 0
+    if available < planned:
         _add_issue(
             plan, demand, NurseryPlanIssue.Kind.TRAY,
-            f'Only {max(available, 0)} unallocated trays are available on the sowing date.',
-            requirement.required_trays, max(available, 0),
+            f'Only {available} trays are available on the sowing date.',
+            planned, available,
         )
 
 
@@ -193,11 +221,13 @@ def _capacity_issue(plan, demand, milestone):
     occupied = location_occupancy(milestone.location, subtree=True).of(basis)
     planned = NurseryPlanMilestone.objects.filter(
         requirement__demand__plan__workspace=plan.workspace,
-        requirement__demand__plan__status=NurseryProductionPlan.Status.APPROVED,
         location=milestone.location,
         planned_date=milestone.planned_date,
         capacity_basis=basis,
-    ).exclude(requirement__demand__plan=plan).aggregate(
+    ).filter(Q(requirement__demand__plan=plan) | Q(
+        requirement__demand__plan__status=NurseryProductionPlan.Status.APPROVED,
+        requirement__batch__status__in=OPEN_BATCH_STATUSES,
+    )).exclude(pk=milestone.pk).aggregate(
         total=Sum('capacity_required'),
     )['total'] or Decimal('0')
     available = milestone.location.capacity_value - Decimal(occupied) - planned

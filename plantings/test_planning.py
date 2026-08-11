@@ -137,6 +137,27 @@ class NurseryPlanningTests(TestCase):
         self.assertEqual(calculate_plan(plan).count(), 2)
         self.assertEqual(plan.demand_lines.count(), 2)
 
+    def test_demand_lines_share_capacity_and_stock_availability(self):
+        self.location.capacity_value = Decimal('150')
+        self.location.save()
+        plan = self._plan()
+        NurseryPlanDemand.objects.create(
+            plan=plan,
+            variety=self.variety,
+            target_quantity=72,
+            ready_from=date(2026, 4, 30),
+            ready_until=date(2026, 5, 2),
+            source=NurseryPlanDemand.Source.MANUAL,
+        )
+
+        calculate_plan(plan)
+
+        capacity = plan.issues.filter(kind=NurseryPlanIssue.Kind.CAPACITY).first()
+        seed = plan.issues.filter(kind=NurseryPlanIssue.Kind.SEED).last()
+        self.assertEqual(capacity.required_quantity, Decimal('100'))
+        self.assertEqual(capacity.available_quantity, Decimal('50'))
+        self.assertEqual(seed.required_quantity, Decimal('448'))
+
     def test_approval_creates_planned_batches_without_sowings_or_stock(self):
         plan = self._plan()
         requirement = calculate_plan(plan).get()

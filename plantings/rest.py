@@ -28,6 +28,7 @@ from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSeriali
 from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, NurseryObservation, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
 from .register_rest import register_register_routes
 from .growth_rest import NurseryObservationSerializer, register_growth_routes
+from .planning_rest import register_planning_routes
 from .growth import current_growth
 from .cohort_rest import register_cohort_routes
 from .sowing import correct_sowing_consumption, post_sowing_consumption
@@ -1077,6 +1078,7 @@ register_harvest_routes(router)
 register_register_routes(router)
 register_growth_routes(router)
 register_cohort_routes(router)
+register_planning_routes(router)
 
 
 def _register_bulk_routes():
