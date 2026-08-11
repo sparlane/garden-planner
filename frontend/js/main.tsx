@@ -28,6 +28,7 @@ import { NurseryRegisterView } from './plantings/register.js'
 import { PlantDetailView } from './plantings/plant_detail.js'
 import { CohortDetailView, CohortRegisterView } from './plantings/cohorts.js'
 import { GrowthCatalogsView } from './plantings/growth_catalogs.js'
+import { ProductionPlanningView } from './plantings/production_planning.js'
 import { LabelsView, ScannerView } from './labels.js'
 
 function SeedTrayDetailsRoute() {
@@ -136,6 +137,14 @@ function FrontEndPage() {
           element={
             <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
               <GrowthCatalogsView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/plantings/production-planning"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <ProductionPlanningView />
             </WorkspaceModeRoute>
           }
         />

@@ -63,6 +63,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
                 <NavDropdown.Item as={NavLink} to="/plantings/growth-setup">
                   Growth stages and grades
                 </NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/plantings/production-planning">
+                  Production planning
+                </NavDropdown.Item>
               </>
             )}
             <NavDropdown.Item as={NavLink} to="/plantings/batches">
