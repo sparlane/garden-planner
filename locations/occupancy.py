@@ -61,9 +61,14 @@ def plant_contribution():
     return Occupancy(trays=0, plants=1, containers=1)
 
 
+def cohort_contribution(quantity):
+    """Return the measurable footprint of anonymous nursery stock."""
+    return Occupancy(trays=0, plants=quantity, containers=0)
+
+
 def location_occupancy(location, subtree=False):
     """Count what is standing in a location, optionally including its children."""
-    from plantings.models import SpecificPlantLocation  # pylint: disable=import-outside-toplevel
+    from plantings.models import PlantCohort, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
     from seedtrays.models import SeedTray  # pylint: disable=import-outside-toplevel
 
     if subtree:
@@ -83,10 +88,16 @@ def location_occupancy(location, subtree=False):
         ended__isnull=True,
         **{f'location__{lookup}': value},
     ).count()
+    cohort_plants = sum(
+        PlantCohort.objects.filter(
+            quantity__gt=0,
+            **{f'location__{lookup}': value},
+        ).values_list('quantity', flat=True)
+    )
 
     return Occupancy(
         trays=tray_count,
-        plants=plants_in_trays + standing_plants,
+        plants=plants_in_trays + standing_plants + cohort_plants,
         containers=standing_plants,
     )
 

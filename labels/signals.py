@@ -5,7 +5,7 @@ from django.dispatch import receiver
 
 from garden.models import GardenArea
 from locations.models import Location
-from plantings.models import ProductionBatch, SpecificPlant
+from plantings.models import PlantCohort, ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTray
 from workspaces.models import Workspace
 
@@ -13,7 +13,7 @@ from .models import LabelIdentity
 from .services import ensure_default_templates, ensure_identity, target_key
 
 
-SUPPORTED_MODELS = (SpecificPlant, SeedTray, ProductionBatch, Location, GardenArea)
+SUPPORTED_MODELS = (SpecificPlant, PlantCohort, SeedTray, ProductionBatch, Location, GardenArea)
 
 
 @receiver(post_save, sender=Workspace)
@@ -24,6 +24,7 @@ def create_workspace_label_templates(sender, instance, created, raw=False, **kwa
 
 
 @receiver(post_save, sender=SpecificPlant)
+@receiver(post_save, sender=PlantCohort)
 @receiver(post_save, sender=SeedTray)
 @receiver(post_save, sender=ProductionBatch)
 @receiver(post_save, sender=Location)
@@ -35,6 +36,7 @@ def issue_label_identity(sender, instance, created, raw=False, **kwargs):  # pyl
 
 
 @receiver(pre_delete, sender=SpecificPlant)
+@receiver(pre_delete, sender=PlantCohort)
 @receiver(pre_delete, sender=SeedTray)
 @receiver(pre_delete, sender=ProductionBatch)
 @receiver(pre_delete, sender=Location)

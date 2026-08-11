@@ -281,6 +281,8 @@ def _plant_events(plant):
 
 def _plant_batch(plant):
     """Return the batch that raised this plant."""
+    if plant.batch_id:
+        return plant.batch
     return plant.cell_planting.seed_tray_planting.batch
 
 
