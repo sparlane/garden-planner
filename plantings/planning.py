@@ -17,8 +17,12 @@ from locations.occupancy import location_occupancy
 from seeds.models import Seeds
 from seedtrays.models import SeedTray
 
-from .batches import BatchRequest, batch_seeds_sown, create_batch
+from .batches import BatchRequest, batch_lifecycle_counts, batch_seeds_sown, create_batch
+from .growth import current_growth
+from .lifecycle import LifecycleState
 from .models import (
+    CohortEvent,
+    CohortOperation,
     NurseryPlanDemand,
     NurseryPlanInputRequirement,
     NurseryPlanIssue,
@@ -27,7 +31,9 @@ from .models import (
     NurseryPlanningAssumption,
     NurseryProductionPlan,
     PlantCohort,
+    PlantLifecycleEvent,
     ProductionBatch,
+    SpecificPlant,
 )
 
 
@@ -375,11 +381,14 @@ def plan_variance(plan):
     ).select_related('demand', 'batch').order_by('pk'):
         batch = requirement.batch
         seeds_sown = batch_seeds_sown(batch) if batch else 0
-        current_output = 0
-        if batch:
-            current_output = PlantCohort.objects.filter(batch=batch).aggregate(
-                total=Sum('quantity'),
-            )['total'] or 0
+        facts = _batch_actuals(batch) if batch else _empty_actuals()
+        stages = _stage_actuals(requirement, batch)
+        planned_germinated = requirement.milestones.order_by('sequence').values_list(
+            'input_quantity', flat=True,
+        ).first() or requirement.expected_finished
+        ready_variance = None
+        if facts['actual_ready_date']:
+            ready_variance = (facts['actual_ready_date'] - requirement.expected_ready_from).days
         rows.append({
             'demand': requirement.demand_id,
             'batch': batch.pk if batch else None,
@@ -388,9 +397,123 @@ def plan_variance(plan):
             'planned_seeds': requirement.required_seeds,
             'actual_seeds': seeds_sown,
             'seed_variance': seeds_sown - requirement.required_seeds,
+            'planned_germinated': planned_germinated,
+            'actual_germinated': facts['actual_germinated'],
+            'germination_variance': facts['actual_germinated'] - planned_germinated,
+            'planned_losses': requirement.required_clusters - requirement.expected_finished,
+            'actual_losses': facts['actual_losses'],
+            'loss_variance': facts['actual_losses'] - (
+                requirement.required_clusters - requirement.expected_finished
+            ),
             'planned_output': requirement.expected_finished,
-            'current_output': current_output,
-            'output_variance': current_output - requirement.expected_finished,
+            'current_output': facts['current_output'],
+            'output_variance': facts['current_output'] - requirement.expected_finished,
+            'final_availability': facts['final_availability'],
+            'planned_ready_date': requirement.expected_ready_from,
+            'actual_ready_date': facts['actual_ready_date'],
+            'ready_variance_days': ready_variance,
+            'stage_output': stages,
             'batch_status': batch.status if batch else None,
         })
     return rows
+
+
+def _empty_actuals():
+    return {
+        'actual_germinated': 0,
+        'actual_losses': 0,
+        'current_output': 0,
+        'final_availability': 0,
+        'actual_ready_date': None,
+    }
+
+
+def _batch_actuals(batch):
+    """Derive germination, loss, readiness, and availability from audit facts."""
+    direct_plants = SpecificPlant.objects.filter(
+        batch=batch, promoted_from_cohort__isnull=True,
+    ).count()
+    cohort_germinated = CohortEvent.objects.filter(
+        cohort__batch=batch,
+        operation__action=CohortOperation.Action.OBSERVE,
+    ).aggregate(total=Sum('quantity_after'))['total'] or 0
+    cohort_losses = CohortEvent.objects.filter(
+        cohort__batch=batch,
+        operation__action=CohortOperation.Action.LOSS,
+        quantity_delta__lt=0,
+    ).aggregate(total=Sum('quantity_delta'))['total'] or 0
+    plant_losses = PlantLifecycleEvent.objects.filter(
+        batch=batch,
+        event_type__in=(
+            PlantLifecycleEvent.EventType.FAILED,
+            PlantLifecycleEvent.EventType.CULLED,
+        ),
+        reversal__isnull=True,
+    ).count()
+    cohorts = PlantCohort.objects.filter(batch=batch)
+    cohort_output = cohorts.aggregate(total=Sum('quantity'))['total'] or 0
+    lifecycle_counts = batch_lifecycle_counts(batch)
+    plant_output = sum(
+        lifecycle_counts[state]
+        for state in (
+            LifecycleState.GROWING,
+            LifecycleState.AVAILABLE,
+            LifecycleState.RETAINED,
+        )
+    )
+    cohort_available = cohorts.filter(
+        lifecycle_state=PlantCohort.LifecycleState.AVAILABLE,
+    ).aggregate(total=Sum('quantity'))['total'] or 0
+    plant_available = lifecycle_counts[LifecycleState.AVAILABLE]
+    ready_dates = list(PlantLifecycleEvent.objects.filter(
+        batch=batch,
+        event_type=PlantLifecycleEvent.EventType.READY,
+        reversal__isnull=True,
+    ).values_list('occurred_at', flat=True))
+    ready_dates.extend(CohortOperation.objects.filter(
+        events__cohort__batch=batch,
+        action=CohortOperation.Action.READY,
+    ).values_list('occurred_at', flat=True).distinct())
+    return {
+        'actual_germinated': direct_plants + cohort_germinated,
+        'actual_losses': plant_losses + abs(cohort_losses),
+        'current_output': cohort_output + plant_output,
+        'final_availability': cohort_available + plant_available,
+        'actual_ready_date': min(ready_dates).date() if ready_dates else None,
+    }
+
+
+def _stage_actuals(requirement, batch):
+    """Compare each milestone with stock currently observed at that stage."""
+    if batch is None:
+        return [
+            {
+                'stage': milestone.stage_id,
+                'stage_name': milestone.stage.name,
+                'planned_output': milestone.expected_output,
+                'actual_output': 0,
+                'variance': -milestone.expected_output,
+            }
+            for milestone in requirement.milestones.select_related('stage').order_by('sequence')
+        ]
+    counts = {}
+    targets = [
+        *SpecificPlant.objects.filter(batch=batch),
+        *PlantCohort.objects.filter(batch=batch, quantity__gt=0),
+    ]
+    for target in targets:
+        stage = current_growth(target)['stage']
+        if stage is None:
+            continue
+        quantity = 1 if isinstance(target, SpecificPlant) else target.quantity
+        counts[stage.pk] = counts.get(stage.pk, 0) + quantity
+    return [
+        {
+            'stage': milestone.stage_id,
+            'stage_name': milestone.stage.name,
+            'planned_output': milestone.expected_output,
+            'actual_output': counts.get(milestone.stage_id, 0),
+            'variance': counts.get(milestone.stage_id, 0) - milestone.expected_output,
+        }
+        for milestone in requirement.milestones.select_related('stage').order_by('sequence')
+    ]

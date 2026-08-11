@@ -378,9 +378,12 @@ function PlanVariance({ plan }: { plan: NurseryProductionPlan }) {
       <thead>
         <tr>
           <th>Batch</th>
-          <th>Seeds planned / actual</th>
-          <th>Output planned / current</th>
-          <th>Start planned / actual</th>
+          <th>Seeds</th>
+          <th>Germinated</th>
+          <th>Losses</th>
+          <th>Output / available</th>
+          <th>Start</th>
+          <th>Ready</th>
         </tr>
       </thead>
       <tbody>
@@ -393,10 +396,19 @@ function PlanVariance({ plan }: { plan: NurseryProductionPlan }) {
               {row.planned_seeds} / {row.actual_seeds}
             </td>
             <td>
-              {row.planned_output} / {row.current_output}
+              {row.planned_germinated} / {row.actual_germinated}
+            </td>
+            <td>
+              {row.planned_losses} / {row.actual_losses}
+            </td>
+            <td>
+              {row.planned_output} / {row.current_output} / {row.final_availability}
             </td>
             <td>
               {row.planned_sowing_date} / {row.actual_sowing_date ?? 'not started'}
+            </td>
+            <td>
+              {row.planned_ready_date} / {row.actual_ready_date ?? 'not ready'}
             </td>
           </tr>
         ))}

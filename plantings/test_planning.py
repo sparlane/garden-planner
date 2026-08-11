@@ -21,7 +21,7 @@ from .models import (
     NurseryProductionPlan,
     ProductionBatch,
 )
-from .planning import approve_plan, calculate_plan, revise_plan
+from .planning import approve_plan, calculate_plan, plan_variance, revise_plan
 
 
 class NurseryPlanningTests(TestCase):
@@ -188,6 +188,24 @@ class NurseryPlanningTests(TestCase):
         self.assertEqual(revision.supersedes, plan)
         self.assertEqual(recalculated.expected_finished, 100)
         self.assertEqual(original.expected_finished, 72)
+
+    def test_variance_reports_every_planned_production_dimension(self):
+        plan = self._plan()
+        calculate_plan(plan)
+        approve_plan(plan, self.user)
+
+        variance = plan_variance(plan)[0]
+
+        self.assertEqual(variance['planned_germinated'], 100)
+        self.assertEqual(variance['actual_germinated'], 0)
+        self.assertEqual(variance['planned_losses'], 40)
+        self.assertEqual(variance['actual_losses'], 0)
+        self.assertEqual(variance['final_availability'], 0)
+        self.assertIsNone(variance['actual_ready_date'])
+        self.assertEqual(
+            [(row['stage_name'], row['planned_output'], row['actual_output']) for row in variance['stage_output']],
+            [('Germination', 90, 0), ('Finishing', 72, 0)],
+        )
 
     def test_missing_effective_assumption_is_an_explicit_issue(self):
         NurseryPlanningAssumption.objects.filter(pk=self.assumption.pk).update(
