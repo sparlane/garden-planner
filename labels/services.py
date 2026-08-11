@@ -13,6 +13,7 @@ from .models import LabelCode, LabelIdentity, LabelTemplate
 ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
 TARGET_PREFIXES = {
     ('plantings', 'specificplant'): 'PLT',
+    ('plantings', 'plantcohort'): 'COH',
     ('seedtrays', 'seedtray'): 'TRY',
     ('plantings', 'productionbatch'): 'BAT',
     ('locations', 'location'): 'LOC',

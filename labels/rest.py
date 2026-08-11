@@ -26,6 +26,7 @@ LABEL_FIELDS = {
     'batch',
     'sowing_date',
     'expected_ready',
+    'quantity',
     'code',
     'print_date',
 }
@@ -39,6 +40,7 @@ DIMENSION_FIELDS = {
 }
 TARGET_ROUTES = {
     ('plantings', 'specificplant'): '/plantings/plants/{pk}',
+    ('plantings', 'plantcohort'): '/plantings/cohorts/{pk}',
     ('seedtrays', 'seedtray'): '/seedtrays/{pk}',
     ('plantings', 'productionbatch'): '/plantings/batches/{pk}',
     ('locations', 'location'): '/locations',
@@ -71,13 +73,13 @@ def _target_values(identity, code=None):
         return values
     key = _key(identity)
     if key == ('plantings', 'specificplant'):
-        planting = target.cell_planting.seed_tray_planting
-        variety = planting.batch.variety
+        planting = target.cell_planting.seed_tray_planting if target.cell_planting_id else None
+        variety = target.batch.variety if target.batch_id else planting.batch.variety
         values.update({
             'display': f'{variety.plant.name} — {variety.name}',
             'variety': variety.name,
-            'batch': planting.batch.code,
-            'sowing_date': planting.planted.date().isoformat(),
+            'batch': target.batch.code if target.batch_id else planting.batch.code,
+            'sowing_date': planting.planted.date().isoformat() if planting else None,
         })
         minimum = variety.maturity_days_min or variety.plant.maturity_days_min
         maximum = variety.maturity_days_max or variety.plant.maturity_days_max
@@ -88,6 +90,14 @@ def _target_values(identity, code=None):
         ]
         if ready_dates:
             values['expected_ready'] = ready_dates[0] if len(set(ready_dates)) == 1 else f'{ready_dates[0]} – {ready_dates[-1]}'
+    elif key == ('plantings', 'plantcohort'):
+        values.update({
+            'display': f'{target.batch.variety.name} — {target.quantity}',
+            'variety': target.batch.variety.name,
+            'batch': target.batch.code,
+            'sowing_date': target.source_sowing.planted.date().isoformat() if target.source_sowing else None,
+            'quantity': target.quantity,
+        })
     elif key == ('plantings', 'productionbatch'):
         values.update({
             'display': target.code,
@@ -141,6 +151,11 @@ def _resolution(code, workspace):
         summary = derive_state(identity.target.lifecycle_events.all())
         if summary.state in ('growing', 'available', 'retained'):
             capabilities.append('bulk_select')
+    active_cohort = resolution_status == LabelCode.Status.ACTIVE
+    active_cohort = active_cohort and key == ('plantings', 'plantcohort')
+    active_cohort = active_cohort and identity.target.quantity > 0
+    if active_cohort:
+        capabilities.append('cohort_operation')
     return {
         'status': resolution_status,
         'message': {
