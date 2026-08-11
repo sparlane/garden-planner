@@ -866,9 +866,20 @@ interface NurseryPlanVariance {
   planned_seeds: number
   actual_seeds: number
   seed_variance: number
+  planned_germinated: number
+  actual_germinated: number
+  germination_variance: number
+  planned_losses: number
+  actual_losses: number
+  loss_variance: number
   planned_output: number
   current_output: number
   output_variance: number
+  final_availability: number
+  planned_ready_date: string
+  actual_ready_date: string | null
+  ready_variance_days: number | null
+  stage_output: Array<{ stage: number; stage_name: string; planned_output: number; actual_output: number; variance: number }>
   batch_status: ProductionBatchStatus | null
 }
 
