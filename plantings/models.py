@@ -420,6 +420,69 @@ class SpecificPlant(WorkspaceOwnedModel):
         return f'Plant from {origin} germinated {self.germinated}'
 
 
+class GrowthStage(WorkspaceOwnedModel):
+    """One workspace-configurable operational nursery stage."""
+
+    code = models.CharField(max_length=64)
+    name = models.CharField(max_length=128)
+    display_order = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+    target_days = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['display_order', 'name', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'code'],
+                name='growth_stage_workspace_code_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        super().clean()
+        self.code = self.code.strip().lower()
+        if not self.code:
+            raise ValidationError({'code': 'A stable code is required.'})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
+class PlantGrade(WorkspaceOwnedModel):
+    """One workspace-configurable commercial plant grade."""
+
+    code = models.CharField(max_length=64)
+    name = models.CharField(max_length=128)
+    display_order = models.IntegerField(default=0)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['display_order', 'name', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'code'],
+                name='plant_grade_workspace_code_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        super().clean()
+        self.code = self.code.strip().lower()
+        if not self.code:
+            raise ValidationError({'code': 'A stable code is required.'})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+
 class PlantCohort(WorkspaceOwnedModel):
     """A homogeneous quantity of nursery plants managed under one identity."""
 
@@ -592,6 +655,153 @@ class CohortEvent(WorkspaceOwnedModel):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Cohort events cannot be deleted.')
+
+
+class NurseryObservation(WorkspaceOwnedModel):
+    """An immutable dated nursery fact, optionally replacing one mistake."""
+
+    stage = models.ForeignKey(
+        GrowthStage, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='observations',
+    )
+    grade = models.ForeignKey(
+        PlantGrade, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='observations',
+    )
+    container_item = models.ForeignKey(
+        'inventory.InventoryItem', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='nursery_observations',
+    )
+    container_count = models.PositiveIntegerField(null=True, blank=True)
+    container_name = models.CharField(max_length=255, blank=True, default='')
+    container_size_label = models.CharField(max_length=64, blank=True, default='')
+    container_volume_ml = models.PositiveIntegerField(null=True, blank=True)
+    container_footprint_m2 = models.DecimalField(
+        max_digits=18, decimal_places=6, null=True, blank=True,
+    )
+    height_cm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    spread_cm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    root_condition = models.CharField(max_length=255, blank=True, default='')
+    expected_ready = models.DateField(null=True, blank=True)
+    occurred_at = models.DateTimeField(default=timezone.now)
+    notes = models.TextField(blank=True, default='')
+    corrects = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='correction',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['occurred_at', 'pk']
+
+    def clean(self):
+        """Validate snapshots, ownership, correction direction, and content."""
+        super().clean()
+        errors = {}
+        for field in ('stage', 'grade', 'container_item'):
+            value = getattr(self, field, None)
+            if value is not None and value.workspace_id != self.workspace_id:
+                errors[field] = f'The {field.replace("_", " ")} belongs to another workspace.'
+        if self.container_item_id:
+            if self.container_item.category != self.container_item.Category.POT_CONTAINER:
+                errors['container_item'] = 'Choose a pot or container inventory item.'
+            if not self.container_count:
+                errors['container_count'] = 'Record how many containers are assigned.'
+        elif self.container_count is not None:
+            errors['container_item'] = 'Choose the assigned container item.'
+        facts = (
+            self.stage_id, self.grade_id, self.container_item_id,
+            self.height_cm, self.spread_cm, self.root_condition,
+            self.expected_ready, self.notes,
+        )
+        if not any(value not in (None, '') for value in facts):
+            errors['notes'] = 'Record at least one nursery observation.'
+        if self.corrects_id:
+            if self.corrects.workspace_id != self.workspace_id:
+                errors['corrects'] = 'The corrected observation belongs to another workspace.'
+            elif self.corrects_id == self.pk:
+                errors['corrects'] = 'An observation cannot correct itself.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Nursery observations are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Nursery observations cannot be deleted.')
+
+
+class NurseryObservationTarget(models.Model):
+    """One plant or cohort sharing the facts on an observation."""
+
+    observation = models.ForeignKey(
+        NurseryObservation, on_delete=models.PROTECT, related_name='targets',
+    )
+    plant = models.ForeignKey(
+        SpecificPlant, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='nursery_observation_targets',
+    )
+    cohort = models.ForeignKey(
+        PlantCohort, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='nursery_observation_targets',
+    )
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(plant__isnull=False, cohort__isnull=True),
+                    models.Q(plant__isnull=True, cohort__isnull=False),
+                    _connector=models.Q.OR,
+                ),
+                name='nursery_observation_target_one_identity',
+            ),
+            models.UniqueConstraint(
+                fields=['observation', 'plant'],
+                condition=models.Q(plant__isnull=False),
+                name='nursery_observation_target_unique_plant',
+            ),
+            models.UniqueConstraint(
+                fields=['observation', 'cohort'],
+                condition=models.Q(cohort__isnull=False),
+                name='nursery_observation_target_unique_cohort',
+            ),
+        ]
+
+    @property
+    def target(self):
+        """Return the concrete plant or cohort selected by this row."""
+        return self.plant or self.cohort
+
+    def clean(self):
+        super().clean()
+        populated = [self.plant_id is not None, self.cohort_id is not None]
+        if sum(populated) != 1:
+            raise ValidationError('Choose exactly one plant or cohort.')
+        if self.observation_id and self.target.workspace_id != self.observation.workspace_id:
+            raise ValidationError('The target belongs to another workspace.')
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Nursery observation targets are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Nursery observation targets cannot be deleted.')
 
 
 class SpecificPlantLocation(models.Model):

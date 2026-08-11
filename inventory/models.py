@@ -134,6 +134,20 @@ class InventoryItem(WorkspaceOwnedModel):
         validators=[MinValueValidator(Decimal('0'))],
         help_text='Optional low-stock threshold in the item base unit.',
     )
+    container_size_label = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+        help_text='Commercial container size, for example P9 or 2 L.',
+    )
+    container_volume_ml = models.PositiveIntegerField(null=True, blank=True)
+    container_footprint_m2 = models.DecimalField(
+        max_digits=18,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 
@@ -178,9 +192,22 @@ class InventoryItem(WorkspaceOwnedModel):
         if base_unit is not None:
             self._validate_item_unit_semantics(errors)
         self._validate_usage_configuration(errors)
+        self._validate_container_configuration(errors)
 
         if errors:
             raise ValidationError(errors)
+
+    def _validate_container_configuration(self, errors):
+        """Keep physical container metadata on container catalog items only."""
+        configured = any((
+            self.container_size_label,
+            self.container_volume_ml is not None,
+            self.container_footprint_m2 is not None,
+        ))
+        if configured and self.category != self.Category.POT_CONTAINER:
+            errors['container_size_label'] = (
+                'Container metadata is only valid for pot or container items.'
+            )
 
     def _validate_base_unit(self, errors):
         """Resolve the base unit while retaining the registry's exact error."""
