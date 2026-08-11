@@ -8,7 +8,7 @@ from .models import NurseryObservation, NurseryObservationTarget, PlantCohort, S
 
 OBSERVED_FIELDS = (
     'stage', 'grade', 'container_item', 'height_cm', 'spread_cm',
-    'root_condition', 'expected_ready', 'notes',
+    'root_condition', 'expected_ready', 'photo_url', 'notes',
 )
 
 

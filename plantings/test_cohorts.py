@@ -1,6 +1,7 @@
 """Cohort quantity, lineage, promotion, and REST contract tests."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from uuid import uuid4
 
 from django.conf import settings
@@ -14,7 +15,7 @@ from tests.factories import make_location, make_production_batch, make_seed_tray
 from workspaces.models import Workspace
 
 from .cohorts import merge_cohorts, observe_cohort, promote_cohort, split_cohort
-from .models import CohortEvent, PlantCohort, PlantLifecycleEvent
+from .models import CohortEvent, GrowthStage, PlantCohort, PlantGrade, PlantLifecycleEvent
 
 
 class CohortServiceTests(TestCase):
@@ -192,6 +193,40 @@ class CohortRESTTests(RESTContractTestCase):
         register = self.client.get('/plantings/register/', {'batch': self.batch.pk})
         self.assertEqual(register.status_code, 200, register.data)
         self.assertEqual(register.data['count'], 2)
+
+    def test_current_growth_facts_are_filterable_after_catalog_deactivation(self):
+        """Historical catalog rows remain useful after operators retire a choice."""
+        observed = self.client.post('/plantings/cohorts/observe/', {
+            'batch': self.batch.pk,
+            'quantity': 6,
+            'location': self.location.pk,
+            'idempotency_key': str(uuid4()),
+        }, format='json')
+        stage = GrowthStage.objects.get(workspace=self.workspace, code='rooted')
+        grade = PlantGrade.objects.get(workspace=self.workspace, code='premium')
+        stage.target_days = 1
+        stage.save()
+        growth = self.client.post('/plantings/nursery-observations/', {
+            'cohort': observed.data['pk'],
+            'stage': stage.pk,
+            'grade': grade.pk,
+            'expected_ready': timezone.localdate().isoformat(),
+            'occurred_at': (timezone.now() - timedelta(days=2)).isoformat(),
+        }, format='json')
+        self.assertEqual(growth.status_code, 201, growth.data)
+        stage.active = False
+        stage.save()
+
+        listed = self.client.get('/plantings/cohorts/', {
+            'stage': stage.pk,
+            'grade': grade.pk,
+            'stage_overdue': 'true',
+            'expected_ready_to': timezone.localdate().isoformat(),
+        })
+        self.assertEqual(listed.status_code, 200, listed.data)
+        self.assertEqual(len(listed.data['results']), 1)
+        self.assertEqual(listed.data['results'][0]['stage_name'], stage.name)
+        self.assertEqual(listed.data['results'][0]['grade_name'], grade.name)
 
 
 @skipUnlessDBFeature('has_select_for_update')

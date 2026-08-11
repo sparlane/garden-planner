@@ -13,10 +13,21 @@ def create_nursery_catalogs(sender, instance, **kwargs):  # pylint: disable=unus
     """Give newly created or newly switched Nursery workspaces usable catalogs."""
     if instance.mode != Workspace.Mode.NURSERY:
         return
-    for order, code in enumerate(('struck', 'rooted', 'potted_on', 'hardening', 'sale_ready')):
+    stages = (
+        ('struck', 14),
+        ('rooted', 21),
+        ('potted_on', 21),
+        ('hardening', 7),
+        ('sale_ready', None),
+    )
+    for order, (code, target_days) in enumerate(stages):
         GrowthStage.objects.get_or_create(
             workspace=instance, code=code,
-            defaults={'name': code.replace('_', ' ').title(), 'display_order': order},
+            defaults={
+                'name': code.replace('_', ' ').title(),
+                'display_order': order,
+                'target_days': target_days,
+            },
         )
     for order, code in enumerate(('premium', 'standard', 'seconds')):
         PlantGrade.objects.get_or_create(

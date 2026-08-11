@@ -63,22 +63,11 @@ function StandingAtCell({ row }: { row: NurseryRegisterRow }) {
   return <>{row.standing_at_label}</>
 }
 
-// Projected from the crop's maturity range, so a variety that records only one
-// end of that range still says something useful rather than nothing.
 function ReadyCell({ row }: { row: NurseryRegisterRow }) {
-  const early = row.expected_ready_early
-  const late = row.expected_ready_late
-  if (early === null && late === null) {
+  if (row.expected_ready === null) {
     return <span className="text-muted">Unknown</span>
   }
-  if (early !== null && late !== null && early !== late) {
-    return (
-      <>
-        {formatDate(early)} – {formatDate(late)}
-      </>
-    )
-  }
-  return <>{formatDate(early ?? late ?? '')}</>
+  return <span className={row.stage_overdue ? 'text-danger' : ''}>{formatDate(row.expected_ready)}</span>
 }
 
 interface RegisterTableProps {
@@ -100,6 +89,8 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
           <th>Crop</th>
           <th>Batch</th>
           <th>State</th>
+          <th>Stage / grade</th>
+          <th>Container</th>
           <th>Age</th>
           <th>Expected ready</th>
           <th>Where</th>
@@ -130,6 +121,19 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
             </td>
             <td>
               <LifecycleStateBadge state={row.lifecycle_state} />
+            </td>
+            <td>
+              {row.stage_name ?? '—'}
+              {row.stage_overdue && <div className="text-danger small">Overdue at stage</div>}
+              <div className="text-muted small">{row.grade_name ?? 'Ungraded'}</div>
+            </td>
+            <td>
+              {row.container_name ?? '—'}
+              {row.container !== null && (
+                <div className="text-muted small">
+                  {row.container_size || 'Size not set'} × {row.container_count}
+                </div>
+              )}
             </td>
             <td>
               {row.age_days} days

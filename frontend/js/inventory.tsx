@@ -65,6 +65,9 @@ interface ItemFormState {
   usageRate: string
   usageRateUnit: UnitCode
   fixedQuantity: string
+  containerSize: string
+  containerVolume: string
+  containerFootprint: string
 }
 
 const INITIAL_ITEM_FORM: ItemFormState = {
@@ -77,7 +80,10 @@ const INITIAL_ITEM_FORM: ItemFormState = {
   usageBasis: 'manual',
   usageRate: '',
   usageRateUnit: 'ml',
-  fixedQuantity: ''
+  fixedQuantity: '',
+  containerSize: '',
+  containerVolume: '',
+  containerFootprint: ''
 }
 
 interface InventoryItemFormProps {
@@ -141,6 +147,11 @@ function InventoryItemForm({ units, onCreated }: InventoryItemFormProps) {
       item.usage_rate_unit = form.usageRateUnit
     } else if (form.usageBasis === 'fixed') {
       item.default_fixed_quantity = form.fixedQuantity
+    }
+    if (form.category === 'pot_container') {
+      item.container_size_label = form.containerSize
+      if (form.containerVolume) item.container_volume_ml = Number(form.containerVolume)
+      if (form.containerFootprint) item.container_footprint_m2 = form.containerFootprint
     }
     mutation.mutate(item)
   }
@@ -237,6 +248,34 @@ function InventoryItemForm({ units, onCreated }: InventoryItemFormProps) {
                       </option>
                     ))}
                   </Form.Select>
+                </Form.Group>
+              </Col>
+            </Row>
+          )}
+          {form.category === 'pot_container' && (
+            <Row>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Commercial size</Form.Label>
+                  <Form.Control placeholder="P9 or 2 L" value={form.containerSize} onChange={(event) => update('containerSize', event.target.value)} />
+                </Form.Group>
+              </Col>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Volume (ml)</Form.Label>
+                  <Form.Control type="number" min={1} value={form.containerVolume} onChange={(event) => update('containerVolume', event.target.value)} />
+                </Form.Group>
+              </Col>
+              <Col md={4}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Footprint (m²)</Form.Label>
+                  <Form.Control
+                    type="number"
+                    min="0.000001"
+                    step="0.000001"
+                    value={form.containerFootprint}
+                    onChange={(event) => update('containerFootprint', event.target.value)}
+                  />
                 </Form.Group>
               </Col>
             </Row>

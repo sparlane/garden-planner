@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-bootstrap'
 
 import { getLocations } from '../api/locations'
-import { getNurseryRegister, getProductionBatches } from '../api/plantings'
+import { getInventoryItems } from '../api/inventory'
+import { getGrowthStages, getNurseryRegister, getPlantGrades, getProductionBatches } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
 import { getSeedTrayGenerations, getSeedTrays } from '../api/seedtrays'
 import { queryKeys } from '../query'
@@ -22,7 +23,8 @@ const ORDERING_OPTIONS: Array<{ value: NurseryRegisterOrdering; label: string }>
   { value: 'standing_at', label: 'Where it is standing' },
   { value: 'state', label: 'State' },
   { value: 'batch', label: 'Batch' },
-  { value: '-cost', label: 'Most expensive first' }
+  { value: '-cost', label: 'Most expensive first' },
+  { value: 'expected_ready', label: 'Ready date' }
 ]
 
 const LOCATION_OPTIONS: Array<{ value: NonNullable<NurseryRegisterFilters['location_type']>; label: string }> = [
@@ -106,6 +108,12 @@ function NurseryRegisterView() {
   const [germinatedFrom, setGerminatedFrom] = React.useState('')
   const [germinatedTo, setGerminatedTo] = React.useState('')
   const [ordering, setOrdering] = React.useState<NurseryRegisterOrdering>('-age')
+  const [stage, setStage] = React.useState<number | ''>('')
+  const [grade, setGrade] = React.useState<number | ''>('')
+  const [container, setContainer] = React.useState<number | ''>('')
+  const [readyFrom, setReadyFrom] = React.useState('')
+  const [readyTo, setReadyTo] = React.useState('')
+  const [stageOverdue, setStageOverdue] = React.useState(false)
   const [page, setPage] = React.useState(1)
   const [selection, setSelection] = React.useState<RegisterSelection>(EMPTY_SELECTION)
 
@@ -120,6 +128,12 @@ function NurseryRegisterView() {
     generation: generation === '' ? undefined : generation,
     germinated_from: germinatedFrom || undefined,
     germinated_to: germinatedTo || undefined,
+    stage: stage === '' ? undefined : stage,
+    grade: grade === '' ? undefined : grade,
+    container: container === '' ? undefined : container,
+    expected_ready_from: readyFrom || undefined,
+    expected_ready_to: readyTo || undefined,
+    stage_overdue: stageOverdue || undefined,
     ordering,
     page,
     page_size: PAGE_SIZE
@@ -142,6 +156,12 @@ function NurseryRegisterView() {
   const { data: batches = [] } = useQuery({
     queryKey: queryKeys.plantings.batches('active', '', '', false),
     queryFn: ({ signal }) => getProductionBatches({ status: 'active' }, signal)
+  })
+  const { data: stages = [] } = useQuery({ queryKey: ['growth-stages'], queryFn: ({ signal }) => getGrowthStages(signal) })
+  const { data: grades = [] } = useQuery({ queryKey: ['plant-grades'], queryFn: ({ signal }) => getPlantGrades(signal) })
+  const { data: containers = [] } = useQuery({
+    queryKey: ['inventory', 'pot-containers'],
+    queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container' }, signal)
   })
   const { data: locations = [] } = useQuery({
     queryKey: queryKeys.locations.list('active'),
@@ -272,6 +292,60 @@ function NurseryRegisterView() {
             <Form.Label>Germinated from</Form.Label>
             <Form.Control type="date" value={germinatedFrom} onChange={(event) => narrow(setGerminatedFrom)(event.target.value)} />
           </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-stage">
+            <Form.Label>Growth stage</Form.Label>
+            <Form.Select value={stage} onChange={(event) => narrow(setStage)(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Any stage</option>
+              {stages.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.name}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-grade">
+            <Form.Label>Grade</Form.Label>
+            <Form.Select value={grade} onChange={(event) => narrow(setGrade)(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Any grade</option>
+              {grades.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.name}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-container">
+            <Form.Label>Container</Form.Label>
+            <Form.Select value={container} onChange={(event) => narrow(setContainer)(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Any container</option>
+              {containers.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.name} {entry.container_size_label}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-ready-from">
+            <Form.Label>Expected ready from</Form.Label>
+            <Form.Control type="date" value={readyFrom} onChange={(event) => narrow(setReadyFrom)(event.target.value)} />
+          </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Group controlId="register-ready-to">
+            <Form.Label>Expected ready to</Form.Label>
+            <Form.Control type="date" value={readyTo} onChange={(event) => narrow(setReadyTo)(event.target.value)} />
+          </Form.Group>
+        </Col>
+        <Col md={3} className="d-flex align-items-end">
+          <Form.Check label="Overdue at stage" checked={stageOverdue} onChange={(event) => narrow(setStageOverdue)(event.target.checked)} />
         </Col>
         <Col md={3}>
           <Form.Group controlId="register-germinated-to">

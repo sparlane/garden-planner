@@ -4,7 +4,18 @@ import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstr
 import { Link } from 'react-router'
 
 import { getLocations } from '../api/locations'
-import { getCohort, getCohortAvailability, getCohorts, getProductionBatches, mergeCohorts, observeCohort, postCohortAction } from '../api/plantings'
+import { getInventoryItems } from '../api/inventory'
+import {
+  getCohort,
+  getCohortAvailability,
+  getCohorts,
+  getGrowthStages,
+  getPlantGrades,
+  getProductionBatches,
+  mergeCohorts,
+  observeCohort,
+  postCohortAction
+} from '../api/plantings'
 import { queryClient, queryKeys } from '../query'
 import { CohortAction, CohortFilters, CohortLifecycleState, PlantCohort } from '../types/plantings'
 
@@ -121,10 +132,33 @@ function ObserveCohortForm() {
 function CohortRegisterView() {
   const [search, setSearch] = React.useState('')
   const [state, setState] = React.useState<CohortLifecycleState | ''>('')
+  const [stage, setStage] = React.useState<number | ''>('')
+  const [grade, setGrade] = React.useState<number | ''>('')
+  const [container, setContainer] = React.useState<number | ''>('')
+  const [readyFrom, setReadyFrom] = React.useState('')
+  const [readyTo, setReadyTo] = React.useState('')
+  const [stageOverdue, setStageOverdue] = React.useState(false)
   const [page, setPage] = React.useState(1)
   const [selected, setSelected] = React.useState<Array<number>>([])
   const [mergeReason, setMergeReason] = React.useState('')
-  const filters: CohortFilters = { search: search || undefined, state: state || undefined, page, page_size: 50 }
+  const filters: CohortFilters = {
+    search: search || undefined,
+    state: state || undefined,
+    stage: stage === '' ? undefined : stage,
+    grade: grade === '' ? undefined : grade,
+    container: container === '' ? undefined : container,
+    expected_ready_from: readyFrom || undefined,
+    expected_ready_to: readyTo || undefined,
+    stage_overdue: stageOverdue || undefined,
+    page,
+    page_size: 50
+  }
+  const { data: stages = [] } = useQuery({ queryKey: ['growth-stages'], queryFn: ({ signal }) => getGrowthStages(signal) })
+  const { data: grades = [] } = useQuery({ queryKey: ['plant-grades'], queryFn: ({ signal }) => getPlantGrades(signal) })
+  const { data: containers = [] } = useQuery({
+    queryKey: ['inventory', 'pot-containers'],
+    queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container' }, signal)
+  })
   const { data, isPending } = useQuery({
     queryKey: queryKeys.plantings.cohorts(filters),
     queryFn: ({ signal }) => getCohorts(filters, signal)
@@ -156,6 +190,45 @@ function CohortRegisterView() {
               </option>
             ))}
           </Form.Select>
+        </Col>
+        <Col md={3}>
+          <Form.Select value={stage} aria-label="Growth stage" onChange={(event) => setStage(event.target.value === '' ? '' : Number(event.target.value))}>
+            <option value="">All growth stages</option>
+            {stages.map((entry) => (
+              <option key={entry.pk} value={entry.pk}>
+                {entry.name}
+              </option>
+            ))}
+          </Form.Select>
+        </Col>
+        <Col md={3}>
+          <Form.Select value={grade} aria-label="Plant grade" onChange={(event) => setGrade(event.target.value === '' ? '' : Number(event.target.value))}>
+            <option value="">All grades</option>
+            {grades.map((entry) => (
+              <option key={entry.pk} value={entry.pk}>
+                {entry.name}
+              </option>
+            ))}
+          </Form.Select>
+        </Col>
+        <Col md={3}>
+          <Form.Select value={container} aria-label="Container" onChange={(event) => setContainer(event.target.value === '' ? '' : Number(event.target.value))}>
+            <option value="">All containers</option>
+            {containers.map((entry) => (
+              <option key={entry.pk} value={entry.pk}>
+                {entry.name} {entry.container_size_label}
+              </option>
+            ))}
+          </Form.Select>
+        </Col>
+        <Col md={2}>
+          <Form.Control type="date" aria-label="Expected ready from" value={readyFrom} onChange={(event) => setReadyFrom(event.target.value)} />
+        </Col>
+        <Col md={2}>
+          <Form.Control type="date" aria-label="Expected ready to" value={readyTo} onChange={(event) => setReadyTo(event.target.value)} />
+        </Col>
+        <Col md="auto">
+          <Form.Check label="Overdue at stage" checked={stageOverdue} onChange={(event) => setStageOverdue(event.target.checked)} />
         </Col>
       </Row>
       {selected.length >= 2 && (
@@ -195,6 +268,8 @@ function CohortRegisterView() {
                 <th>Batch</th>
                 <th>State</th>
                 <th>Quantity</th>
+                <th>Stage / grade</th>
+                <th>Container</th>
                 <th>Location</th>
                 <th>Label</th>
               </tr>
@@ -221,6 +296,18 @@ function CohortRegisterView() {
                     <Badge bg={cohort.lifecycle_state === 'available' ? 'success' : 'secondary'}>{STATE_LABELS[cohort.lifecycle_state]}</Badge>
                   </td>
                   <td>{cohort.quantity}</td>
+                  <td>
+                    {cohort.stage_name ?? '—'}
+                    <div className="text-muted small">{cohort.grade_name ?? 'Ungraded'}</div>
+                  </td>
+                  <td>
+                    {cohort.container_name ?? '—'}
+                    {cohort.container !== null && (
+                      <div className="text-muted small">
+                        {cohort.container_size || 'Size not set'} × {cohort.container_count}
+                      </div>
+                    )}
+                  </td>
                   <td>{cohort.location_name || 'Not placed'}</td>
                   <td>{cohort.label_code}</td>
                 </tr>
@@ -246,6 +333,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
   const [quantity, setQuantity] = React.useState(cohort.quantity)
   const [reason, setReason] = React.useState('')
   const [location, setLocation] = React.useState<number | ''>(cohort.location ?? '')
+  const [containerCount, setContainerCount] = React.useState<number | ''>('')
   const [message, setMessage] = React.useState('')
   const mutation = useMutation({
     mutationFn: (payload: CohortAction) => postCohortAction(cohort.pk, actionName, payload),
@@ -272,6 +360,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
             expected_revision: cohort.revision,
             idempotency_key: crypto.randomUUID(),
             quantity: needsQuantity ? quantity : undefined,
+            container_count: cohort.container !== null && ['split', 'promote'].includes(actionName) && containerCount !== '' ? containerCount : undefined,
             location: actionName === 'move' && location !== '' ? location : undefined,
             reason
           })
@@ -296,6 +385,18 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
               <Form.Control type="number" min={actionName === 'adjust' ? 0 : 1} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
             </Col>
           )}
+          {cohort.container !== null && ['split', 'promote'].includes(actionName) && (
+            <Col md={2}>
+              <Form.Label>Containers allocated</Form.Label>
+              <Form.Control
+                required
+                type="number"
+                min={1}
+                value={containerCount}
+                onChange={(event) => setContainerCount(event.target.value === '' ? '' : Number(event.target.value))}
+              />
+            </Col>
+          )}
           {actionName === 'move' && (
             <Col md={3}>
               <Form.Label>Destination</Form.Label>
@@ -317,6 +418,24 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
             <Button type="submit" disabled={mutation.isPending || cohort.quantity === 0}>
               Apply
             </Button>
+          </Col>
+          <Col md={2}>
+            <Card body>
+              <div className="text-muted small">Stage / grade</div>
+              <div>{cohort.stage_name ?? 'Not recorded'}</div>
+              <div className="small">{cohort.grade_name ?? 'Ungraded'}</div>
+            </Card>
+          </Col>
+          <Col md={2}>
+            <Card body>
+              <div className="text-muted small">Container</div>
+              <div>{cohort.container_name ?? 'Not recorded'}</div>
+              {cohort.container !== null && (
+                <div className="small">
+                  {cohort.container_size || 'Size not set'} × {cohort.container_count}
+                </div>
+              )}
+            </Card>
           </Col>
         </Row>
       </Form>

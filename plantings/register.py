@@ -6,25 +6,25 @@ mutable plant table. Every row is derived from the source records, and one
 filter parser feeds both the rows and the whole-filter totals so a screen can
 never report counts that its own list disagrees with.
 
-Filters for growth stage, grade, container, reservation, and quarantine are
-deliberately absent: nothing records those facts yet, and tasks 54, 44, and 56
-each add their filter here when they add their model.
+Reservation and quarantine remain with their owning tasks; growth facts are
+projected from append-only Nursery observations.
 """
 
+from datetime import timedelta
 from typing import NamedTuple
 
-from django.db.models import Count, DecimalField, F, OuterRef, Q, Subquery, Sum, TextField, Value
-from django.db.models.functions import Coalesce
+from django.db.models import Count, DateField, DateTimeField, DecimalField, DurationField, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value
+from django.db.models.functions import Coalesce, Now
 from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
 
 from costing.models import CostAllocation
-from inventory.rest_query import parse_boolean, parse_datetime, parse_integer
+from inventory.rest_query import parse_boolean, parse_date, parse_datetime, parse_integer
 from locations.models import Location
 from labels.models import LabelCode
 
 from .lifecycle import FINAL_STATES, LifecycleState, with_lifecycle_state
-from .models import SpecificPlant, SpecificPlantLocation
+from .models import NurseryObservation, SpecificPlant, SpecificPlantLocation
 
 
 #: Where a plant may currently be, plus the absence of anywhere at all.
@@ -46,6 +46,7 @@ ORDERINGS = {
     'state': ('lifecycle_state', 'pk'),
     'batch': ('batch_code', 'pk'),
     'germinated': ('germinated', 'pk'),
+    'expected_ready': ('current_expected_ready', 'pk'),
 }
 DEFAULT_ORDERING = '-age'
 
@@ -70,6 +71,12 @@ class RegisterFilters(NamedTuple):
     generation: object = None
     garden_square: object = None
     location: object = None
+    stage: object = None
+    grade: object = None
+    container: object = None
+    expected_ready_from: object = None
+    expected_ready_to: object = None
+    stage_overdue: object = None
     search: str = ''
     ordering: str = DEFAULT_ORDERING
 
@@ -104,6 +111,12 @@ def parse_register_filters(query_params):
         generation=parse_integer(query_params.get('generation'), 'generation'),
         garden_square=parse_integer(query_params.get('garden_square'), 'garden_square'),
         location=parse_integer(query_params.get('location'), 'location'),
+        stage=parse_integer(query_params.get('stage'), 'stage'),
+        grade=parse_integer(query_params.get('grade'), 'grade'),
+        container=parse_integer(query_params.get('container'), 'container'),
+        expected_ready_from=parse_date(query_params.get('expected_ready_from'), 'expected_ready_from'),
+        expected_ready_to=parse_date(query_params.get('expected_ready_to'), 'expected_ready_to'),
+        stage_overdue=parse_boolean(query_params.get('stage_overdue'), 'stage_overdue'),
         search=(query_params.get('search') or '').strip(),
         ordering=ordering,
     )
@@ -144,6 +157,21 @@ def _plant_cost():
     )
 
 
+def _current_observation(field, output_field=None, observed_field=None):
+    """Read the newest effective observation that supplied one field."""
+    queryset = (
+        NurseryObservation.objects
+        .filter(
+            targets__plant=OuterRef('pk'),
+            correction__isnull=True,
+        )
+        .exclude(**{f'{observed_field or field}__isnull': True})
+        .order_by('-occurred_at', '-pk')
+        .values(field)[:1]
+    )
+    return Subquery(queryset, output_field=output_field)
+
+
 def register_projection(workspace):
     """Return every plant in the workspace with its register columns."""
     plant_content_type = ContentType.objects.get_for_model(SpecificPlant)
@@ -176,6 +204,17 @@ def register_projection(workspace):
         tray_location=_current_location(_TRAY_LOCATION),
         tray_location_name=_current_location(f'{_TRAY_LOCATION}__name'),
         tray_location_path=_current_location(f'{_TRAY_LOCATION}__path'),
+        current_stage=_current_observation('stage_id', IntegerField()),
+        current_stage_name=_current_observation('stage__name', TextField()),
+        current_stage_target_days=_current_observation('stage__target_days', IntegerField(), 'stage'),
+        current_stage_observed_at=_current_observation('occurred_at', DateTimeField(), 'stage'),
+        current_grade=_current_observation('grade_id', IntegerField()),
+        current_grade_name=_current_observation('grade__name', TextField()),
+        current_container=_current_observation('container_item_id', IntegerField()),
+        current_container_name=_current_observation('container_name', TextField(), 'container_item'),
+        current_container_size=_current_observation('container_size_label', TextField(), 'container_item'),
+        current_container_count=_current_observation('container_count', IntegerField(), 'container_item'),
+        current_expected_ready=_current_observation('expected_ready', DateField()),
     ).annotate(
         current_location_label=Coalesce(
             'current_garden_square_label',
@@ -200,6 +239,13 @@ def register_projection(workspace):
             'tray_location_path',
             Value(''),
             output_field=TextField(),
+        ),
+        stage_due_at=ExpressionWrapper(
+            F('current_stage_observed_at') + ExpressionWrapper(
+                F('current_stage_target_days') * Value(timedelta(days=1)),
+                output_field=DurationField(),
+            ),
+            output_field=DateTimeField(),
         ),
     )
 
@@ -249,6 +295,20 @@ def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
         queryset = queryset.filter(current_garden_square=filters.garden_square)
     if filters.location is not None:
         queryset = _standing_in(queryset, workspace, filters.location)
+    if filters.stage is not None:
+        queryset = queryset.filter(current_stage=filters.stage)
+    if filters.grade is not None:
+        queryset = queryset.filter(current_grade=filters.grade)
+    if filters.container is not None:
+        queryset = queryset.filter(current_container=filters.container)
+    if filters.expected_ready_from is not None:
+        queryset = queryset.filter(current_expected_ready__gte=filters.expected_ready_from)
+    if filters.expected_ready_to is not None:
+        queryset = queryset.filter(current_expected_ready__lte=filters.expected_ready_to)
+    if filters.stage_overdue is True:
+        queryset = queryset.filter(stage_due_at__lt=Now())
+    elif filters.stage_overdue is False:
+        queryset = queryset.filter(Q(stage_due_at__gte=Now()) | Q(stage_due_at__isnull=True))
     if filters.search:
         queryset = _apply_search(queryset, filters.search)
     return queryset.order_by(*_ordering_fields(filters.ordering))
@@ -296,4 +356,20 @@ def register_totals(queryset):
         'pk',
         filter=~Q(lifecycle_state__in=sorted(FINAL_STATES)),
     )
-    return queryset.order_by().aggregate(**counted)
+    totals = queryset.order_by().aggregate(**counted)
+    totals['stage_counts'] = {
+        str(row['current_stage']): row['count']
+        for row in queryset.order_by().values('current_stage').annotate(count=Count('pk'))
+        if row['current_stage'] is not None
+    }
+    totals['grade_counts'] = {
+        str(row['current_grade']): row['count']
+        for row in queryset.order_by().values('current_grade').annotate(count=Count('pk'))
+        if row['current_grade'] is not None
+    }
+    totals['container_counts'] = {
+        str(row['current_container']): row['count']
+        for row in queryset.order_by().values('current_container').annotate(count=Count('pk'))
+        if row['current_container'] is not None
+    }
+    return totals

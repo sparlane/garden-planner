@@ -12,6 +12,7 @@ from django.utils import timezone
 from locations.occupancy import check_capacity, cohort_contribution
 
 from .lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
+from .growth import current_growth, record_observation
 from .models import (
     CohortEvent,
     CohortOperation,
@@ -94,6 +95,39 @@ def _save(cohort):
     cohort.revision += 1
     cohort.full_clean()
     cohort.save(update_fields=['quantity', 'lifecycle_state', 'location', 'revision', 'updated'])
+
+
+def _observation_values(growth, container_count=None):
+    """Copy effective homogeneous facts onto a structurally changed identity."""
+    values = {
+        field: growth[field]
+        for field in (
+            'stage', 'grade', 'height_cm', 'spread_cm', 'root_condition',
+            'expected_ready', 'photo_url',
+        )
+        if growth[field] not in (None, '')
+    }
+    if growth['container_item'] is not None and container_count is not None:
+        values.update({
+            'container_item': growth['container_item'],
+            'container_count': container_count,
+        })
+    return values
+
+
+def _container_allocation(growth, allocated, remaining_quantity):
+    """Validate an explicit whole-container allocation for a quantity change."""
+    current = growth['container_count']
+    if current is None:
+        if allocated is not None:
+            raise ValidationError({'container_count': 'This cohort has no container assignment.'})
+        return None, None
+    if allocated is None:
+        raise ValidationError({'container_count': 'Allocate containers explicitly for this operation.'})
+    remaining = current - allocated
+    if allocated <= 0 or remaining < 0 or (remaining_quantity > 0 and remaining == 0):
+        raise ValidationError({'container_count': 'The container allocation is not physically possible.'})
+    return allocated, remaining
 
 
 def _reallocate(batch, user, reason):
@@ -204,7 +238,8 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
 
 @transaction.atomic
 def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
-                 idempotency_key, occurred_at=None, reason='', location=None):
+                 idempotency_key, occurred_at=None, reason='', location=None,
+                 container_count=None):
     """Move part of a cohort into a new identity, optionally at a new location."""
     _require_reason(reason)
     payload = {
@@ -212,6 +247,7 @@ def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
         'expected_revision': expected_revision,
         'quantity': quantity,
         'location': location.pk if location else None,
+        'container_count': container_count,
     }
     existing = _existing(workspace, idempotency_key, CohortOperation.Action.SPLIT, payload)
     if existing:
@@ -220,6 +256,10 @@ def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
     if quantity <= 0 or quantity >= source.quantity:
         raise ValidationError({'quantity': 'Split quantity must be less than the cohort quantity.'})
     destination = location or source.location
+    growth = current_growth(source)
+    allocated, remaining = _container_allocation(
+        growth, container_count, source.quantity - quantity,
+    )
     if destination != source.location:
         check_capacity(destination, cohort_contribution(quantity))
     source_before = _snapshot(source)
@@ -246,6 +286,16 @@ def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
         'state': child.lifecycle_state,
         'location': None,
     }, sources=(source,))
+    occurred = occurred_at or timezone.now()
+    child_values = _observation_values(growth, allocated)
+    if child_values:
+        record_observation(workspace, user, cohort_id=child.pk, occurred_at=occurred, **child_values)
+    if remaining is not None:
+        record_observation(
+            workspace, user, cohort_id=source.pk, occurred_at=occurred,
+            container_item=growth['container_item'], container_count=remaining,
+            notes=reason,
+        )
     _reallocate(source.batch, user, reason)
     return child, operation
 
@@ -270,10 +320,24 @@ def merge_cohorts(workspace, user, *, target_id, revisions, source_ids,
         if cohort.revision != int(revisions.get(str(cohort.pk), revisions.get(cohort.pk, -1))):
             raise ValidationError({'revision': f'Cohort {cohort.pk} changed after it was loaded.'})
     target = by_id[target_id]
-    signature = (target.batch_id, target.source_sowing_id, target.lifecycle_state, target.location_id)
+    target_growth = current_growth(target)
+    signature = (
+        target.batch_id, target.source_sowing_id, target.lifecycle_state, target.location_id,
+        target_growth['stage'].pk if target_growth['stage'] else None,
+        target_growth['grade'].pk if target_growth['grade'] else None,
+        target_growth['container_item'].pk if target_growth['container_item'] else None,
+        target_growth['expected_ready'],
+    )
 
     def incompatible(row):
-        row_signature = (row.batch_id, row.source_sowing_id, row.lifecycle_state, row.location_id)
+        growth = current_growth(row)
+        row_signature = (
+            row.batch_id, row.source_sowing_id, row.lifecycle_state, row.location_id,
+            growth['stage'].pk if growth['stage'] else None,
+            growth['grade'].pk if growth['grade'] else None,
+            growth['container_item'].pk if growth['container_item'] else None,
+            growth['expected_ready'],
+        )
         return row_signature != signature or row.quantity == 0
 
     if any(incompatible(row) for row in cohorts):
@@ -294,19 +358,29 @@ def merge_cohorts(workspace, user, *, target_id, revisions, source_ids,
     _event(operation, target, snapshots[target.pk], sources=sources)
     for source in sources:
         _event(operation, source, snapshots[source.pk])
+    if target_growth['container_item'] is not None:
+        total_containers = sum(current_growth(row)['container_count'] for row in cohorts)
+        record_observation(
+            workspace, user, cohort_id=target.pk,
+            occurred_at=occurred_at or timezone.now(),
+            container_item=target_growth['container_item'],
+            container_count=total_containers,
+            notes=reason,
+        )
     _reallocate(target.batch, user, reason)
     return target, operation
 
 
 @transaction.atomic
 def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
-                   idempotency_key, occurred_at=None, reason=''):
+                   idempotency_key, occurred_at=None, reason='', container_count=None):
     """Replace an anonymous quantity with the same number of concrete plant IDs."""
     _require_reason(reason)
     payload = {
         'cohort': cohort_id,
         'expected_revision': expected_revision,
         'quantity': quantity,
+        'container_count': container_count,
     }
     existing = _existing(workspace, idempotency_key, CohortOperation.Action.PROMOTE, payload)
     if existing:
@@ -315,6 +389,10 @@ def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
     if quantity <= 0 or quantity > cohort.quantity:
         raise ValidationError({'quantity': 'Promotion must be within the current quantity.'})
     before = _snapshot(cohort)
+    growth = current_growth(cohort)
+    allocated, remaining = _container_allocation(
+        growth, container_count, cohort.quantity - quantity,
+    )
     promoted_at = occurred_at or timezone.now()
     plants = []
     for _index in range(quantity):
@@ -348,6 +426,18 @@ def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
         idempotency_key, promoted_at, reason, payload,
     )
     _event(operation, cohort, before)
+    plant_values = _observation_values(growth, allocated)
+    if plant_values:
+        record_observation(
+            workspace, user, plant_ids=[plant.pk for plant in plants],
+            occurred_at=promoted_at, **plant_values,
+        )
+    if remaining is not None and cohort.quantity > 0:
+        record_observation(
+            workspace, user, cohort_id=cohort.pk, occurred_at=promoted_at,
+            container_item=growth['container_item'], container_count=remaining,
+            notes=reason,
+        )
     operation.payload = {**payload, 'plants': [plant.pk for plant in plants]}
     CohortOperation.objects.filter(pk=operation.pk).update(payload=operation.payload)
     _reallocate(cohort.batch, user, reason)

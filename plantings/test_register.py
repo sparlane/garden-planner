@@ -42,7 +42,8 @@ from .lifecycle import (
     record_lifecycle_event,
 )
 from . import register_rest
-from .models import SpecificPlantLocation
+from .growth import record_observation
+from .models import GrowthStage, PlantGrade, SpecificPlantLocation
 
 
 class RegisterTestCase(RESTContractTestCase):
@@ -150,14 +151,19 @@ class RegisterContractTests(RegisterTestCase):
             'age_days',
             'batch',
             'batch_code',
+            'container',
+            'container_count',
+            'container_name',
+            'container_size',
             'cost',
             'currency_code',
-            'expected_ready_early',
-            'expected_ready_late',
+            'expected_ready',
             'final_outcome',
             'final_outcome_at',
             'garden_square',
             'germinated',
+            'grade',
+            'grade_name',
             'label_code',
             'lifecycle_state',
             'located_since',
@@ -169,11 +175,36 @@ class RegisterContractTests(RegisterTestCase):
             'seed_tray',
             'seed_tray_cell',
             'sellable',
+            'stage',
+            'stage_name',
+            'stage_overdue',
             'standing_at',
             'standing_at_label',
             'variety',
             'variety_name',
         ])
+
+    def test_growth_filters_use_recorded_current_facts(self):
+        """Stage, grade, and ready-date questions ignore catalog projections."""
+        plant = self.make_plant()
+        stage = GrowthStage.objects.get(workspace=self.workspace, code='rooted')
+        stage.target_days = 2
+        stage.save()
+        grade = PlantGrade.objects.get(workspace=self.workspace, code='premium')
+        ready = timezone.localdate() + timedelta(days=5)
+        record_observation(
+            self.workspace, self.operator, plant_ids=[plant.pk],
+            stage=stage, grade=grade, expected_ready=ready,
+            occurred_at=timezone.now() - timedelta(days=3),
+        )
+        page = self.page(
+            stage=stage.pk, grade=grade.pk,
+            expected_ready_from=ready.isoformat(),
+            expected_ready_to=ready.isoformat(), stage_overdue='true',
+        )
+        self.assertEqual(self.row_ids(page), [plant.pk])
+        self.assertEqual(page['results'][0]['expected_ready'], ready.isoformat())
+        self.assertTrue(page['results'][0]['stage_overdue'])
 
     def test_label_code_search_finds_the_identified_plant(self):
         """The code from a plant's physical label resolves in ordinary search."""
@@ -546,4 +577,4 @@ class RegisterQueryBudgetTests(RegisterTestCase):
         self.assertEqual(len(small.data['results']), 5)
         self.assertEqual(len(large.data['results']), 60)
         self.assertEqual(len(large_queries), len(small_queries))
-        self.assertLessEqual(len(small_queries), 6, small_queries.captured_queries)
+        self.assertLessEqual(len(small_queries), 8, small_queries.captured_queries)

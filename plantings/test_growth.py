@@ -99,6 +99,7 @@ class GrowthRestTests(RESTContractTestCase):
             'plants': [plant.pk],
             'stage': stage['pk'],
             'height_cm': '12.500',
+            'photo_url': 'https://example.test/plant-photo.jpg',
             'notes': 'Rooted evenly.',
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
@@ -107,6 +108,7 @@ class GrowthRestTests(RESTContractTestCase):
         )
         self.assertEqual(len(history.data), 1)
         self.assertEqual(history.data[0]['stage_name'], stage['name'])
+        self.assertEqual(history.data[0]['photo_url'], 'https://example.test/plant-photo.jpg')
 
     def test_catalog_codes_are_stable_after_creation(self):
         response = self.client.post('/plantings/growth-stages/', {

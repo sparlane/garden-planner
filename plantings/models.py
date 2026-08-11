@@ -689,6 +689,7 @@ class NurseryObservation(WorkspaceOwnedModel):
     )
     root_condition = models.CharField(max_length=255, blank=True, default='')
     expected_ready = models.DateField(null=True, blank=True)
+    photo_url = models.URLField(blank=True, default='')
     occurred_at = models.DateTimeField(default=timezone.now)
     notes = models.TextField(blank=True, default='')
     input_application = models.ForeignKey(
@@ -726,7 +727,7 @@ class NurseryObservation(WorkspaceOwnedModel):
         facts = (
             self.stage_id, self.grade_id, self.container_item_id,
             self.height_cm, self.spread_cm, self.root_condition,
-            self.expected_ready, self.notes,
+            self.expected_ready, self.photo_url, self.notes,
         )
         if not any(value not in (None, '') for value in facts):
             errors['notes'] = 'Record at least one nursery observation.'
