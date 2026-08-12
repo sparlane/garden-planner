@@ -10,6 +10,8 @@ from django.http import HttpResponseNotAllowed, JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404
 
 from gp.utils import get_request_data
+from plants.metadata import variety_days
+from plants.models import MaturityBasis
 from workspaces.models import get_current_workspace
 from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
 
@@ -107,12 +109,14 @@ def seedtray_complete(request):
 
 
 def _get_variety_days(variety):
-    return (
-        variety.germination_days_min or variety.plant.germination_days_min,
-        variety.germination_days_max or variety.plant.germination_days_max,
-        variety.maturity_days_min or variety.plant.maturity_days_min,
-        variety.maturity_days_max or variety.plant.maturity_days_max,
-    )
+    return (*variety_days(variety, 'germination'), *variety_days(variety, 'maturity'))
+
+
+def _maturity_anchor(variety, sowed_at, transplanted_at=None):
+    """Choose the recorded event configured as the start of maturity."""
+    if variety.effective_maturity_basis == MaturityBasis.TRANSPLANTING:
+        return transplanted_at
+    return sowed_at
 
 
 def _add_nullable_days(value, days):
@@ -194,8 +198,14 @@ def gardensquare_current(request):
             'notes': planting.notes,
             'germination_date_early': _add_nullable_days(planting.planted, germination_min),
             'germination_date_late': _add_nullable_days(planting.planted, germination_max),
-            'maturity_date_early': _add_nullable_days(transplanting.transplanted, maturity_min),
-            'maturity_date_late': _add_nullable_days(transplanting.transplanted, maturity_max)
+            'maturity_date_early': _add_nullable_days(
+                _maturity_anchor(variety, planting.planted, transplanting.transplanted),
+                maturity_min,
+            ),
+            'maturity_date_late': _add_nullable_days(
+                _maturity_anchor(variety, planting.planted, transplanting.transplanted),
+                maturity_max,
+            )
         })
     specific_plant_locations = SpecificPlantLocation.objects.filter(
         specific_plant__workspace=workspace,
@@ -225,8 +235,12 @@ def gardensquare_current(request):
             'notes': location.notes or location.specific_plant.notes,
             'germination_date_early': _add_nullable_days(planting.planted, germination_min),
             'germination_date_late': _add_nullable_days(planting.planted, germination_max),
-            'maturity_date_early': _add_nullable_days(location.started, maturity_min),
-            'maturity_date_late': _add_nullable_days(location.started, maturity_max),
+            'maturity_date_early': _add_nullable_days(
+                _maturity_anchor(variety, planting.planted, location.started), maturity_min,
+            ),
+            'maturity_date_late': _add_nullable_days(
+                _maturity_anchor(variety, planting.planted, location.started), maturity_max,
+            ),
         })
     return JsonResponse({'plantings': planting_data})
 
