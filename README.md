@@ -51,6 +51,8 @@ Features
   - One configured workspace owns every catalog, garden, tray, and planting record.
   - The workspace can switch between Garden and Nursery presentation without converting or deleting data.
   - Workspace settings include currency, default tax percentage, IANA timezone, and metric or imperial display preferences.
+  - Nursery mode adds a plant register that searches current plants as operational inventory. Its counts describe the whole filter rather than the visible page, and it is the one paginated collection in the API; every other list still returns a bare array.
+  - Nursery mode also adds a Work screen. Germination, approved-plan milestone, stage-age, recorded readiness, and maturity facts project into the queue without copying source dates; manual and recurring work retains assignment, snooze, completion, skip, and reopen history.
 
 - React-based frontend components
   - Frontend lives in `frontend/js/` (React components) and uses Bootstrap and jQuery for the UI; examples include `menu.js`, `planting.js`, `seeds.js`, and `plants.js`.
@@ -179,6 +181,12 @@ Workspace and account boundaries
 - Every authenticated account has the same access to that workspace. Memberships and roles are not implemented, so do not create accounts for mutually untrusted users.
 - Additional workspace rows are supported as an isolation boundary for future development, but serving unrelated tenants, selecting workspaces per user, and moving records between workspaces remain unsupported.
 
+Nursery work scheduling
+- Open **Work** in a Nursery workspace to review Today, This week, Overdue, Snoozed, and Completed queues. Generated tasks remain live projections until an operator first acts on them, so correcting a source date moves the outstanding work instead of leaving a stale copy.
+- Safe rules cover expected germination, approved production milestones, stage target ages, recorded ready dates, and expected maturity. Add calendar rules for watering, feeding, thinning, spacing, potting-on, hardening, or other local routines; recurrence is evaluated in the workspace timezone.
+- Completing a task records that the work was reviewed but does not move plants, consume inventory, or perform another domain action. Perform the authoritative workflow first and link its result when completing the task.
+- Until workspace memberships ship, every active Django account is assignable and every authenticated account has the same workspace access. The in-app queue is authoritative; email and push delivery are not implemented.
+
 API endpoints (examples)
 - Workspace settings:
   - GET /settings/workspace/ — retrieve the current workspace profile without exposing its ID
@@ -189,6 +197,8 @@ API endpoints (examples)
   - POST /plantings/seedtray/complete/ — mark seedtray planting removed
   - GET /plantings/garden/squares/current/ — list current garden-square plantings
   - POST /plantings/specificplants/{id}/move/ — atomically move an individual plant
+  - GET /plantings/register/ — Nursery-only plant register; a page of current plants plus counts for the whole filter, not just the page
+  - GET /plantings/register/ids/ — resolve the same filters to the plant IDs they select, for bulk selection
   - GET /plantings/transplantedgardensquare/ — list read-only legacy aggregate transplants
   - POST /plantings/garden/squares/transplant/complete/ — complete a legacy aggregate transplant
 - Seeds:
@@ -198,12 +208,18 @@ API endpoints (examples)
 - Locations:
   - GET /locations/ — list the physical places the workspace uses, filterable by `active` and `location_type`
   - POST /locations/ — name a new place; PATCH `{"active": false}` retires one that stock has passed through
+- Nursery work:
+  - GET /work/tasks/ — combined projected and acknowledged queue, filterable by view, task type, priority, assignee, batch, and location
+  - POST /work/tasks/ — schedule manual or recurring work
+  - POST /work/tasks/{id}/act/ — assign, claim, snooze, complete, skip, or reopen acknowledged work
+  - GET/POST/PATCH /work/rules/ — inspect and configure source-date or calendar automation rules
 - REST routers are registered in each app (see `*.rest.py` files) and wired into the Django URL config.
 
 Project layout (high level)
 - gp/ — Django project settings and WSGI/ASGI entry points
 - frontend/ — JS React components and build configuration
 - locations/ — the shared catalog of physical places, referenced by stock, trays, and plants
+- work/ — Nursery task rules, source projections, acknowledged work, and action history
 - garden/, plants/, seeds/, plantings/, supplies/ — Django apps with models, views, rest.py, urls
 - setup-venv.sh, setup-db.sh, build-frontend.sh, start-wsgi.sh — helper scripts
 - requirements.txt, package.json — dependency manifests
