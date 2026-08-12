@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     "applications",
     "costing",
     "labels",
+    "work",
     "rest_framework",
     "django.contrib.admin",
     "django.contrib.auth",
