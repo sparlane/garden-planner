@@ -196,7 +196,14 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
               {task.links
                 .filter((link) => link.role === 'target')
                 .map((link) => (
-                  <div key={`${link.target_type}:${link.object_id}`}>{link.url ? <NavLink to={link.url}>{link.label}</NavLink> : link.label}</div>
+                  <div key={`${link.target_type}:${link.object_id}`}>
+                    {link.url ? <NavLink to={link.url}>{link.label}</NavLink> : link.label}
+                    {link.active_health_alerts > 0 && (
+                      <Badge bg="warning" text="dark" className="ms-1">
+                        Health alert
+                      </Badge>
+                    )}
+                  </div>
                 ))}
             </td>
             <td>{task.assignee_name ?? 'Unassigned'}</td>

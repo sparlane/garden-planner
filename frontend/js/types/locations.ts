@@ -55,6 +55,7 @@ interface LocationOccupancy {
   here: OccupancyCounts
   subtree: OccupancyCounts
   remaining: string | null
+  active_health_alerts: number
 }
 
 export { CapacityBasis, Location, LocationCreate, LocationOccupancy, LocationType, LocationUpdate, OccupancyCounts }

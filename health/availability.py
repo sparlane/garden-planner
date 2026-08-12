@@ -1,7 +1,7 @@
 """Authoritative current quarantine projections and locking checks."""
 
 from django.core.exceptions import ValidationError
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Q
 
 from .models import QuarantineAction, QuarantineCase, QuarantineMember
 
@@ -68,3 +68,36 @@ def require_available(targets, *, lock=False):
             'targets': f'Quarantined stock is unavailable: {blocked}.',
         })
     return rows
+
+
+def active_alert_count(workspace, scopes):
+    """Count active quarantine cases intersecting one reviewed target scope."""
+    from .services import preview_observation  # pylint: disable=import-outside-toplevel
+
+    try:
+        preview = preview_observation(workspace, scopes)
+    except ValidationError:
+        return 0
+    affected = Q(members__plant_id__in=preview['plants'])
+    affected |= Q(
+        members__cohort_id__in=[row['cohort'] for row in preview['cohorts']],
+    )
+    return active_cases(workspace).filter(affected).count()
+
+
+def target_alert_count(target):
+    """Count active quarantine cases for a supported generic task target."""
+    scope_types = {
+        'specificplant': 'plant',
+        'plantcohort': 'cohort',
+        'seedtray': 'tray',
+        'seedtraygeneration': 'generation',
+        'productionbatch': 'batch',
+        'location': 'location',
+    }
+    scope_type = scope_types.get(target._meta.model_name)  # pylint: disable=protected-access
+    if scope_type is None:
+        return 0
+    return active_alert_count(
+        target.workspace, [{'type': scope_type, 'id': target.pk}],
+    )

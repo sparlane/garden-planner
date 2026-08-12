@@ -8,6 +8,7 @@ interface WorkLink {
   label: string
   url: string
   snapshot: Record<string, unknown>
+  active_health_alerts: number
 }
 
 interface WorkHistory {
