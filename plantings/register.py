@@ -22,7 +22,7 @@ from costing.models import CostAllocation
 from inventory.rest_query import parse_boolean, parse_date, parse_datetime, parse_integer
 from locations.models import Location
 from labels.models import LabelCode
-from health.availability import with_quarantine
+from health.availability import quarantine_expression, with_quarantine
 
 from .lifecycle import FINAL_STATES, SELLABLE_STATES, LifecycleState, with_lifecycle_state
 from .models import NurseryObservation, SpecificPlant, SpecificPlantLocation
@@ -193,7 +193,7 @@ def register_projection(workspace):
     return queryset.annotate(
         sellable=Case(
             When(
-                quarantined=False,
+                ~quarantine_expression(),
                 lifecycle_state__in=sorted(SELLABLE_STATES),
                 then=Value(True),
             ),
@@ -372,7 +372,9 @@ def register_totals(queryset):
         'pk',
         filter=~Q(lifecycle_state__in=sorted(FINAL_STATES)),
     )
-    counted['quarantined'] = Count('pk', filter=Q(quarantined=True))
+    counted['quarantined'] = Count(
+        'pk', filter=quarantine_expression(),
+    )
     totals = queryset.order_by().aggregate(**counted)
     totals['stage_counts'] = {
         str(row['current_stage']): row['count']

@@ -28,8 +28,8 @@ def case_is_active(case):
     return active_cases(case.workspace).filter(pk=case.pk).exists()
 
 
-def with_quarantine(queryset, target_type='plant'):
-    """Annotate a plant or cohort queryset with current quarantine state."""
+def quarantine_expression(target_type='plant'):
+    """Build the correlated expression for a plant or cohort constraint."""
     if target_type not in {'plant', 'cohort'}:
         raise ValueError('Quarantine projection supports plants or cohorts.')
     closed_cases = QuarantineAction.objects.filter(
@@ -40,7 +40,14 @@ def with_quarantine(queryset, target_type='plant'):
         case__actions__action=QuarantineAction.Action.QUARANTINE,
         **{f'{target_type}_id': OuterRef('pk')},
     ).exclude(case_id__in=closed_cases)
-    return queryset.annotate(quarantined=Exists(memberships))
+    return Exists(memberships)
+
+
+def with_quarantine(queryset, target_type='plant'):
+    """Annotate a plant or cohort queryset with current quarantine state."""
+    return queryset.annotate(
+        quarantined=quarantine_expression(target_type),
+    )
 
 
 def is_quarantined(target):
