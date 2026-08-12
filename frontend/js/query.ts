@@ -4,6 +4,14 @@ import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 import { WorkFilters } from './types/work'
 
 const queryKeys = {
+  health: {
+    all: ['health'] as const,
+    types: ['health', 'observation-types'] as const,
+    diagnoses: ['health', 'diagnoses'] as const,
+    observations: ['health', 'observations'] as const,
+    quarantines: ['health', 'quarantines'] as const,
+    report: ['health', 'report'] as const
+  },
   work: {
     all: ['work'] as const,
     tasks: (filters: WorkFilters) => ['work', 'tasks', filters] as const,

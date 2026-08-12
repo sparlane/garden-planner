@@ -50,6 +50,7 @@ function RegisterTotals({ totals }: TotalsProps) {
     { label: 'Matching', value: totals.total },
     { label: 'Growing', value: totals.growing },
     { label: 'Available', value: totals.available, variant: 'text-success' },
+    { label: 'Quarantined', value: totals.quarantined, variant: 'text-warning' },
     { label: 'Unresolved', value: totals.unresolved },
     { label: 'Retained', value: totals.retained },
     { label: 'Lost', value: totals.failed + totals.culled, variant: 'text-danger' }
@@ -114,6 +115,7 @@ function NurseryRegisterView() {
   const [readyFrom, setReadyFrom] = React.useState('')
   const [readyTo, setReadyTo] = React.useState('')
   const [stageOverdue, setStageOverdue] = React.useState(false)
+  const [quarantined, setQuarantined] = React.useState<boolean | undefined>(undefined)
   const [page, setPage] = React.useState(1)
   const [selection, setSelection] = React.useState<RegisterSelection>(EMPTY_SELECTION)
 
@@ -134,6 +136,7 @@ function NurseryRegisterView() {
     expected_ready_from: readyFrom || undefined,
     expected_ready_to: readyTo || undefined,
     stage_overdue: stageOverdue || undefined,
+    quarantined,
     ordering,
     page,
     page_size: PAGE_SIZE
@@ -346,6 +349,17 @@ function NurseryRegisterView() {
         </Col>
         <Col md={3} className="d-flex align-items-end">
           <Form.Check label="Overdue at stage" checked={stageOverdue} onChange={(event) => narrow(setStageOverdue)(event.target.checked)} />
+        </Col>
+        <Col md={3}>
+          <Form.Label>Quarantine</Form.Label>
+          <Form.Select
+            value={quarantined === undefined ? '' : String(quarantined)}
+            onChange={(event) => narrow(setQuarantined)(event.target.value === '' ? undefined : event.target.value === 'true')}
+          >
+            <option value="">Any status</option>
+            <option value="true">Quarantined</option>
+            <option value="false">Not quarantined</option>
+          </Form.Select>
         </Col>
         <Col md={3}>
           <Form.Group controlId="register-germinated-to">

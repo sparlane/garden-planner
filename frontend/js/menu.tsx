@@ -15,7 +15,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
   const { pathname } = useLocation()
   const seedsActive = pathname === '/seeds' || pathname.startsWith('/seeds/')
   const seedTraysActive = pathname === '/seedtrays' || pathname.startsWith('/seedtrays/')
-  const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/')
+  const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health'
   const inventoryActive = pathname === '/inventory' || pathname.startsWith('/inventory/') || pathname.startsWith('/applications') || pathname.startsWith('/locations')
 
   return (
@@ -65,6 +65,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
                 </NavDropdown.Item>
                 <NavDropdown.Item as={NavLink} to="/plantings/production-planning">
                   Production planning
+                </NavDropdown.Item>
+                <NavDropdown.Item as={NavLink} to="/health">
+                  Plant health
                 </NavDropdown.Item>
               </>
             )}

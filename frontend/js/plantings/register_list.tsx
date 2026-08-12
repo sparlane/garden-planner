@@ -1,5 +1,5 @@
 import React from 'react'
-import { Form, Table } from 'react-bootstrap'
+import { Badge, Form, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
 
 import { formatDate, formatDateTime, formatMoney } from '../utils'
@@ -105,7 +105,7 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
               <Form.Check
                 aria-label={`Select plant ${row.pk}`}
                 checked={isSelected(selection, row.pk)}
-                disabled={selection.mode === 'filter'}
+                disabled={selection.mode === 'filter' || row.quarantined}
                 onChange={() => setSelection(toggleSelected(selection, row.pk))}
               />
             </td>
@@ -121,6 +121,13 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
             </td>
             <td>
               <LifecycleStateBadge state={row.lifecycle_state} />
+              {row.quarantined && (
+                <div>
+                  <Badge bg="warning" text="dark">
+                    Quarantined · unavailable
+                  </Badge>
+                </div>
+              )}
             </td>
             <td>
               {row.stage_name ?? '—'}

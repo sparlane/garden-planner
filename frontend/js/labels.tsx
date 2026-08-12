@@ -10,6 +10,7 @@ import { getLocations } from './api/locations'
 import { queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
 import { BulkOperationPanel } from './plantings/bulk_operations'
+import { HealthScopeType } from './types/health'
 
 import './labels.css'
 
@@ -214,6 +215,7 @@ function ScannerView() {
   const [result, setResult] = React.useState<LabelResolution>()
   const [cameraError, setCameraError] = React.useState('')
   const [scanned, setScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
+  const [healthScanned, setHealthScanned] = React.useState<Array<{ type: HealthScopeType; id: number; code: string; display: string }>>([])
   const video = React.useRef<HTMLVideoElement>(null)
   const controls = React.useRef<IScannerControls | undefined>(undefined)
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
@@ -229,6 +231,24 @@ function ScannerView() {
             ? current
             : [...current, { id: target.object_id, code: resolved.current_code ?? resolved.code ?? '', display: target.display }]
         )
+      }
+      if (resolved.status === 'active' && resolved.target && resolved.capabilities?.includes('health_inspection')) {
+        const target = resolved.target
+        const scopes: Record<string, HealthScopeType> = {
+          specificplant: 'plant',
+          plantcohort: 'cohort',
+          seedtray: 'tray',
+          productionbatch: 'batch',
+          location: 'location'
+        }
+        const type = scopes[target.target_type]
+        if (type) {
+          setHealthScanned((current) =>
+            current.some((entry) => entry.type === type && entry.id === target.object_id)
+              ? current
+              : [...current, { type, id: target.object_id, code: resolved.current_code ?? resolved.code ?? '', display: target.display }]
+          )
+        }
       }
     }
   })
@@ -303,6 +323,37 @@ function ScannerView() {
           )}
         </Col>
         <Col lg={6}>
+          <h2>
+            Health inspection{' '}
+            <Badge bg="warning" text="dark">
+              {healthScanned.length}
+            </Badge>
+          </h2>
+          {healthScanned.length === 0 ? (
+            <p className="text-muted">Eligible nursery labels scanned here will build an exact health-inspection scope.</p>
+          ) : (
+            <>
+              <ul className="list-group mb-3">
+                {healthScanned.map((entry) => (
+                  <li className="list-group-item d-flex justify-content-between" key={`${entry.type}:${entry.id}`}>
+                    <span>
+                      {entry.display}
+                      <br />
+                      <small className="font-monospace">{entry.code}</small>
+                    </span>
+                    <Button variant="outline-danger" onClick={() => setHealthScanned(healthScanned.filter((item) => item !== entry))}>
+                      Remove
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <Link to={`/health?${healthScanned.map((entry) => `scope=${encodeURIComponent(`${entry.type}:${entry.id}`)}`).join('&')}`}>
+                <Button variant="warning" className="mb-4">
+                  Review health scope
+                </Button>
+              </Link>
+            </>
+          )}
           <h2>
             Plant selection <Badge bg="secondary">{scanned.length}</Badge>
           </h2>

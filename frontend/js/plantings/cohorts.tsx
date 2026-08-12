@@ -138,6 +138,7 @@ function CohortRegisterView() {
   const [readyFrom, setReadyFrom] = React.useState('')
   const [readyTo, setReadyTo] = React.useState('')
   const [stageOverdue, setStageOverdue] = React.useState(false)
+  const [quarantined, setQuarantined] = React.useState<boolean | undefined>(undefined)
   const [page, setPage] = React.useState(1)
   const [selected, setSelected] = React.useState<Array<number>>([])
   const [mergeReason, setMergeReason] = React.useState('')
@@ -150,6 +151,7 @@ function CohortRegisterView() {
     expected_ready_from: readyFrom || undefined,
     expected_ready_to: readyTo || undefined,
     stage_overdue: stageOverdue || undefined,
+    quarantined,
     page,
     page_size: 50
   }
@@ -230,6 +232,17 @@ function CohortRegisterView() {
         <Col md="auto">
           <Form.Check label="Overdue at stage" checked={stageOverdue} onChange={(event) => setStageOverdue(event.target.checked)} />
         </Col>
+        <Col md={3}>
+          <Form.Select
+            aria-label="Quarantine status"
+            value={quarantined === undefined ? '' : String(quarantined)}
+            onChange={(event) => setQuarantined(event.target.value === '' ? undefined : event.target.value === 'true')}
+          >
+            <option value="">Any quarantine status</option>
+            <option value="true">Quarantined</option>
+            <option value="false">Not quarantined</option>
+          </Form.Select>
+        </Col>
       </Row>
       {selected.length >= 2 && (
         <Alert variant="light" className="d-flex gap-2 align-items-end">
@@ -280,7 +293,7 @@ function CohortRegisterView() {
                   <td>
                     <Form.Check
                       aria-label={`Select cohort ${cohort.pk}`}
-                      disabled={cohort.quantity === 0}
+                      disabled={cohort.quantity === 0 || cohort.quarantined}
                       checked={selected.includes(cohort.pk)}
                       onChange={(event) => setSelected(event.target.checked ? [...selected, cohort.pk] : selected.filter((pk) => pk !== cohort.pk))}
                     />
@@ -294,6 +307,13 @@ function CohortRegisterView() {
                   <td>{cohort.batch_code}</td>
                   <td>
                     <Badge bg={cohort.lifecycle_state === 'available' ? 'success' : 'secondary'}>{STATE_LABELS[cohort.lifecycle_state]}</Badge>
+                    {cohort.quarantined && (
+                      <div>
+                        <Badge bg="warning" text="dark">
+                          Quarantined · unavailable
+                        </Badge>
+                      </div>
+                    )}
                   </td>
                   <td>{cohort.quantity}</td>
                   <td>
