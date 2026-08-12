@@ -260,6 +260,36 @@ def _cull_members(workspace, user, action, plants, cohorts):
         )
 
 
+def _escalate_case(workspace, user, action, plants, cohorts):
+    """Create an immediate high-priority task linked to the reviewed stock."""
+    from work.models import WorkTaskType  # pylint: disable=import-outside-toplevel
+    from work.services import create_manual_task  # pylint: disable=import-outside-toplevel
+
+    targets = [
+        (action.case.observation, f'Health observation {action.case.observation_id}', '/health')
+    ]
+    targets.extend(
+        (plant, f'Plant {plant.pk}', f'/plantings/plants/{plant.pk}')
+        for plant in plants
+    )
+    targets.extend(
+        (cohort, f'Cohort {cohort.pk}', f'/plantings/cohorts/{cohort.pk}')
+        for cohort in cohorts
+    )
+    create_manual_task(workspace, user, {
+        'task_type': WorkTaskType.HEALTH_INSPECTION,
+        'title': f'Escalated health issue #{action.case.observation_id}',
+        'notes': action.reason,
+        'priority': 100,
+        'due_start': action.occurred_at,
+        'due_end': action.occurred_at,
+        'source_snapshot': {
+            'quarantine_case': action.case_id,
+            'quarantine_action': action.pk,
+        },
+    }, targets=targets)
+
+
 @transaction.atomic
 def act_on_quarantine(
         workspace, user, case, *, action_name, idempotency_key, reason,
@@ -295,6 +325,8 @@ def act_on_quarantine(
         _move_members(workspace, user, action, plants, cohorts, destination, reason)
     if action_name == QuarantineAction.Action.CULL:
         _cull_members(workspace, user, action, plants, cohorts)
+    elif action_name == QuarantineAction.Action.ESCALATE:
+        _escalate_case(workspace, user, action, plants, cohorts)
     return action
 
 

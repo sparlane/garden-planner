@@ -5,6 +5,10 @@ from zoneinfo import ZoneInfo
 
 from django.test import TestCase
 
+from health.models import HealthObservation, HealthObservationType
+from health.operations import record_follow_up
+from health.services import preview_observation, record_observation
+
 from plantings.models import (
     GardenSquareTransplant,
     ProductionBatch,
@@ -71,6 +75,37 @@ class WorkProjectionTests(TestCase):
         )
         self.assertEqual(after.timetz().replace(tzinfo=None), time(9))
         self.assertNotEqual(before.utcoffset(), after.utcoffset())
+
+    def test_health_follow_up_projects_until_result_is_recorded(self):
+        """An effective result suppresses the live follow-up occurrence."""
+        plant = make_specific_plant(workspace=self.workspace)
+        scopes = [{'type': 'plant', 'id': plant.pk}]
+        preview = preview_observation(self.workspace, scopes)
+        observation = record_observation(
+            self.workspace, None, scopes=scopes,
+            reviewed_digest=preview['digest'],
+            observation_type=HealthObservationType.objects.get(
+                workspace=self.workspace, code='pest-signs',
+            ),
+            severity=HealthObservation.Severity.MODERATE,
+            follow_up_due_at=datetime(
+                2026, 8, 13, 9, tzinfo=datetime_timezone.utc,
+            ),
+        )
+        tasks = [
+            row for row in projected_tasks(self.workspace)
+            if 'health-observation' in row.key
+        ]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].targets[0].target, plant)
+        record_follow_up(
+            self.workspace, None, observation,
+            result='resolved', effectiveness='unknown',
+        )
+        self.assertFalse(any(
+            'health-observation' in row.key
+            for row in projected_tasks(self.workspace)
+        ))
 
     def _maturity_rule(self):
         WorkTaskRule.objects.filter(workspace=self.workspace).delete()

@@ -1,10 +1,16 @@
 """REST contract tests for label resolution and print auditing."""
 
+from uuid import uuid4
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from tests.factories import make_garden_area, make_specific_plant
 from workspaces.models import Workspace, get_current_workspace
+
+from health.models import HealthObservation, HealthObservationType
+from health.operations import quarantine_observation
+from health.services import preview_observation, record_observation
 
 from .models import LabelCode, LabelPrintJob, LabelTemplate
 from .services import ensure_identity, replace_code, void_code
@@ -34,6 +40,33 @@ class LabelResolutionTests(TestCase):
         self.assertEqual(bare.data['target']['object_id'], self.identity.target_object_id)
         self.assertIn('bulk_select', bare.data['capabilities'])
         self.assertEqual(linked.data['code'], bare.data['code'])
+
+    def test_nursery_scan_exposes_health_actions_and_active_release(self):
+        """A scan offers only health actions currently valid for its target."""
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        plant = self.identity.target
+        initial = self.resolve(self.code.code)
+        self.assertIn('health_inspection', initial.data['capabilities'])
+        self.assertIn('health_treatment', initial.data['capabilities'])
+        self.assertIn('health_quarantine', initial.data['capabilities'])
+        self.assertNotIn('health_release', initial.data['capabilities'])
+        scopes = [{'type': 'plant', 'id': plant.pk}]
+        preview = preview_observation(self.workspace, scopes)
+        observation = record_observation(
+            self.workspace, self.user, scopes=scopes,
+            reviewed_digest=preview['digest'],
+            observation_type=HealthObservationType.objects.get(
+                workspace=self.workspace, code='pest-signs',
+            ),
+            severity=HealthObservation.Severity.HIGH,
+        )
+        quarantine_observation(
+            self.workspace, self.user, observation,
+            idempotency_key=uuid4(), reason='Prevent spread.',
+        )
+        constrained = self.resolve(self.code.code)
+        self.assertIn('health_release', constrained.data['capabilities'])
 
     def test_unknown_replaced_void_and_wrong_workspace_are_explicit(self):
         """Every unusable scan explains its condition without target leakage."""

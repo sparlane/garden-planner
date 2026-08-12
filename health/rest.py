@@ -30,6 +30,7 @@ from .operations import (
     quarantine_observation,
     record_follow_up,
 )
+from .reports import health_report
 from .services import correct_observation, preview_observation, record_observation
 
 
@@ -343,6 +344,19 @@ class HealthObservationViewSet(
         if params.get('diagnosis'):
             queryset = queryset.filter(diagnoses__diagnosis_id=params['diagnosis'])
         return queryset.filter(correction__isnull=True).distinct()
+
+    @action(detail=False, methods=['get'], url_path='reports')
+    def reports(self, request):
+        """Group effective health history while retaining traceable rows."""
+        allowed = {
+            'observation_type', 'severity', 'diagnosis', 'category',
+            'batch', 'location', 'treatment', 'outcome',
+        }
+        filters = {
+            key: value for key, value in request.query_params.items()
+            if key in allowed and value
+        }
+        return Response(health_report(self.get_current_workspace(), filters))
 
     @action(detail=False, methods=['post'])
     def preview(self, request):

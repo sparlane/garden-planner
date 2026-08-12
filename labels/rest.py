@@ -3,7 +3,7 @@
 from urllib.parse import unquote, urlparse
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 from rest_framework import mixins, routers, serializers, status, viewsets
 from rest_framework.decorators import action
@@ -11,9 +11,11 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from health.availability import active_cases, is_quarantined
+from health.services import preview_observation
 from plantings.lifecycle import derive_state
 from plantings.growth import current_growth
-from workspaces.models import get_current_workspace
+from workspaces.models import Workspace, get_current_workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
 
 from .models import LabelCode, LabelIdentity, LabelPrintItem, LabelPrintJob, LabelTemplate
@@ -146,7 +148,7 @@ def _target_active(identity):
     return True
 
 
-def _resolution(code, workspace):
+def _resolution(code, workspace):  # pylint: disable=too-many-locals
     """Build the safe scan contract for a code visible to this workspace."""
     if code.workspace_id != workspace.pk:
         return {'status': 'wrong_workspace', 'message': 'This code belongs to another workspace.'}
@@ -167,6 +169,38 @@ def _resolution(code, workspace):
     active_cohort = active_cohort and identity.target.quantity > 0
     if active_cohort:
         capabilities.append('cohort_operation')
+    health_scopes = {
+        ('plantings', 'specificplant'): 'plant',
+        ('plantings', 'plantcohort'): 'cohort',
+        ('seedtrays', 'seedtray'): 'tray',
+        ('plantings', 'productionbatch'): 'batch',
+        ('locations', 'location'): 'location',
+    }
+    health_enabled = workspace.mode == Workspace.Mode.NURSERY
+    health_enabled = health_enabled and resolution_status == LabelCode.Status.ACTIVE
+    health_enabled = health_enabled and key in health_scopes
+    if health_enabled:
+        target = identity.target
+        try:
+            preview = preview_observation(workspace, [{
+                'type': health_scopes[key], 'id': target.pk,
+            }])
+        except DjangoValidationError:
+            preview = None
+        if preview is not None:
+            capabilities.extend([
+                'health_inspection', 'health_treatment', 'health_quarantine',
+            ])
+            if key in {('plantings', 'specificplant'), ('plantings', 'plantcohort')}:
+                releasable = is_quarantined(target)
+            else:
+                plant_ids = preview['plants']
+                cohort_ids = [row['cohort'] for row in preview['cohorts']]
+                affected = models.Q(members__plant_id__in=plant_ids)
+                affected |= models.Q(members__cohort_id__in=cohort_ids)
+                releasable = active_cases(workspace).filter(affected).exists()
+            if releasable:
+                capabilities.append('health_release')
     return {
         'status': resolution_status,
         'message': {

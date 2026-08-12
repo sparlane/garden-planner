@@ -39,6 +39,7 @@ from .operations import (
     quarantine_observation,
     record_follow_up,
 )
+from .reports import health_report
 from .services import preview_observation, record_observation
 
 
@@ -165,3 +166,16 @@ class HealthOperationTests(TestCase):
             correction_reason='The result was transcribed incorrectly.',
         )
         self.assertEqual(replacement.corrects, follow_up)
+
+    def test_report_traces_issue_to_batch_variety_and_seed_supplier(self):
+        plant = make_specific_plant(workspace=self.workspace)
+        observation = self.observe('plant', plant)
+        report = health_report(self.workspace, {'severity': 'high'})
+        self.assertEqual(report['summary']['observations'], 1)
+        row = report['results'][0]
+        self.assertEqual(row['observation'], observation.pk)
+        self.assertEqual(row['batches'][0]['batch'], plant.batch_id)
+        self.assertEqual(
+            row['seed_sources'][0]['supplier'],
+            plant.cell_planting.seed_tray_planting.seeds_used.seeds.supplier_id,
+        )
