@@ -290,6 +290,7 @@ interface SpecificPlant {
   locations: Array<SpecificPlantLocation>
   lifecycle_state: PlantLifecycleState
   sellable: boolean
+  quarantined: boolean
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
 }
@@ -362,6 +363,7 @@ interface NurseryRegisterRow {
   age_days: number
   lifecycle_state: PlantLifecycleState
   sellable: boolean
+  quarantined: boolean
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
   location_type: PlantPlacementType | null
@@ -413,6 +415,7 @@ interface NurseryRegisterFilters {
   batch?: number
   state?: Array<PlantLifecycleState>
   sellable?: boolean
+  quarantined?: boolean
   germinated_from?: string
   germinated_to?: string
   location_type?: PlantPlacementType | 'none'
@@ -438,6 +441,7 @@ interface NurseryRegisterFilters {
 type NurseryRegisterTotals = Record<PlantLifecycleState, number> & {
   total: number
   unresolved: number
+  quarantined: number
   stage_counts: Record<string, number>
   grade_counts: Record<string, number>
   container_counts: Record<string, number>
@@ -660,6 +664,7 @@ interface PlantCohort {
   source_sowing: number | null
   quantity: number
   lifecycle_state: CohortLifecycleState
+  quarantined: boolean
   location: number | null
   location_name: string | null
   observed_at: string
@@ -707,6 +712,7 @@ interface CohortFilters {
   location?: number
   state?: CohortLifecycleState
   active?: boolean
+  quarantined?: boolean
   stage?: number
   grade?: number
   container?: number
