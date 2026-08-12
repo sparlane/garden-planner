@@ -91,6 +91,14 @@ def _lock(cohort_id, workspace, expected_revision):
     return cohort
 
 
+def _require_not_quarantined(cohort):
+    """Keep structural and commercial changes behind the health workflow."""
+    from health.availability import is_quarantined  # pylint: disable=import-outside-toplevel
+
+    if is_quarantined(cohort):
+        raise ValidationError({'cohort': 'Release this cohort from quarantine first.'})
+
+
 def _save(cohort):
     cohort.revision += 1
     cohort.full_clean()
@@ -184,7 +192,7 @@ def observe_cohort(workspace, user, *, batch, quantity, idempotency_key,
 @transaction.atomic
 def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
                   idempotency_key, occurred_at=None, reason='', quantity=None,
-                  location=None, payload_extra=None):
+                  location=None, payload_extra=None, allow_quarantined=False):
     """Apply an adjustment, loss, lifecycle change, or whole-cohort move."""
     payload = {
         'cohort': cohort_id,
@@ -197,6 +205,8 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
     if existing:
         return existing.events.get().cohort, existing
     cohort = _lock(cohort_id, workspace, expected_revision)
+    if not allow_quarantined:
+        _require_not_quarantined(cohort)
     before = _snapshot(cohort)
     if action == CohortOperation.Action.ADJUST:
         _require_reason(reason)
@@ -253,6 +263,7 @@ def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
     if existing:
         return existing.events.order_by('pk').last().cohort, existing
     source = _lock(cohort_id, workspace, expected_revision)
+    _require_not_quarantined(source)
     if quantity <= 0 or quantity >= source.quantity:
         raise ValidationError({'quantity': 'Split quantity must be less than the cohort quantity.'})
     destination = location or source.location
@@ -316,6 +327,8 @@ def merge_cohorts(workspace, user, *, target_id, revisions, source_ids,
     if len(cohorts) != len(ids) or target_id in source_ids:
         raise ValidationError({'cohorts': 'Select one target and distinct source cohorts.'})
     by_id = {cohort.pk: cohort for cohort in cohorts}
+    for cohort in cohorts:
+        _require_not_quarantined(cohort)
     for cohort in cohorts:
         if cohort.revision != int(revisions.get(str(cohort.pk), revisions.get(cohort.pk, -1))):
             raise ValidationError({'revision': f'Cohort {cohort.pk} changed after it was loaded.'})
@@ -386,6 +399,7 @@ def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
     if existing:
         return list(SpecificPlant.objects.filter(pk__in=existing.payload['plants'])), existing
     cohort = _lock(cohort_id, workspace, expected_revision)
+    _require_not_quarantined(cohort)
     if quantity <= 0 or quantity > cohort.quantity:
         raise ValidationError({'quantity': 'Promotion must be within the current quantity.'})
     before = _snapshot(cohort)

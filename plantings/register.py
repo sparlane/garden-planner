@@ -13,7 +13,7 @@ projected from append-only Nursery observations.
 from datetime import timedelta
 from typing import NamedTuple
 
-from django.db.models import Count, DateField, DateTimeField, DecimalField, DurationField, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value
+from django.db.models import BooleanField, Case, Count, DateField, DateTimeField, DecimalField, DurationField, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value, When
 from django.db.models.functions import Coalesce, Now
 from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
@@ -22,8 +22,9 @@ from costing.models import CostAllocation
 from inventory.rest_query import parse_boolean, parse_date, parse_datetime, parse_integer
 from locations.models import Location
 from labels.models import LabelCode
+from health.availability import with_quarantine
 
-from .lifecycle import FINAL_STATES, LifecycleState, with_lifecycle_state
+from .lifecycle import FINAL_STATES, SELLABLE_STATES, LifecycleState, with_lifecycle_state
 from .models import NurseryObservation, SpecificPlant, SpecificPlantLocation
 
 
@@ -64,6 +65,7 @@ class RegisterFilters(NamedTuple):
     batch: object = None
     states: tuple = ()
     sellable: object = None
+    quarantined: object = None
     germinated_from: object = None
     germinated_to: object = None
     location_type: object = None
@@ -104,6 +106,7 @@ def parse_register_filters(query_params):
         batch=parse_integer(query_params.get('batch'), 'batch'),
         states=states,
         sellable=parse_boolean(query_params.get('sellable'), 'sellable'),
+        quarantined=parse_boolean(query_params.get('quarantined'), 'quarantined'),
         germinated_from=parse_datetime(query_params.get('germinated_from'), 'germinated_from'),
         germinated_to=parse_datetime(query_params.get('germinated_to'), 'germinated_to'),
         location_type=location_type,
@@ -181,11 +184,22 @@ def register_projection(workspace):
         identity__target_content_type=plant_content_type,
         identity__target_object_id=OuterRef('pk'),
     ).values('code')[:1]
-    return with_lifecycle_state(
+    queryset = with_lifecycle_state(
         SpecificPlant.objects
         .filter(workspace=workspace)
         .select_related(f'{_BATCH}__variety__plant')
-    ).annotate(
+    )
+    queryset = with_quarantine(queryset)
+    return queryset.annotate(
+        sellable=Case(
+            When(
+                quarantined=False,
+                lifecycle_state__in=sorted(SELLABLE_STATES),
+                then=Value(True),
+            ),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
         batch_code=F(f'{_BATCH}__code'),
         variety_name=F(f'{_BATCH}__variety__name'),
         plant_name=F(f'{_BATCH}__variety__plant__name'),
@@ -277,6 +291,8 @@ def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
         queryset = queryset.filter(lifecycle_state__in=list(filters.states))
     if filters.sellable is not None:
         queryset = queryset.filter(sellable=filters.sellable)
+    if filters.quarantined is not None:
+        queryset = queryset.filter(quarantined=filters.quarantined)
     if filters.germinated_from is not None:
         queryset = queryset.filter(germinated__gte=filters.germinated_from)
     if filters.germinated_to is not None:
@@ -356,6 +372,7 @@ def register_totals(queryset):
         'pk',
         filter=~Q(lifecycle_state__in=sorted(FINAL_STATES)),
     )
+    counted['quarantined'] = Count('pk', filter=Q(quarantined=True))
     totals = queryset.order_by().aggregate(**counted)
     totals['stage_counts'] = {
         str(row['current_stage']): row['count']

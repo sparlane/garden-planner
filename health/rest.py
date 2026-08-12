@@ -15,9 +15,20 @@ from workspaces.scoping import CurrentWorkspaceViewSetMixin, RequireWorkspaceMod
 
 from .models import (
     HealthDiagnosis,
+    HealthFollowUp,
     HealthObservation,
     HealthObservationDiagnosis,
     HealthObservationType,
+    HealthTreatment,
+    QuarantineAction,
+    QuarantineCase,
+)
+from .availability import case_is_active
+from .operations import (
+    act_on_quarantine,
+    link_treatment,
+    quarantine_observation,
+    record_follow_up,
 )
 from .services import correct_observation, preview_observation, record_observation
 
@@ -148,6 +159,9 @@ class HealthObservationSerializer(serializers.ModelSerializer):
     diagnoses = serializers.SerializerMethodField()
     evidence = serializers.SerializerMethodField()
     affected_count = serializers.SerializerMethodField()
+    quarantine_cases = serializers.SerializerMethodField()
+    treatments = serializers.SerializerMethodField()
+    follow_ups = serializers.SerializerMethodField()
 
     class Meta:
         model = HealthObservation
@@ -156,6 +170,7 @@ class HealthObservationSerializer(serializers.ModelSerializer):
             'occurred_at', 'follow_up_due_at', 'notes', 'scopes', 'affected',
             'affected_count', 'diagnoses', 'evidence', 'corrects',
             'correction_reason', 'created_by', 'created',
+            'quarantine_cases', 'treatments', 'follow_ups',
         ]
 
     def get_scopes(self, observation):
@@ -194,6 +209,110 @@ class HealthObservationSerializer(serializers.ModelSerializer):
             for row in observation.evidence_links.all()
         ]
 
+    def get_quarantine_cases(self, observation):
+        return [
+            {'pk': case.pk, 'active': case_is_active(case), 'reason': case.reason}
+            for case in observation.quarantine_cases.all()
+        ]
+
+    def get_treatments(self, observation):
+        return [
+            {
+                'pk': row.pk,
+                'application': row.application_id,
+                'application_status': row.application.status,
+                'follow_up_due_at': row.follow_up_due_at,
+                'notes': row.notes,
+            }
+            for row in observation.treatments.all()
+        ]
+
+    def get_follow_ups(self, observation):
+        return [
+            {
+                'pk': row.pk, 'treatment': row.treatment_id,
+                'occurred_at': row.occurred_at, 'result': row.result,
+                'effectiveness': row.effectiveness, 'notes': row.notes,
+                'corrects': row.corrects_id,
+                'correction_reason': row.correction_reason,
+            }
+            for row in observation.follow_ups.all()
+        ]
+
+
+class QuarantineWriteSerializer(serializers.Serializer):
+    idempotency_key = serializers.UUIDField()
+    reason = serializers.CharField(allow_blank=False)
+    occurred_at = serializers.DateTimeField(required=False)
+    destination = serializers.PrimaryKeyRelatedField(
+        queryset=QuarantineAction._meta.get_field('destination').remote_field.model.objects.all(),
+        required=False, allow_null=True,
+    )
+
+
+class TreatmentWriteSerializer(serializers.Serializer):
+    application = serializers.PrimaryKeyRelatedField(
+        queryset=HealthTreatment._meta.get_field('application').remote_field.model.objects.all(),
+    )
+    follow_up_due_at = serializers.DateTimeField(required=False, allow_null=True)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class FollowUpWriteSerializer(serializers.Serializer):
+    treatment = serializers.PrimaryKeyRelatedField(
+        queryset=HealthTreatment.objects.all(), required=False, allow_null=True,
+    )
+    occurred_at = serializers.DateTimeField(required=False)
+    result = serializers.ChoiceField(choices=HealthFollowUp.Result.choices)
+    effectiveness = serializers.ChoiceField(
+        choices=HealthFollowUp.Effectiveness.choices,
+        required=False, default=HealthFollowUp.Effectiveness.UNKNOWN,
+    )
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    corrects = serializers.PrimaryKeyRelatedField(
+        queryset=HealthFollowUp.objects.all(), required=False, allow_null=True,
+    )
+    correction_reason = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class QuarantineCaseSerializer(serializers.ModelSerializer):
+    active = serializers.SerializerMethodField()
+    observation_summary = serializers.CharField(
+        source='observation.observation_type.name', read_only=True,
+    )
+    members = serializers.SerializerMethodField()
+    actions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = QuarantineCase
+        fields = [
+            'pk', 'observation', 'observation_summary', 'reason', 'active',
+            'members', 'actions', 'created_by', 'created',
+        ]
+
+    def get_active(self, case):
+        return case_is_active(case)
+
+    def get_members(self, case):
+        return [
+            {
+                'type': 'plant' if row.plant_id else 'cohort',
+                'id': row.plant_id or row.cohort_id,
+                'quantity': row.quantity,
+            }
+            for row in case.members.all()
+        ]
+
+    def get_actions(self, case):
+        return [
+            {
+                'pk': row.pk, 'action': row.action,
+                'occurred_at': row.occurred_at, 'reason': row.reason,
+                'destination': row.destination_id, 'created_by': row.created_by_id,
+            }
+            for row in case.actions.all()
+        ]
+
 
 class HealthObservationViewSet(
     RequireWorkspaceModeMixin,
@@ -207,6 +326,8 @@ class HealthObservationViewSet(
         'scopes__plant', 'scopes__cohort', 'scopes__generation',
         'scopes__batch', 'scopes__location', 'affected_stock',
         'diagnoses__diagnosis', 'evidence_links',
+        'quarantine_cases__actions', 'quarantine_cases__members',
+        'treatments__application', 'follow_ups',
     )
     serializer_class = HealthObservationSerializer
 
@@ -276,8 +397,105 @@ class HealthObservationViewSet(
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=True, methods=['post'])
+    def quarantine(self, request, pk=None):
+        serializer = QuarantineWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            case, _action = quarantine_observation(
+                self.get_current_workspace(), request.user, self.get_object(),
+                **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_errors(exc)) from exc
+        return Response(QuarantineCaseSerializer(case).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def treatment(self, request, pk=None):
+        serializer = TreatmentWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = dict(serializer.validated_data)
+        try:
+            treatment = link_treatment(
+                self.get_current_workspace(), request.user, self.get_object(),
+                values.pop('application'), **values,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_errors(exc)) from exc
+        return Response({
+            'pk': treatment.pk,
+            'application': treatment.application_id,
+            'follow_up_due_at': treatment.follow_up_due_at,
+            'notes': treatment.notes,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='follow-up')
+    def follow_up(self, request, pk=None):
+        serializer = FollowUpWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = dict(serializer.validated_data)
+        try:
+            follow_up = record_follow_up(
+                self.get_current_workspace(), request.user, self.get_object(), **values,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_errors(exc)) from exc
+        return Response({
+            'pk': follow_up.pk, 'treatment': follow_up.treatment_id,
+            'occurred_at': follow_up.occurred_at, 'result': follow_up.result,
+            'effectiveness': follow_up.effectiveness, 'notes': follow_up.notes,
+            'corrects': follow_up.corrects_id,
+            'correction_reason': follow_up.correction_reason,
+        }, status=status.HTTP_201_CREATED)
+
+
+class QuarantineCaseViewSet(
+    RequireWorkspaceModeMixin,
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ReadOnlyModelViewSet,
+):
+    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    queryset = QuarantineCase.objects.select_related(
+        'observation__observation_type', 'created_by',
+    ).prefetch_related('members', 'actions')
+    serializer_class = QuarantineCaseSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.query_params.get('active') == 'true':
+            queryset = queryset.filter(
+                pk__in=[case.pk for case in queryset if case_is_active(case)],
+            )
+        return queryset
+
+    def _act(self, request, case, action_name):
+        serializer = QuarantineWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            act_on_quarantine(
+                self.get_current_workspace(), request.user, case,
+                action_name=action_name, **serializer.validated_data,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_errors(exc)) from exc
+        case.refresh_from_db()
+        return Response(QuarantineCaseSerializer(case).data)
+
+    @action(detail=True, methods=['post'])
+    def release(self, request, pk=None):
+        return self._act(request, self.get_object(), QuarantineAction.Action.RELEASE)
+
+    @action(detail=True, methods=['post'])
+    def escalate(self, request, pk=None):
+        return self._act(request, self.get_object(), QuarantineAction.Action.ESCALATE)
+
+    @action(detail=True, methods=['post'])
+    def cull(self, request, pk=None):
+        return self._act(request, self.get_object(), QuarantineAction.Action.CULL)
+
 
 router = routers.SimpleRouter()
 router.register(r'observation-types', HealthObservationTypeViewSet)
 router.register(r'diagnoses', HealthDiagnosisViewSet)
 router.register(r'observations', HealthObservationViewSet)
+router.register(r'quarantines', QuarantineCaseViewSet)

@@ -21,6 +21,7 @@ from workspaces.scoping import (
     CurrentWorkspaceViewSetMixin,
     RequireWorkspaceModeMixin,
 )
+from health.availability import with_quarantine
 
 from .cohorts import (
     change_cohort,
@@ -85,6 +86,7 @@ class PlantCohortSerializer(serializers.ModelSerializer):
     container_size = serializers.SerializerMethodField()
     container_count = serializers.SerializerMethodField()
     expected_ready = serializers.SerializerMethodField()
+    quarantined = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = PlantCohort
@@ -95,6 +97,7 @@ class PlantCohortSerializer(serializers.ModelSerializer):
             'cost', 'currency_code',
             'stage', 'stage_name', 'grade', 'grade_name', 'container',
             'container_name', 'container_size', 'container_count', 'expected_ready',
+            'quarantined',
             'created', 'updated',
         ]
         read_only_fields = [
@@ -276,7 +279,7 @@ class PlantCohortViewSet(
         return CohortDetailSerializer if self.action == 'retrieve' else PlantCohortSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset().annotate(
+        queryset = with_quarantine(super().get_queryset(), 'cohort').annotate(
             current_stage=self._observation('stage_id', IntegerField()),
             current_stage_name=self._observation('stage__name', TextField()),
             current_stage_days=self._observation('stage__target_days', IntegerField(), 'stage'),
@@ -326,6 +329,8 @@ class PlantCohortViewSet(
             queryset = queryset.filter(stage_due_at__lt=Now())
         if params.get('active') == 'true':
             queryset = queryset.filter(quantity__gt=0)
+        if params.get('quarantined') in {'true', 'false'}:
+            queryset = queryset.filter(quarantined=params['quarantined'] == 'true')
         if params.get('search'):
             search = params['search'].strip()
             queryset = queryset.filter(batch__code__icontains=search)
@@ -352,6 +357,7 @@ class PlantCohortViewSet(
         cohorts = self.get_queryset().filter(
             lifecycle_state=PlantCohort.LifecycleState.AVAILABLE,
             quantity__gt=0,
+            quarantined=False,
         )
         params = request.query_params.copy()
         params.setlist('state', ['available'])
