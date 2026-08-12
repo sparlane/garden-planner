@@ -172,6 +172,7 @@ class RegisterContractTests(RegisterTestCase):
             'location_type',
             'pk',
             'plant_name',
+            'quarantined',
             'seed_tray',
             'seed_tray_cell',
             'sellable',
