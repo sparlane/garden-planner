@@ -2,601 +2,558 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import { Table, Button } from 'react-bootstrap'
+import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
-import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties } from './api/plants'
+import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties, updatePlant, updatePlantFamily, updatePlantVariety } from './api/plants'
 import { queryKeys } from './query'
+import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
+import { ApiError } from './utils'
 
-interface NewPlantFamilyRowProps {
-  done: () => void
-  createFamily: (data: PlantFamilyCreate) => Promise<void>
+type Editor = { kind: 'family' | 'plant' | 'variety'; pk?: number; parentPk?: number }
+type FieldErrors = Record<string, string>
+
+const BASIS_LABELS: Record<MaturityBasis, string> = {
+  seed: 'From seed',
+  transplanting: 'From transplanting'
 }
 
-interface NewPlantFamilyRowState {
+function errorsByField(error: unknown): FieldErrors {
+  const body = error instanceof ApiError ? error.body : null
+  if (!body || typeof body !== 'object') return { form: 'The changes could not be saved.' }
+  const errors: FieldErrors = {}
+  for (const [field, detail] of Object.entries(body as Record<string, unknown>)) {
+    errors[field] = Array.isArray(detail) ? String(detail[0]) : String(detail)
+  }
+  return errors
+}
+
+function optionalNumber(value: string): number | null {
+  return value === '' ? null : Number(value)
+}
+
+function inputNumber(value: number | null | undefined): string {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+function displayNumber(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : String(value)
+}
+
+function displayRange(minimum: number | null | undefined, maximum: number | null | undefined): string {
+  if (minimum == null && maximum == null) return '—'
+  if (minimum == null) return `Up to ${maximum}`
+  if (maximum == null) return `${minimum}+`
+  return `${minimum}–${maximum}`
+}
+
+interface SaveActionsProps {
+  formId: string
+  saving: boolean
+  errors: FieldErrors
+  onCancel: () => void
+}
+
+function SaveActions({ formId, saving, errors, onCancel }: SaveActionsProps) {
+  function submit() {
+    const form = document.getElementById(formId) as HTMLFormElement | null
+    form?.requestSubmit()
+  }
+
+  return (
+    <>
+      <Button size="sm" type="button" disabled={saving} onClick={submit}>
+        {saving ? 'Saving…' : 'Save'}
+      </Button>{' '}
+      <Button size="sm" variant="secondary" disabled={saving} onClick={onCancel}>
+        Cancel
+      </Button>
+      {(errors.form || errors.non_field_errors || errors.detail) && (
+        <Alert variant="danger" className="mt-2 mb-0 p-1">
+          {errors.form || errors.non_field_errors || errors.detail}
+        </Alert>
+      )}
+    </>
+  )
+}
+
+interface InputProps {
+  formId: string
+  field: string
+  errors: FieldErrors
+  value: string
+  onChange: (value: string) => void
+  required?: boolean
+  type?: string
+}
+
+function EditorInput({ formId, field, errors, value, onChange, required = false, type = 'text' }: InputProps) {
+  return (
+    <>
+      <Form.Control
+        size="sm"
+        form={formId}
+        type={type}
+        required={required}
+        aria-label={field.replaceAll('_', ' ')}
+        value={value}
+        isInvalid={field in errors}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <Form.Control.Feedback type="invalid">{errors[field]}</Form.Control.Feedback>
+    </>
+  )
+}
+
+interface FamilyEditorProps {
+  family?: PlantFamily
+  onSave: (data: PlantFamilyCreate) => Promise<unknown>
+  onDone: () => void
+}
+
+function FamilyEditor({ family, onSave, onDone }: FamilyEditorProps) {
+  const formId = `family-editor-${family?.pk ?? 'new'}`
+  const [name, setName] = React.useState(family?.name ?? '')
+  const [notes, setNotes] = React.useState(family?.notes ?? '')
+  const [saving, setSaving] = React.useState(false)
+  const [errors, setErrors] = React.useState<FieldErrors>({})
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setErrors({})
+    try {
+      await onSave({ name, notes })
+      onDone()
+    } catch (error) {
+      setErrors(errorsByField(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <Form onSubmit={submit} id={formId}></Form>
+        <EditorInput formId={formId} field="name" errors={errors} value={name} onChange={setName} required />
+      </td>
+      <td colSpan={8}></td>
+      <td>
+        <EditorInput formId={formId} field="notes" errors={errors} value={notes} onChange={setNotes} />
+      </td>
+      <td>
+        <SaveActions formId={formId} saving={saving} errors={errors} onCancel={onDone} />
+      </td>
+    </tr>
+  )
+}
+
+interface CultivationFormState {
   name: string
+  spacing: string
+  interRowSpacing: string
+  plantsPerSquareFoot: string
+  germinationMin: string
+  germinationMax: string
+  maturityMin: string
+  maturityMax: string
   notes: string
 }
 
-class NewPlantFamilyRow extends React.Component<NewPlantFamilyRowProps, NewPlantFamilyRowState> {
-  constructor(props: NewPlantFamilyRowProps) {
-    super(props)
-
-    this.state = {
-      name: '',
-      notes: ''
-    }
-
-    this.updateName = this.updateName.bind(this)
-    this.updateNotes = this.updateNotes.bind(this)
-    this.add = this.add.bind(this)
-  }
-
-  updateName(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    this.setState({ name: value })
-  }
-
-  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
-    const { value } = event.target
-
-    this.setState({ notes: value })
-  }
-
-  async add() {
-    await this.props.createFamily({
-      name: this.state.name,
-      notes: this.state.notes
-    })
-    this.props.done()
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>
-          <input type="text" onChange={this.updateName} />
-        </td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td>
-          <textarea onChange={this.updateNotes} />
-        </td>
-        <td>
-          <Button onClick={this.add}>Add</Button>
-          <Button onClick={this.props.done}>Cancel</Button>
-        </td>
-      </tr>
-    )
+function cultivationState(value?: Plant | PlantVariety): CultivationFormState {
+  return {
+    name: value?.name ?? '',
+    spacing: inputNumber(value?.spacing),
+    interRowSpacing: inputNumber(value?.inter_row_spacing),
+    plantsPerSquareFoot: inputNumber(value?.plants_per_square_foot),
+    germinationMin: inputNumber(value?.germination_days_min),
+    germinationMax: inputNumber(value?.germination_days_max),
+    maturityMin: inputNumber(value?.maturity_days_min),
+    maturityMax: inputNumber(value?.maturity_days_max),
+    notes: value?.notes ?? ''
   }
 }
 
-interface PlantFamilyRowProps {
-  family: PlantFamily
-  addNewPlant: (familyId: number) => void
-}
-
-class PlantFamilyRow extends React.Component<PlantFamilyRowProps> {
-  constructor(props: PlantFamilyRowProps) {
-    super(props)
-
-    this.addNewPlant = this.addNewPlant.bind(this)
-  }
-
-  addNewPlant() {
-    this.props.addNewPlant(this.props.family.pk)
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>{this.props.family.name}</td>
-        <td>
-          <Button variant="link" className="p-0 align-baseline" aria-label="Add plant" onClick={this.addNewPlant}>
-            +
-          </Button>
-        </td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td></td>
-        <td>{this.props.family.notes}</td>
-      </tr>
-    )
+function cultivationPayload(form: CultivationFormState) {
+  return {
+    name: form.name,
+    spacing: optionalNumber(form.spacing),
+    inter_row_spacing: optionalNumber(form.interRowSpacing),
+    plants_per_square_foot: optionalNumber(form.plantsPerSquareFoot),
+    germination_days_min: optionalNumber(form.germinationMin),
+    germination_days_max: optionalNumber(form.germinationMax),
+    maturity_days_min: optionalNumber(form.maturityMin),
+    maturity_days_max: optionalNumber(form.maturityMax),
+    notes: form.notes
   }
 }
 
-interface NewPlantRowProps {
-  done: () => void
-  createPlant: (data: PlantCreate) => Promise<void>
-  familyName: string
-  familyId: number
+interface NumberCellProps {
+  formId: string
+  field: string
+  errors: FieldErrors
+  value: string
+  onChange: (value: string) => void
 }
 
-interface NewPlantRowState {
-  name: string
-  spacing?: number
-  row_spacing?: number
-  per_square_foot?: number
-  notes: string
+function NumberCell(props: NumberCellProps) {
+  return (
+    <td>
+      <EditorInput {...props} type="number" />
+    </td>
+  )
 }
 
-class NewPlantRow extends React.Component<NewPlantRowProps, NewPlantRowState> {
-  constructor(props: NewPlantRowProps) {
-    super(props)
-
-    this.state = {
-      name: '',
-      spacing: undefined,
-      row_spacing: undefined,
-      per_square_foot: undefined,
-      notes: ''
-    }
-
-    this.updateName = this.updateName.bind(this)
-    this.updateNotes = this.updateNotes.bind(this)
-    this.updateSpacing = this.updateSpacing.bind(this)
-    this.updateRowSpacing = this.updateRowSpacing.bind(this)
-    this.updatePerSquareFtRate = this.updatePerSquareFtRate.bind(this)
-    this.add = this.add.bind(this)
-  }
-
-  updateName(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    this.setState({ name: value })
-  }
-
-  updateSpacing(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ spacing: undefined })
-      return
-    }
-
-    this.setState({ spacing: Number(value) })
-  }
-
-  updateRowSpacing(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ row_spacing: undefined })
-      return
-    }
-    this.setState({ row_spacing: Number(value) })
-  }
-
-  updatePerSquareFtRate(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ per_square_foot: undefined })
-      return
-    }
-    this.setState({ per_square_foot: Number(value) })
-  }
-
-  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
-    const { value } = event.target
-
-    this.setState({ notes: value })
-  }
-
-  async add() {
-    const data: PlantCreate = {
-      family: this.props.familyId,
-      name: this.state.name,
-      notes: this.state.notes
-    }
-    if (this.state.spacing !== undefined) {
-      data.spacing = this.state.spacing
-    }
-    if (this.state.row_spacing !== undefined) {
-      data.inter_row_spacing = this.state.row_spacing
-    }
-    if (this.state.per_square_foot !== undefined) {
-      data.plants_per_square_foot = this.state.per_square_foot
-    }
-    await this.props.createPlant(data)
-    this.props.done()
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>{this.props.familyName}</td>
-        <td>
-          <input type="text" onChange={this.updateName} />
-        </td>
-        <td></td>
-        <td>
-          <input type="number" onChange={this.updateSpacing}></input>
-        </td>
-        <td>
-          <input type="number" onChange={this.updateRowSpacing}></input>
-        </td>
-        <td>
-          <input type="number" onChange={this.updatePerSquareFtRate}></input>
-        </td>
-        <td>
-          <textarea onChange={this.updateNotes} />
-        </td>
-        <td>
-          <Button onClick={this.add}>Add</Button>
-          <Button onClick={this.props.done}>Cancel</Button>
-        </td>
-      </tr>
-    )
-  }
+interface RangeCellProps {
+  formId: string
+  minimumField: string
+  maximumField: string
+  errors: FieldErrors
+  minimum: string
+  maximum: string
+  onMinimum: (value: string) => void
+  onMaximum: (value: string) => void
 }
 
-interface PlantRowProps {
-  familyName: string
-  plant: Plant
-  addNewPlantVariety: (plantId: number) => void
+function RangeCell({ formId, minimumField, maximumField, errors, minimum, maximum, onMinimum, onMaximum }: RangeCellProps) {
+  return (
+    <td>
+      <div className="d-flex gap-1">
+        <EditorInput formId={formId} field={minimumField} errors={errors} value={minimum} onChange={onMinimum} type="number" />
+        <EditorInput formId={formId} field={maximumField} errors={errors} value={maximum} onChange={onMaximum} type="number" />
+      </div>
+    </td>
+  )
 }
 
-class PlantRow extends React.Component<PlantRowProps> {
-  constructor(props: PlantRowProps) {
-    super(props)
-
-    this.addNewPlantVariety = this.addNewPlantVariety.bind(this)
-  }
-
-  addNewPlantVariety() {
-    this.props.addNewPlantVariety(this.props.plant.pk)
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>{this.props.familyName}</td>
-        <td>{this.props.plant.name}</td>
-        <td>
-          <Button variant="link" className="p-0 align-baseline" aria-label="Add variety" onClick={this.addNewPlantVariety}>
-            +
-          </Button>
-        </td>
-        <td>{this.props.plant.spacing}</td>
-        <td>{this.props.plant.inter_row_spacing}</td>
-        <td>{this.props.plant.plants_per_square_foot}</td>
-        <td>{this.props.plant.notes}</td>
-      </tr>
-    )
-  }
+interface PlantEditorProps {
+  plant?: Plant
+  families: Array<PlantFamily>
+  initialFamily: number
+  onSave: (data: PlantCreate) => Promise<unknown>
+  onDone: () => void
 }
 
-interface NewPlantVarietyRowProps {
-  done: () => void
-  createVariety: (data: PlantVarietyCreate) => Promise<void>
-  familyName: string
-  plantName: string
-  plantId: number
+function PlantEditor({ plant, families, initialFamily, onSave, onDone }: PlantEditorProps) {
+  const formId = `plant-editor-${plant?.pk ?? 'new'}`
+  const [family, setFamily] = React.useState(String(plant?.family ?? initialFamily))
+  const [basis, setBasis] = React.useState<MaturityBasis>(plant?.maturity_basis ?? 'seed')
+  const [form, setForm] = React.useState(() => cultivationState(plant))
+  const [saving, setSaving] = React.useState(false)
+  const [errors, setErrors] = React.useState<FieldErrors>({})
+  const update = (field: keyof CultivationFormState, value: string) => setForm((current) => ({ ...current, [field]: value }))
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setErrors({})
+    try {
+      await onSave({ ...cultivationPayload(form), family: Number(family), maturity_basis: basis })
+      onDone()
+    } catch (error) {
+      setErrors(errorsByField(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <tr>
+      <td>
+        <Form onSubmit={submit} id={formId}></Form>
+        <Form.Select size="sm" form={formId} value={family} isInvalid={'family' in errors} onChange={(event) => setFamily(event.target.value)}>
+          {families.map((value) => (
+            <option key={value.pk} value={value.pk}>
+              {value.name}
+            </option>
+          ))}
+        </Form.Select>
+        <Form.Control.Feedback type="invalid">{errors.family}</Form.Control.Feedback>
+      </td>
+      <td>
+        <EditorInput formId={formId} field="name" errors={errors} value={form.name} onChange={(value) => update('name', value)} required />
+      </td>
+      <td></td>
+      <NumberCell formId={formId} field="spacing" errors={errors} value={form.spacing} onChange={(value) => update('spacing', value)} />
+      <NumberCell formId={formId} field="inter_row_spacing" errors={errors} value={form.interRowSpacing} onChange={(value) => update('interRowSpacing', value)} />
+      <NumberCell formId={formId} field="plants_per_square_foot" errors={errors} value={form.plantsPerSquareFoot} onChange={(value) => update('plantsPerSquareFoot', value)} />
+      <RangeCell
+        formId={formId}
+        minimumField="germination_days_min"
+        maximumField="germination_days_max"
+        errors={errors}
+        minimum={form.germinationMin}
+        maximum={form.germinationMax}
+        onMinimum={(value) => update('germinationMin', value)}
+        onMaximum={(value) => update('germinationMax', value)}
+      />
+      <RangeCell
+        formId={formId}
+        minimumField="maturity_days_min"
+        maximumField="maturity_days_max"
+        errors={errors}
+        minimum={form.maturityMin}
+        maximum={form.maturityMax}
+        onMinimum={(value) => update('maturityMin', value)}
+        onMaximum={(value) => update('maturityMax', value)}
+      />
+      <td>
+        <Form.Select size="sm" form={formId} value={basis} isInvalid={'maturity_basis' in errors} onChange={(event) => setBasis(event.target.value as MaturityBasis)}>
+          <option value="seed">From seed</option>
+          <option value="transplanting">From transplanting</option>
+        </Form.Select>
+        <Form.Control.Feedback type="invalid">{errors.maturity_basis}</Form.Control.Feedback>
+      </td>
+      <td>
+        <EditorInput formId={formId} field="notes" errors={errors} value={form.notes} onChange={(value) => update('notes', value)} />
+      </td>
+      <td>
+        <SaveActions formId={formId} saving={saving} errors={errors} onCancel={onDone} />
+      </td>
+    </tr>
+  )
 }
 
-interface NewPlantVarietyRowState {
-  name: string
-  spacing?: number
-  row_spacing?: number
-  per_square_foot?: number
-  germination_days_min?: number
-  germination_days_max?: number
-  maturity_days_min?: number
-  maturity_days_max?: number
-  notes: string
+interface VarietyEditorProps {
+  variety?: PlantVariety
+  plants: Array<Plant>
+  families: Array<PlantFamily>
+  initialPlant: number
+  onSave: (data: PlantVarietyCreate) => Promise<unknown>
+  onDone: () => void
 }
 
-class NewPlantVarietyRow extends React.Component<NewPlantVarietyRowProps, NewPlantVarietyRowState> {
-  constructor(props: NewPlantVarietyRowProps) {
-    super(props)
+function VarietyEditor({ variety, plants, families, initialPlant, onSave, onDone }: VarietyEditorProps) {
+  const formId = `variety-editor-${variety?.pk ?? 'new'}`
+  const [plant, setPlant] = React.useState(String(variety?.plant ?? initialPlant))
+  const [basis, setBasis] = React.useState<MaturityBasis | ''>(variety?.maturity_basis ?? '')
+  const [form, setForm] = React.useState(() => cultivationState(variety))
+  const [saving, setSaving] = React.useState(false)
+  const [errors, setErrors] = React.useState<FieldErrors>({})
+  const update = (field: keyof CultivationFormState, value: string) => setForm((current) => ({ ...current, [field]: value }))
+  const selectedPlant = plants.find((value) => value.pk === Number(plant))
+  const familyName = families.find((value) => value.pk === selectedPlant?.family)?.name ?? '—'
 
-    this.state = {
-      name: '',
-      spacing: undefined,
-      row_spacing: undefined,
-      per_square_foot: undefined,
-      germination_days_min: undefined,
-      germination_days_max: undefined,
-      maturity_days_min: undefined,
-      maturity_days_max: undefined,
-      notes: ''
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setSaving(true)
+    setErrors({})
+    try {
+      await onSave({ ...cultivationPayload(form), plant: Number(plant), maturity_basis: basis || null })
+      onDone()
+    } catch (error) {
+      setErrors(errorsByField(error))
+    } finally {
+      setSaving(false)
     }
-
-    this.updateName = this.updateName.bind(this)
-    this.updateNotes = this.updateNotes.bind(this)
-    this.updateSpacing = this.updateSpacing.bind(this)
-    this.updateRowSpacing = this.updateRowSpacing.bind(this)
-    this.updatePerSquareFtRate = this.updatePerSquareFtRate.bind(this)
-    this.updateGerminationMin = this.updateGerminationMin.bind(this)
-    this.updateGerminationMax = this.updateGerminationMax.bind(this)
-    this.updateMaturityMin = this.updateMaturityMin.bind(this)
-    this.updateMaturityMax = this.updateMaturityMax.bind(this)
-    this.add = this.add.bind(this)
   }
 
-  updateName(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    this.setState({ name: value })
-  }
-
-  updateSpacing(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ spacing: undefined })
-      return
-    }
-
-    this.setState({ spacing: Number(value) })
-  }
-
-  updateRowSpacing(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ row_spacing: undefined })
-      return
-    }
-
-    this.setState({ row_spacing: Number(value) })
-  }
-
-  updatePerSquareFtRate(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ per_square_foot: undefined })
-      return
-    }
-
-    this.setState({ per_square_foot: Number(value) })
-  }
-
-  updateGerminationMin(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ germination_days_min: undefined })
-      return
-    }
-
-    this.setState({ germination_days_min: Number(value) })
-  }
-
-  updateGerminationMax(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ germination_days_max: undefined })
-      return
-    }
-
-    this.setState({ germination_days_max: Number(value) })
-  }
-
-  updateMaturityMin(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ maturity_days_min: undefined })
-      return
-    }
-    this.setState({ maturity_days_min: Number(value) })
-  }
-
-  updateMaturityMax(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    if (value === '' || value === undefined || value === null) {
-      this.setState({ maturity_days_max: undefined })
-      return
-    }
-    this.setState({ maturity_days_max: Number(value) })
-  }
-
-  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
-    const { value } = event.target
-
-    this.setState({ notes: value })
-  }
-
-  async add() {
-    const data: PlantVarietyCreate = {
-      plant: this.props.plantId,
-      name: this.state.name,
-      notes: this.state.notes
-    }
-    if (this.state.spacing !== undefined) {
-      data.spacing = this.state.spacing
-    }
-    if (this.state.row_spacing !== undefined) {
-      data.inter_row_spacing = this.state.row_spacing
-    }
-    if (this.state.per_square_foot !== undefined) {
-      data.plants_per_square_foot = this.state.per_square_foot
-    }
-    if (this.state.germination_days_min !== undefined) {
-      data.germination_days_min = this.state.germination_days_min
-    }
-    if (this.state.germination_days_max !== undefined) {
-      data.germination_days_max = this.state.germination_days_max
-    }
-    if (this.state.maturity_days_min !== undefined) {
-      data.maturity_days_min = this.state.maturity_days_min
-    }
-    if (this.state.maturity_days_max !== undefined) {
-      data.maturity_days_max = this.state.maturity_days_max
-    }
-    await this.props.createVariety(data)
-    this.props.done()
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>{this.props.familyName}</td>
-        <td>{this.props.plantName}</td>
-        <td>
-          <input type="text" onChange={this.updateName} />
-        </td>
-        <td>
-          <input type="number" onChange={this.updateSpacing}></input>
-        </td>
-        <td>
-          <input type="number" onChange={this.updateRowSpacing}></input>
-        </td>
-        <td>
-          <input type="number" onChange={this.updatePerSquareFtRate}></input>
-        </td>
-        <td>
-          <input type="number" onChange={this.updateGerminationMin} /> - <input type="number" onChange={this.updateGerminationMax} />
-        </td>
-        <td>
-          <input type="number" onChange={this.updateMaturityMin} /> - <input type="number" onChange={this.updateMaturityMax} />
-        </td>
-        <td>
-          <textarea onChange={this.updateNotes} />
-        </td>
-        <td>
-          <Button onClick={this.add}>Add</Button>
-          <Button onClick={this.props.done}>Cancel</Button>
-        </td>
-      </tr>
-    )
-  }
-}
-
-interface PlantVarietyRowProps {
-  variety: PlantVariety
-  familyName: string
-  plantName: string
-}
-
-class PlantVarietyRow extends React.Component<PlantVarietyRowProps> {
-  render() {
-    return (
-      <tr>
-        <td>{this.props.familyName}</td>
-        <td>{this.props.plantName}</td>
-        <td>{this.props.variety.name}</td>
-        <td>{this.props.variety.spacing}</td>
-        <td>{this.props.variety.inter_row_spacing}</td>
-        <td>{this.props.variety.plants_per_square_foot}</td>
-        <td>
-          {this.props.variety.germination_days_min}-{this.props.variety.germination_days_max}
-        </td>
-        <td>
-          {this.props.variety.maturity_days_min}-{this.props.variety.maturity_days_max}
-        </td>
-        <td>{this.props.variety.notes}</td>
-      </tr>
-    )
-  }
+  return (
+    <tr>
+      <td>{familyName}</td>
+      <td>
+        <Form onSubmit={submit} id={formId}></Form>
+        <Form.Select size="sm" form={formId} value={plant} isInvalid={'plant' in errors} onChange={(event) => setPlant(event.target.value)}>
+          {plants.map((value) => (
+            <option key={value.pk} value={value.pk}>
+              {value.name}
+            </option>
+          ))}
+        </Form.Select>
+        <Form.Control.Feedback type="invalid">{errors.plant}</Form.Control.Feedback>
+      </td>
+      <td>
+        <EditorInput formId={formId} field="name" errors={errors} value={form.name} onChange={(value) => update('name', value)} required />
+      </td>
+      <NumberCell formId={formId} field="spacing" errors={errors} value={form.spacing} onChange={(value) => update('spacing', value)} />
+      <NumberCell formId={formId} field="inter_row_spacing" errors={errors} value={form.interRowSpacing} onChange={(value) => update('interRowSpacing', value)} />
+      <NumberCell formId={formId} field="plants_per_square_foot" errors={errors} value={form.plantsPerSquareFoot} onChange={(value) => update('plantsPerSquareFoot', value)} />
+      <RangeCell
+        formId={formId}
+        minimumField="germination_days_min"
+        maximumField="germination_days_max"
+        errors={errors}
+        minimum={form.germinationMin}
+        maximum={form.germinationMax}
+        onMinimum={(value) => update('germinationMin', value)}
+        onMaximum={(value) => update('germinationMax', value)}
+      />
+      <RangeCell
+        formId={formId}
+        minimumField="maturity_days_min"
+        maximumField="maturity_days_max"
+        errors={errors}
+        minimum={form.maturityMin}
+        maximum={form.maturityMax}
+        onMinimum={(value) => update('maturityMin', value)}
+        onMaximum={(value) => update('maturityMax', value)}
+      />
+      <td>
+        <Form.Select size="sm" form={formId} value={basis} isInvalid={'maturity_basis' in errors} onChange={(event) => setBasis(event.target.value as MaturityBasis | '')}>
+          <option value="">Inherit ({selectedPlant ? BASIS_LABELS[selectedPlant.maturity_basis] : 'plant default'})</option>
+          <option value="seed">From seed</option>
+          <option value="transplanting">From transplanting</option>
+        </Form.Select>
+        <Form.Control.Feedback type="invalid">{errors.maturity_basis}</Form.Control.Feedback>
+      </td>
+      <td>
+        <EditorInput formId={formId} field="notes" errors={errors} value={form.notes} onChange={(value) => update('notes', value)} />
+      </td>
+      <td>
+        <SaveActions formId={formId} saving={saving} errors={errors} onCancel={onDone} />
+      </td>
+    </tr>
+  )
 }
 
 function PlantsView() {
   const queryClient = useQueryClient()
-  const [showFamilyAdd, setShowFamilyAdd] = React.useState(false)
-  const [showPlantAdd, setShowPlantAdd] = React.useState<number>()
-  const [showVarietyAdd, setShowVarietyAdd] = React.useState<number>()
-  const { data: families = [] } = useQuery({
-    queryKey: queryKeys.plants.families,
-    queryFn: ({ signal }) => getPlantFamilies(signal)
-  })
-  const { data: plants = [] } = useQuery({
-    queryKey: queryKeys.plants.plants,
-    queryFn: ({ signal }) => getPlants(signal)
-  })
-  const { data: varieties = [] } = useQuery({
-    queryKey: queryKeys.plants.varieties,
-    queryFn: ({ signal }) => getPlantVarieties(signal)
-  })
-  const familyMutation = useMutation({
-    mutationFn: addPlantFamily,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.families })
-  })
-  const plantMutation = useMutation({
-    mutationFn: addPlant,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.plants })
-  })
-  const varietyMutation = useMutation({
-    mutationFn: addPlantVariety,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.varieties })
-  })
+  const [editor, setEditor] = React.useState<Editor | null>(null)
+  const { data: families = [] } = useQuery({ queryKey: queryKeys.plants.families, queryFn: ({ signal }) => getPlantFamilies(signal) })
+  const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
+  const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
+  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.all })
+  const createFamily = useMutation({ mutationFn: addPlantFamily, onSuccess: refresh })
+  const editFamily = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: PlantFamilyCreate }) => updatePlantFamily(pk, data), onSuccess: refresh })
+  const createPlant = useMutation({ mutationFn: addPlant, onSuccess: refresh })
+  const editPlant = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: PlantCreate }) => updatePlant(pk, data), onSuccess: refresh })
+  const createVariety = useMutation({ mutationFn: addPlantVariety, onSuccess: refresh })
+  const editVariety = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: PlantVarietyCreate }) => updatePlantVariety(pk, data), onSuccess: refresh })
+  const done = () => setEditor(null)
+  const rows: Array<React.ReactNode> = []
 
-  async function createFamily(data: PlantFamilyCreate) {
-    await familyMutation.mutateAsync(data)
+  if (editor?.kind === 'family' && editor.pk === undefined) {
+    rows.push(<FamilyEditor key="new-family" onSave={(data) => createFamily.mutateAsync(data)} onDone={done} />)
   }
-
-  async function createPlant(data: PlantCreate) {
-    await plantMutation.mutateAsync(data)
-  }
-
-  async function createVariety(data: PlantVarietyCreate) {
-    await varietyMutation.mutateAsync(data)
-  }
-
-  const rows = []
-  if (showFamilyAdd) {
-    rows.push(<NewPlantFamilyRow createFamily={createFamily} done={() => setShowFamilyAdd(false)} key="family-add" />)
-  }
-  for (const familyData of families) {
-    rows.push(<PlantFamilyRow family={familyData} key={'family-' + familyData.pk} addNewPlant={setShowPlantAdd} />)
-    if (showPlantAdd === familyData.pk) {
-      rows.push(<NewPlantRow createPlant={createPlant} done={() => setShowPlantAdd(undefined)} familyId={familyData.pk} familyName={familyData.name} key="plant-add" />)
-    }
-    const familyPlants = plants.filter((plant) => plant.family === familyData.pk)
-    for (const plantData of familyPlants) {
-      rows.push(<PlantRow familyName={familyData.name} plant={plantData} key={'plant-' + plantData.pk} addNewPlantVariety={setShowVarietyAdd} />)
-      if (showVarietyAdd === plantData.pk) {
-        rows.push(
-          <NewPlantVarietyRow
-            createVariety={createVariety}
-            done={() => setShowVarietyAdd(undefined)}
-            plantId={plantData.pk}
-            familyName={familyData.name}
-            plantName={plantData.name}
-            key="variety-add"
-          />
-        )
-      }
-      const plantVarieties = varieties.filter((variety) => variety.plant === plantData.pk)
-      for (const varietyData of plantVarieties) {
-        rows.push(<PlantVarietyRow variety={varietyData} familyName={familyData.name} plantName={plantData.name} key={'variety-' + varietyData.pk} />)
-      }
-    }
-  }
-  return (
-    <Table>
-      <thead>
-        <tr>
+  for (const family of families) {
+    if (editor?.kind === 'family' && editor.pk === family.pk) {
+      rows.push(<FamilyEditor key={`family-${family.pk}`} family={family} onSave={(data) => editFamily.mutateAsync({ pk: family.pk, data })} onDone={done} />)
+    } else {
+      rows.push(
+        <tr key={`family-${family.pk}`}>
+          <td>{family.name}</td>
+          <td colSpan={8}></td>
+          <td>{family.notes || '—'}</td>
           <td>
-            Family{' '}
-            <Button variant="link" className="p-0 align-baseline" aria-label="Add family" onClick={() => setShowFamilyAdd(true)}>
-              +
+            <Button size="sm" variant="outline-primary" onClick={() => setEditor({ kind: 'plant', parentPk: family.pk })}>
+              Add plant
+            </Button>{' '}
+            <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'family', pk: family.pk })}>
+              Edit
             </Button>
           </td>
-          <td>Plant</td>
-          <td>Variety</td>
-          <td>Spacing (mm)</td>
-          <td>Row Spacing (mm)</td>
-          <td>per sq/ft</td>
-          <td>Germination (days)</td>
-          <td>Maturity (days)</td>
-          <td>Notes</td>
         </tr>
-      </thead>
-      <tbody>{rows}</tbody>
-    </Table>
+      )
+    }
+    if (editor?.kind === 'plant' && editor.pk === undefined && editor.parentPk === family.pk) {
+      rows.push(<PlantEditor key="new-plant" families={families} initialFamily={family.pk} onSave={(data) => createPlant.mutateAsync(data)} onDone={done} />)
+    }
+    for (const plant of plants.filter((value) => value.family === family.pk)) {
+      if (editor?.kind === 'plant' && editor.pk === plant.pk) {
+        rows.push(
+          <PlantEditor
+            key={`plant-${plant.pk}`}
+            plant={plant}
+            families={families}
+            initialFamily={family.pk}
+            onSave={(data) => editPlant.mutateAsync({ pk: plant.pk, data })}
+            onDone={done}
+          />
+        )
+      } else {
+        rows.push(
+          <tr key={`plant-${plant.pk}`}>
+            <td>{family.name}</td>
+            <td>{plant.name}</td>
+            <td></td>
+            <td>{displayNumber(plant.spacing)}</td>
+            <td>{displayNumber(plant.inter_row_spacing)}</td>
+            <td>{displayNumber(plant.plants_per_square_foot)}</td>
+            <td>{displayRange(plant.germination_days_min, plant.germination_days_max)}</td>
+            <td>{displayRange(plant.maturity_days_min, plant.maturity_days_max)}</td>
+            <td>{BASIS_LABELS[plant.maturity_basis]}</td>
+            <td>{plant.notes || '—'}</td>
+            <td>
+              <Button size="sm" variant="outline-primary" onClick={() => setEditor({ kind: 'variety', parentPk: plant.pk })}>
+                Add variety
+              </Button>{' '}
+              <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'plant', pk: plant.pk })}>
+                Edit
+              </Button>
+            </td>
+          </tr>
+        )
+      }
+      if (editor?.kind === 'variety' && editor.pk === undefined && editor.parentPk === plant.pk) {
+        rows.push(<VarietyEditor key="new-variety" plants={plants} families={families} initialPlant={plant.pk} onSave={(data) => createVariety.mutateAsync(data)} onDone={done} />)
+      }
+      for (const variety of varieties.filter((value) => value.plant === plant.pk)) {
+        if (editor?.kind === 'variety' && editor.pk === variety.pk) {
+          rows.push(
+            <VarietyEditor
+              key={`variety-${variety.pk}`}
+              variety={variety}
+              plants={plants}
+              families={families}
+              initialPlant={plant.pk}
+              onSave={(data) => editVariety.mutateAsync({ pk: variety.pk, data })}
+              onDone={done}
+            />
+          )
+        } else {
+          rows.push(
+            <tr key={`variety-${variety.pk}`}>
+              <td>{family.name}</td>
+              <td>{plant.name}</td>
+              <td>{variety.name}</td>
+              <td>{displayNumber(variety.spacing)}</td>
+              <td>{displayNumber(variety.inter_row_spacing)}</td>
+              <td>{displayNumber(variety.plants_per_square_foot)}</td>
+              <td>{displayRange(variety.germination_days_min, variety.germination_days_max)}</td>
+              <td>{displayRange(variety.maturity_days_min, variety.maturity_days_max)}</td>
+              <td>{variety.maturity_basis ? BASIS_LABELS[variety.maturity_basis] : `Inherit (${BASIS_LABELS[variety.effective_maturity_basis]})`}</td>
+              <td>{variety.notes || '—'}</td>
+              <td>
+                <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'variety', pk: variety.pk })}>
+                  Edit
+                </Button>
+              </td>
+            </tr>
+          )
+        }
+      }
+    }
+  }
+
+  return (
+    <>
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <h2 className="mb-1">Plants</h2>
+          <div className="text-muted">Variety values override plant defaults when provided.</div>
+        </div>
+        <Button onClick={() => setEditor({ kind: 'family' })}>Add family</Button>
+      </div>
+      <Table responsive hover size="sm" className="align-middle">
+        <thead>
+          <tr>
+            <th>Family</th>
+            <th>Plant</th>
+            <th>Variety</th>
+            <th>Spacing (mm)</th>
+            <th>Row spacing (mm)</th>
+            <th>Per sq ft</th>
+            <th>Germination (days)</th>
+            <th>Maturity (days)</th>
+            <th>Maturity counted</th>
+            <th>Notes</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </Table>
+    </>
   )
 }
 

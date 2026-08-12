@@ -22,7 +22,8 @@ Features
 
 - Plants and varieties
   - PlantFamily, Plant and PlantVariety models.
-  - Plants and varieties store metadata useful for planning: spacing, inter-row spacing, plants per square foot, germination and maturity ranges, notes.
+  - Plants and varieties store editable planning metadata: spacing, inter-row spacing, plants per square foot, germination and maturity ranges, maturity counted from seed or transplanting, and notes.
+  - Variety planning values can inherit plant defaults or override them; transplant-based maturity starts only when a plant is recorded in a garden square, while direct sowings always use their sowing date.
 
 - Seed suppliers and seed stocks
   - Supplier model for seed suppliers.
