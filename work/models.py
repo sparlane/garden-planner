@@ -32,6 +32,8 @@ class WorkTaskType(models.TextChoices):
     STOCKTAKE = 'stocktake', 'Stocktake'
     ORDER_PICKING = 'order_picking', 'Order picking'
     STAGE = 'stage_review', 'Stage review'
+    HEALTH_INSPECTION = 'health_inspection', 'Health inspection'
+    TREATMENT_FOLLOW_UP = 'treatment_follow_up', 'Treatment follow-up'
     CUSTOM = 'custom', 'Custom'
 
 
@@ -47,6 +49,7 @@ class WorkTaskRule(WorkspaceOwnedModel):
         EXPECTED_READY = 'expected_ready', 'Recorded expected-ready date'
         MATURITY = 'sowing_maturity', 'Expected sowing maturity'
         CALENDAR = 'calendar', 'Recurring calendar work'
+        HEALTH_FOLLOW_UP = 'health_follow_up', 'Health follow-up due'
 
     class Frequency(models.TextChoices):
         """Calendar recurrence units evaluated in workspace local time."""

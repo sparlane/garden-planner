@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from plantings.growth import current_growth
@@ -410,12 +411,89 @@ def _calendar_tasks(rule, today):
     return [task for task in tasks if task]
 
 
+def _health_target_links(observation):
+    """Turn the frozen affected set into actionable work links."""
+    links = []
+    for member in observation.affected_stock.all():
+        if member.plant_id:
+            links.append(TargetLink(
+                member.plant, f'Plant {member.plant_id}',
+                f'/plantings/plants/{member.plant_id}',
+            ))
+        else:
+            links.append(TargetLink(
+                member.cohort,
+                f'Cohort {member.cohort_id} ({member.quantity})',
+                f'/plantings/cohorts/{member.cohort_id}',
+            ))
+    return links
+
+
+def _health_follow_up_tasks(rule):
+    """Project outstanding observation and treatment review dates."""
+    from health.models import HealthFollowUp, HealthObservation, HealthTreatment  # pylint: disable=import-outside-toplevel
+
+    observation_complete = HealthFollowUp.objects.filter(
+        observation_id=OuterRef('pk'), treatment__isnull=True,
+        correction__isnull=True,
+    )
+    treatment_complete = HealthFollowUp.objects.filter(
+        treatment_id=OuterRef('pk'), correction__isnull=True,
+    )
+    observations = HealthObservation.objects.annotate(
+        follow_up_complete=Exists(observation_complete),
+    ).filter(
+        workspace=rule.workspace, correction__isnull=True,
+        follow_up_due_at__isnull=False, follow_up_complete=False,
+    ).select_related('observation_type').prefetch_related(
+        'affected_stock__plant', 'affected_stock__cohort',
+    )
+    treatments = HealthTreatment.objects.annotate(
+        follow_up_complete=Exists(treatment_complete),
+    ).filter(
+        workspace=rule.workspace, follow_up_due_at__isnull=False,
+        follow_up_complete=False,
+    ).select_related(
+        'observation__observation_type',
+    ).prefetch_related(
+        'observation__affected_stock__plant',
+        'observation__affected_stock__cohort',
+    )
+    tasks = []
+    for observation in observations.distinct():
+        due = observation.follow_up_due_at.astimezone(
+            ZoneInfo(rule.workspace.timezone),
+        ).date()
+        tasks.append(_source_task(
+            rule, f'health-observation:{observation.pk}',
+            f'Health follow-up: {observation.observation_type.name}',
+            due, due, _health_target_links(observation),
+            {'health_observation': observation.pk},
+        ))
+    for treatment in treatments.distinct():
+        due = treatment.follow_up_due_at.astimezone(
+            ZoneInfo(rule.workspace.timezone),
+        ).date()
+        tasks.append(_source_task(
+            rule, f'health-treatment:{treatment.pk}',
+            f'Treatment follow-up: {treatment.observation.observation_type.name}',
+            due, due, _health_target_links(treatment.observation),
+            {
+                'health_observation': treatment.observation_id,
+                'health_treatment': treatment.pk,
+                'application': treatment.application_id,
+            },
+        ))
+    return [task for task in tasks if task]
+
+
 PROJECTORS = {
     WorkTaskRule.Trigger.GERMINATION: _sowing_tasks,
     WorkTaskRule.Trigger.MATURITY: _maturity_tasks,
     WorkTaskRule.Trigger.PLAN_MILESTONE: _milestone_tasks,
     WorkTaskRule.Trigger.STAGE_AGE: _growth_tasks,
     WorkTaskRule.Trigger.EXPECTED_READY: lambda rule: _growth_tasks(rule, expected_ready=True),
+    WorkTaskRule.Trigger.HEALTH_FOLLOW_UP: _health_follow_up_tasks,
 }
 
 

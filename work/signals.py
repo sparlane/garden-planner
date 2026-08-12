@@ -14,6 +14,7 @@ DEFAULT_RULES = (
     ('stage-review', 'Stage reviews', WorkTaskType.STAGE, WorkTaskRule.Trigger.STAGE_AGE),
     ('ready-review', 'Ready-date reviews', WorkTaskType.READY, WorkTaskRule.Trigger.EXPECTED_READY),
     ('maturity-review', 'Maturity and harvest reviews', WorkTaskType.HARVEST, WorkTaskRule.Trigger.MATURITY),
+    ('health-follow-up', 'Plant health follow-ups', WorkTaskType.HEALTH_INSPECTION, WorkTaskRule.Trigger.HEALTH_FOLLOW_UP),
 )
 
 
