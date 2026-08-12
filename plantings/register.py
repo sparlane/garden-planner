@@ -6,7 +6,7 @@ mutable plant table. Every row is derived from the source records, and one
 filter parser feeds both the rows and the whole-filter totals so a screen can
 never report counts that its own list disagrees with.
 
-Reservation and quarantine remain with their owning tasks; growth facts are
+Reservation remains with its owning task; health and growth facts are
 projected from append-only Nursery observations.
 """
 
@@ -362,8 +362,9 @@ def register_totals(queryset):
     """Count the whole filtered selection, independent of any page of it.
 
     Growing and available are reported separately rather than as one present
-    count, and unresolved names the plants still owed an outcome. Reserved and
-    quarantined are absent until tasks 44 and 56 record them.
+    count, unresolved names the plants still owed an outcome, and quarantined
+    names the matching plants constrained by an active health case. Reserved is
+    absent until task 44 records it.
     """
     counted = {'total': Count('pk')}
     for state in LifecycleState:

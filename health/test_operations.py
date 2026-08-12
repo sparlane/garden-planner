@@ -21,12 +21,13 @@ from applications.services import (
 from inventory.units import UnitCode
 from plantings.cohorts import change_cohort
 from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
-from plantings.models import CohortOperation, PlantCohort
+from plantings.models import CohortOperation, PlantCohort, SpecificPlantLocation
 from plantings.register import RegisterFilters, register_queryset
 from tests.factories import (
     make_inventory_item,
     make_location,
     make_specific_plant,
+    make_specific_plant_location,
     make_stock_lot,
 )
 from workspaces.models import Workspace, get_current_workspace
@@ -107,6 +108,31 @@ class HealthOperationTests(TestCase):
             action_name='release', idempotency_key=uuid4(), reason='Second issue resolved.',
         )
         self.assertFalse(is_quarantined(plant))
+
+    def test_quarantine_move_preserves_physical_location_history(self):
+        plant = make_specific_plant(workspace=self.workspace)
+        source = make_location(workspace=self.workspace)
+        original = make_specific_plant_location(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=source,
+        )
+        destination = make_location(
+            workspace=self.workspace, location_type='quarantine',
+        )
+        _case, action = quarantine_observation(
+            self.workspace, None, self.observe('plant', plant),
+            idempotency_key=uuid4(), reason='Move away from healthy stock.',
+            destination=destination,
+        )
+        original.refresh_from_db()
+        current = SpecificPlantLocation.objects.get(
+            specific_plant=plant, ended__isnull=True,
+        )
+        self.assertIsNotNone(original.ended)
+        self.assertEqual(current.location, destination)
+        self.assertEqual(action.results.get().plant_location, current)
 
     def test_quarantined_cohort_requires_release_before_structural_change(self):
         plant = make_specific_plant(workspace=self.workspace)
