@@ -8,3 +8,7 @@ class WorkConfig(AppConfig):
 
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'work'
+
+    def ready(self):
+        """Register workspace-profile integration after models are loaded."""
+        from . import signals  # pylint: disable=import-outside-toplevel,unused-import

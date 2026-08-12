@@ -1,8 +1,15 @@
 import { QueryClient } from '@tanstack/react-query'
 
 import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
+import { WorkFilters } from './types/work'
 
 const queryKeys = {
+  work: {
+    all: ['work'] as const,
+    tasks: (filters: WorkFilters) => ['work', 'tasks', filters] as const,
+    rules: ['work', 'rules'] as const,
+    assignees: ['work', 'assignees'] as const
+  },
   labels: {
     all: ['labels'] as const,
     identities: ['labels', 'identities'] as const,

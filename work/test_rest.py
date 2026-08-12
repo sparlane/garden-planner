@@ -8,7 +8,7 @@ from rest_framework.test import APITestCase
 
 from workspaces.models import get_current_workspace
 
-from .models import WorkTask
+from .models import WorkTask, WorkTaskRule
 
 
 class WorkRESTTests(APITestCase):
@@ -75,3 +75,14 @@ class WorkRESTTests(APITestCase):
         self.workspace.mode = self.workspace.Mode.GARDEN
         self.workspace.save()
         self.assertEqual(self.client.get('/work/tasks/').status_code, 403)
+
+    def test_switching_to_nursery_installs_safe_default_rules(self):
+        """A profile change after migration receives the conservative defaults."""
+        WorkTaskRule.objects.filter(workspace=self.workspace).delete()
+        self.workspace.mode = self.workspace.Mode.GARDEN
+        self.workspace.save()
+        self.workspace.mode = self.workspace.Mode.NURSERY
+        self.workspace.save()
+        response = self.client.get('/work/rules/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 5)
