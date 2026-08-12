@@ -6,6 +6,13 @@ from django.db import models
 from workspaces.models import WorkspaceOwnedModel
 
 
+class MaturityBasis(models.TextChoices):
+    """The cultivation event from which maturity days are counted."""
+
+    SEED = 'seed', 'From seed'
+    TRANSPLANTING = 'transplanting', 'From transplanting'
+
+
 class PlantFamily(WorkspaceOwnedModel):
     """
     Plant Family
@@ -31,6 +38,11 @@ class Plant(WorkspaceOwnedModel):
     germination_days_max = models.IntegerField(null=True, blank=True)
     maturity_days_min = models.IntegerField(null=True, blank=True)
     maturity_days_max = models.IntegerField(null=True, blank=True)
+    maturity_basis = models.CharField(
+        max_length=16,
+        choices=MaturityBasis.choices,
+        default=MaturityBasis.SEED,
+    )
 
     def __str__(self):
         return self.name
@@ -50,6 +62,19 @@ class PlantVariety(WorkspaceOwnedModel):
     germination_days_max = models.IntegerField(null=True, blank=True)
     maturity_days_min = models.IntegerField(null=True, blank=True)
     maturity_days_max = models.IntegerField(null=True, blank=True)
+    maturity_basis = models.CharField(
+        max_length=16,
+        choices=MaturityBasis.choices,
+        null=True,
+        blank=True,
+        default=None,
+        help_text='Leave blank to inherit the plant default.',
+    )
+
+    @property
+    def effective_maturity_basis(self):
+        """Return this variety's override or its plant's default."""
+        return self.maturity_basis or self.plant.maturity_basis
 
     def __str__(self):
         return self.name

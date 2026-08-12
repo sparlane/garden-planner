@@ -23,7 +23,7 @@ class PlantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializ
     """
     class Meta:
         model = Plant
-        fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max']
+        fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max', 'maturity_basis']
 
     workspace_field_lookups = {'family': 'workspace'}
 
@@ -34,7 +34,13 @@ class PlantVarietySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelS
     """
     class Meta:
         model = PlantVariety
-        fields = ['pk', 'plant', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max']
+        fields = [
+            'pk', 'plant', 'name', 'notes', 'spacing', 'inter_row_spacing',
+            'plants_per_square_foot', 'germination_days_min',
+            'germination_days_max', 'maturity_days_min', 'maturity_days_max',
+            'maturity_basis', 'effective_maturity_basis',
+        ]
+        read_only_fields = ['effective_maturity_basis']
 
     workspace_field_lookups = {'plant': 'workspace'}
 
