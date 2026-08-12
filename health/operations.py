@@ -206,6 +206,13 @@ def quarantine_observation(
     ).first()
     if observation is None:
         raise ValidationError({'observation': 'Choose an effective observation in this workspace.'})
+    existing = _existing_action(
+        workspace, idempotency_key, QuarantineAction.Action.QUARANTINE,
+    )
+    if existing:
+        if existing.case.observation_id != observation.pk:
+            raise ValidationError({'idempotency_key': 'That key was used for different work.'})
+        return existing.case, existing
     affected = list(observation.affected_stock.all())
     if not affected:
         raise ValidationError({'observation': 'There is no affected stock to quarantine.'})
@@ -312,6 +319,9 @@ def act_on_quarantine(
     ).first()
     if case is None:
         raise ValidationError({'case': 'The quarantine case does not belong to this workspace.'})
+    existing = _existing_action(workspace, idempotency_key, action_name, case)
+    if existing:
+        return existing
     if not case_is_active(case):
         raise ValidationError({'case': 'This quarantine case is already closed.'})
     plants, cohorts = _member_rows(case, lock=True)

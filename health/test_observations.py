@@ -10,8 +10,11 @@ from plantings.models import PlantCohort
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_seed_tray_cell_planting,
+    make_seed_tray,
+    make_seed_tray_generation,
     make_seed_tray_planting,
     make_specific_plant,
+    make_specific_plant_location,
 )
 from workspaces.models import Workspace, get_current_workspace
 
@@ -70,6 +73,47 @@ class HealthObservationServiceTests(TestCase):
         )
         self.assertEqual(observation.diagnoses.get().certainty, 'suspected')
         self.assertEqual(observation.evidence_links.get().label, 'Leaf underside')
+
+    def test_every_supported_scope_resolves_the_same_concrete_stock(self):
+        tray = make_seed_tray(workspace=self.workspace)
+        generation = make_seed_tray_generation(tray=tray)
+        planting = make_seed_tray_planting(
+            seed_tray=tray, generation=generation, workspace=self.workspace,
+        )
+        allocation = make_seed_tray_cell_planting(seed_tray_planting=planting)
+        plant = make_specific_plant(
+            cell_planting=allocation, workspace=self.workspace,
+        )
+        make_specific_plant_location(specific_plant=plant)
+        location = tray.inventory_unit.current_location
+        cohort = PlantCohort.objects.create(
+            workspace=self.workspace, batch=plant.batch,
+            source_sowing=planting, location=location, quantity=3,
+        )
+        scopes = {
+            'plant': (plant.pk, [plant.pk], []),
+            'cohort': (cohort.pk, [], [{'cohort': cohort.pk, 'quantity': 3}]),
+            'tray': (tray.pk, [plant.pk], [{'cohort': cohort.pk, 'quantity': 3}]),
+            'generation': (
+                generation.pk, [plant.pk],
+                [{'cohort': cohort.pk, 'quantity': 3}],
+            ),
+            'batch': (
+                plant.batch_id, [plant.pk],
+                [{'cohort': cohort.pk, 'quantity': 3}],
+            ),
+            'location': (
+                location.pk, [plant.pk],
+                [{'cohort': cohort.pk, 'quantity': 3}],
+            ),
+        }
+        for scope_type, (scope_id, plants, cohorts) in scopes.items():
+            with self.subTest(scope_type=scope_type):
+                preview = preview_observation(
+                    self.workspace, [{'type': scope_type, 'id': scope_id}],
+                )
+                self.assertEqual(preview['plants'], plants)
+                self.assertEqual(preview['cohorts'], cohorts)
 
     def test_confirmation_rejects_changed_reviewed_set(self):
         planting = make_seed_tray_planting(workspace=self.workspace)
