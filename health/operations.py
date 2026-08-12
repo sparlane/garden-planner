@@ -201,7 +201,7 @@ def quarantine_observation(
         if existing.case.observation_id != observation.pk:
             raise ValidationError({'idempotency_key': 'That key was used for different work.'})
         return existing.case, existing
-    observation = HealthObservation.objects.select_for_update().filter(
+    observation = HealthObservation.objects.select_for_update(of=('self',)).filter(
         workspace=workspace, pk=observation.pk, correction__isnull=True,
     ).first()
     if observation is None:
