@@ -101,6 +101,11 @@ function GPTopBar({ workspace }: GPTopBarProps) {
           <Nav.Link as={NavLink} to="/settings">
             Settings
           </Nav.Link>
+          {workspace.mode === 'nursery' && (
+            <Nav.Link as={NavLink} to="/work">
+              Work
+            </Nav.Link>
+          )}
           <Nav.Link as={NavLink} to="/labels">
             Labels
           </Nav.Link>

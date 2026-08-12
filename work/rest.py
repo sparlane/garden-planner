@@ -101,6 +101,12 @@ class ManualTaskSerializer(serializers.Serializer):
         if recurrence and recurrence.get('frequency') not in {
                 WorkTaskRule.Frequency.DAILY, WorkTaskRule.Frequency.WEEKLY}:
             raise serializers.ValidationError({'recurrence': 'Choose daily or weekly recurrence.'})
+        if recurrence.get('frequency') == WorkTaskRule.Frequency.WEEKLY:
+            weekdays = recurrence.get('weekdays', [])
+            if not weekdays or any(day not in range(7) for day in weekdays):
+                raise serializers.ValidationError({
+                    'recurrence': 'Weekly recurrence requires weekdays from 0 through 6.',
+                })
         return attrs
 
 
@@ -159,6 +165,20 @@ def _in_view(task, view, workspace, now):
     return task.due_start < day_end and task.due_end >= day_start
 
 
+def _has_target(task, target_type, object_id):
+    """Match projected or persisted concrete links without trusting snapshots."""
+    if isinstance(task, ProjectedTask):
+        return any(
+            link.target._meta.model_name == target_type and link.target.pk == object_id
+            for link in task.targets
+        )
+    return task.links.filter(
+        role=WorkTaskLink.Role.TARGET,
+        content_type__model=target_type,
+        object_id=object_id,
+    ).exists()
+
+
 class NurseryWorkMixin(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin):
     required_workspace_modes = (Workspace.Mode.NURSERY,)
 
@@ -190,6 +210,10 @@ class WorkTaskViewSet(NurseryWorkMixin, viewsets.GenericViewSet):
         assignee = request.query_params.get('assignee')
         if assignee:
             rows = [row for row in rows if row.assignee and str(row.assignee.pk) == assignee]
+        for parameter, target_type in (('batch', 'productionbatch'), ('location', 'location')):
+            value = request.query_params.get(parameter)
+            if value and value.isdigit():
+                rows = [row for row in rows if _has_target(row, target_type, int(value))]
         rows.sort(key=lambda row: (row.due_end, -row.priority, row.key))
         return Response([
             _projected_data(row) if isinstance(row, ProjectedTask) else WorkTaskSerializer(row).data

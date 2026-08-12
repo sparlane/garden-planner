@@ -30,6 +30,7 @@ import { CohortDetailView, CohortRegisterView } from './plantings/cohorts.js'
 import { GrowthCatalogsView } from './plantings/growth_catalogs.js'
 import { ProductionPlanningView } from './plantings/production_planning.js'
 import { LabelsView, ScannerView } from './labels.js'
+import { WorkQueueView } from './work.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -157,6 +158,14 @@ function FrontEndPage() {
         <Route path="/labels" element={<LabelsView />} />
         <Route path="/scan" element={<ScannerView />} />
         <Route path="/scan/:code" element={<ScannerView />} />
+        <Route
+          path="/work"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <WorkQueueView />
+            </WorkspaceModeRoute>
+          }
+        />
         <Route
           path="/settings"
           element={
