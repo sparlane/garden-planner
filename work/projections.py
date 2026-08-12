@@ -13,13 +13,19 @@ from django.utils import timezone
 
 from plantings.growth import current_growth
 from plantings.models import (
+    GardenRowDirectSowPlanting,
+    GardenSquareDirectSowPlanting,
+    GardenSquareTransplant,
     NurseryPlanMilestone,
     NurseryProductionPlan,
     PlantCohort,
     ProductionBatch,
     SeedTrayPlanting,
     SpecificPlant,
+    SpecificPlantLocation,
 )
+from plants.metadata import variety_days
+from plants.models import MaturityBasis
 
 from .models import WorkTask, WorkTaskRule
 
@@ -85,10 +91,7 @@ def next_recurrence(workspace, after, frequency, interval=1, weekdays=()):
 
 
 def _metadata_days(variety, prefix):
-    minimum = getattr(variety, f'{prefix}_days_min')
-    maximum = getattr(variety, f'{prefix}_days_max')
-    plant = variety.plant
-    return minimum or getattr(plant, f'{prefix}_days_min'), maximum or getattr(plant, f'{prefix}_days_max')
+    return variety_days(variety, prefix)
 
 
 def _window(rule, start_day, end_day=None):
@@ -136,6 +139,8 @@ def _sowing_tasks(rule, maturity=False):
     tasks = []
     for sowing in rows:
         variety = sowing.batch.variety
+        if maturity and variety.effective_maturity_basis != MaturityBasis.SEED:
+            continue
         minimum, maximum = _metadata_days(variety, prefix)
         if minimum is None or maximum is None or not _allows(rule, variety=variety):
             continue
@@ -149,6 +154,136 @@ def _sowing_tasks(rule, maturity=False):
             targets, {'sowing': sowing.pk, 'planted': sowing.planted.isoformat()},
         ))
     return [task for task in tasks if task]
+
+
+def _direct_sow_maturity_tasks(rule):
+    """Project direct garden sowings from their sowing dates in every case."""
+    tasks = []
+    sources = (
+        (GardenRowDirectSowPlanting, 'row'),
+        (GardenSquareDirectSowPlanting, 'square'),
+    )
+    for model, label in sources:
+        rows = model.objects.filter(
+            workspace=rule.workspace,
+            removed=False,
+        ).select_related('batch__variety__plant', 'location')
+        for sowing in rows:
+            variety = sowing.batch.variety
+            minimum, maximum = _metadata_days(variety, 'maturity')
+            if minimum is None or maximum is None or not _allows(rule, variety=variety):
+                continue
+            planted = sowing.planted.astimezone(
+                ZoneInfo(rule.workspace.timezone)
+            ).date()
+            tasks.append(_source_task(
+                rule,
+                f'maturity:direct-{label}:{sowing.pk}',
+                f'Harvest review: {variety}',
+                planted + timedelta(days=minimum),
+                planted + timedelta(days=maximum),
+                [TargetLink(sowing, f'Direct sowing {sowing.pk}')],
+                {
+                    'sowing': sowing.pk,
+                    'planted': sowing.planted.isoformat(),
+                    'maturity_basis': MaturityBasis.SEED,
+                },
+            ))
+    return [task for task in tasks if task]
+
+
+def _transplant_maturity_tasks(rule):
+    """Project transplant-based maturity only from active garden-square placements."""
+    tasks = []
+    represented_sowings = set(
+        SpecificPlantLocation.objects.filter(
+            specific_plant__workspace=rule.workspace,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+        ).values_list(
+            'specific_plant__cell_planting__seed_tray_planting_id', flat=True,
+        )
+    )
+    aggregate_rows = GardenSquareTransplant.objects.filter(
+        workspace=rule.workspace,
+        removed=False,
+    ).exclude(
+        original_planting_id__in=represented_sowings,
+    ).select_related(
+        'original_planting__batch__variety__plant', 'location',
+    )
+    for transplant in aggregate_rows:
+        variety = transplant.original_planting.batch.variety
+        minimum, maximum = _metadata_days(variety, 'maturity')
+        if not all((
+            variety.effective_maturity_basis == MaturityBasis.TRANSPLANTING,
+            minimum is not None,
+            maximum is not None,
+            _allows(rule, variety=variety),
+        )):
+            continue
+        planted_out = transplant.transplanted.astimezone(
+            ZoneInfo(rule.workspace.timezone)
+        ).date()
+        tasks.append(_source_task(
+            rule,
+            f'maturity:transplant:{transplant.pk}',
+            f'Harvest review: {variety}',
+            planted_out + timedelta(days=minimum),
+            planted_out + timedelta(days=maximum),
+            [TargetLink(transplant, f'Transplant {transplant.pk}')],
+            {
+                'transplant': transplant.pk,
+                'transplanted': transplant.transplanted.isoformat(),
+                'maturity_basis': MaturityBasis.TRANSPLANTING,
+            },
+        ))
+
+    individual_rows = SpecificPlantLocation.objects.filter(
+        specific_plant__workspace=rule.workspace,
+        location_type=SpecificPlantLocation.GARDEN_SQUARE,
+        ended__isnull=True,
+    ).select_related(
+        'specific_plant__batch__variety__plant', 'garden_square',
+    )
+    for location in individual_rows:
+        variety = location.specific_plant.batch.variety
+        minimum, maximum = _metadata_days(variety, 'maturity')
+        if not all((
+            variety.effective_maturity_basis == MaturityBasis.TRANSPLANTING,
+            minimum is not None,
+            maximum is not None,
+            _allows(rule, variety=variety),
+        )):
+            continue
+        planted_out = location.started.astimezone(
+            ZoneInfo(rule.workspace.timezone)
+        ).date()
+        plant = location.specific_plant
+        tasks.append(_source_task(
+            rule,
+            f'maturity:plant:{plant.pk}',
+            f'Harvest review: {variety}',
+            planted_out + timedelta(days=minimum),
+            planted_out + timedelta(days=maximum),
+            [TargetLink(
+                plant, f'Plant {plant.pk}', f'/plantings/plants/{plant.pk}',
+            )],
+            {
+                'plant': plant.pk,
+                'transplanted': location.started.isoformat(),
+                'maturity_basis': MaturityBasis.TRANSPLANTING,
+            },
+        ))
+    return [task for task in tasks if task]
+
+
+def _maturity_tasks(rule):
+    """Combine maturity projections for sowings and actual transplants."""
+    return [
+        *_sowing_tasks(rule, maturity=True),
+        *_direct_sow_maturity_tasks(rule),
+        *_transplant_maturity_tasks(rule),
+    ]
 
 
 def _milestone_tasks(rule):
@@ -277,7 +412,7 @@ def _calendar_tasks(rule, today):
 
 PROJECTORS = {
     WorkTaskRule.Trigger.GERMINATION: _sowing_tasks,
-    WorkTaskRule.Trigger.MATURITY: lambda rule: _sowing_tasks(rule, maturity=True),
+    WorkTaskRule.Trigger.MATURITY: _maturity_tasks,
     WorkTaskRule.Trigger.PLAN_MILESTONE: _milestone_tasks,
     WorkTaskRule.Trigger.STAGE_AGE: _growth_tasks,
     WorkTaskRule.Trigger.EXPECTED_READY: lambda rule: _growth_tasks(rule, expected_ready=True),
