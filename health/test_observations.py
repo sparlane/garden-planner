@@ -3,16 +3,20 @@
 # Test names describe behavior directly.
 # pylint: disable=missing-function-docstring
 
+from uuid import uuid4
+
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 
-from plantings.models import PlantCohort
+from plantings.models import PlantCohort, SpecificPlantLocation
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_seed_tray_cell_planting,
     make_seed_tray,
     make_seed_tray_generation,
     make_seed_tray_planting,
+    make_location,
     make_specific_plant,
     make_specific_plant_location,
 )
@@ -216,3 +220,48 @@ class HealthObservationRestTests(RESTContractTestCase):
         self.workspace.save()
         response = self.client.get('/health/observation-types/')
         self.assertEqual(response.status_code, 403)
+
+    def test_active_alerts_surface_in_location_and_task_views(self):
+        location = make_location(workspace=self.workspace)
+        plant = make_specific_plant(workspace=self.workspace)
+        make_specific_plant_location(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=location,
+        )
+        scopes = [{'type': 'plant', 'id': plant.pk}]
+        preview = self.client.post(
+            '/health/observations/preview/', {'scopes': scopes}, format='json',
+        )
+        observation_type = HealthObservationType.objects.get(
+            workspace=self.workspace, code='pest-signs',
+        )
+        observation = self.client.post('/health/observations/', {
+            'scopes': scopes,
+            'reviewed_digest': preview.data['digest'],
+            'observation_type': observation_type.pk,
+            'severity': 'high',
+            'follow_up_due_at': timezone.now().isoformat(),
+        }, format='json')
+        constrained = self.client.post(
+            f"/health/observations/{observation.data['pk']}/quarantine/",
+            {
+                'idempotency_key': str(uuid4()),
+                'reason': 'Keep away from healthy plants.',
+            },
+            format='json',
+        )
+        self.assertEqual(constrained.status_code, 201, constrained.data)
+        occupancy = self.client.get(f'/locations/{location.pk}/occupancy/')
+        self.assertEqual(occupancy.data['active_health_alerts'], 1)
+        queue = self.client.get('/work/tasks/')
+        health_task = next(
+            row for row in queue.data
+            if row['source_snapshot'].get('health_observation') == observation.data['pk']
+        )
+        plant_link = next(
+            row for row in health_task['links']
+            if row['target_type'] == 'specificplant'
+        )
+        self.assertEqual(plant_link['active_health_alerts'], 1)

@@ -56,10 +56,19 @@ class HistorySerializer(serializers.ModelSerializer):
 
 class LinkSerializer(serializers.ModelSerializer):
     target_type = serializers.CharField(source='content_type.model', read_only=True)
+    active_health_alerts = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkTaskLink
-        fields = ['role', 'target_type', 'object_id', 'label', 'url', 'snapshot']
+        fields = [
+            'role', 'target_type', 'object_id', 'label', 'url', 'snapshot',
+            'active_health_alerts',
+        ]
+
+    def get_active_health_alerts(self, link):
+        from health.availability import target_alert_count  # pylint: disable=import-outside-toplevel
+
+        return target_alert_count(link.target)
 
 
 class WorkTaskSerializer(serializers.ModelSerializer):
@@ -134,9 +143,16 @@ def _projected_data(task):
             'target_type': row.target._meta.model_name,
             'object_id': row.target.pk, 'label': row.label, 'url': row.url,
             'snapshot': {},
+            'active_health_alerts': _target_health_alert_count(row.target),
         } for row in task.targets],
         'history': [], 'created': None, 'updated': None,
     }
+
+
+def _target_health_alert_count(target):
+    from health.availability import target_alert_count  # pylint: disable=import-outside-toplevel
+
+    return target_alert_count(target)
 
 
 def _effective_status(task, now):

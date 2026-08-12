@@ -251,6 +251,11 @@ function OccupancyPanel({ location }: OccupancyPanelProps) {
     <Card>
       <Card.Header>What is standing in {location.full_name}</Card.Header>
       <Card.Body>
+        {occupancy.active_health_alerts > 0 && (
+          <Alert variant="warning">
+            {occupancy.active_health_alerts} active health alert{occupancy.active_health_alerts === 1 ? '' : 's'} affects stock here or below.
+          </Alert>
+        )}
         <Table size="sm" className="mb-0">
           <thead>
             <tr>
