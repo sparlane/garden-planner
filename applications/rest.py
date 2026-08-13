@@ -43,6 +43,11 @@ from .services import (
 
 TargetType = InputApplicationTarget.TargetType
 
+SEED_TRAY_INPUT_CATEGORIES = {
+    InventoryItem.Category.GROWING_MEDIA,
+    InventoryItem.Category.FERTILIZER_TREATMENT,
+}
+
 #: How each target type is reached, and the lookup that keeps it in workspace.
 #: A tray cell is not workspace owned in its own right, so it is scoped through
 #: the tray that holds it.
@@ -252,6 +257,24 @@ class ApplicationLineInputSerializer(CurrentWorkspaceSerializerMixin, ActionSeri
                 'Seed stock must be consumed by recording a sowing.'
             )
         return item
+
+    def validate(self, attrs):
+        """Only accept categories that can physically be applied to tray cells."""
+        attrs = super().validate(attrs)
+        targets_tray = attrs.get('tray') is not None or any(
+            target['target_type'] == TargetType.SEED_TRAY_CELL
+            for target in attrs.get('targets', [])
+        )
+        item = attrs['item']
+        invalid_tray_item = targets_tray and item.category not in SEED_TRAY_INPUT_CATEGORIES
+        if invalid_tray_item:
+            raise serializers.ValidationError({
+                'item': (
+                    'Only growing media or fertilizer/treatment can be applied '
+                    'to seed trays.'
+                ),
+            })
+        return attrs
 
 
 class ApplicationDraftSerializer(CurrentWorkspaceSerializerMixin, ActionSerializer):

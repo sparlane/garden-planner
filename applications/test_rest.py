@@ -125,6 +125,78 @@ class ApplicationContractTests(ApplicationRESTTestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn('Seed stock must be consumed', str(response.data))
 
+    def test_treatment_can_be_applied_to_a_whole_seed_tray(self):
+        """Treatments are valid tray inputs alongside growing media."""
+        treatment = make_inventory_item(
+            category=InventoryItem.Category.FERTILIZER_TREATMENT,
+        )
+        treatment_lot = make_stock_lot(
+            item=treatment,
+            location=self.location,
+            quantity='50',
+        )
+
+        response = self.client.post(
+            URL,
+            self.payload(line={
+                'item': treatment.pk,
+                'lot': treatment_lot.pk,
+                'targets': [],
+                'tray': self.tray.pk,
+            }),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_non_input_categories_cannot_be_applied_to_a_seed_tray(self):
+        """Containers and unrelated stock do not become tray-cell inputs."""
+        rejected_categories = (
+            InventoryItem.Category.LABEL,
+            InventoryItem.Category.PACKAGING,
+            InventoryItem.Category.POT_CONTAINER,
+            InventoryItem.Category.TRAY,
+            InventoryItem.Category.OTHER,
+        )
+        for category in rejected_categories:
+            with self.subTest(category=category):
+                item = make_inventory_item(category=category)
+                lot = make_stock_lot(
+                    item=item,
+                    location=self.location,
+                    quantity='50',
+                )
+                response = self.client.post(
+                    URL,
+                    self.payload(line={
+                        'item': item.pk,
+                        'lot': lot.pk,
+                        'targets': [],
+                        'tray': self.tray.pk,
+                    }),
+                    format='json',
+                )
+
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertIn('Only growing media', str(response.data))
+
+    def test_category_rule_also_applies_to_explicit_tray_cells(self):
+        """Callers cannot bypass the tray shortcut rule with cell targets."""
+        pot = make_inventory_item(category=InventoryItem.Category.POT_CONTAINER)
+        pot_lot = make_stock_lot(item=pot, location=self.location, quantity='50')
+
+        response = self.client.post(
+            URL,
+            self.payload(line={
+                'item': pot.pk,
+                'lot': pot_lot.pk,
+            }),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Only growing media', str(response.data))
+
     def test_a_draft_can_be_retrieved(self):
         """A stored draft reads back the same way it was created."""
         created = self.create_draft()
