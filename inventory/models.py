@@ -1031,6 +1031,8 @@ class StocktakeTarget(models.Model):
     expected_state = models.CharField(max_length=32, blank=True, default='')
     expected_snapshot = models.JSONField(default=dict)
     source_revision = models.CharField(max_length=64)
+    review_revision = models.CharField(max_length=64, blank=True, default='')
+    review_snapshot = models.JSONField(default=dict, blank=True)
     unexpected = models.BooleanField(default=False)
     count_status = models.CharField(
         max_length=16, choices=CountStatus.choices, default=CountStatus.PENDING,
@@ -1167,6 +1169,39 @@ class StocktakeAttachment(models.Model):
                 name='inventory_stocktake_attachment_url_unique',
             ),
         ]
+
+
+class StocktakeReconciliation(models.Model):
+    """An immutable link to one authoritative correction or reversal."""
+
+    class Phase(models.TextChoices):
+        """Whether the result applies or compensates for a stocktake."""
+
+        POST = 'post', 'Posted correction'
+        REVERSE = 'reverse', 'Reversal correction'
+
+    target = models.ForeignKey(
+        StocktakeTarget, on_delete=models.PROTECT, related_name='reconciliations',
+    )
+    phase = models.CharField(max_length=8, choices=Phase.choices)
+    domain = models.CharField(max_length=32)
+    result_app = models.CharField(max_length=64)
+    result_model = models.CharField(max_length=64)
+    result_object_id = models.PositiveBigIntegerField()
+    before = models.JSONField(default=dict)
+    after = models.JSONField(default=dict)
+    reverses = models.ForeignKey(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reversed_by',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
 
 
 class StocktakeLine(models.Model):

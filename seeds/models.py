@@ -135,6 +135,13 @@ class SeedPacketQuantityReconciliation(WorkspaceOwnedModel):
         blank=True,
         related_name='seed_packet_reconciliation',
     )
+    reversal_of = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='reversal',
+    )
     reason = models.TextField()
     recorded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -152,8 +159,10 @@ class SeedPacketQuantityReconciliation(WorkspaceOwnedModel):
         """Keep counts numeric and inside the packet's workspace."""
         super().clean()
         errors = {}
-        if self.quantity_certainty == QuantityCertainty.UNKNOWN:
+        if self.quantity_certainty == QuantityCertainty.UNKNOWN and not self.reversal_of_id:
             errors['quantity_certainty'] = 'A physical count cannot be unknown.'
+        if self.reversal_of_id and self.reversal_of.packet_id != self.packet_id:
+            errors['reversal_of'] = 'A reversal must restore the same packet.'
         if self.packet_id and self.packet.workspace_id != self.workspace_id:
             errors['packet'] = 'The packet belongs to a different workspace.'
         if self.movement_id and self.movement.workspace_id != self.workspace_id:

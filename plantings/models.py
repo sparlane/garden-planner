@@ -1299,6 +1299,7 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
         TRANSPLANTED = 'transplanted', 'Transplanted or planted out'
         RETAINED = 'retained', 'Retained'
         FAILED = 'failed', 'Failed'
+        LOST = 'lost', 'Lost during stocktake'
         CULLED = 'culled', 'Culled'
         DONATED = 'donated', 'Donated'
         HARVEST_FINISHED = 'harvest_finished', 'Harvest finished'

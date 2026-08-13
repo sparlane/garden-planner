@@ -22,9 +22,11 @@ from .stocktakes import (
     approve_stocktake,
     begin_review,
     open_stocktake,
+    post_reviewed_stocktake,
     record_count,
     request_recount,
     resolve_identity_target,
+    reverse_reviewed_stocktake,
     resolve_variance,
     scope_rows,
     transition_stocktake,
@@ -150,7 +152,7 @@ def _count_data(count):
 
 
 def _variance_data(variance):
-    return {
+    data = {
         'pk': variance.pk, 'kind': variance.kind,
         'expected': variance.expected, 'observed': variance.observed,
         'source_changed': variance.source_changed,
@@ -163,6 +165,16 @@ def _variance_data(variance):
         'resolved_by': variance.resolved_by_id,
         'resolved_at': variance.resolved_at,
     }
+    unit_cost = variance.target.expected_snapshot.get('unit_cost')
+    if variance.kind == StocktakeVariance.Kind.QUANTITY and unit_cost is not None:
+        expected = Decimal(str(variance.expected.get('quantity') or '0'))
+        observed = Decimal(str(variance.observed.get('quantity') or '0'))
+        data['variance_value'] = str((abs(expected - observed) * Decimal(unit_cost)).quantize(Decimal('0.0001')))
+        data['currency'] = variance.target.expected_snapshot.get('currency')
+    else:
+        data['variance_value'] = None
+        data['currency'] = variance.target.expected_snapshot.get('currency')
+    return data
 
 
 def _target_data(target, reveal_expected):
@@ -184,6 +196,18 @@ def _target_data(target, reveal_expected):
         'accepted_count': _count_data(target.accepted_count),
         'counts': [_count_data(count) for count in target.counts.all()],
         'variances': [_variance_data(row) for row in target.variances.all()],
+        'reconciliations': [
+            {
+                'pk': row.pk, 'phase': row.phase, 'domain': row.domain,
+                'result': {
+                    'app': row.result_app, 'model': row.result_model,
+                    'object_id': row.result_object_id,
+                },
+                'before': row.before, 'after': row.after,
+                'reverses': row.reverses_id,
+            }
+            for row in target.reconciliations.all()
+        ],
     }
 
 
@@ -233,6 +257,7 @@ class NurseryStocktakeViewSet(
             'created_by', 'reviewed_by', 'approved_by', 'posted_by', 'reversed_by',
         ).prefetch_related(
             'targets__accepted_count', 'targets__counts', 'targets__variances',
+            'targets__reconciliations',
             'attachments',
         )
 
@@ -387,25 +412,30 @@ class NurseryStocktakeViewSet(
 
     @action(detail=True, methods=['post'])
     def post(self, request, pk=None):  # pylint: disable=unused-argument
-        """Retain the legacy lot-only posting action during the transition."""
+        """Atomically post a reviewed session or a legacy lot document."""
         stocktake = self._get(pk)
         if stocktake.targets.exists():
-            raise serializers.ValidationError({'status': 'Approve this session before posting.'})
-        stocktake, _movements = _run(post_stocktake, stocktake, request.user)
+            stocktake = _run(post_reviewed_stocktake, stocktake, request.user)
+        else:
+            stocktake, _movements = _run(post_stocktake, stocktake, request.user)
         return Response(stocktake_data(stocktake))
 
     @action(detail=True, methods=['post'])
     def reverse(self, request, pk=None):
-        """Reverse a legacy lot-only stocktake through its existing service."""
+        """Atomically compensate a reviewed session or legacy lot document."""
         serializer = ReasonSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         stocktake = self._get(pk)
         if stocktake.targets.exists():
-            raise serializers.ValidationError({'status': 'Use reviewed-session reversal.'})
-        stocktake, _movements = _run(
-            reverse_stocktake, stocktake, request.user,
-            serializer.validated_data['reason'],
-        )
+            stocktake = _run(
+                reverse_reviewed_stocktake, stocktake, request.user,
+                serializer.validated_data['reason'],
+            )
+        else:
+            stocktake, _movements = _run(
+                reverse_stocktake, stocktake, request.user,
+                serializer.validated_data['reason'],
+            )
         return Response(stocktake_data(stocktake))
 
     @action(detail=True, methods=['post'], url_path='attachments')
