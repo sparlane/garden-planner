@@ -44,6 +44,7 @@ import { GardenSquare } from '../types/garden'
 import { getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
 import { queryClient, queryKeys } from '../query'
+import { InputApplicationForm } from '../applications/application_form'
 
 interface SeedTrayDetailsProps {
   seedTrayPk: number
@@ -531,6 +532,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const [inventoryReason, setInventoryReason] = React.useState('')
   const [inventoryCost, setInventoryCost] = React.useState('0.0000')
   const [cleaning, setCleaning] = React.useState(false)
+  const [applyingFillInput, setApplyingFillInput] = React.useState(false)
   const seedTrayModelsQuery = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
@@ -786,8 +788,17 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   }
 
   async function handleFillTray() {
-    const notes = globalThis.prompt('What was the tray filled with? (optional)') ?? ''
-    await fillMutation.mutateAsync({ notes })
+    await fillMutation.mutateAsync({ notes: '' })
+    setApplyingFillInput(true)
+  }
+
+  function handleFillInputPosted() {
+    setApplyingFillInput(false)
+    if (!activeGeneration) return
+    void Promise.all([
+      cache.invalidateQueries({ queryKey: queryKeys.seedTrays.generationContents(activeGeneration.pk) }),
+      cache.invalidateQueries({ queryKey: queryKeys.seedTrays.generationCost(activeGeneration.pk) })
+    ])
   }
 
   async function handleReviewGeneration(generation: SeedTrayGeneration) {
@@ -890,13 +901,10 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       <Card className="mb-3">
         <Card.Body>
           <Card.Title>Inputs</Card.Title>
-          <p className="mb-2">
-            Media and treatments applied to this tray are recorded against its cells and attributed to the fill those cells are serving. This screen is a separate bundle, so it
-            links to the applications page rather than embedding the form.
-          </p>
+          <p className="mb-2">Media and treatments applied to this tray are recorded against its cells and attributed to the fill those cells are serving.</p>
           {activeGeneration ? (
-            <Button href={`/#/applications?tray=${seedTray.pk}`} variant="outline-primary">
-              Apply an input to {activeGeneration.code}
+            <Button variant="outline-primary" onClick={() => setApplyingFillInput((shown) => !shown)}>
+              {applyingFillInput ? 'Hide input form' : `Apply an input to ${activeGeneration.code}`}
             </Button>
           ) : (
             <Alert variant="secondary" className="mb-0">
@@ -905,6 +913,14 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           )}
         </Card.Body>
       </Card>
+      {activeGeneration && applyingFillInput && (
+        <div>
+          <InputApplicationForm targets={[]} tray={seedTray.pk} title={`Apply the fill input to ${activeGeneration.code}`} onPosted={handleFillInputPosted} />
+          <Button className="mb-4" variant="outline-secondary" onClick={() => setApplyingFillInput(false)}>
+            Skip for now
+          </Button>
+        </div>
+      )}
       {activeGeneration && generationCostQuery.data && (
         <Card className="mb-3">
           <Card.Body>
