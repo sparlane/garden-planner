@@ -907,6 +907,10 @@ class Stocktake(WorkspaceOwnedModel):
         """Stocktake lifecycle states."""
 
         DRAFT = 'draft', 'Draft'
+        OPEN = 'open', 'Open'
+        PAUSED = 'paused', 'Paused'
+        REVIEW = 'review', 'In review'
+        APPROVED = 'approved', 'Approved'
         POSTED = 'posted', 'Posted'
         REVERSED = 'reversed', 'Reversed'
 
@@ -918,6 +922,9 @@ class Stocktake(WorkspaceOwnedModel):
     )
     counted_at = models.DateTimeField()
     notes = models.TextField(blank=True, default='')
+    blind = models.BooleanField(default=True)
+    scope = models.JSONField(default=dict, blank=True)
+    scope_digest = models.CharField(max_length=64, blank=True, default='')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -926,6 +933,40 @@ class Stocktake(WorkspaceOwnedModel):
         related_name='+',
     )
     posted_at = models.DateTimeField(null=True, blank=True, editable=False)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='+',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, editable=False)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='+',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True, editable=False)
+    posted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='+',
+    )
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='+',
+    )
     reversed_at = models.DateTimeField(null=True, blank=True, editable=False)
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
@@ -937,8 +978,8 @@ class Stocktake(WorkspaceOwnedModel):
         return f'Stocktake {self.pk or "draft"}'
 
     def save(self, *args, **kwargs):
-        if not self.pk and self.status != self.Status.DRAFT:
-            raise ValidationError('Stocktakes must be created as drafts.')
+        if not self.pk and self.status not in {self.Status.DRAFT, self.Status.OPEN}:
+            raise ValidationError('Stocktakes must be created as drafts or open sessions.')
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).only('status').first()
             if previous and previous.status != self.Status.DRAFT:
@@ -947,9 +988,185 @@ class Stocktake(WorkspaceOwnedModel):
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        if self.status != self.Status.DRAFT:
-            raise ValidationError('Only draft stocktakes can be deleted.')
+        if self.status not in {self.Status.DRAFT, self.Status.OPEN, self.Status.PAUSED}:
+            raise ValidationError('Only unreviewed stocktakes can be deleted.')
         return super().delete(*args, **kwargs)
+
+
+class StocktakeTarget(models.Model):
+    """One frozen quantity or identity expected inside a stocktake scope."""
+
+    class TargetType(models.TextChoices):
+        """Physical domains that participate in a mixed stocktake."""
+
+        LOT = 'lot', 'Consumable lot'
+        SEED_PACKET = 'seed_packet', 'Seed packet'
+        TRAY = 'tray', 'Serialized tray'
+        COHORT = 'cohort', 'Plant cohort'
+        PLANT = 'plant', 'Individual plant'
+
+    class CountStatus(models.TextChoices):
+        """Whether this frozen target still needs physical evidence."""
+
+        PENDING = 'pending', 'Pending'
+        COUNTED = 'counted', 'Counted'
+        RECOUNT = 'recount', 'Recount requested'
+
+    stocktake = models.ForeignKey(
+        Stocktake, on_delete=models.CASCADE, related_name='targets',
+    )
+    target_type = models.CharField(max_length=16, choices=TargetType.choices)
+    target_key = models.CharField(max_length=96)
+    target_object_id = models.PositiveBigIntegerField(null=True, blank=True)
+    display = models.CharField(max_length=255)
+    expected_location = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
+    expected_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+    )
+    expected_state = models.CharField(max_length=32, blank=True, default='')
+    expected_snapshot = models.JSONField(default=dict)
+    source_revision = models.CharField(max_length=64)
+    unexpected = models.BooleanField(default=False)
+    count_status = models.CharField(
+        max_length=16, choices=CountStatus.choices, default=CountStatus.PENDING,
+    )
+    accepted_count = models.OneToOneField(
+        'StocktakeCount', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='accepted_for',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['target_type', 'display', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['stocktake', 'target_key'],
+                name='inventory_stocktake_target_key_unique',
+            ),
+        ]
+
+
+class StocktakeCount(models.Model):
+    """An immutable blind count attempt retained across recounts."""
+
+    target = models.ForeignKey(
+        StocktakeTarget, on_delete=models.PROTECT, related_name='counts',
+    )
+    counted_quantity = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    observed_location = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
+    observed_state = models.CharField(max_length=32, blank=True, default='')
+    code_snapshot = models.CharField(max_length=64, blank=True, default='')
+    resolved_identity = models.JSONField(default=dict, blank=True)
+    notes = models.TextField(blank=True, default='')
+    counter = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Stocktake counts are immutable.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Stocktake counts cannot be deleted.')
+
+
+class StocktakeVariance(models.Model):
+    """A reviewable difference between frozen scope and physical evidence."""
+
+    class Kind(models.TextChoices):
+        """Review classifications shared by quantity and identity counts."""
+
+        QUANTITY = 'quantity', 'Quantity'
+        MISSING = 'missing', 'Missing'
+        EXCESS = 'excess', 'Excess'
+        MISPLACED = 'misplaced', 'Misplaced'
+        STATE = 'state_mismatch', 'State mismatch'
+
+    class ConflictResolution(models.TextChoices):
+        """Explicit decisions for facts that changed after the snapshot."""
+
+        NONE = '', 'No conflict'
+        ACCEPTED = 'accepted', 'Accepted current conflict'
+        REFRESHED = 'refreshed', 'Refreshed snapshot'
+        RECOUNT = 'recount', 'Recount requested'
+
+    target = models.ForeignKey(
+        StocktakeTarget, on_delete=models.PROTECT, related_name='variances',
+    )
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    expected = models.JSONField(default=dict)
+    observed = models.JSONField(default=dict)
+    source_changed = models.BooleanField(default=False)
+    current_revision = models.CharField(max_length=64, blank=True, default='')
+    conflict_resolution = models.CharField(
+        max_length=12, choices=ConflictResolution.choices, blank=True, default='',
+    )
+    conflict_reason = models.TextField(blank=True, default='')
+    resolution_action = models.CharField(max_length=32, blank=True, default='')
+    resolution_payload = models.JSONField(default=dict, blank=True)
+    resolution_reason = models.TextField(blank=True, default='')
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='+',
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['target_id', 'kind', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['target', 'kind'],
+                name='inventory_stocktake_variance_kind_unique',
+            ),
+        ]
+
+
+class StocktakeAttachment(models.Model):
+    """An externally hosted photo or document retained with count evidence."""
+
+    stocktake = models.ForeignKey(
+        Stocktake, on_delete=models.PROTECT, related_name='attachments',
+    )
+    target = models.ForeignKey(
+        StocktakeTarget, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='attachments',
+    )
+    url = models.URLField(max_length=2048)
+    label = models.CharField(max_length=255, blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['stocktake', 'url'],
+                name='inventory_stocktake_attachment_url_unique',
+            ),
+        ]
 
 
 class StocktakeLine(models.Model):
