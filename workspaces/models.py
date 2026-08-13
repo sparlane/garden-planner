@@ -99,6 +99,12 @@ class Workspace(models.Model):
             'reason, so a rounding-sized drift never does. Zero disables it.'
         ),
     )
+    stocktake_two_person_required = models.BooleanField(
+        default=False,
+        help_text=(
+            'Require a stocktake reviewer to be different from every counter.'
+        ),
+    )
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 
