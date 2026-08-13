@@ -39,7 +39,9 @@ const queryKeys = {
     conversions: (itemPk: number) => ['inventory', 'conversions', itemPk] as const,
     receiptsAll: ['inventory', 'receipts'] as const,
     receipts: (status: string, seedPacket: string) => ['inventory', 'receipts', status, seedPacket] as const,
-    balances: (itemPk: number | '') => ['inventory', 'balances', itemPk] as const
+    balances: (itemPk: number | '') => ['inventory', 'balances', itemPk] as const,
+    stocktakes: ['inventory', 'stocktakes'] as const,
+    stocktake: (pk: number) => ['inventory', 'stocktakes', pk] as const
   },
   garden: {
     all: ['garden'] as const,

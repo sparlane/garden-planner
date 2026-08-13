@@ -3,6 +3,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -72,6 +73,7 @@ class StocktakeCreateSerializer(serializers.Serializer):  # pylint: disable=abst
     scope = ScopeSerializer()
     blind = serializers.BooleanField(required=False, default=True)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
+    work_task = serializers.IntegerField(min_value=1, required=False)
 
 
 class CountSerializer(CurrentWorkspaceSerializerMixin, serializers.Serializer):  # pylint: disable=abstract-method
@@ -282,6 +284,7 @@ class NurseryStocktakeViewSet(
         """Return one blind count sheet or revealed review document."""
         return Response(stocktake_data(self._get(pk)))
 
+    @transaction.atomic
     def create(self, request):
         """Resolve and freeze scope immediately when a session opens."""
         if 'lines' in request.data:
@@ -294,10 +297,29 @@ class NurseryStocktakeViewSet(
             return Response(stocktake_data(stocktake), status=status.HTTP_201_CREATED)
         serializer = StocktakeCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        work_task_id = values.pop('work_task', None)
+        task = None
+        if work_task_id:
+            from work.models import WorkTask  # pylint: disable=import-outside-toplevel
+            try:
+                task = WorkTask.objects.get(pk=work_task_id, workspace=self.get_current_workspace())
+            except WorkTask.DoesNotExist as exc:
+                raise serializers.ValidationError({'work_task': 'Work task not found.'}) from exc
         stocktake = _run(
             open_stocktake, self.get_current_workspace(), request.user,
-            **serializer.validated_data,
+            **values,
         )
+        if task:
+            from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
+            from work.models import WorkTaskLink  # pylint: disable=import-outside-toplevel
+            WorkTaskLink.objects.create(
+                task=task, role=WorkTaskLink.Role.RESULT,
+                content_type=ContentType.objects.get_for_model(stocktake),
+                object_id=stocktake.pk, label=f'Stocktake {stocktake.pk}',
+                url=f'/inventory/stocktakes/{stocktake.pk}',
+                snapshot={'status': stocktake.status, 'scope': stocktake.scope},
+            )
         return Response(stocktake_data(self._get(stocktake.pk)), status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='scope-preview')

@@ -34,7 +34,8 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     timezone: workspace.timezone,
     measurement_system: workspace.measurement_system,
     override_tolerance_percent: workspace.override_tolerance_percent,
-    override_tolerance_floor: workspace.override_tolerance_floor
+    override_tolerance_floor: workspace.override_tolerance_floor,
+    stocktake_two_person_required: workspace.stocktake_two_person_required
   })
   const mutation = useMutation({
     mutationFn: updateWorkspace,
@@ -50,7 +51,8 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       timezone: workspace.timezone,
       measurement_system: workspace.measurement_system,
       override_tolerance_percent: workspace.override_tolerance_percent,
-      override_tolerance_floor: workspace.override_tolerance_floor
+      override_tolerance_floor: workspace.override_tolerance_floor,
+      stocktake_two_person_required: workspace.stocktake_two_person_required
     })
   }, [workspace])
 
@@ -149,6 +151,16 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
             Smallest difference, in an item&apos;s own unit, that can require a reason. Zero disables it, so the percentage alone applies.
           </Form.Text>
         </Form.Group>
+        {form.mode === 'nursery' && (
+          <Form.Check
+            className="mb-3"
+            type="switch"
+            id="stocktake-two-person"
+            label="Require a different reviewer from every stocktake counter"
+            checked={form.stocktake_two_person_required}
+            onChange={(event) => updateField('stocktake_two_person_required', event.target.checked)}
+          />
+        )}
         <Button type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? 'Saving…' : 'Save settings'}
         </Button>

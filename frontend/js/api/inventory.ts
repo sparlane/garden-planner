@@ -8,13 +8,46 @@ import {
   ItemUnitConversionCreate,
   StockReceipt,
   StockReceiptFilters,
-  StockReceiptWrite
+  StockReceiptWrite,
+  Stocktake,
+  StocktakeScope
 } from '../types/inventory'
 import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 const ITEMS_URL = '/inventory/items/'
 const CONVERSIONS_URL = '/inventory/conversions/'
 const RECEIPTS_URL = '/inventory/receipts/'
+const STOCKTAKES_URL = '/inventory/stocktakes/'
+
+function getStocktakes(signal?: AbortSignal): Promise<Array<Stocktake>> {
+  return fetchAsJson<Array<Stocktake>>(STOCKTAKES_URL, signal)
+}
+
+function getStocktake(pk: number, signal?: AbortSignal): Promise<Stocktake> {
+  return fetchAsJson<Stocktake>(`${STOCKTAKES_URL}${pk}/`, signal)
+}
+
+async function createStocktake(scope: StocktakeScope, notes: string): Promise<Stocktake> {
+  const response = await csrfPost(STOCKTAKES_URL, { scope, notes, blind: true })
+  return response.json() as Promise<Stocktake>
+}
+
+async function stocktakeAction(pk: number, action: string, data: object = {}): Promise<Stocktake> {
+  const response = await csrfPost(`${STOCKTAKES_URL}${pk}/${action}/`, data)
+  return response.json() as Promise<Stocktake>
+}
+
+async function countStocktakeTarget(pk: number, target: number, countedQuantity: string, notes: string): Promise<void> {
+  await csrfPost(`${STOCKTAKES_URL}${pk}/count/`, { target, counted_quantity: countedQuantity, notes })
+}
+
+async function scanStocktakeTarget(pk: number, code: string): Promise<void> {
+  await csrfPost(`${STOCKTAKES_URL}${pk}/scan-count/`, { code })
+}
+
+async function resolveStocktakeVariance(pk: number, variance: number, action: string, reason: string, acceptConflict: boolean, payload: object = {}): Promise<void> {
+  await csrfPost(`${STOCKTAKES_URL}${pk}/resolve-variance/`, { variance, action, reason, accept_conflict: acceptConflict, payload })
+}
 
 function getInventoryBalances(item: number, signal?: AbortSignal): Promise<Array<InventoryBalance>> {
   return fetchAsJson<Array<InventoryBalance>>(`/inventory/balances/?item=${item}`, signal)
@@ -104,8 +137,15 @@ export {
   getInventoryUnits,
   getItemUnitConversions,
   getStockReceipts,
+  getStocktake,
+  getStocktakes,
   postStockReceipt,
   reverseStockReceipt,
+  createStocktake,
+  countStocktakeTarget,
+  resolveStocktakeVariance,
+  scanStocktakeTarget,
+  stocktakeAction,
   setInventoryItemActive,
   setItemUnitConversionActive,
   updateStockReceipt
