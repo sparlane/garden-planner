@@ -225,6 +225,7 @@ function ScannerView() {
   const [cameraError, setCameraError] = React.useState('')
   const [scanned, setScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
   const [healthScanned, setHealthScanned] = React.useState<Array<{ type: HealthScopeType; id: number; code: string; display: string }>>([])
+  const [stocktakeCode, setStocktakeCode] = React.useState('')
   const video = React.useRef<HTMLVideoElement>(null)
   const controls = React.useRef<IScannerControls | undefined>(undefined)
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
@@ -250,6 +251,7 @@ function ScannerView() {
           productionbatch: 'batch',
           location: 'location'
         }
+        if (resolved.status === 'active' && resolved.capabilities?.includes('stocktake_count')) setStocktakeCode(resolved.current_code ?? resolved.code ?? '')
         const type = scopes[target.target_type]
         if (type) {
           setHealthScanned((current) =>
@@ -294,6 +296,15 @@ function ScannerView() {
       <h1>Scan labels</h1>
       <Row className="g-3">
         <Col lg={6}>
+          {stocktakeCode && (
+            <Alert variant="info">
+              <strong>Stocktake-ready identity</strong>
+              <div className="font-monospace">{stocktakeCode}</div>
+              <Link to="/inventory/stocktakes">
+                <Button className="mt-2">Open stocktakes</Button>
+              </Link>
+            </Alert>
+          )}
           <Card body>
             <video ref={video} className="scanner-video" muted playsInline />
             <div className="d-flex gap-2 mt-2">

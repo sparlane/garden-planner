@@ -21,6 +21,7 @@ import { WorkspaceModeRoute, WorkspaceSettings } from './workspace.js'
 import { InventoryCatalog } from './inventory.js'
 import { LocationsCatalog } from './locations.js'
 import { InventoryReceiptsView } from './inventory/receipts.js'
+import { StocktakeDetailView, StocktakeListView } from './inventory/stocktakes.js'
 import { InputApplicationsView } from './applications/applications.js'
 import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
@@ -155,6 +156,8 @@ function FrontEndPage() {
         <Route path="/locations" element={<LocationsCatalog />} />
         <Route path="/inventory" element={<InventoryCatalog />} />
         <Route path="/inventory/receipts" element={<InventoryReceiptsView />} />
+        <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
+        <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
         <Route path="/applications" element={<InputApplicationsView />} />
         <Route path="/labels" element={<LabelsView />} />
         <Route path="/scan" element={<ScannerView />} />

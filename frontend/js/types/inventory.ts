@@ -210,6 +210,72 @@ interface StockReceiptFilters {
   seed_packet?: boolean
 }
 
+type StocktakeStatus = 'open' | 'paused' | 'review' | 'approved' | 'posted' | 'reversed'
+type StocktakeTargetType = 'lot' | 'seed_packet' | 'tray' | 'cohort' | 'plant'
+
+interface StocktakeVariance {
+  pk: number
+  kind: 'quantity' | 'missing' | 'excess' | 'misplaced' | 'state_mismatch'
+  expected: Record<string, unknown>
+  observed: Record<string, unknown>
+  source_changed: boolean
+  conflict_resolution: string
+  resolution_action: string
+  resolution_reason: string
+  variance_value: string | null
+  currency: string | null
+}
+
+interface StocktakeCount {
+  pk: number
+  counted_quantity: string | null
+  observed_location: number | null
+  observed_state: string
+  code_snapshot: string
+  notes: string
+  counter: number | null
+  created: string
+}
+
+interface StocktakeTarget {
+  pk: number
+  target_type: StocktakeTargetType
+  target_object_id: number | null
+  display: string
+  expected_location: number | null
+  expected_quantity: string | null
+  expected_state: string
+  unexpected: boolean
+  count_status: 'pending' | 'counted' | 'recount'
+  accepted_count: StocktakeCount | null
+  counts: Array<StocktakeCount>
+  variances: Array<StocktakeVariance>
+  reconciliations: Array<{ pk: number; phase: 'post' | 'reverse'; domain: string; result: { app: string; model: string; object_id: number } }>
+}
+
+interface Stocktake {
+  pk: number
+  status: StocktakeStatus
+  blind: boolean
+  scope: Record<string, unknown>
+  notes: string
+  counted_at: string
+  progress: { counted: number; total: number }
+  targets: Array<StocktakeTarget>
+  attachments: Array<{ pk: number; target: number | null; url: string; label: string }>
+}
+
+interface StocktakeScope {
+  location: number
+  include_descendants?: boolean
+  target_types?: Array<StocktakeTargetType>
+  item?: number
+  category?: InventoryCategory
+  variety?: number
+  stage?: number
+  tray_state?: string
+}
+
 export {
   InventoryBalance,
   InventoryCategory,
@@ -231,6 +297,13 @@ export {
   StockReceiptLineWrite,
   StockReceiptStatus,
   StockReceiptWrite,
+  Stocktake,
+  StocktakeCount,
+  StocktakeScope,
+  StocktakeStatus,
+  StocktakeTarget,
+  StocktakeTargetType,
+  StocktakeVariance,
   UnitCode,
   UnitDimension
 }

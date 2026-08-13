@@ -20,6 +20,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'measurement_system',
             'override_tolerance_percent',
             'override_tolerance_floor',
+            'stocktake_two_person_required',
             'created',
             'updated',
         ]
