@@ -34,8 +34,17 @@ function PrintArea({ job }: { job: LabelPrintJob }) {
               const value = item.target[field]
               if (value === undefined || value === null || value === '') return null
               return (
-                <div key={field} className={field === 'code' ? 'label-code' : undefined}>
-                  {field === 'display' ? <strong>{String(value)}</strong> : `${field.replaceAll('_', ' ')}: ${String(value)}`}
+                <div key={field}>
+                  {field === 'display' ? (
+                    <strong>{String(value)}</strong>
+                  ) : field === 'code' ? (
+                    <>
+                      <div>code:</div>
+                      <div className="label-code">{String(value)}</div>
+                    </>
+                  ) : (
+                    `${field.replaceAll('_', ' ')}: ${String(value)}`
+                  )}
                 </div>
               )
             })}
