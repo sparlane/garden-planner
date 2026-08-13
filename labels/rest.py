@@ -169,6 +169,18 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals
     active_cohort = active_cohort and identity.target.quantity > 0
     if active_cohort:
         capabilities.append('cohort_operation')
+    stocktake_types = {
+        ('plantings', 'specificplant'),
+        ('plantings', 'plantcohort'),
+        ('seedtrays', 'seedtray'),
+    }
+    stocktake_enabled = all((
+        workspace.mode == Workspace.Mode.NURSERY,
+        resolution_status == LabelCode.Status.ACTIVE,
+        key in stocktake_types,
+    ))
+    if stocktake_enabled:
+        capabilities.append('stocktake_count')
     health_scopes = {
         ('plantings', 'specificplant'): 'plant',
         ('plantings', 'plantcohort'): 'cohort',
