@@ -285,6 +285,12 @@ def scope_rows(workspace, scope):
     rows = []
     for target_type in selected:
         rows.extend(SOURCE_BUILDERS[target_type](workspace, location_ids, scope))
+    selected_keys = set(scope.get('selected_keys') or ())
+    if selected_keys:
+        rows = [row for row in rows if row['target_key'] in selected_keys]
+        missing = selected_keys - {row['target_key'] for row in rows}
+        if missing:
+            raise ValidationError({'selected_keys': f'Targets are outside this scope: {sorted(missing)}.'})
     return rows
 
 
@@ -410,6 +416,16 @@ def begin_review(stocktake, user):
     stocktake = Stocktake.objects.select_for_update().get(pk=stocktake.pk)
     if stocktake.status not in {Stocktake.Status.OPEN, Stocktake.Status.PAUSED}:
         raise ValidationError({'status': 'Only an open stocktake can enter review.'})
+    frozen_keys = set(stocktake.targets.values_list('target_key', flat=True))
+    current_rows = scope_rows(stocktake.workspace, stocktake.scope)
+    entered = [row for row in current_rows if row['target_key'] not in frozen_keys]
+    if entered:
+        StocktakeTarget.objects.bulk_create(
+            StocktakeTarget(stocktake=stocktake, unexpected=True, **row)
+            for row in entered
+        )
+        stocktake.refresh_from_db()
+        return stocktake
     targets = list(
         stocktake.targets.select_for_update(of=('self',)).select_related('accepted_count')
     )
@@ -453,6 +469,36 @@ def request_recount(stocktake, target, user, reason):
     target.save(update_fields=['count_status', 'updated'])
     target.variances.update(
         conflict_resolution=StocktakeVariance.ConflictResolution.RECOUNT,
+        conflict_reason=reason, resolved_by=user, resolved_at=timezone.now(),
+    )
+    Stocktake.objects.filter(pk=stocktake.pk).update(status=Stocktake.Status.OPEN)
+    stocktake.refresh_from_db()
+    return stocktake
+
+
+@transaction.atomic
+def refresh_target_snapshot(stocktake, target, user, reason):
+    """Adopt current source facts and require a fresh physical count."""
+    if not reason.strip():
+        raise ValidationError({'reason': 'Explain why the snapshot is refreshed.'})
+    stocktake = Stocktake.objects.select_for_update().get(pk=stocktake.pk)
+    if stocktake.status != Stocktake.Status.REVIEW:
+        raise ValidationError({'status': 'Refresh changed targets during review.'})
+    target = StocktakeTarget.objects.select_for_update().get(pk=target.pk, stocktake=stocktake)
+    current = _current_row(stocktake, target)
+    if current is None:
+        raise ValidationError({'target': 'A missing source cannot be refreshed; recount or accept it.'})
+    target.expected_location = current['expected_location']
+    target.expected_quantity = current['expected_quantity']
+    target.expected_state = current['expected_state']
+    target.expected_snapshot = current['expected_snapshot']
+    target.source_revision = current['source_revision']
+    target.review_revision = ''
+    target.review_snapshot = {}
+    target.count_status = StocktakeTarget.CountStatus.RECOUNT
+    target.save()
+    target.variances.update(
+        conflict_resolution=StocktakeVariance.ConflictResolution.REFRESHED,
         conflict_reason=reason, resolved_by=user, resolved_at=timezone.now(),
     )
     Stocktake.objects.filter(pk=stocktake.pk).update(status=Stocktake.Status.OPEN)
