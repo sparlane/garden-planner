@@ -388,3 +388,41 @@ def reconcile_packet_quantity(packet, user, count, certainty, reason):
     )
     packet.stock_lot.item.mark_stock_history_started(timezone.now())
     return reconciliation
+
+
+@transaction.atomic
+def reverse_packet_reconciliation(reconciliation, user, reason):
+    """Restore the packet certainty and ledger state before one physical count."""
+    if not reason.strip():
+        raise ValidationError({'reason': 'A reason is required.'})
+    reconciliation = SeedPacketQuantityReconciliation.objects.select_for_update().select_related(
+        'packet__stock_lot', 'movement',
+    ).get(pk=reconciliation.pk)
+    if hasattr(reconciliation, 'reversal'):
+        raise ValidationError({'reconciliation': 'This packet count is already reversed.'})
+    previous = SeedPacketQuantityReconciliation.objects.filter(
+        packet=reconciliation.packet, pk__lt=reconciliation.pk,
+    ).order_by('-pk').first()
+    movement = None
+    if reconciliation.movement_id:
+        from inventory.ledger import reverse_movement  # pylint: disable=import-outside-toplevel
+        movement = reverse_movement(reconciliation.movement, user, reason)
+    if previous:
+        counted = previous.counted_quantity
+        certainty = previous.quantity_certainty
+        reconstructed = previous.reconstructed_initial_quantity
+    else:
+        counted = Decimal('0')
+        certainty = reconciliation.packet.stock_lot.quantity_certainty
+        reconstructed = reconciliation.packet.stock_lot.initial_base_quantity or Decimal('0')
+    return SeedPacketQuantityReconciliation.objects.create(
+        workspace=reconciliation.workspace,
+        packet=reconciliation.packet,
+        counted_quantity=counted,
+        quantity_certainty=certainty,
+        reconstructed_initial_quantity=reconstructed,
+        movement=movement,
+        reversal_of=reconciliation,
+        reason=reason,
+        recorded_by=user,
+    )

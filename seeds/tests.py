@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from inventory.models import QuantityCertainty, StockMovement, StockReceipt
+from seeds.models import SeedPacketQuantityReconciliation
+from seeds.services import packet_inventory_snapshot, reverse_packet_reconciliation
 from plantings.models import (
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
@@ -313,6 +315,33 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
             '0.250000000000',
         )
         self.assertFalse(response.data['empty'])
+
+    def test_reversing_first_count_restores_unknown_packet_certainty(self):
+        """A stocktake reversal does not leave invented packet certainty behind."""
+        packet = self.post_draft(
+            self.create_draft(QuantityCertainty.UNKNOWN)['pk'],
+        )
+        self.client.post(
+            f"/seeds/packets/{packet['pk']}/reconcile/",
+            {
+                'counted_quantity': '24',
+                'quantity_certainty': QuantityCertainty.EXACT,
+                'reason': 'Counted packet contents',
+            },
+            format='json',
+        )
+        reconciliation = SeedPacketQuantityReconciliation.objects.get(
+            packet_id=packet['pk'], reversal_of__isnull=True,
+        )
+
+        reversal = reverse_packet_reconciliation(
+            reconciliation, self.user, 'Counted the wrong packet.',
+        )
+        snapshot = packet_inventory_snapshot(reversal.packet)
+
+        self.assertEqual(snapshot['quantity_certainty'], QuantityCertainty.UNKNOWN)
+        self.assertIsNone(snapshot['remaining_quantity'])
+        self.assertEqual(reversal.reversal_of, reconciliation)
 
     def test_estimated_packet_count_posts_audited_loss(self):
         """A low physical count corrects the balance instead of editing receipt history."""

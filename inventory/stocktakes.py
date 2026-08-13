@@ -6,26 +6,41 @@
 from decimal import Decimal
 from hashlib import sha256
 import json
+from uuid import NAMESPACE_URL, uuid5
 
 from django.contrib.contenttypes.models import ContentType
+from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from locations.models import Location
 from plantings.growth import current_growth
-from plantings.lifecycle import plant_lifecycle_summary
+from plantings.lifecycle import EventType, OutcomeRequest, plant_lifecycle_summary, record_lifecycle_event
 from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
+from plantings.cohorts import change_cohort
+from plantings.rest import move_specific_plant
 from seeds.models import SeedPacket
 from seeds.services import packet_inventory_snapshot
 from seedtrays.models import SeedTray
 
-from .ledger import physical_balance, quantize_quantity, unit_physical_state
+from .ledger import (
+    MovementRequest,
+    UnitMovementRequest,
+    physical_balance,
+    post_stock_movement,
+    post_unit_movement,
+    quantize_quantity,
+    reverse_movement,
+    unit_physical_state,
+)
 from .models import (
     InventoryItem,
     StockLot,
+    StockMovement,
     Stocktake,
     StocktakeCount,
+    StocktakeReconciliation,
     StocktakeTarget,
     StocktakeVariance,
 )
@@ -407,6 +422,9 @@ def begin_review(stocktake, user):
     StocktakeVariance.objects.filter(target__stocktake=stocktake).delete()
     for target in targets:
         current = _current_row(stocktake, target)
+        target.review_revision = current['source_revision'] if current else ''
+        target.review_snapshot = current['expected_snapshot'] if current else {}
+        target.save(update_fields=['review_revision', 'review_snapshot', 'updated'])
         kinds, expected, observed, changed, revision = _variance_rows(target, current)
         for kind in kinds:
             StocktakeVariance.objects.create(
@@ -455,6 +473,15 @@ def resolve_variance(variance, user, *, action, reason, payload=None,
         raise ValidationError({'reason': 'Explain the variance resolution.'})
     if variance.source_changed and not accept_conflict:
         raise ValidationError({'conflict': 'Explicitly accept or recount this changed source.'})
+    allowed = {
+        StocktakeTarget.TargetType.LOT: {'adjust', 'no_change'},
+        StocktakeTarget.TargetType.SEED_PACKET: {'adjust', 'no_change'},
+        StocktakeTarget.TargetType.COHORT: {'adjust', 'move', 'no_change'},
+        StocktakeTarget.TargetType.TRAY: {'move', 'lost', 'state_correct', 'no_change'},
+        StocktakeTarget.TargetType.PLANT: {'move', 'lost', 'state_correct', 'no_change'},
+    }
+    if action not in allowed[variance.target.target_type]:
+        raise ValidationError({'action': 'This correction is not valid for the target type.'})
     variance.resolution_action = action
     variance.resolution_payload = payload or {}
     variance.resolution_reason = reason
@@ -487,6 +514,316 @@ def approve_stocktake(stocktake, user):
     Stocktake.objects.filter(pk=stocktake.pk).update(
         status=Stocktake.Status.APPROVED, approved_by=user,
         approved_at=now, updated=now,
+    )
+    stocktake.refresh_from_db()
+    return stocktake
+
+
+def _result_link(target, result, user, domain, before, after):
+    return StocktakeReconciliation.objects.create(
+        target=target, phase=StocktakeReconciliation.Phase.POST,
+        domain=domain, result_app=result._meta.app_label,
+        result_model=result._meta.model_name, result_object_id=result.pk,
+        before=before, after=after, created_by=user,
+    )
+
+
+def _posting_reason(target):
+    variance = target.variances.exclude(resolution_action='no_change').first()
+    return variance.resolution_reason if variance else ''
+
+
+def _posting_action(target):
+    variance = target.variances.exclude(resolution_action='no_change').first()
+    return (variance.resolution_action, variance.resolution_payload) if variance else ('no_change', {})
+
+
+def _post_lot(stocktake, target, user, reason):
+    lot = StockLot.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
+    location = target.expected_location
+    before_quantity = quantize_quantity(physical_balance(lot, location))
+    counted = target.accepted_count.counted_quantity
+    delta = quantize_quantity(counted - before_quantity)
+    if not delta:
+        return None
+    movement_type = StockMovement.MovementType.ADJUSTMENT_GAIN
+    source, destination = None, location
+    if delta < 0:
+        movement_type = StockMovement.MovementType.ADJUSTMENT_LOSS
+        source, destination = location, None
+    movement = post_stock_movement(
+        stocktake.workspace, user,
+        MovementRequest(
+            lot=lot, movement_type=movement_type, quantity=abs(delta),
+            source=source, destination=destination, reason=reason,
+            reference=f'Stocktake {stocktake.pk}',
+        ),
+    )
+    return _result_link(
+        target, movement, user, 'lot',
+        {'quantity': str(before_quantity), 'location': location.pk},
+        {'quantity': str(counted), 'location': location.pk},
+    )
+
+
+def _post_packet(stocktake, target, user, reason, _action, payload):
+    from seeds.models import QuantityCertainty  # pylint: disable=import-outside-toplevel
+    from seeds.services import reconcile_packet_quantity  # pylint: disable=import-outside-toplevel
+
+    packet = SeedPacket.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
+    before = packet_inventory_snapshot(packet)
+    certainty = payload.get('quantity_certainty', QuantityCertainty.EXACT)
+    reconciliation = reconcile_packet_quantity(
+        packet, user, target.accepted_count.counted_quantity, certainty, reason,
+    )
+    after = packet_inventory_snapshot(packet)
+    return _result_link(
+        target, reconciliation, user, 'seed_packet',
+        {
+            'quantity': str(before['remaining_quantity']) if before['remaining_quantity'] is not None else None,
+            'certainty': before['quantity_certainty'],
+        },
+        {
+            'quantity': str(after['remaining_quantity']) if after['remaining_quantity'] is not None else None,
+            'certainty': after['quantity_certainty'],
+        },
+    )
+
+
+def _post_cohort(stocktake, target, user, reason, action, payload):
+    cohort = PlantCohort.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
+    before = {'quantity': cohort.quantity, 'location': cohort.location_id, 'revision': cohort.revision}
+    kwargs = {
+        'cohort_id': cohort.pk, 'expected_revision': cohort.revision,
+        'action': 'adjust' if action == 'adjust' else 'move',
+        'idempotency_key': uuid5(NAMESPACE_URL, f'stocktake:{stocktake.pk}:target:{target.pk}'),
+        'reason': reason,
+    }
+    if action == 'adjust':
+        counted = target.accepted_count.counted_quantity
+        if counted != counted.to_integral_value():
+            raise ValidationError({'quantity': 'Cohort counts must be whole plants.'})
+        kwargs['quantity'] = int(counted)
+    else:
+        kwargs['location'] = Location.objects.get(
+            pk=payload.get('location'), workspace=stocktake.workspace,
+        )
+    cohort, operation = change_cohort(stocktake.workspace, user, **kwargs)
+    return _result_link(
+        target, operation, user, 'cohort', before,
+        {'quantity': cohort.quantity, 'location': cohort.location_id, 'revision': cohort.revision},
+    )
+
+
+def _post_tray(stocktake, target, user, reason, action, payload):
+    tray = SeedTray.objects.select_related('inventory_unit__current_location').get(
+        pk=target.target_object_id, workspace=stocktake.workspace,
+    )
+    unit = tray.inventory_unit
+    before = {'location': unit.current_location_id, 'state': unit_physical_state(unit)}
+    if action == 'move':
+        movement_type = StockMovement.MovementType.TRANSFER
+        destination = Location.objects.get(pk=payload.get('location'), workspace=stocktake.workspace)
+    elif action == 'lost':
+        movement_type = StockMovement.MovementType.ADJUSTMENT_LOSS
+        destination = None
+    else:
+        choices = {
+            'return': StockMovement.MovementType.ADJUSTMENT_GAIN,
+            'retire': StockMovement.MovementType.WASTE,
+        }
+        try:
+            movement_type = choices[payload.get('state_action')]
+        except KeyError as exc:
+            raise ValidationError({'action': 'Select a valid tray state correction.'}) from exc
+        destination = Location.objects.filter(
+            pk=payload.get('location'), workspace=stocktake.workspace,
+        ).first()
+    movement = post_unit_movement(
+        stocktake.workspace, user,
+        UnitMovementRequest(
+            unit=unit, movement_type=movement_type, destination=destination,
+            reason=reason, reference=f'Stocktake {stocktake.pk}',
+        ),
+    )
+    unit.refresh_from_db()
+    return _result_link(
+        target, movement, user, 'tray', before,
+        {'location': unit.current_location_id, 'state': unit_physical_state(unit)},
+    )
+
+
+def _post_plant(stocktake, target, user, reason, action, payload):
+    plant = SpecificPlant.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
+    before_location = _plant_location(plant)
+    before = {
+        'location': before_location.pk if before_location else None,
+        'state': plant_lifecycle_summary(plant).state,
+    }
+    if action == 'move':
+        destination = Location.objects.get(pk=payload.get('location'), workspace=stocktake.workspace)
+        result = move_specific_plant(
+            plant,
+            {
+                'location_type': SpecificPlantLocation.LOCATION,
+                'location': destination,
+                'notes': reason,
+            },
+            user,
+        )
+    else:
+        event_type = EventType.LOST if action == 'lost' else payload.get('event_type')
+        allowed = {EventType.LOST, EventType.FAILED, EventType.CULLED, EventType.READY, EventType.RETAINED}
+        if event_type not in allowed:
+            raise ValidationError({'action': 'Select a valid plant state correction.'})
+        result = record_lifecycle_event(
+            plant, user,
+            OutcomeRequest(event_type, reason=reason, reference=f'Stocktake {stocktake.pk}'),
+        )
+    after_location = _plant_location(plant)
+    return _result_link(
+        target, result, user, 'plant', before,
+        {
+            'location': after_location.pk if after_location else None,
+            'state': plant_lifecycle_summary(plant).state,
+        },
+    )
+
+
+POSTERS = {
+    StocktakeTarget.TargetType.LOT: _post_lot,
+    StocktakeTarget.TargetType.SEED_PACKET: _post_packet,
+    StocktakeTarget.TargetType.COHORT: _post_cohort,
+    StocktakeTarget.TargetType.TRAY: _post_tray,
+    StocktakeTarget.TargetType.PLANT: _post_plant,
+}
+
+
+@transaction.atomic
+def post_reviewed_stocktake(stocktake, user):
+    """Revalidate and apply every approved correction in one transaction."""
+    stocktake = Stocktake.objects.select_for_update().get(pk=stocktake.pk)
+    if stocktake.status != Stocktake.Status.APPROVED:
+        raise ValidationError({'status': 'Only an approved stocktake can be posted.'})
+    targets = list(
+        stocktake.targets.select_for_update().select_related(
+            'accepted_count', 'expected_location',
+        ).prefetch_related('variances')
+    )
+    for target in targets:
+        current = _current_row(stocktake, target)
+        current_revision = current['source_revision'] if current else ''
+        if current_revision != target.review_revision:
+            raise ValidationError({
+                'conflict': f'Target {target.pk} changed after review; review it again.',
+            })
+    for target in targets:
+        action, payload = _posting_action(target)
+        if action == 'no_change':
+            continue
+        reason = _posting_reason(target)
+        poster = POSTERS[target.target_type]
+        if target.target_type == StocktakeTarget.TargetType.LOT:
+            poster(stocktake, target, user, reason)
+        else:
+            poster(stocktake, target, user, reason, action, payload)
+    now = timezone.now()
+    Stocktake.objects.filter(pk=stocktake.pk).update(
+        status=Stocktake.Status.POSTED, posted_by=user,
+        posted_at=now, updated=now,
+    )
+    stocktake.refresh_from_db()
+    return stocktake
+
+
+def _reverse_link(link, stocktake, user, reason):
+    model = apps.get_model(link.result_app, link.result_model)
+    result = model.objects.get(pk=link.result_object_id)
+    if link.domain in {'lot', 'tray'}:
+        inverse = reverse_movement(result, user, reason)
+    elif link.domain == 'seed_packet':
+        from seeds.services import reverse_packet_reconciliation  # pylint: disable=import-outside-toplevel
+        inverse = reverse_packet_reconciliation(result, user, reason)
+    elif link.domain == 'cohort':
+        cohort = result.events.order_by('pk').first().cohort
+        action = 'adjust'
+        values = {'quantity': int(link.before['quantity'])}
+        if link.before.get('location') != link.after.get('location'):
+            action = 'move'
+            values = {
+                'location': Location.objects.get(
+                    pk=link.before['location'], workspace=stocktake.workspace,
+                ),
+            }
+        cohort, inverse = change_cohort(
+            stocktake.workspace, user, cohort_id=cohort.pk,
+            expected_revision=cohort.revision, action=action,
+            idempotency_key=uuid5(NAMESPACE_URL, f'stocktake:{stocktake.pk}:reverse:{link.pk}'),
+            reason=reason, **values,
+        )
+    elif link.domain == 'plant':
+        if link.result_model == 'plantlifecycleevent':
+            from plantings.lifecycle import reverse_lifecycle_event  # pylint: disable=import-outside-toplevel
+            inverse = reverse_lifecycle_event(result, user, reason)
+            plant = result.plant
+            if link.before.get('location') and _plant_location(plant) is None:
+                move_specific_plant(
+                    plant,
+                    {
+                        'location_type': SpecificPlantLocation.LOCATION,
+                        'location': Location.objects.get(
+                            pk=link.before['location'], workspace=stocktake.workspace,
+                        ),
+                        'notes': reason,
+                    },
+                    user,
+                )
+        else:
+            plant = result.specific_plant
+            location = Location.objects.get(
+                pk=link.before['location'], workspace=stocktake.workspace,
+            )
+            inverse = move_specific_plant(
+                plant,
+                {
+                    'location_type': SpecificPlantLocation.LOCATION,
+                    'location': location,
+                    'notes': reason,
+                },
+                user,
+            )
+    else:
+        raise ValidationError({'reverse': f'Unsupported reconciliation domain {link.domain}.'})
+    return StocktakeReconciliation.objects.create(
+        target=link.target, phase=StocktakeReconciliation.Phase.REVERSE,
+        domain=link.domain, result_app=inverse._meta.app_label,
+        result_model=inverse._meta.model_name, result_object_id=inverse.pk,
+        before=link.after, after=link.before, reverses=link, created_by=user,
+    )
+
+
+@transaction.atomic
+def reverse_reviewed_stocktake(stocktake, user, reason):
+    """Compensate every linked correction together or retain all of them."""
+    if not reason.strip():
+        raise ValidationError({'reason': 'Explain why the stocktake is reversed.'})
+    stocktake = Stocktake.objects.select_for_update().get(pk=stocktake.pk)
+    if stocktake.status != Stocktake.Status.POSTED or not stocktake.targets.exists():
+        raise ValidationError({'status': 'Only a posted reviewed stocktake can be reversed.'})
+    links = list(
+        StocktakeReconciliation.objects.select_for_update().filter(
+            target__stocktake=stocktake,
+            phase=StocktakeReconciliation.Phase.POST,
+        ).order_by('-pk')
+    )
+    if StocktakeReconciliation.objects.filter(reverses__in=links).exists():
+        raise ValidationError({'status': 'This stocktake already has reversal corrections.'})
+    for link in links:
+        _reverse_link(link, stocktake, user, reason)
+    now = timezone.now()
+    Stocktake.objects.filter(pk=stocktake.pk).update(
+        status=Stocktake.Status.REVERSED, reversed_by=user,
+        reversed_at=now, updated=now,
     )
     stocktake.refresh_from_db()
     return stocktake

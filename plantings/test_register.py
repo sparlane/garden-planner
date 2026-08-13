@@ -90,6 +90,7 @@ class RegisterTestCase(RESTContractTestCase):
             LifecycleState.RETAINED: EventType.RETAINED,
             LifecycleState.DONATED: EventType.DONATED,
             LifecycleState.FAILED: EventType.FAILED,
+            LifecycleState.LOST: EventType.LOST,
             LifecycleState.CULLED: EventType.CULLED,
             LifecycleState.HARVESTED: EventType.HARVEST_FINISHED,
         }

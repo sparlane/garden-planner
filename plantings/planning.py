@@ -446,6 +446,7 @@ def _batch_actuals(batch):
         batch=batch,
         event_type__in=(
             PlantLifecycleEvent.EventType.FAILED,
+            PlantLifecycleEvent.EventType.LOST,
             PlantLifecycleEvent.EventType.CULLED,
         ),
         reversal__isnull=True,

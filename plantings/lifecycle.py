@@ -32,6 +32,7 @@ class LifecycleState(models.TextChoices):
     RETAINED = 'retained', 'Retained'
     DONATED = 'donated', 'Donated'
     FAILED = 'failed', 'Failed'
+    LOST = 'lost', 'Lost'
     CULLED = 'culled', 'Culled'
     HARVESTED = 'harvested', 'Harvested'
 
@@ -44,6 +45,7 @@ STATE_AFTER = {
     EventType.RETAINED: LifecycleState.RETAINED,
     EventType.DONATED: LifecycleState.DONATED,
     EventType.FAILED: LifecycleState.FAILED,
+    EventType.LOST: LifecycleState.LOST,
     EventType.CULLED: LifecycleState.CULLED,
     EventType.HARVEST_FINISHED: LifecycleState.HARVESTED,
 }
@@ -59,6 +61,11 @@ ALLOWED_FROM = {
     },
     EventType.RETAINED: {LifecycleState.GROWING, LifecycleState.AVAILABLE},
     EventType.FAILED: {
+        LifecycleState.GROWING,
+        LifecycleState.AVAILABLE,
+        LifecycleState.RETAINED,
+    },
+    EventType.LOST: {
         LifecycleState.GROWING,
         LifecycleState.AVAILABLE,
         LifecycleState.RETAINED,
@@ -86,6 +93,7 @@ FINAL_STATES = {
     LifecycleState.RETAINED,
     LifecycleState.DONATED,
     LifecycleState.FAILED,
+    LifecycleState.LOST,
     LifecycleState.CULLED,
     LifecycleState.HARVESTED,
 }
@@ -98,6 +106,7 @@ SELLABLE_STATES = {LifecycleState.AVAILABLE}
 CLOSES_LOCATION = {
     EventType.DONATED,
     EventType.FAILED,
+    EventType.LOST,
     EventType.CULLED,
     EventType.HARVEST_FINISHED,
 }
@@ -107,6 +116,7 @@ OUTCOME_EVENTS = (
     EventType.READY,
     EventType.RETAINED,
     EventType.FAILED,
+    EventType.LOST,
     EventType.CULLED,
     EventType.DONATED,
     EventType.HARVEST_FINISHED,

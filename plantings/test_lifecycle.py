@@ -39,6 +39,7 @@ FINAL_OUTCOMES = (
     (EventType.RETAINED, LifecycleState.RETAINED),
     (EventType.DONATED, LifecycleState.DONATED),
     (EventType.FAILED, LifecycleState.FAILED),
+    (EventType.LOST, LifecycleState.LOST),
     (EventType.CULLED, LifecycleState.CULLED),
     (EventType.HARVEST_FINISHED, LifecycleState.HARVESTED),
 )
@@ -130,7 +131,7 @@ class LifecycleStateAnnotationTests(TestCase):
             OutcomeRequest(EventType.READY, occurred_at=start + timedelta(days=1)),
         )
         for name, (event_type, _) in zip(
-            ('retained', 'donated', 'failed', 'culled', 'harvested'),
+            ('retained', 'donated', 'failed', 'lost', 'culled', 'harvested'),
             FINAL_OUTCOMES,
         ):
             plant = self.germinated_plant(start)

@@ -213,6 +213,29 @@ class StocktakeWorkflowRestTests(APITestCase):
         self.assertEqual(approved.status_code, 200, approved.data)
         self.assertEqual(approved.data['status'], Stocktake.Status.APPROVED)
         self.assertEqual(len(approved.data['targets'][0]['counts']), 1)
+        posted = self.client.post(
+            f"{self.url}{opened.data['pk']}/post/", {}, format='json',
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(posted.data['status'], Stocktake.Status.POSTED)
+        reconciliation = posted.data['targets'][0]['reconciliations'][0]
+        self.assertEqual(reconciliation['domain'], 'lot')
+        self.assertEqual(
+            posted.data['targets'][0]['variances'][0]['variance_value'],
+            '1.0000',
+        )
+        self.assertEqual(
+            StockMovement.objects.filter(lot=self.lot).count(), 2,
+        )
+        reversed_response = self.client.post(
+            f"{self.url}{opened.data['pk']}/reverse/",
+            {'reason': 'Counted the wrong shelf'}, format='json',
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        self.assertEqual(reversed_response.data['status'], Stocktake.Status.REVERSED)
+        self.assertEqual(
+            len(reversed_response.data['targets'][0]['reconciliations']), 2,
+        )
 
     def test_changed_source_requires_explicit_conflict_acceptance(self):
         """A movement after opening cannot be silently folded into approval."""

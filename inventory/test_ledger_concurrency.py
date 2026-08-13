@@ -1,5 +1,8 @@
 """PostgreSQL row-locking tests for inventory availability."""
 
+# Transactional concurrency fixtures deliberately restore migration seed data.
+# pylint: disable=duplicate-code
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from decimal import Decimal
@@ -23,6 +26,15 @@ from .ledger import (
     post_unit_movement,
 )
 from .models import InventoryItem, Location, InventoryUnit, StockLot, StockMovement
+from .models import Stocktake, StocktakeVariance
+from .stocktakes import (
+    approve_stocktake,
+    begin_review,
+    open_stocktake,
+    post_reviewed_stocktake,
+    record_count,
+    resolve_variance,
+)
 from .units import UnitCode
 
 
@@ -112,6 +124,78 @@ class ConcurrentLedgerTests(TransactionTestCase):
             StockMovement.objects.filter(
                 lot_id=self.lot_pk,
                 movement_type=StockMovement.MovementType.CONSUMPTION,
+            ).count(),
+            1,
+        )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentReviewedStocktakeTests(TransactionTestCase):
+    """One approved posting cannot create duplicate variance corrections."""
+
+    def _post_teardown(self):
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(pk=settings.CURRENT_WORKSPACE_ID, name='My Garden')
+
+    def setUp(self):
+        super().setUp()
+        workspace = get_current_workspace()
+        user = get_user_model().objects.create_user(username='concurrent-stocktake')
+        item = InventoryItem.objects.create(
+            workspace=workspace, name='Counted media',
+            category=InventoryItem.Category.GROWING_MEDIA,
+            base_unit=UnitCode.MILLILITRE,
+        )
+        location = Location.objects.create(
+            workspace=workspace, name='Count store', code='COUNT-STORE',
+            location_type=Location.LocationType.STORAGE,
+        )
+        lot, _movement = post_opening_balance(
+            workspace, user,
+            OpeningBalanceRequest(
+                item=item, quantity=Decimal('10'), destination=location,
+                acquisition_total=Decimal('10'), received_on=date(2026, 8, 1),
+            ),
+        )
+        stocktake = open_stocktake(
+            workspace, user,
+            {'location': location.pk, 'target_types': ['lot']},
+        )
+        target = stocktake.targets.get()
+        record_count(stocktake, user, target.pk, counted_quantity=Decimal('8'))
+        begin_review(stocktake, user)
+        variance = StocktakeVariance.objects.get(target=target)
+        resolve_variance(variance, user, action='adjust', reason='Physical count')
+        approve_stocktake(stocktake, user)
+        self.stocktake_pk = stocktake.pk
+        self.user_pk = user.pk
+        self.lot_pk = lot.pk
+
+    def _post(self):
+        close_old_connections()
+        try:
+            post_reviewed_stocktake(
+                Stocktake.objects.get(pk=self.stocktake_pk),
+                get_user_model().objects.get(pk=self.user_pk),
+            )
+        except ValidationError:
+            result = 'rejected'
+        else:
+            result = 'posted'
+        close_old_connections()
+        return result
+
+    def test_only_one_concurrent_post_applies_the_count(self):
+        """The stocktake row lock serializes identical approved submissions."""
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: self._post(), range(2)))
+
+        self.assertCountEqual(results, ['posted', 'rejected'])
+        self.assertEqual(
+            StockMovement.objects.filter(
+                lot_id=self.lot_pk,
+                movement_type=StockMovement.MovementType.ADJUSTMENT_LOSS,
             ).count(),
             1,
         )
