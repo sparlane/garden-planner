@@ -64,9 +64,13 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
     enabled: item !== ''
   })
 
-  // Seed stock is consumed by a sowing, not by an input application. Keeping
-  // it out of this selector prevents the two inventory workflows overlapping.
-  const applicableItems = items.filter((entry) => entry.category !== 'seed')
+  const targetsSeedTray = tray !== undefined || targets.some((target) => target.target_type === 'seed_tray_cell')
+  // Seed stock is consumed by a sowing, not by an input application. A tray's
+  // cells additionally receive only media and treatments; containers, labels,
+  // packaging, and unrelated physical stock have their own workflows.
+  const applicableItems = items.filter(
+    (entry) => entry.category !== 'seed' && (!targetsSeedTray || entry.category === 'growing_media' || entry.category === 'fertilizer_treatment')
+  )
   const chosenItem = applicableItems.find((entry) => entry.pk === item)
   const chosenBalance = balances.find((entry) => entry.lot === lot)
   const previewLine = preview?.lines[0]
