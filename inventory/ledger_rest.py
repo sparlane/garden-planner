@@ -987,9 +987,10 @@ class StocktakeViewSet(
 def register_ledger_routes(router):
     """Attach ledger viewsets to the inventory API router."""
     from .serialized_rest import InventoryUnitViewSet  # pylint: disable=import-outside-toplevel
+    from .stocktake_rest import NurseryStocktakeViewSet  # pylint: disable=import-outside-toplevel
 
     router.register(r'receipts', StockReceiptViewSet)
     router.register(r'lots', StockLotViewSet)
     router.register(r'serialized-units', InventoryUnitViewSet)
     router.register(r'movements', StockMovementViewSet)
-    router.register(r'stocktakes', StocktakeViewSet)
+    router.register(r'stocktakes', NurseryStocktakeViewSet, basename='stocktake')

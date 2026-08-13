@@ -6,17 +6,22 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APITestCase
 
 from locations.models import Location
 from workspaces.models import get_current_workspace
 
+from .ledger import MovementRequest, OpeningBalanceRequest, post_opening_balance, post_stock_movement
 from .models import (
+    InventoryItem,
+    StockMovement,
     Stocktake,
     StocktakeAttachment,
     StocktakeCount,
     StocktakeTarget,
     StocktakeVariance,
 )
+from .units import UnitCode
 
 
 class StocktakeWorkflowModelTests(TestCase):
@@ -94,3 +99,143 @@ class StocktakeWorkflowModelTests(TestCase):
     def test_two_person_requirement_defaults_off(self):
         """Existing shared workspaces do not acquire a surprise restriction."""
         self.assertFalse(self.workspace.stocktake_two_person_required)
+
+
+class StocktakeWorkflowRestTests(APITestCase):
+    """Blind count sheets reveal expectations only when review begins."""
+
+    url = '/inventory/stocktakes/'
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.user = get_user_model().objects.create_user(username='stocktake-api')
+        self.reviewer = get_user_model().objects.create_user(username='stocktake-reviewer')
+        self.client.force_authenticate(self.user)
+        self.location = Location.objects.create(
+            workspace=self.workspace, name='Stock room', code='STOCK-ROOM',
+            location_type=Location.LocationType.STORAGE,
+        )
+        self.item = InventoryItem.objects.create(
+            workspace=self.workspace, name='Potting mix',
+            category=InventoryItem.Category.GROWING_MEDIA,
+            base_unit=UnitCode.MILLILITRE,
+        )
+        self.lot, _movement = post_opening_balance(
+            self.workspace, self.user,
+            OpeningBalanceRequest(
+                item=self.item, quantity=Decimal('100'),
+                destination=self.location, acquisition_total=Decimal('20'),
+                received_on=timezone.localdate(),
+            ),
+        )
+
+    def _open(self):
+        response = self.client.post(self.url, {
+            'scope': {
+                'location': self.location.pk,
+                'target_types': ['lot'],
+            },
+            'blind': True,
+            'notes': 'Monthly count',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        return response
+
+    def test_blind_count_review_and_approval_preserve_attempt(self):
+        """Review reveals the snapshot and requires an explicit variance action."""
+        opened = self._open()
+        target = opened.data['targets'][0]
+        self.assertIsNone(target['expected_quantity'])
+        counted = self.client.post(
+            f"{self.url}{opened.data['pk']}/count/",
+            {'target': target['pk'], 'counted_quantity': '95'},
+            format='json',
+        )
+        self.assertEqual(counted.status_code, 201, counted.data)
+
+        reviewed = self.client.post(
+            f"{self.url}{opened.data['pk']}/begin-review/", {}, format='json',
+        )
+        self.assertEqual(reviewed.status_code, 200, reviewed.data)
+        target = reviewed.data['targets'][0]
+        self.assertEqual(target['expected_quantity'], '100.000000000')
+        variance = target['variances'][0]
+        self.assertEqual(variance['kind'], StocktakeVariance.Kind.QUANTITY)
+
+        resolved = self.client.post(
+            f"{self.url}{opened.data['pk']}/resolve-variance/",
+            {
+                'variance': variance['pk'], 'action': 'adjust',
+                'reason': 'Measured spill',
+            },
+            format='json',
+        )
+        self.assertEqual(resolved.status_code, 200, resolved.data)
+        approved = self.client.post(
+            f"{self.url}{opened.data['pk']}/approve/", {}, format='json',
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
+        self.assertEqual(approved.data['status'], Stocktake.Status.APPROVED)
+        self.assertEqual(len(approved.data['targets'][0]['counts']), 1)
+
+    def test_changed_source_requires_explicit_conflict_acceptance(self):
+        """A movement after opening cannot be silently folded into approval."""
+        opened = self._open()
+        target = opened.data['targets'][0]
+        self.client.post(
+            f"{self.url}{opened.data['pk']}/count/",
+            {'target': target['pk'], 'counted_quantity': '90'}, format='json',
+        )
+        post_stock_movement(
+            self.workspace, self.user,
+            MovementRequest(
+                lot=self.lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('1'), source=self.location,
+            ),
+        )
+        reviewed = self.client.post(
+            f"{self.url}{opened.data['pk']}/begin-review/", {}, format='json',
+        )
+        variance = reviewed.data['targets'][0]['variances'][0]
+        self.assertTrue(variance['source_changed'])
+        rejected = self.client.post(
+            f"{self.url}{opened.data['pk']}/resolve-variance/",
+            {
+                'variance': variance['pk'], 'action': 'adjust',
+                'reason': 'Reviewed movement',
+            }, format='json',
+        )
+        self.assertEqual(rejected.status_code, 400)
+        accepted = self.client.post(
+            f"{self.url}{opened.data['pk']}/resolve-variance/",
+            {
+                'variance': variance['pk'], 'action': 'adjust',
+                'reason': 'Reviewed movement', 'accept_conflict': True,
+            }, format='json',
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.data)
+
+    def test_two_person_rule_rejects_a_counter_as_reviewer(self):
+        """Optional separation applies to identities even before task 58 roles."""
+        self.workspace.stocktake_two_person_required = True
+        self.workspace.save(update_fields=['stocktake_two_person_required', 'updated'])
+        opened = self._open()
+        target = opened.data['targets'][0]
+        self.client.post(
+            f"{self.url}{opened.data['pk']}/count/",
+            {'target': target['pk'], 'counted_quantity': '100'}, format='json',
+        )
+        self.client.post(
+            f"{self.url}{opened.data['pk']}/begin-review/", {}, format='json',
+        )
+        rejected = self.client.post(
+            f"{self.url}{opened.data['pk']}/approve/", {}, format='json',
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.client.force_authenticate(self.reviewer)
+        approved = self.client.post(
+            f"{self.url}{opened.data['pk']}/approve/", {}, format='json',
+        )
+        self.assertEqual(approved.status_code, 200, approved.data)
