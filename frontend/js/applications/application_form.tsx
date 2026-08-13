@@ -64,7 +64,10 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
     enabled: item !== ''
   })
 
-  const chosenItem = items.find((entry) => entry.pk === item)
+  // Seed stock is consumed by a sowing, not by an input application. Keeping
+  // it out of this selector prevents the two inventory workflows overlapping.
+  const applicableItems = items.filter((entry) => entry.category !== 'seed')
+  const chosenItem = applicableItems.find((entry) => entry.pk === item)
   const chosenBalance = balances.find((entry) => entry.lot === lot)
   const previewLine = preview?.lines[0]
   const overrideRequired = previewLine?.override_required ?? false
@@ -176,7 +179,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
                 }}
               >
                 <option value="">Select an item</option>
-                {items.map((entry) => (
+                {applicableItems.map((entry) => (
                   <option key={entry.pk} value={entry.pk}>
                     {entry.name}
                   </option>

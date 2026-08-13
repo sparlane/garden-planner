@@ -245,6 +245,14 @@ class ApplicationLineInputSerializer(CurrentWorkspaceSerializerMixin, ActionSeri
         'unit_conversion': 'workspace',
     }
 
+    def validate_item(self, item):
+        """Keep seed consumption in the sowing workflow that owns it."""
+        if item.category == InventoryItem.Category.SEED:
+            raise serializers.ValidationError(
+                'Seed stock must be consumed by recording a sowing.'
+            )
+        return item
+
 
 class ApplicationDraftSerializer(CurrentWorkspaceSerializerMixin, ActionSerializer):
     """The payload that creates or replaces a draft."""
