@@ -103,6 +103,28 @@ class ApplicationContractTests(ApplicationRESTTestCase):
         self.assertEqual(len(data['lines'][0]['targets']), 24)
         self.assertEqual(data['lines'][0]['calculated_base_quantity'], '0.960000000')
 
+    def test_seed_stock_cannot_be_recorded_as_an_input_application(self):
+        """Sowings, rather than generic applications, own seed consumption."""
+        seed = make_inventory_item(
+            category=InventoryItem.Category.SEED,
+            base_unit=UnitCode.SEED,
+        )
+        seed_lot = make_stock_lot(item=seed, location=self.location, quantity='50')
+
+        response = self.client.post(
+            URL,
+            self.payload(line={
+                'item': seed.pk,
+                'lot': seed_lot.pk,
+                'applied_quantity': '1',
+                'unit_code': UnitCode.SEED,
+            }),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Seed stock must be consumed', str(response.data))
+
     def test_a_draft_can_be_retrieved(self):
         """A stored draft reads back the same way it was created."""
         created = self.create_draft()
