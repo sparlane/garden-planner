@@ -275,6 +275,58 @@ class StocktakeWorkflowRestTests(APITestCase):
         )
         self.assertEqual(accepted.status_code, 200, accepted.data)
 
+    def test_changed_source_can_refresh_and_require_a_recount(self):
+        """Refreshing preserves the old attempt but adopts a new expected revision."""
+        opened = self._open()
+        target = opened.data['targets'][0]
+        self.client.post(
+            f"{self.url}{opened.data['pk']}/count/",
+            {'target': target['pk'], 'counted_quantity': '90'}, format='json',
+        )
+        post_stock_movement(
+            self.workspace, self.user,
+            MovementRequest(
+                lot=self.lot, movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('1'), source=self.location,
+            ),
+        )
+        self.client.post(
+            f"{self.url}{opened.data['pk']}/begin-review/", {}, format='json',
+        )
+        refreshed = self.client.post(
+            f"{self.url}{opened.data['pk']}/refresh-target/",
+            {'target': target['pk'], 'reason': 'Use the movement-corrected balance'},
+            format='json',
+        )
+        self.assertEqual(refreshed.status_code, 200, refreshed.data)
+        self.assertEqual(refreshed.data['status'], Stocktake.Status.OPEN)
+        row = refreshed.data['targets'][0]
+        self.assertEqual(row['count_status'], StocktakeTarget.CountStatus.RECOUNT)
+        self.assertEqual(len(row['counts']), 1)
+
+    def test_new_stock_entering_scope_is_added_before_review(self):
+        """A frozen scope reports a newly entered identity instead of ignoring it."""
+        opened = self._open()
+        target = opened.data['targets'][0]
+        self.client.post(
+            f"{self.url}{opened.data['pk']}/count/",
+            {'target': target['pk'], 'counted_quantity': '100'}, format='json',
+        )
+        post_opening_balance(
+            self.workspace, self.user,
+            OpeningBalanceRequest(
+                item=self.item, quantity=Decimal('5'), destination=self.location,
+                acquisition_total=Decimal('1'), received_on=timezone.localdate(),
+            ),
+        )
+        response = self.client.post(
+            f"{self.url}{opened.data['pk']}/begin-review/", {}, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['status'], Stocktake.Status.OPEN)
+        self.assertEqual(response.data['progress']['total'], 2)
+        self.assertTrue(next(row for row in response.data['targets'] if row['unexpected'])['unexpected'])
+
     def test_two_person_rule_rejects_a_counter_as_reviewer(self):
         """Optional separation applies to identities even before task 58 roles."""
         self.workspace.stocktake_two_person_required = True

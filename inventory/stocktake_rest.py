@@ -25,6 +25,7 @@ from .stocktakes import (
     open_stocktake,
     post_reviewed_stocktake,
     record_count,
+    refresh_target_snapshot,
     request_recount,
     resolve_identity_target,
     reverse_reviewed_stocktake,
@@ -59,6 +60,9 @@ class ScopeSerializer(CurrentWorkspaceSerializerMixin, serializers.Serializer): 
     variety = serializers.IntegerField(min_value=1, required=False)
     stage = serializers.IntegerField(min_value=1, required=False)
     tray_state = serializers.CharField(required=False)
+    selected_keys = serializers.ListField(
+        child=serializers.CharField(max_length=96), required=False,
+    )
     workspace_field_lookups = {'location': 'workspace'}
 
     def to_internal_value(self, data):
@@ -406,6 +410,22 @@ class NurseryStocktakeViewSet(
             raise serializers.ValidationError({'target': 'Target not found.'}) from exc
         stocktake = _run(
             request_recount, stocktake, target, request.user,
+            serializer.validated_data['reason'],
+        )
+        return Response(stocktake_data(self._get(stocktake.pk)))
+
+    @action(detail=True, methods=['post'], url_path='refresh-target')
+    def refresh_target(self, request, pk=None):
+        """Refresh one changed snapshot and require a retained recount."""
+        serializer = RecountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        stocktake = self._get(pk)
+        try:
+            target = stocktake.targets.get(pk=serializer.validated_data['target'])
+        except StocktakeTarget.DoesNotExist as exc:
+            raise serializers.ValidationError({'target': 'Target not found.'}) from exc
+        stocktake = _run(
+            refresh_target_snapshot, stocktake, target, request.user,
             serializer.validated_data['reason'],
         )
         return Response(stocktake_data(self._get(stocktake.pk)))

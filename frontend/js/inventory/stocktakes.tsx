@@ -115,11 +115,36 @@ function CountTarget({ stocktakePk, target, refresh }: { stocktakePk: number; ta
   )
 }
 
-function ReviewVariance({ stocktakePk, variance, refresh }: { stocktakePk: number; variance: StocktakeVariance; refresh: () => Promise<unknown> }) {
+function ReviewVariance({
+  stocktakePk,
+  target,
+  variance,
+  refresh
+}: {
+  stocktakePk: number
+  target: StocktakeTarget
+  variance: StocktakeVariance
+  refresh: () => Promise<unknown>
+}) {
   const [action, setAction] = React.useState('')
   const [reason, setReason] = React.useState('')
+  const [location, setLocation] = React.useState<number | ''>('')
+  const [stateAction, setStateAction] = React.useState('')
+  const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
+  const payload =
+    action === 'move'
+      ? { location }
+      : action === 'state_correct' && target.target_type === 'tray'
+        ? { state_action: stateAction, location: location || undefined }
+        : action === 'state_correct'
+          ? { event_type: stateAction }
+          : {}
   const resolve = useMutation({
-    mutationFn: () => resolveStocktakeVariance(stocktakePk, variance.pk, action, reason, variance.source_changed),
+    mutationFn: () => resolveStocktakeVariance(stocktakePk, variance.pk, action, reason, variance.source_changed, payload),
+    onSuccess: () => refresh()
+  })
+  const refreshSnapshot = useMutation({
+    mutationFn: () => stocktakeAction(stocktakePk, 'refresh-target', { target: target.pk, reason: reason || 'Refresh changed source before recount' }),
     onSuccess: () => refresh()
   })
   if (variance.resolution_action)
@@ -131,17 +156,51 @@ function ReviewVariance({ stocktakePk, variance, refresh }: { stocktakePk: numbe
   return (
     <div>
       {variance.source_changed && <Alert variant="warning">Source changed after opening. Saving explicitly accepts this conflict.</Alert>}
+      {variance.source_changed && (
+        <Button className="mb-2" variant="outline-warning" onClick={() => refreshSnapshot.mutate()}>
+          Refresh snapshot and recount
+        </Button>
+      )}
       <div className="d-flex gap-2 flex-wrap">
         <Form.Select value={action} onChange={(event) => setAction(event.target.value)} aria-label="Correction action">
           <option value="">Choose correction</option>
-          <option value="adjust">Adjust quantity</option>
-          <option value="move">Move</option>
-          <option value="lost">Record lost</option>
-          <option value="state_correct">Correct state</option>
+          {['lot', 'seed_packet', 'cohort'].includes(target.target_type) && <option value="adjust">Adjust quantity</option>}
+          {['tray', 'cohort', 'plant'].includes(target.target_type) && <option value="move">Move</option>}
+          {['tray', 'plant'].includes(target.target_type) && <option value="lost">Record lost</option>}
+          {['tray', 'plant'].includes(target.target_type) && <option value="state_correct">Correct state</option>}
           <option value="no_change">No change</option>
         </Form.Select>
         <Form.Control value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Required reason" />
-        <Button disabled={!action || !reason.trim() || resolve.isPending} onClick={() => resolve.mutate()}>
+        {(action === 'move' || (action === 'state_correct' && target.target_type === 'tray' && stateAction === 'return')) && (
+          <Form.Select value={location} onChange={(event) => setLocation(Number(event.target.value) || '')}>
+            <option value="">Select location</option>
+            {(locations.data ?? []).map((row) => (
+              <option value={row.pk} key={row.pk}>
+                {row.full_name}
+              </option>
+            ))}
+          </Form.Select>
+        )}
+        {action === 'state_correct' && target.target_type === 'tray' && (
+          <Form.Select value={stateAction} onChange={(event) => setStateAction(event.target.value)}>
+            <option value="">Select tray correction</option>
+            <option value="return">Return on hand</option>
+            <option value="retire">Retire</option>
+          </Form.Select>
+        )}
+        {action === 'state_correct' && target.target_type === 'plant' && (
+          <Form.Select value={stateAction} onChange={(event) => setStateAction(event.target.value)}>
+            <option value="">Select plant state</option>
+            <option value="ready">Ready</option>
+            <option value="retained">Retained</option>
+            <option value="failed">Failed</option>
+            <option value="culled">Culled</option>
+          </Form.Select>
+        )}
+        <Button
+          disabled={!action || !reason.trim() || (action === 'move' && !location) || (action === 'state_correct' && !stateAction) || resolve.isPending}
+          onClick={() => resolve.mutate()}
+        >
           Resolve
         </Button>
       </div>
@@ -229,7 +288,7 @@ function StocktakeDetailView() {
                 <p>
                   Value: {variance.variance_value ?? 'Unknown'} {variance.currency ?? ''}
                 </p>
-                <ReviewVariance stocktakePk={pk} variance={variance} refresh={refresh} />
+                <ReviewVariance stocktakePk={pk} target={target} variance={variance} refresh={refresh} />
               </Card>
             ))
           )}
