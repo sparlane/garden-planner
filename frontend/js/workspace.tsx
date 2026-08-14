@@ -31,6 +31,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     mode: workspace.mode,
     currency_code: workspace.currency_code,
     default_tax_rate: workspace.default_tax_rate,
+    sales_prices_include_tax: workspace.sales_prices_include_tax,
     timezone: workspace.timezone,
     measurement_system: workspace.measurement_system,
     override_tolerance_percent: workspace.override_tolerance_percent,
@@ -48,6 +49,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       mode: workspace.mode,
       currency_code: workspace.currency_code,
       default_tax_rate: workspace.default_tax_rate,
+      sales_prices_include_tax: workspace.sales_prices_include_tax,
       timezone: workspace.timezone,
       measurement_system: workspace.measurement_system,
       override_tolerance_percent: workspace.override_tolerance_percent,
@@ -105,6 +107,14 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
             value={form.default_tax_rate}
             onChange={(event) => updateField('default_tax_rate', event.target.value)}
           />
+        </Form.Group>
+        <Form.Group className="mb-3" controlId="workspace-sales-tax-mode">
+          <Form.Check
+            label="Prices entered on new sales orders include tax / GST"
+            checked={form.sales_prices_include_tax}
+            onChange={(event) => updateField('sales_prices_include_tax', event.target.checked)}
+          />
+          <Form.Text>Each order snapshots this default and may override it while still a quote or draft.</Form.Text>
         </Form.Group>
         <Form.Group className="mb-3" controlId="workspace-timezone">
           <Form.Label>Timezone</Form.Label>

@@ -33,6 +33,7 @@ import { ProductionPlanningView } from './plantings/production_planning.js'
 import { LabelsView, ScannerView } from './labels.js'
 import { WorkQueueView } from './work.js'
 import { HealthView } from './health.js'
+import { CustomerListView, SalesOrderDetailView, SalesOrderListView } from './sales.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -72,6 +73,13 @@ function CohortDetailRoute() {
   const cohortPk = Number(cohortId)
   if (!cohortId || !Number.isInteger(cohortPk) || cohortPk <= 0) return <div>Cohort not found.</div>
   return <CohortDetailView cohortPk={cohortPk} />
+}
+
+function SalesOrderDetailRoute({ workspace }: { workspace: Workspace }) {
+  const { orderId } = useParams()
+  const orderPk = Number(orderId)
+  if (!orderId || !Number.isInteger(orderPk) || orderPk <= 0) return <div>Sales order not found.</div>
+  return <SalesOrderDetailView orderPk={orderPk} workspace={workspace} />
 }
 
 function FrontEndPage() {
@@ -159,6 +167,30 @@ function FrontEndPage() {
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
         <Route path="/applications" element={<InputApplicationsView />} />
+        <Route
+          path="/sales/orders"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <SalesOrderListView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/sales/orders/:orderId"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <SalesOrderDetailRoute workspace={workspace} />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/sales/customers"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <CustomerListView />
+            </WorkspaceModeRoute>
+          }
+        />
         <Route path="/labels" element={<LabelsView />} />
         <Route path="/scan" element={<ScannerView />} />
         <Route path="/scan/:code" element={<ScannerView />} />

@@ -17,6 +17,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
   const seedTraysActive = pathname === '/seedtrays' || pathname.startsWith('/seedtrays/')
   const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health'
   const inventoryActive = pathname === '/inventory' || pathname.startsWith('/inventory/') || pathname.startsWith('/applications') || pathname.startsWith('/locations')
+  const salesActive = pathname === '/sales' || pathname.startsWith('/sales/')
 
   return (
     <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
@@ -43,6 +44,16 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               Stock
             </NavDropdown.Item>
           </NavDropdown>
+          {workspace.mode === 'nursery' && (
+            <NavDropdown title="Sales" active={salesActive}>
+              <NavDropdown.Item as={NavLink} to="/sales/orders">
+                Orders
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/sales/customers">
+                Customers
+              </NavDropdown.Item>
+            </NavDropdown>
+          )}
           <NavDropdown title="Seed Trays" active={seedTraysActive}>
             <NavDropdown.Item as={NavLink} to="/seedtrays/models">
               Seed Tray Models

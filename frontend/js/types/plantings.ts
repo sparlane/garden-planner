@@ -364,6 +364,7 @@ interface NurseryRegisterRow {
   lifecycle_state: PlantLifecycleState
   sellable: boolean
   quarantined: boolean
+  reserved: boolean
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
   location_type: PlantPlacementType | null
@@ -416,6 +417,7 @@ interface NurseryRegisterFilters {
   state?: Array<PlantLifecycleState>
   sellable?: boolean
   quarantined?: boolean
+  reserved?: boolean
   germinated_from?: string
   germinated_to?: string
   location_type?: PlantPlacementType | 'none'
@@ -442,6 +444,7 @@ type NurseryRegisterTotals = Record<PlantLifecycleState, number> & {
   total: number
   unresolved: number
   quarantined: number
+  reserved: number
   stage_counts: Record<string, number>
   grade_counts: Record<string, number>
   container_counts: Record<string, number>

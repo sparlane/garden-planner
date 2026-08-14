@@ -107,6 +107,7 @@ def _target_values(identity, code=None):
     elif key == ('seedtrays', 'seedtray'):
         open_generation = target.generations.filter(status='open').first()
         values['display'] = f'Tray {target.pk} — {target.model.identifier}'
+        values['inventory_unit'] = target.inventory_unit_id
         if open_generation:
             sowings = list(open_generation.sowings.select_related('batch__variety'))
             batches = sorted({sowing.batch.code for sowing in sowings})

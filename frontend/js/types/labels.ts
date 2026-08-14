@@ -13,6 +13,7 @@ interface LabelIdentity {
   batch?: string | null
   sowing_date?: string | null
   expected_ready?: string | null
+  inventory_unit?: number
 }
 
 interface LabelTemplate {
