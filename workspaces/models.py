@@ -66,6 +66,10 @@ class Workspace(models.Model):
         ],
         help_text='Default tax percentage from 0 through 100.',
     )
+    sales_prices_include_tax = models.BooleanField(
+        default=False,
+        help_text='Whether prices entered on new sales orders include tax.',
+    )
     timezone = models.CharField(
         max_length=64,
         default='UTC',
