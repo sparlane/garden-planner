@@ -1,9 +1,10 @@
 """PostgreSQL proofs for exact-stock reservation locking."""
 
-# pylint: disable=duplicate-code
+# pylint: disable=duplicate-code,missing-function-docstring
 
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -15,6 +16,7 @@ from plantings.lifecycle import EventType, OutcomeRequest, record_germination_ev
 from tests.factories import make_seed_tray, make_specific_plant
 from workspaces.models import Workspace
 
+from .commerce import post_fulfillment
 from .models import SalesOrder, SalesOrderAllocation, SalesOrderLine
 from .services import allocate_targets, confirm_order, create_order
 
@@ -111,3 +113,47 @@ class ConcurrentTrayReservationTests(ReservationConcurrencyTestCase):
             results = sorted(pool.map(self._confirm, self.order_pks))
         self.assertEqual(results, ['confirmed', 'rejected'])
         self.assertEqual(SalesOrderAllocation.objects.filter(status='reserved').count(), 1)
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentFulfillmentTests(ReservationConcurrencyTestCase):
+    """One reserved allocation cannot be sold by two posting requests."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='fulfillment-racer')
+        plant = make_specific_plant(workspace=self.workspace)
+        record_germination_event(plant, self.user)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        order, line = self._order_with_line(
+            SalesOrderLine.LineType.SEEDLING, variety=plant.batch.variety,
+        )
+        allocation = allocate_targets(line, self.user, plant_ids=[plant.pk])[0]
+        confirm_order(order, self.user)
+        self.order_pk = order.pk
+        self.allocation_pk = allocation.pk
+
+    def _fulfill(self, _index):
+        close_old_connections()
+        order = SalesOrder.objects.get(pk=self.order_pk)
+        user = get_user_model().objects.get(pk=self.user.pk)
+        try:
+            post_fulfillment(
+                order, user, operation_key=uuid4(),
+                allocation_ids=[self.allocation_pk],
+            )
+        except ValidationError:
+            result = 'rejected'
+        else:
+            result = 'fulfilled'
+        close_old_connections()
+        return result
+
+    def test_exactly_one_fulfillment_posts(self):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(pool.map(self._fulfill, range(2)))
+        self.assertEqual(results, ['fulfilled', 'rejected'])
+        self.assertEqual(SalesOrderAllocation.objects.filter(status='fulfilled').count(), 1)
