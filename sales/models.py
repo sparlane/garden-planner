@@ -10,7 +10,9 @@ from django.core.validators import MaxValueValidator, MinValueValidator, RegexVa
 from django.db import models
 
 from inventory.models import InventoryItem, InventoryUnit, MONEY_DECIMAL_PLACES, MONEY_MAX_DIGITS
-from plantings.models import SpecificPlant
+from inventory.models import StockLot, StockMovement
+from locations.models import Location
+from plantings.models import PlantLifecycleEvent, SpecificPlant
 from plants.models import PlantVariety
 from workspaces.models import Workspace, WorkspaceOwnedModel
 
@@ -242,6 +244,7 @@ class SalesOrderAllocation(models.Model):
         RELEASED = 'released', 'Released'
         EXPIRED = 'expired', 'Expired'
         FULFILLED = 'fulfilled', 'Fulfilled'
+        RETURNED = 'returned', 'Returned'
 
     line = models.ForeignKey(SalesOrderLine, on_delete=models.PROTECT, related_name='allocations')
     plant = models.ForeignKey(SpecificPlant, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
@@ -329,3 +332,342 @@ class ReservationEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Reservation events cannot be deleted.')
+
+
+class FulfillmentNumberSequence(models.Model):
+    """The next readable fulfillment number for one locked workspace."""
+
+    workspace = models.OneToOneField(
+        Workspace, on_delete=models.PROTECT, primary_key=True, related_name='+',
+    )
+    next_number = models.PositiveBigIntegerField(default=1)
+
+
+class ImmutableCommerceModel(WorkspaceOwnedModel):
+    """Shared append-only identity for retryable commerce actions."""
+
+    operation_key = models.UUIDField()
+    request_fingerprint = models.CharField(max_length=64)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Posted commerce records are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Posted commerce records cannot be deleted.')
+
+
+class Fulfillment(ImmutableCommerceModel):
+    """One posted dispatch or the explicit reversal of one dispatch."""
+
+    order = models.ForeignKey(
+        SalesOrder, on_delete=models.PROTECT, related_name='fulfillments',
+    )
+    fulfillment_number = models.CharField(max_length=32)
+    fulfilled_at = models.DateTimeField()
+    notes = models.TextField(blank=True, default='')
+    reversal_of = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reversal',
+    )
+
+    class Meta:
+        ordering = ['fulfilled_at', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workspace', 'fulfillment_number'],
+                name='sales_fulfillment_workspace_number_unique',
+            ),
+            models.UniqueConstraint(
+                fields=['workspace', 'operation_key'],
+                name='sales_fulfillment_workspace_operation_unique',
+            ),
+        ]
+
+
+class FulfillmentLine(models.Model):
+    """Recognized revenue and direct cost for one exact allocation."""
+
+    fulfillment = models.ForeignKey(
+        Fulfillment, on_delete=models.PROTECT, related_name='lines',
+    )
+    allocation = models.ForeignKey(
+        SalesOrderAllocation, on_delete=models.PROTECT,
+        related_name='fulfillment_lines',
+    )
+    commercial_position = models.PositiveIntegerField()
+    gross_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    discount_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    subtotal_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    tax_total = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    total_incl_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    cogs_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+    cogs_provisional = models.BooleanField(default=False)
+    currency_code = models.CharField(max_length=3)
+    lifecycle_event = models.OneToOneField(
+        PlantLifecycleEvent, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='fulfillment_line',
+    )
+    stock_movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='fulfillment_line',
+    )
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['fulfillment', 'allocation'],
+                name='sales_fulfillment_line_allocation_unique',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(commercial_position__gte=1),
+                name='sales_fulfillment_line_position_positive',
+            ),
+        ]
+
+
+class FulfillmentPackagingLine(models.Model):
+    """An exact packaging-lot quantity consumed by one fulfillment."""
+
+    fulfillment = models.ForeignKey(
+        Fulfillment, on_delete=models.PROTECT, related_name='packaging_lines',
+    )
+    lot = models.ForeignKey(
+        StockLot, on_delete=models.PROTECT, related_name='fulfillment_packaging',
+    )
+    source = models.ForeignKey(
+        Location, on_delete=models.PROTECT, related_name='+',
+    )
+    quantity = models.DecimalField(max_digits=18, decimal_places=9)
+    base_unit = models.CharField(max_length=16)
+    unit_cost = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+    cogs_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+    currency_code = models.CharField(max_length=3)
+    stock_movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT,
+        related_name='fulfillment_packaging_line',
+    )
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [models.CheckConstraint(
+            condition=models.Q(quantity__gt=0),
+            name='sales_fulfillment_packaging_quantity_positive',
+        )]
+
+
+class Payment(ImmutableCommerceModel):
+    """Operational cash received, or an append-only reversal of it."""
+
+    class Method(models.TextChoices):
+        """Supported operational tender descriptions."""
+
+        CASH = 'cash', 'Cash'
+        CARD = 'card', 'Card'
+        BANK_TRANSFER = 'bank_transfer', 'Bank transfer'
+        OTHER = 'other', 'Other'
+
+    order = models.ForeignKey(
+        SalesOrder, on_delete=models.PROTECT, related_name='payments',
+    )
+    paid_on = models.DateField()
+    amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        validators=[MinValueValidator(Decimal('0.0001'))],
+    )
+    currency_code = models.CharField(max_length=3)
+    method = models.CharField(max_length=16, choices=Method.choices)
+    external_reference = models.CharField(max_length=255, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+    reversal_of = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reversal',
+    )
+
+    class Meta:
+        ordering = ['paid_on', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name='sales_payment_amount_positive',
+            ),
+            models.UniqueConstraint(
+                fields=['workspace', 'operation_key'],
+                name='sales_payment_workspace_operation_unique',
+            ),
+        ]
+
+
+class SalesReturn(ImmutableCommerceModel):
+    """A physical return, independent from whether money is refunded."""
+
+    order = models.ForeignKey(
+        SalesOrder, on_delete=models.PROTECT, related_name='returns',
+    )
+    returned_at = models.DateTimeField()
+    reason = models.TextField()
+    notes = models.TextField(blank=True, default='')
+    health_observation = models.ForeignKey(
+        'health.HealthObservation', on_delete=models.PROTECT, null=True,
+        blank=True, related_name='sales_returns',
+    )
+    quarantine_case = models.ForeignKey(
+        'health.QuarantineCase', on_delete=models.PROTECT, null=True,
+        blank=True, related_name='sales_returns',
+    )
+    reversal_of = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reversal',
+    )
+
+    class Meta:
+        ordering = ['returned_at', 'pk']
+        constraints = [models.UniqueConstraint(
+            fields=['workspace', 'operation_key'],
+            name='sales_return_workspace_operation_unique',
+        )]
+
+
+class SalesReturnLine(models.Model):
+    """The explicit outcome and linked facts for one returned allocation."""
+
+    class Outcome(models.TextChoices):
+        """Required physical disposition for returned exact stock."""
+
+        AVAILABLE = 'available', 'Available'
+        QUARANTINED = 'quarantined', 'Quarantined'
+        DISCARDED = 'discarded', 'Discarded'
+
+    sales_return = models.ForeignKey(
+        SalesReturn, on_delete=models.PROTECT, related_name='lines',
+    )
+    fulfillment_line = models.ForeignKey(
+        FulfillmentLine, on_delete=models.PROTECT, related_name='return_lines',
+    )
+    outcome = models.CharField(max_length=16, choices=Outcome.choices)
+    destination = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='+',
+    )
+    lifecycle_event = models.OneToOneField(
+        PlantLifecycleEvent, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='sales_return_line',
+    )
+    return_movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='sales_return_line',
+    )
+    discard_movement = models.OneToOneField(
+        StockMovement, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='sales_return_discard_line',
+    )
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [models.UniqueConstraint(
+            fields=['sales_return', 'fulfillment_line'],
+            name='sales_return_line_fulfillment_unique',
+        )]
+
+
+class Refund(ImmutableCommerceModel):
+    """A monetary correction classified against original fulfillment lines."""
+
+    order = models.ForeignKey(
+        SalesOrder, on_delete=models.PROTECT, related_name='refunds',
+    )
+    payment = models.ForeignKey(
+        Payment, on_delete=models.PROTECT, related_name='refunds',
+    )
+    sales_return = models.ForeignKey(
+        SalesReturn, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='refunds',
+    )
+    refunded_at = models.DateTimeField()
+    amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        validators=[MinValueValidator(Decimal('0.0001'))],
+    )
+    currency_code = models.CharField(max_length=3)
+    reason = models.TextField()
+    notes = models.TextField(blank=True, default='')
+    reversal_of = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reversal',
+    )
+
+    class Meta:
+        ordering = ['refunded_at', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(amount__gt=0),
+                name='sales_refund_amount_positive',
+            ),
+            models.UniqueConstraint(
+                fields=['workspace', 'operation_key'],
+                name='sales_refund_workspace_operation_unique',
+            ),
+        ]
+
+
+class RefundLine(models.Model):
+    """One proportional piece of a refund assigned to recognized revenue."""
+
+    refund = models.ForeignKey(
+        Refund, on_delete=models.PROTECT, related_name='lines',
+    )
+    fulfillment_line = models.ForeignKey(
+        FulfillmentLine, on_delete=models.PROTECT, related_name='refund_lines',
+    )
+    gross_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    discount_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    subtotal_ex_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    tax_total = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+    total_incl_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+    )
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [models.UniqueConstraint(
+            fields=['refund', 'fulfillment_line'],
+            name='sales_refund_line_fulfillment_unique',
+        )]
