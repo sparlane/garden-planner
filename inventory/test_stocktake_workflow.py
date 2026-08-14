@@ -21,6 +21,7 @@ from .models import (
     StocktakeTarget,
     StocktakeVariance,
 )
+from .stocktakes import transition_stocktake
 from .units import UnitCode
 
 
@@ -99,6 +100,23 @@ class StocktakeWorkflowModelTests(TestCase):
     def test_two_person_requirement_defaults_off(self):
         """Existing shared workspaces do not acquire a surprise restriction."""
         self.assertFalse(self.workspace.stocktake_two_person_required)
+
+    def test_status_transition_rejects_a_stale_instance(self):
+        """A concurrent status change cannot be overwritten by a stale request."""
+        stale_stocktake = Stocktake.objects.get(pk=self.stocktake.pk)
+        Stocktake.objects.filter(pk=self.stocktake.pk).update(
+            status=Stocktake.Status.PAUSED,
+        )
+
+        with self.assertRaisesMessage(ValidationError, 'transition is not available'):
+            transition_stocktake(
+                stale_stocktake,
+                {Stocktake.Status.OPEN},
+                Stocktake.Status.PAUSED,
+            )
+
+        self.stocktake.refresh_from_db()
+        self.assertEqual(self.stocktake.status, Stocktake.Status.PAUSED)
 
 
 class StocktakeWorkflowRestTests(APITestCase):
