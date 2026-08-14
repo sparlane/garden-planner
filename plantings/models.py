@@ -1303,6 +1303,10 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
         CULLED = 'culled', 'Culled'
         DONATED = 'donated', 'Donated'
         HARVEST_FINISHED = 'harvest_finished', 'Harvest finished'
+        SOLD = 'sold', 'Sold'
+        RETURNED_AVAILABLE = 'returned_available', 'Returned available'
+        RETURNED_QUARANTINED = 'returned_quarantined', 'Returned quarantined'
+        RETURNED_DISCARDED = 'returned_discarded', 'Returned discarded'
         CORRECTED = 'corrected', 'Corrected'
 
     plant = models.ForeignKey(
@@ -1316,7 +1320,7 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
         editable=False,
         related_name='plant_lifecycle_events',
     )
-    event_type = models.CharField(max_length=20, choices=EventType.choices)
+    event_type = models.CharField(max_length=24, choices=EventType.choices)
     occurred_at = models.DateTimeField()
     reason = models.TextField(blank=True, default='')
     reference = models.CharField(max_length=255, blank=True, default='')
