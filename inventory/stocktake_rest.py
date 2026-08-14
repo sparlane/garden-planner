@@ -3,7 +3,6 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import transaction
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -25,6 +24,7 @@ from .stocktakes import (
     open_stocktake,
     record_count,
     request_recount,
+    resolve_identity_target,
     resolve_variance,
     scope_rows,
     transition_stocktake,
@@ -312,24 +312,7 @@ class NurseryStocktakeViewSet(
                 raise serializers.ValidationError({'code': 'This code belongs to another workspace.'})
             raise serializers.ValidationError({'code': 'No label uses this code.'})
         identity = code.identity
-        mapping = {
-            'seedtray': StocktakeTarget.TargetType.TRAY,
-            'plantcohort': StocktakeTarget.TargetType.COHORT,
-            'specificplant': StocktakeTarget.TargetType.PLANT,
-        }
-        target_type = mapping.get(identity.target_content_type.model)
-        if target_type is None:
-            raise serializers.ValidationError({'code': 'This identity cannot be counted in a stocktake.'})
-        key = f'{target_type}:{identity.target_object_id}'
-        target = stocktake.targets.filter(target_key=key).first()
-        if target is None:
-            with transaction.atomic():
-                target = StocktakeTarget.objects.create(
-                    stocktake=stocktake, target_type=target_type,
-                    target_key=key, target_object_id=identity.target_object_id,
-                    display=identity.target_snapshot.get('display', key),
-                    expected_snapshot={}, source_revision='', unexpected=True,
-                )
+        target = _run(resolve_identity_target, stocktake, identity)
         values = serializer.validated_data
         count = _run(
             record_count, stocktake, request.user, target.pk,

@@ -1,6 +1,7 @@
 """Model contracts for reviewed nursery stocktake evidence."""
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -21,7 +22,7 @@ from .models import (
     StocktakeTarget,
     StocktakeVariance,
 )
-from .stocktakes import transition_stocktake
+from .stocktakes import resolve_identity_target, transition_stocktake
 from .units import UnitCode
 
 
@@ -117,6 +118,22 @@ class StocktakeWorkflowModelTests(TestCase):
 
         self.stocktake.refresh_from_db()
         self.assertEqual(self.stocktake.status, Stocktake.Status.PAUSED)
+
+    def test_scanned_identity_resolution_reuses_an_unexpected_target(self):
+        """Scan orchestration creates one stable target outside the frozen scope."""
+        identity = SimpleNamespace(
+            target_content_type=SimpleNamespace(model='plantcohort'),
+            target_object_id=19,
+            target_snapshot={'display': 'Cohort 19'},
+        )
+
+        first = resolve_identity_target(self.stocktake, identity)
+        second = resolve_identity_target(self.stocktake, identity)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first.target_type, StocktakeTarget.TargetType.COHORT)
+        self.assertEqual(first.display, 'Cohort 19')
+        self.assertTrue(first.unexpected)
 
 
 class StocktakeWorkflowRestTests(APITestCase):
