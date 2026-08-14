@@ -382,6 +382,7 @@ class BatchPlantResolutionTests(TestCase):
                 'retained': 1,
                 'donated': 0,
                 'failed': 1,
+                'lost': 0,
                 'culled': 0,
                 'harvested': 0,
             },

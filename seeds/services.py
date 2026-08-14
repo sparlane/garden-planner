@@ -395,9 +395,11 @@ def reverse_packet_reconciliation(reconciliation, user, reason):
     """Restore the packet certainty and ledger state before one physical count."""
     if not reason.strip():
         raise ValidationError({'reason': 'A reason is required.'})
-    reconciliation = SeedPacketQuantityReconciliation.objects.select_for_update().select_related(
-        'packet__stock_lot', 'movement',
-    ).get(pk=reconciliation.pk)
+    reconciliation = (
+        SeedPacketQuantityReconciliation.objects.select_for_update(of=('self',))
+        .select_related('packet__stock_lot', 'movement')
+        .get(pk=reconciliation.pk)
+    )
     if hasattr(reconciliation, 'reversal'):
         raise ValidationError({'reconciliation': 'This packet count is already reversed.'})
     previous = SeedPacketQuantityReconciliation.objects.filter(

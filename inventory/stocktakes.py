@@ -706,7 +706,7 @@ def post_reviewed_stocktake(stocktake, user):
     if stocktake.status != Stocktake.Status.APPROVED:
         raise ValidationError({'status': 'Only an approved stocktake can be posted.'})
     targets = list(
-        stocktake.targets.select_for_update().select_related(
+        stocktake.targets.select_for_update(of=('self',)).select_related(
             'accepted_count', 'expected_location',
         ).prefetch_related('variances')
     )
