@@ -11,7 +11,7 @@ import { queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
 import { BulkOperationPanel } from './plantings/bulk_operations'
 import { HealthScopeType } from './types/health'
-import { allocateOrderLine, getSalesOrders, previewAllocation } from './api/sales'
+import { allocateOrderLine, getFulfillments, getSalesOrders, postFulfillment, postReturn, previewAllocation } from './api/sales'
 
 import './labels.css'
 
@@ -229,7 +229,9 @@ function ScannerView() {
   const [stocktakeCode, setStocktakeCode] = React.useState('')
   const [salesOrder, setSalesOrder] = React.useState<number | ''>('')
   const [salesLine, setSalesLine] = React.useState<number | ''>('')
+  const [orderMode, setOrderMode] = React.useState<'allocate' | 'fulfill' | 'return'>('allocate')
   const [orderScanned, setOrderScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
+  const [returnDestination, setReturnDestination] = React.useState<number | ''>('')
   const [orderConflict, setOrderConflict] = React.useState('')
   const video = React.useRef<HTMLVideoElement>(null)
   const controls = React.useRef<IScannerControls | undefined>(undefined)
@@ -237,6 +239,11 @@ function ScannerView() {
   const orders = useQuery({ queryKey: queryKeys.sales.orders, queryFn: ({ signal }) => getSalesOrders(signal) })
   const chosenOrder = orders.data?.find((entry) => entry.pk === salesOrder)
   const chosenLine = chosenOrder?.lines.find((entry) => entry.pk === salesLine)
+  const scannedFulfillments = useQuery({
+    queryKey: ['sales', salesOrder, 'scan-fulfillments'],
+    queryFn: ({ signal }) => getFulfillments(salesOrder as number, signal),
+    enabled: salesOrder !== '' && orderMode === 'return'
+  })
   const orderAllocation = useMutation({
     mutationFn: async (resolved: LabelResolution) => {
       if (!chosenOrder || !chosenLine || !resolved.target) throw new Error('Choose an order line before scanning stock.')
@@ -269,6 +276,24 @@ function ScannerView() {
       void orders.refetch()
     }
   })
+  const saveCommerceScans = useMutation<object>({
+    mutationFn: async () => {
+      if (!chosenOrder) throw new Error('Choose an order first.')
+      if (orderMode === 'fulfill') {
+        return await postFulfillment(chosenOrder.pk, { operation_key: crypto.randomUUID(), allocation_ids: orderScanned.map((entry) => entry.id) })
+      }
+      return await postReturn(chosenOrder.pk, {
+        operation_key: crypto.randomUUID(),
+        reason: 'Returned through label scan.',
+        items: orderScanned.map((entry) => ({ fulfillment_line: entry.id, outcome: 'available', destination: returnDestination }))
+      })
+    },
+    onSuccess: () => {
+      setOrderScanned([])
+      void orders.refetch()
+      void scannedFulfillments.refetch()
+    }
+  })
 
   const resolveMutation = useMutation({
     mutationFn: (input: string) => resolveLabel(input),
@@ -283,7 +308,33 @@ function ScannerView() {
         )
       }
       if (resolved.status === 'active' && resolved.target && resolved.capabilities?.includes('order_allocate') && chosenLine) {
-        orderAllocation.mutate(resolved)
+        if (orderMode === 'allocate') orderAllocation.mutate(resolved)
+      }
+      if (resolved.status === 'active' && resolved.target && chosenOrder && orderMode !== 'allocate') {
+        const target = resolved.target
+        const allocation = chosenOrder.lines
+          .flatMap((line) => line.allocations)
+          .find((entry) => entry.plant === (target.target_type === 'specificplant' ? target.object_id : null) || entry.inventory_unit === target.inventory_unit)
+        if (orderMode === 'fulfill' && resolved.capabilities?.includes('order_fulfill') && allocation?.status === 'reserved') {
+          setOrderScanned((current) =>
+            current.some((entry) => entry.id === allocation.pk)
+              ? current
+              : [...current, { id: allocation.pk, code: resolved.current_code ?? resolved.code ?? '', display: target.display }]
+          )
+        } else if (orderMode === 'return' && resolved.capabilities?.includes('order_return') && allocation) {
+          const fulfillmentLine = (scannedFulfillments.data ?? [])
+            .filter((entry) => entry.status === 'posted')
+            .flatMap((entry) => entry.lines)
+            .find((line) => line.allocation === allocation.pk)
+          if (fulfillmentLine)
+            setOrderScanned((current) =>
+              current.some((entry) => entry.id === fulfillmentLine.pk)
+                ? current
+                : [...current, { id: fulfillmentLine.pk, code: resolved.current_code ?? resolved.code ?? '', display: target.display }]
+            )
+        } else {
+          setOrderConflict(`That label is not eligible for ${orderMode} on the chosen order.`)
+        }
       }
       if (resolved.status === 'active' && resolved.target && resolved.capabilities?.includes('health_inspection')) {
         const target = resolved.target
@@ -387,10 +438,24 @@ function ScannerView() {
         </Col>
         <Col lg={6}>
           <h2>
-            Order allocation <Badge bg="primary">{orderScanned.length}</Badge>
+            Order commerce <Badge bg="primary">{orderScanned.length}</Badge>
           </h2>
           <Row className="g-2 mb-2">
-            <Col md={6}>
+            <Col md={4}>
+              <Form.Select
+                value={orderMode}
+                onChange={(event) => {
+                  setOrderMode(event.target.value as typeof orderMode)
+                  setOrderScanned([])
+                  setOrderConflict('')
+                }}
+              >
+                <option value="allocate">Allocate</option>
+                <option value="fulfill">Fulfill</option>
+                <option value="return">Return available</option>
+              </Form.Select>
+            </Col>
+            <Col md={4}>
               <Form.Select
                 value={salesOrder}
                 onChange={(event) => {
@@ -409,10 +474,10 @@ function ScannerView() {
                   ))}
               </Form.Select>
             </Col>
-            <Col md={6}>
+            <Col md={4}>
               <Form.Select
                 value={salesLine}
-                disabled={!chosenOrder}
+                disabled={!chosenOrder || orderMode !== 'allocate'}
                 onChange={(event) => {
                   setSalesLine(event.target.value === '' ? '' : Number(event.target.value))
                   setOrderScanned([])
@@ -428,7 +493,24 @@ function ScannerView() {
             </Col>
           </Row>
           {orderConflict && <Alert variant="warning">Scan not added: {orderConflict}</Alert>}
-          {chosenLine && <p className="text-muted">Scan {chosenLine.line_type === 'seedling' ? 'plant' : 'tray'} labels to validate them against this line.</p>}
+          {orderMode === 'allocate' && chosenLine && (
+            <p className="text-muted">Scan {chosenLine.line_type === 'seedling' ? 'plant' : 'tray'} labels to validate them against this line.</p>
+          )}
+          {orderMode === 'fulfill' && chosenOrder && (
+            <p className="text-muted">Scans stage reserved plants or trays from this order. Posting happens only when you confirm below.</p>
+          )}
+          {orderMode === 'return' && chosenOrder && (
+            <Form.Select className="mb-2" value={returnDestination} onChange={(event) => setReturnDestination(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Return destination</option>
+              {(locations.data ?? [])
+                .filter((location) => location.location_type !== 'quarantine')
+                .map((location) => (
+                  <option key={location.pk} value={location.pk}>
+                    {location.full_name}
+                  </option>
+                ))}
+            </Form.Select>
+          )}
           {orderScanned.length > 0 && (
             <>
               <ul className="list-group mb-2">
@@ -448,13 +530,15 @@ function ScannerView() {
               <Button
                 className="mb-4"
                 disabled={
-                  !chosenLine ||
-                  orderScanned.length + (chosenLine?.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length ?? 0) >
-                    (chosenLine?.quantity ?? 0)
+                  orderMode === 'allocate'
+                    ? !chosenLine ||
+                      orderScanned.length + (chosenLine?.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length ?? 0) >
+                        (chosenLine?.quantity ?? 0)
+                    : orderMode === 'return' && returnDestination === ''
                 }
-                onClick={() => saveOrderAllocation.mutate()}
+                onClick={() => (orderMode === 'allocate' ? saveOrderAllocation.mutate() : saveCommerceScans.mutate())}
               >
-                Add scans to order
+                {orderMode === 'allocate' ? 'Add scans to order' : orderMode === 'fulfill' ? 'Post scanned fulfillment' : 'Post scanned return'}
               </Button>
             </>
           )}

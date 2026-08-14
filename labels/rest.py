@@ -145,7 +145,7 @@ def _target_active(identity):
     if key == ('locations', 'location'):
         return target.active
     if key == ('seedtrays', 'seedtray'):
-        return target.inventory_unit.active
+        return True
     return True
 
 
@@ -162,6 +162,8 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
     route = TARGET_ROUTES.get(key)
     capabilities = ['inspect', 'print'] if resolution_status == LabelCode.Status.ACTIVE else ['inspect']
     if resolution_status == LabelCode.Status.ACTIVE and key == ('plantings', 'specificplant'):
+        from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
+
         summary = derive_state(identity.target.lifecycle_events.all())
         if summary.state in ('growing', 'available', 'retained'):
             capabilities.append('bulk_select')
@@ -174,6 +176,23 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
             ).exists()
             if not reserved and not is_quarantined(identity.target):
                 capabilities.append('order_allocate')
+        if workspace.mode == Workspace.Mode.NURSERY:
+            from sales.models import FulfillmentLine  # pylint: disable=import-outside-toplevel
+
+            if SalesOrderAllocation.objects.filter(
+                    plant=identity.target, status=SalesOrderAllocation.Status.RESERVED).exists():
+                capabilities.append('order_fulfill')
+            fulfilled = FulfillmentLine.objects.filter(
+                allocation__plant=identity.target,
+                fulfillment__reversal__isnull=True,
+                fulfillment__reversal_of__isnull=True,
+            ).order_by('-pk').first()
+            returned = fulfilled and fulfilled.return_lines.filter(
+                sales_return__reversal__isnull=True,
+                sales_return__reversal_of__isnull=True,
+            ).exists()
+            if fulfilled and not returned:
+                capabilities.append('order_return')
     if resolution_status == LabelCode.Status.ACTIVE and key == ('seedtrays', 'seedtray'):
         from inventory.ledger import unit_physical_state  # pylint: disable=import-outside-toplevel
         from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel,reimported
@@ -185,6 +204,10 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
         ).exists()
         if workspace.mode == Workspace.Mode.NURSERY and unit_physical_state(unit) == 'available' and not reserved:
             capabilities.append('order_allocate')
+        if workspace.mode == Workspace.Mode.NURSERY and reserved:
+            capabilities.append('order_fulfill')
+        if workspace.mode == Workspace.Mode.NURSERY and unit_physical_state(unit) == 'dispatched':
+            capabilities.append('order_return')
     active_cohort = resolution_status == LabelCode.Status.ACTIVE
     active_cohort = active_cohort and key == ('plantings', 'plantcohort')
     active_cohort = active_cohort and identity.target.quantity > 0
