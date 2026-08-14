@@ -14,7 +14,8 @@ type Customer = {
 type SalesOrderStatus = 'quote' | 'draft' | 'confirmed' | 'partially_fulfilled' | 'fulfilled' | 'cancelled'
 type SalesLineType = 'seedling' | 'tray'
 type SalesDiscountType = 'none' | 'fixed' | 'percentage'
-type SalesAllocationStatus = 'pending' | 'reserved' | 'released' | 'expired' | 'fulfilled'
+type SalesAllocationStatus = 'pending' | 'reserved' | 'released' | 'expired' | 'fulfilled' | 'returned'
+type CommerceStatus = 'posted' | 'reversed' | 'reversal'
 
 interface ReservationEvent {
   pk: number
@@ -91,6 +92,123 @@ interface SalesOrder {
   updated: string
   lines: Array<SalesOrderLine>
   margin: SalesMargin
+  commerce: SalesCommerceSummary
+}
+
+interface SalesCommerceSummary {
+  requested_quantity: number
+  reserved_quantity: number
+  fulfilled_quantity: number
+  returned_quantity: number
+  fulfilled_total_incl_tax: string
+  refunded_total_incl_tax: string
+  paid_total: string
+  net_paid_total: string
+  outstanding_total: string
+  overpaid_total: string
+  payment_status: 'unpaid' | 'partially_paid' | 'paid' | 'overpaid'
+  currency_code: string
+}
+
+interface FulfillmentLine {
+  pk: number
+  allocation: number
+  commercial_position: number
+  gross_ex_tax: string
+  discount_ex_tax: string
+  subtotal_ex_tax: string
+  tax_total: string
+  total_incl_tax: string
+  cogs_amount: string | null
+  cogs_provisional: boolean
+  currency_code: string
+  lifecycle_event: number | null
+  stock_movement: number | null
+}
+
+interface FulfillmentPackagingLine {
+  pk: number
+  lot: number
+  source: number
+  quantity: string
+  base_unit: string
+  unit_cost: string | null
+  cogs_amount: string | null
+  currency_code: string
+  stock_movement: number
+}
+
+interface Fulfillment {
+  pk: number
+  fulfillment_number: string
+  fulfilled_at: string
+  status: CommerceStatus
+  notes: string
+  operation_key: string
+  reversal_of: number | null
+  lines: Array<FulfillmentLine>
+  packaging_lines: Array<FulfillmentPackagingLine>
+}
+
+interface SalesPayment {
+  pk: number
+  paid_on: string
+  amount: string
+  currency_code: string
+  method: 'cash' | 'card' | 'bank_transfer' | 'other'
+  external_reference: string
+  notes: string
+  status: CommerceStatus
+  operation_key: string
+  reversal_of: number | null
+}
+
+interface SalesReturnLine {
+  pk: number
+  fulfillment_line: number
+  outcome: 'available' | 'quarantined' | 'discarded'
+  destination: number | null
+  lifecycle_event: number | null
+  return_movement: number | null
+  discard_movement: number | null
+}
+
+interface SalesReturn {
+  pk: number
+  returned_at: string
+  reason: string
+  notes: string
+  status: CommerceStatus
+  health_observation: number | null
+  quarantine_case: number | null
+  operation_key: string
+  reversal_of: number | null
+  lines: Array<SalesReturnLine>
+}
+
+interface SalesRefundLine {
+  pk: number
+  fulfillment_line: number
+  gross_ex_tax: string
+  discount_ex_tax: string
+  subtotal_ex_tax: string
+  tax_total: string
+  total_incl_tax: string
+}
+
+interface SalesRefund {
+  pk: number
+  payment: number
+  sales_return: number | null
+  refunded_at: string
+  amount: string
+  currency_code: string
+  reason: string
+  notes: string
+  status: CommerceStatus
+  operation_key: string
+  reversal_of: number | null
+  lines: Array<SalesRefundLine>
 }
 
 interface SalesOrderLineWrite {
@@ -114,13 +232,20 @@ interface AllocationPreview {
 export {
   AllocationPreview,
   Customer,
+  Fulfillment,
+  FulfillmentLine,
+  FulfillmentPackagingLine,
   SalesAllocation,
   SalesAllocationStatus,
   SalesDiscountType,
   SalesLineType,
+  SalesCommerceSummary,
   SalesMargin,
   SalesOrder,
   SalesOrderLine,
   SalesOrderLineWrite,
-  SalesOrderStatus
+  SalesOrderStatus,
+  SalesPayment,
+  SalesRefund,
+  SalesReturn
 }

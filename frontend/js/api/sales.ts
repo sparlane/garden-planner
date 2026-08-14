@@ -1,5 +1,17 @@
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
-import { AllocationPreview, Customer, SalesAllocation, SalesOrder, SalesOrderLine, SalesOrderLineWrite, SalesOrderStatus } from '../types/sales'
+import {
+  AllocationPreview,
+  Customer,
+  Fulfillment,
+  SalesAllocation,
+  SalesOrder,
+  SalesOrderLine,
+  SalesOrderLineWrite,
+  SalesOrderStatus,
+  SalesPayment,
+  SalesRefund,
+  SalesReturn
+} from '../types/sales'
 
 const CUSTOMERS_URL = '/sales/customers/'
 const ORDERS_URL = '/sales/orders/'
@@ -70,6 +82,50 @@ function editableOrder(status: SalesOrderStatus): boolean {
   return status === 'quote' || status === 'draft'
 }
 
+function getFulfillments(order: number, signal?: AbortSignal): Promise<Array<Fulfillment>> {
+  return fetchAsJson(`${ORDERS_URL}${order}/fulfillments/`, signal)
+}
+
+async function postFulfillment(order: number, data: object): Promise<Fulfillment> {
+  const response = await csrfPost(`${ORDERS_URL}${order}/fulfillments/`, data)
+  return response.json() as Promise<Fulfillment>
+}
+
+function getPayments(order: number, signal?: AbortSignal): Promise<Array<SalesPayment>> {
+  return fetchAsJson(`${ORDERS_URL}${order}/payments/`, signal)
+}
+
+async function postPayment(order: number, data: object): Promise<SalesPayment> {
+  const response = await csrfPost(`${ORDERS_URL}${order}/payments/`, data)
+  return response.json() as Promise<SalesPayment>
+}
+
+function getReturns(order: number, signal?: AbortSignal): Promise<Array<SalesReturn>> {
+  return fetchAsJson(`${ORDERS_URL}${order}/returns/`, signal)
+}
+
+async function postReturn(order: number, data: object): Promise<SalesReturn> {
+  const response = await csrfPost(`${ORDERS_URL}${order}/returns/`, data)
+  return response.json() as Promise<SalesReturn>
+}
+
+function getRefunds(order: number, signal?: AbortSignal): Promise<Array<SalesRefund>> {
+  return fetchAsJson(`${ORDERS_URL}${order}/refunds/`, signal)
+}
+
+async function postRefund(order: number, data: object): Promise<SalesRefund> {
+  const response = await csrfPost(`${ORDERS_URL}${order}/refunds/`, data)
+  return response.json() as Promise<SalesRefund>
+}
+
+async function reverseCommerce(order: number, kind: 'fulfillments' | 'payments' | 'returns' | 'refunds', record: number, reason: string): Promise<object> {
+  const response = await csrfPost(`${ORDERS_URL}${order}/${kind}/${record}/reverse/`, {
+    operation_key: crypto.randomUUID(),
+    reason
+  })
+  return response.json() as Promise<object>
+}
+
 export {
   allocateOrderLine,
   closeAllocations,
@@ -77,12 +133,21 @@ export {
   createSalesOrder,
   createSalesOrderLine,
   editableOrder,
+  getFulfillments,
   getAvailableSerializedUnits,
   getCustomers,
   getSalesOrder,
   getSalesOrders,
+  getPayments,
+  getRefunds,
+  getReturns,
   orderAction,
   previewAllocation,
+  postFulfillment,
+  postPayment,
+  postRefund,
+  postReturn,
+  reverseCommerce,
   updateCustomer,
   updateSalesOrder
 }

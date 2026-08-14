@@ -12,14 +12,25 @@ import {
   editableOrder,
   getAvailableSerializedUnits,
   getCustomers,
+  getFulfillments,
+  getPayments,
+  getRefunds,
+  getReturns,
   getSalesOrder,
   getSalesOrders,
   orderAction,
+  postFulfillment,
+  postPayment,
+  postRefund,
+  postReturn,
   previewAllocation,
+  reverseCommerce,
   updateCustomer,
   updateSalesOrder
 } from './api/sales'
-import { getInventoryItems } from './api/inventory'
+import { getInventoryBalances, getInventoryItems } from './api/inventory'
+import { getLocations } from './api/locations'
+import { getHealthObservationTypes } from './api/health'
 import { getPlantVarieties } from './api/plants'
 import { queryClient, queryKeys } from './query'
 import { AllocationPreview, Customer, SalesDiscountType, SalesLineType, SalesOrder, SalesOrderLine } from './types/sales'
@@ -455,6 +466,373 @@ function OrderTotals({ order }: { order: SalesOrder }) {
   )
 }
 
+function CommercePanel({ order }: { order: SalesOrder }) {
+  const fulfillments = useQuery({ queryKey: ['sales', order.pk, 'fulfillments'], queryFn: ({ signal }) => getFulfillments(order.pk, signal) })
+  const payments = useQuery({ queryKey: ['sales', order.pk, 'payments'], queryFn: ({ signal }) => getPayments(order.pk, signal) })
+  const returns = useQuery({ queryKey: ['sales', order.pk, 'returns'], queryFn: ({ signal }) => getReturns(order.pk, signal) })
+  const refunds = useQuery({ queryKey: ['sales', order.pk, 'refunds'], queryFn: ({ signal }) => getRefunds(order.pk, signal) })
+  const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
+  const healthTypes = useQuery({ queryKey: queryKeys.health.types, queryFn: ({ signal }) => getHealthObservationTypes(signal) })
+  const packagingItems = useQuery({
+    queryKey: ['inventory', 'sales-packaging'],
+    queryFn: ({ signal }) => getInventoryItems({ category: 'packaging', tracking_mode: 'lot', active: true }, signal)
+  })
+  const [selectedAllocations, setSelectedAllocations] = React.useState<Array<number>>([])
+  const [packagingItem, setPackagingItem] = React.useState<number | ''>('')
+  const packagingBalances = useQuery({
+    queryKey: ['inventory', 'sales-packaging-balances', packagingItem],
+    queryFn: ({ signal }) => getInventoryBalances(packagingItem as number, signal),
+    enabled: packagingItem !== ''
+  })
+  const [packagingBalance, setPackagingBalance] = React.useState('')
+  const [packagingQuantity, setPackagingQuantity] = React.useState('')
+  const [paymentAmount, setPaymentAmount] = React.useState('')
+  const [paymentMethod, setPaymentMethod] = React.useState<'cash' | 'card' | 'bank_transfer' | 'other'>('cash')
+  const [returnLine, setReturnLine] = React.useState<number | ''>('')
+  const [returnOutcome, setReturnOutcome] = React.useState<'available' | 'quarantined' | 'discarded'>('available')
+  const [returnDestination, setReturnDestination] = React.useState<number | ''>('')
+  const [returnReason, setReturnReason] = React.useState('')
+  const [healthType, setHealthType] = React.useState<number | ''>('')
+  const [healthSeverity, setHealthSeverity] = React.useState<'low' | 'moderate' | 'high' | 'critical'>('moderate')
+  const [refundPayment, setRefundPayment] = React.useState<number | ''>('')
+  const [refundLine, setRefundLine] = React.useState<number | ''>('')
+  const [refundAmount, setRefundAmount] = React.useState('')
+  const [refundReason, setRefundReason] = React.useState('')
+  const reserved = order.lines.flatMap((line) => line.allocations.filter((allocation) => allocation.status === 'reserved'))
+  const activeFulfillmentLines = (fulfillments.data ?? []).filter((entry) => entry.status === 'posted').flatMap((entry) => entry.lines)
+  const activePayments = (payments.data ?? []).filter((entry) => entry.status === 'posted')
+
+  function refreshCommerce() {
+    invalidateSales(order.pk)
+    void fulfillments.refetch()
+    void payments.refetch()
+    void returns.refetch()
+    void refunds.refetch()
+  }
+
+  const fulfill = useMutation({
+    mutationFn: () => {
+      const balance = packagingBalances.data?.find((entry) => `${entry.lot}:${entry.location}` === packagingBalance)
+      return postFulfillment(order.pk, {
+        operation_key: crypto.randomUUID(),
+        allocation_ids: selectedAllocations,
+        packaging: balance && Number(packagingQuantity) > 0 ? [{ lot: balance.lot, source: balance.location, quantity: packagingQuantity }] : []
+      })
+    },
+    onSuccess: () => {
+      setSelectedAllocations([])
+      setPackagingQuantity('')
+      refreshCommerce()
+    }
+  })
+  const pay = useMutation({
+    mutationFn: () =>
+      postPayment(order.pk, {
+        operation_key: crypto.randomUUID(),
+        paid_on: new Date().toISOString().slice(0, 10),
+        amount: paymentAmount,
+        method: paymentMethod
+      }),
+    onSuccess: () => {
+      setPaymentAmount('')
+      refreshCommerce()
+    }
+  })
+  const returnMutation = useMutation({
+    mutationFn: () =>
+      postReturn(order.pk, {
+        operation_key: crypto.randomUUID(),
+        reason: returnReason,
+        items: [
+          {
+            fulfillment_line: returnLine,
+            outcome: returnOutcome,
+            destination: returnOutcome === 'discarded' ? null : returnDestination
+          }
+        ],
+        ...(returnOutcome === 'quarantined' ? { observation_type: healthType, severity: healthSeverity } : {})
+      }),
+    onSuccess: () => {
+      setReturnLine('')
+      setReturnReason('')
+      refreshCommerce()
+    }
+  })
+  const refund = useMutation({
+    mutationFn: () =>
+      postRefund(order.pk, {
+        operation_key: crypto.randomUUID(),
+        payment: refundPayment,
+        fulfillment_lines: [refundLine],
+        amount: refundAmount,
+        reason: refundReason
+      }),
+    onSuccess: () => {
+      setRefundAmount('')
+      setRefundReason('')
+      refreshCommerce()
+    }
+  })
+  const reverse = useMutation({
+    mutationFn: ({ kind, pk }: { kind: 'fulfillments' | 'payments' | 'returns' | 'refunds'; pk: number }) => reverseCommerce(order.pk, kind, pk, 'Reversed by operator.'),
+    onSuccess: refreshCommerce
+  })
+
+  const audit = [
+    ...(fulfillments.data ?? []).map((entry) => ({
+      kind: 'fulfillments' as const,
+      pk: entry.pk,
+      at: entry.fulfilled_at,
+      label: `${entry.fulfillment_number} · ${entry.lines.length} dispatched`,
+      status: entry.status
+    })),
+    ...(payments.data ?? []).map((entry) => ({
+      kind: 'payments' as const,
+      pk: entry.pk,
+      at: entry.paid_on,
+      label: `Payment ${formatMoney(entry.amount, entry.currency_code)} · ${entry.method.replaceAll('_', ' ')}`,
+      status: entry.status
+    })),
+    ...(returns.data ?? []).map((entry) => ({
+      kind: 'returns' as const,
+      pk: entry.pk,
+      at: entry.returned_at,
+      label: `Return · ${entry.lines.map((line) => line.outcome).join(', ')}`,
+      status: entry.status
+    })),
+    ...(refunds.data ?? []).map((entry) => ({
+      kind: 'refunds' as const,
+      pk: entry.pk,
+      at: entry.refunded_at,
+      label: `Refund ${formatMoney(entry.amount, entry.currency_code)}`,
+      status: entry.status
+    }))
+  ].sort((left, right) => left.at.localeCompare(right.at))
+
+  return (
+    <>
+      <Card body className="mb-3">
+        <Card.Title>Commerce status</Card.Title>
+        <Row>
+          <Col>
+            Dispatched
+            <br />
+            <strong>{order.commerce.fulfilled_quantity}</strong>
+          </Col>
+          <Col>
+            Returned
+            <br />
+            <strong>{order.commerce.returned_quantity}</strong>
+          </Col>
+          <Col>
+            Paid
+            <br />
+            <strong>{formatMoney(order.commerce.net_paid_total, order.currency_code)}</strong>
+          </Col>
+          <Col>
+            Outstanding
+            <br />
+            <strong>{formatMoney(order.commerce.outstanding_total, order.currency_code)}</strong>
+          </Col>
+          <Col>
+            Status
+            <br />
+            <Badge bg={order.commerce.payment_status === 'paid' ? 'success' : 'secondary'}>{order.commerce.payment_status.replaceAll('_', ' ')}</Badge>
+          </Col>
+        </Row>
+      </Card>
+      {reserved.length > 0 && (
+        <Card body className="mb-3">
+          <Card.Title>Post fulfillment</Card.Title>
+          {reserved.map((allocation) => (
+            <Form.Check
+              key={allocation.pk}
+              label={allocation.plant ? `Plant #${allocation.plant}` : (allocation.asset_code ?? `Unit #${allocation.inventory_unit}`)}
+              checked={selectedAllocations.includes(allocation.pk)}
+              onChange={() => setSelectedAllocations((current) => (current.includes(allocation.pk) ? current.filter((pk) => pk !== allocation.pk) : [...current, allocation.pk]))}
+            />
+          ))}
+          <Row className="g-2 align-items-end mt-1">
+            <Col md={3}>
+              <Form.Label>Optional packaging item</Form.Label>
+              <Form.Select
+                value={packagingItem}
+                onChange={(event) => {
+                  setPackagingItem(event.target.value === '' ? '' : Number(event.target.value))
+                  setPackagingBalance('')
+                }}
+              >
+                <option value="">None</option>
+                {(packagingItems.data ?? []).map((item) => (
+                  <option key={item.pk} value={item.pk}>
+                    {item.name}
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+            <Col md={4}>
+              <Form.Label>Exact lot and location</Form.Label>
+              <Form.Select disabled={packagingItem === ''} value={packagingBalance} onChange={(event) => setPackagingBalance(event.target.value)}>
+                <option value="">Select balance</option>
+                {(packagingBalances.data ?? [])
+                  .filter((balance) => Number(balance.available_quantity) > 0)
+                  .map((balance) => (
+                    <option key={`${balance.lot}:${balance.location}`} value={`${balance.lot}:${balance.location}`}>
+                      {balance.lot_identifier} · {balance.location_name} · {balance.available_quantity} {balance.base_unit}
+                    </option>
+                  ))}
+              </Form.Select>
+            </Col>
+            <Col md={2}>
+              <Form.Label>Quantity</Form.Label>
+              <Form.Control type="number" min="0" step="0.000000001" value={packagingQuantity} onChange={(event) => setPackagingQuantity(event.target.value)} />
+            </Col>
+            <Col md={3}>
+              <Button disabled={!selectedAllocations.length || fulfill.isPending} onClick={() => fulfill.mutate()}>
+                Post dispatch
+              </Button>
+            </Col>
+          </Row>
+        </Card>
+      )}
+      <Row className="g-3 mb-3">
+        <Col lg={4}>
+          <Card body className="h-100">
+            <Card.Title>Record payment</Card.Title>
+            <Form.Control
+              className="mb-2"
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              placeholder="Amount"
+              value={paymentAmount}
+              onChange={(event) => setPaymentAmount(event.target.value)}
+            />
+            <Form.Select className="mb-2" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as typeof paymentMethod)}>
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+              <option value="bank_transfer">Bank transfer</option>
+              <option value="other">Other</option>
+            </Form.Select>
+            <Button disabled={!paymentAmount || pay.isPending} onClick={() => pay.mutate()}>
+              Record payment
+            </Button>
+          </Card>
+        </Col>
+        <Col lg={4}>
+          <Card body className="h-100">
+            <Card.Title>Return exact item</Card.Title>
+            <Form.Select className="mb-2" value={returnLine} onChange={(event) => setReturnLine(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Fulfillment item</option>
+              {activeFulfillmentLines.map((line) => (
+                <option key={line.pk} value={line.pk}>
+                  Allocation #{line.allocation} · {formatMoney(line.total_incl_tax, line.currency_code)}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Select className="mb-2" value={returnOutcome} onChange={(event) => setReturnOutcome(event.target.value as typeof returnOutcome)}>
+              <option value="available">Available</option>
+              <option value="quarantined">Quarantined</option>
+              <option value="discarded">Discarded</option>
+            </Form.Select>
+            {returnOutcome !== 'discarded' && (
+              <Form.Select className="mb-2" value={returnDestination} onChange={(event) => setReturnDestination(event.target.value === '' ? '' : Number(event.target.value))}>
+                <option value="">Destination</option>
+                {(locations.data ?? [])
+                  .filter((location) => returnOutcome !== 'quarantined' || location.location_type === 'quarantine')
+                  .map((location) => (
+                    <option key={location.pk} value={location.pk}>
+                      {location.full_name}
+                    </option>
+                  ))}
+              </Form.Select>
+            )}
+            {returnOutcome === 'quarantined' && (
+              <>
+                <Form.Select className="mb-2" value={healthType} onChange={(event) => setHealthType(event.target.value === '' ? '' : Number(event.target.value))}>
+                  <option value="">Observation type</option>
+                  {(healthTypes.data ?? [])
+                    .filter((entry) => entry.active)
+                    .map((entry) => (
+                      <option key={entry.pk} value={entry.pk}>
+                        {entry.name}
+                      </option>
+                    ))}
+                </Form.Select>
+                <Form.Select className="mb-2" value={healthSeverity} onChange={(event) => setHealthSeverity(event.target.value as typeof healthSeverity)}>
+                  <option value="low">Low</option>
+                  <option value="moderate">Moderate</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </Form.Select>
+              </>
+            )}
+            <Form.Control className="mb-2" placeholder="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} />
+            <Button
+              disabled={
+                returnLine === '' || !returnReason.trim() || (returnOutcome !== 'discarded' && returnDestination === '') || (returnOutcome === 'quarantined' && healthType === '')
+              }
+              onClick={() => returnMutation.mutate()}
+            >
+              Post return
+            </Button>
+          </Card>
+        </Col>
+        <Col lg={4}>
+          <Card body className="h-100">
+            <Card.Title>Refund paid value</Card.Title>
+            <Form.Select className="mb-2" value={refundPayment} onChange={(event) => setRefundPayment(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Payment</option>
+              {activePayments.map((payment) => (
+                <option key={payment.pk} value={payment.pk}>
+                  {formatMoney(payment.amount, payment.currency_code)} · {payment.paid_on}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Select className="mb-2" value={refundLine} onChange={(event) => setRefundLine(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">Fulfillment item</option>
+              {activeFulfillmentLines.map((line) => (
+                <option key={line.pk} value={line.pk}>
+                  Allocation #{line.allocation}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Control
+              className="mb-2"
+              type="number"
+              min="0.0001"
+              step="0.0001"
+              placeholder="Amount"
+              value={refundAmount}
+              onChange={(event) => setRefundAmount(event.target.value)}
+            />
+            <Form.Control className="mb-2" placeholder="Refund reason" value={refundReason} onChange={(event) => setRefundReason(event.target.value)} />
+            <Button disabled={refundPayment === '' || refundLine === '' || !refundAmount || !refundReason.trim()} onClick={() => refund.mutate()}>
+              Post refund
+            </Button>
+          </Card>
+        </Col>
+      </Row>
+      <Card body className="mb-3">
+        <Card.Title>Chronological audit history</Card.Title>
+        {audit.length === 0 && <p className="text-muted mb-0">No posted commerce yet.</p>}
+        {audit.map((entry) => (
+          <div className="d-flex justify-content-between border-bottom py-2" key={`${entry.kind}:${entry.pk}`}>
+            <span>
+              {formatDate(entry.at)} · {entry.label} · {entry.status}
+            </span>
+            {entry.status === 'posted' && (
+              <Button size="sm" variant="outline-danger" onClick={() => reverse.mutate({ kind: entry.kind, pk: entry.pk })}>
+                Reverse
+              </Button>
+            )}
+          </div>
+        ))}
+      </Card>
+    </>
+  )
+}
+
 function SalesOrderDetailView({ orderPk, workspace }: { orderPk: number; workspace: Workspace }) {
   const client = useQueryClient()
   const orderQuery = useQuery({ queryKey: queryKeys.sales.order(orderPk), queryFn: ({ signal }) => getSalesOrder(orderPk, signal) })
@@ -520,6 +898,7 @@ function SalesOrderDetailView({ orderPk, workspace }: { orderPk: number; workspa
         )}
       </Card>
       <OrderTotals order={order} />
+      {['confirmed', 'partially_fulfilled', 'fulfilled'].includes(order.status) && <CommercePanel order={order} />}
       {editable && <LineForm order={order} workspace={workspace} />}
       {order.lines.map((line) => (
         <Card body className="mb-3" key={line.pk}>

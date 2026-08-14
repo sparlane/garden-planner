@@ -1,5 +1,6 @@
 """REST contract tests for label resolution and print auditing."""
 
+from decimal import Decimal
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
@@ -12,6 +13,9 @@ from health.models import HealthObservation, HealthObservationType
 from health.operations import quarantine_observation
 from health.services import preview_observation, record_observation
 from plantings.lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
+from sales.commerce import post_fulfillment
+from sales.models import SalesOrderLine
+from sales.services import allocate_targets, confirm_order, create_order
 
 from .models import LabelCode, LabelPrintJob, LabelTemplate
 from .services import ensure_identity, replace_code, void_code
@@ -78,6 +82,30 @@ class LabelResolutionTests(TestCase):
         record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
         resolved = self.resolve(self.code.code)
         self.assertIn('order_allocate', resolved.data['capabilities'])
+
+    def test_reserved_then_sold_plant_exposes_staging_only_commerce_modes(self):
+        """A scan advertises selection capabilities without changing stock."""
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        plant = self.identity.target
+        record_germination_event(plant, self.user)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        order = create_order(self.workspace, self.user)
+        line = SalesOrderLine.objects.create(
+            order=order, line_type=SalesOrderLine.LineType.SEEDLING,
+            variety=plant.batch.variety, description='Scanned seedling',
+            quantity=1, unit_price=Decimal('10'), tax_rate=Decimal('15'),
+        )
+        allocation = allocate_targets(line, self.user, plant_ids=[plant.pk])[0]
+        confirm_order(order, self.user)
+        reserved = self.resolve(self.code.code)
+        self.assertIn('order_fulfill', reserved.data['capabilities'])
+        post_fulfillment(
+            order, self.user, operation_key=uuid4(),
+            allocation_ids=[allocation.pk],
+        )
+        sold = self.resolve(self.code.code)
+        self.assertIn('order_return', sold.data['capabilities'])
 
     def test_unknown_replaced_void_and_wrong_workspace_are_explicit(self):
         """Every unusable scan explains its condition without target leakage."""
