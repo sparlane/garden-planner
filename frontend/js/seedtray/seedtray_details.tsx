@@ -7,7 +7,7 @@ import React from 'react'
 import * as ReactDOM from 'react-dom/client'
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { CleanMediaDisposition, CleanPlantDisposition, CleanSeedDisposition, SeedTray, SeedTrayCell, SeedTrayGeneration, SeedTrayModel } from '../types/seedtrays'
+import { CleanMediaDisposition, CleanPlantDisposition, CleanSeedDisposition, SeedTray, SeedTrayCell, SeedTrayGeneration } from '../types/seedtrays'
 import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
 import {
   cleanSeedTrayGeneration,
@@ -24,6 +24,7 @@ import {
   reviewSeedTrayGeneration
 } from '../api/seedtrays'
 import { GenerationCleanForm, GenerationCostPanel } from './generation_clean'
+import { buildSeedTrayCellGrid } from './grid'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { BulkPlantOperationRequest, PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
 import {
@@ -94,19 +95,6 @@ function computeCellData(specificPlants: Array<SpecificPlant> | undefined, plant
   return { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting, cellTotals }
 }
 
-function buildCellGrid(model: SeedTrayModel | undefined, cells: Array<SeedTrayCell>): (SeedTrayCell | undefined)[][] {
-  if (!model) return []
-  const grid: (SeedTrayCell | undefined)[][] = Array.from({ length: model.x_cells }, () => Array.from({ length: model.y_cells }, () => undefined))
-  cells.forEach((cell) => {
-    if (cell.x_position < 0 || cell.x_position >= model.x_cells) return
-    if (cell.y_position < 0 || cell.y_position >= model.y_cells) return
-    if (grid[cell.x_position][cell.y_position] === undefined) {
-      grid[cell.x_position][cell.y_position] = cell
-    }
-  })
-  return grid
-}
-
 function currentLocation(plant: SpecificPlant): SpecificPlantLocation | undefined {
   return plant.locations.find((l) => !l.ended)
 }
@@ -166,7 +154,7 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
 
   return (
     <td style={{ textAlign: 'center', minWidth: 70, verticalAlign: 'top' }}>
-      <div>{cell?.pk ?? ''}</div>
+      <div>{cell ? `Cell ${cell.x_position}, ${cell.y_position}` : ''}</div>
       {cell && <div style={{ fontWeight: 'bold' }}>{total || 0} sown</div>}
       {cell && <div style={{ color: 'green', fontSize: '0.85em' }}>{totalGerminated} germinated</div>}
       {plants.map((plant) => {
@@ -671,7 +659,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   }, {})
   const seedTray = selectedSeedTray
   const seedTrayModel = seedTrayModels.find((model) => model.pk === seedTray?.model)
-  const seedTrayCells = buildCellGrid(seedTrayModel, allCells)
+  const seedTrayCells = buildSeedTrayCellGrid(seedTrayModel, allCells)
   const seeds = seedPacketDetails.reduce<Record<number, SeedPacketDetails>>((packets, packet) => {
     packets[packet.pk] = packet
     return packets

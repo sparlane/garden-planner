@@ -35,6 +35,7 @@ import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
 import { BatchChooser, isChoiceComplete, type BatchChoice } from './plantings/batch_chooser'
 import { queryKeys } from './query'
+import { buildSeedTrayCellGrid } from './seedtray/grid'
 
 function packetVarietyPk(packetPk: number | undefined, packets: Array<SeedPacket>, seeds: Array<Seed>): number | undefined {
   if (packetPk === undefined) {
@@ -54,6 +55,7 @@ function packetBalanceLabel(packet: SeedPacket): string {
 
 interface SeedTrayCellGridProps {
   cells: Array<SeedTrayCell>
+  model: SeedTrayModel
   cellQuantities: { [cellPk: number]: number }
   quantity: number
   onUpdateCellQuantity: (cellPk: number, qty: number) => void
@@ -61,42 +63,41 @@ interface SeedTrayCellGridProps {
 
 class SeedTrayCellGrid extends React.PureComponent<SeedTrayCellGridProps> {
   render() {
-    const { cells, cellQuantities, quantity, onUpdateCellQuantity } = this.props
-    const cellsPerRow = 8
-    const cellGridRows = []
+    const { cells, model, cellQuantities, quantity, onUpdateCellQuantity } = this.props
+    const cellGrid = buildSeedTrayCellGrid(model, cells)
+    const cellGridRows = cellGrid.map((rowCells, rowIndex) => (
+      <tr key={rowIndex}>
+        {rowCells.map((cell, columnIndex) => (
+          <td key={cell?.pk ?? `empty-${rowIndex}-${columnIndex}`} style={{ padding: '8px', border: '1px solid #ccc', textAlign: 'center' }}>
+            {cell && (
+              <>
+                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+                  Cell {cell.x_position}, {cell.y_position}
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="Qty"
+                  value={cellQuantities[cell.pk] || ''}
+                  onChange={(e) => {
+                    const rawValue = e.target.value
+                    const parsed = parseInt(rawValue, 10)
 
-    for (let i = 0; i < cells.length; i += cellsPerRow) {
-      const rowCells = cells.slice(i, i + cellsPerRow)
-      cellGridRows.push(
-        <tr key={i}>
-          {rowCells.map((cell) => (
-            <td key={cell.pk} style={{ padding: '8px', border: '1px solid #ccc', textAlign: 'center' }}>
-              <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-                Cell {cell.x_position}, {cell.y_position}
-              </div>
-              <input
-                type="number"
-                min="0"
-                placeholder="Qty"
-                value={cellQuantities[cell.pk] || ''}
-                onChange={(e) => {
-                  const rawValue = e.target.value
-                  const parsed = parseInt(rawValue, 10)
+                    if (Number.isNaN(parsed)) {
+                      return
+                    }
 
-                  if (Number.isNaN(parsed)) {
-                    return
-                  }
-
-                  const clamped = Math.max(0, parsed)
-                  onUpdateCellQuantity(cell.pk, clamped)
-                }}
-                style={{ width: '50px' }}
-              />
-            </td>
-          ))}
-        </tr>
-      )
-    }
+                    const clamped = Math.max(0, parsed)
+                    onUpdateCellQuantity(cell.pk, clamped)
+                  }}
+                  style={{ width: '50px' }}
+                />
+              </>
+            )}
+          </td>
+        ))}
+      </tr>
+    ))
 
     const cellTotal = Object.values(cellQuantities).reduce((sum, qty) => sum + qty, 0)
 
@@ -229,6 +230,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     )
   }
   const trayOptions = seedTrays.map((tray) => ({ value: tray.pk, label: `${tray.pk} (${seedTrayModels[tray.model]?.description})` }))
+  const selectedSeedTrayModel = seedTray === undefined ? undefined : seedTrayModels[seedTrays.find((tray) => tray.pk === seedTray)?.model ?? 0]
 
   return (
     <>
@@ -264,11 +266,11 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
           <Button onClick={done}>Cancel</Button>
         </td>
       </tr>
-      {seedTray !== undefined && seedTrayCells.length > 0 && (
+      {seedTray !== undefined && selectedSeedTrayModel && seedTrayCells.length > 0 && (
         <tr>
           <td colSpan={8} style={{ padding: '16px' }}>
             <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>Select cells and quantities:</div>
-            <SeedTrayCellGrid cells={seedTrayCells} cellQuantities={cellQuantities} quantity={quantity} onUpdateCellQuantity={updateCellQuantity} />
+            <SeedTrayCellGrid cells={seedTrayCells} model={selectedSeedTrayModel} cellQuantities={cellQuantities} quantity={quantity} onUpdateCellQuantity={updateCellQuantity} />
           </td>
         </tr>
       )}
