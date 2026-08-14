@@ -105,7 +105,7 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
               <Form.Check
                 aria-label={`Select plant ${row.pk}`}
                 checked={isSelected(selection, row.pk)}
-                disabled={selection.mode === 'filter' || row.quarantined}
+                disabled={selection.mode === 'filter' || row.quarantined || row.reserved}
                 onChange={() => setSelection(toggleSelected(selection, row.pk))}
               />
             </td>
@@ -126,6 +126,11 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
                   <Badge bg="warning" text="dark">
                     Quarantined · unavailable
                   </Badge>
+                </div>
+              )}
+              {row.reserved && (
+                <div>
+                  <Badge bg="primary">Reserved · unavailable</Badge>
                 </div>
               )}
             </td>

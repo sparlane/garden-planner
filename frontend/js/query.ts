@@ -4,6 +4,13 @@ import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 import { WorkFilters } from './types/work'
 
 const queryKeys = {
+  sales: {
+    all: ['sales'] as const,
+    customers: ['sales', 'customers'] as const,
+    orders: ['sales', 'orders'] as const,
+    order: (pk: number) => ['sales', 'orders', pk] as const,
+    availableUnits: (item: number) => ['sales', 'available-units', item] as const
+  },
   health: {
     all: ['health'] as const,
     types: ['health', 'observation-types'] as const,

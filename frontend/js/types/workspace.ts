@@ -6,6 +6,7 @@ interface Workspace {
   mode: WorkspaceMode
   currency_code: string
   default_tax_rate: string
+  sales_prices_include_tax: boolean
   timezone: string
   measurement_system: MeasurementSystem
   override_tolerance_percent: string
@@ -21,6 +22,7 @@ type WorkspaceUpdate = Pick<
   | 'mode'
   | 'currency_code'
   | 'default_tax_rate'
+  | 'sales_prices_include_tax'
   | 'timezone'
   | 'measurement_system'
   | 'override_tolerance_percent'

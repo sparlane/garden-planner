@@ -11,6 +11,7 @@ import { queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
 import { BulkOperationPanel } from './plantings/bulk_operations'
 import { HealthScopeType } from './types/health'
+import { allocateOrderLine, getSalesOrders, previewAllocation } from './api/sales'
 
 import './labels.css'
 
@@ -226,9 +227,48 @@ function ScannerView() {
   const [scanned, setScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
   const [healthScanned, setHealthScanned] = React.useState<Array<{ type: HealthScopeType; id: number; code: string; display: string }>>([])
   const [stocktakeCode, setStocktakeCode] = React.useState('')
+  const [salesOrder, setSalesOrder] = React.useState<number | ''>('')
+  const [salesLine, setSalesLine] = React.useState<number | ''>('')
+  const [orderScanned, setOrderScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
+  const [orderConflict, setOrderConflict] = React.useState('')
   const video = React.useRef<HTMLVideoElement>(null)
   const controls = React.useRef<IScannerControls | undefined>(undefined)
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
+  const orders = useQuery({ queryKey: queryKeys.sales.orders, queryFn: ({ signal }) => getSalesOrders(signal) })
+  const chosenOrder = orders.data?.find((entry) => entry.pk === salesOrder)
+  const chosenLine = chosenOrder?.lines.find((entry) => entry.pk === salesLine)
+  const orderAllocation = useMutation({
+    mutationFn: async (resolved: LabelResolution) => {
+      if (!chosenOrder || !chosenLine || !resolved.target) throw new Error('Choose an order line before scanning stock.')
+      const id = chosenLine.line_type === 'seedling' ? resolved.target.object_id : resolved.target.inventory_unit
+      if (id === undefined) throw new Error('That label is not compatible with the selected line.')
+      const preview = await previewAllocation(chosenOrder.pk, {
+        line: chosenLine.pk,
+        ...(chosenLine.line_type === 'seedling' ? { plant_ids: [id] } : { unit_ids: [id] })
+      })
+      if (preview.conflicts.length) throw new Error(preview.conflicts[0].reason.replaceAll('_', ' '))
+      return { id, code: resolved.current_code ?? resolved.code ?? '', display: resolved.target.display }
+    },
+    onSuccess: (entry) => {
+      setOrderConflict('')
+      setOrderScanned((current) => (current.some((item) => item.id === entry.id) ? current : [...current, entry]))
+    },
+    onError: (error) => setOrderConflict(error instanceof Error ? error.message : String(error))
+  })
+  const saveOrderAllocation = useMutation({
+    mutationFn: () =>
+      allocateOrderLine(
+        chosenOrder?.pk as number,
+        chosenLine?.pk as number,
+        chosenLine?.line_type === 'seedling' ? orderScanned.map((entry) => entry.id) : [],
+        chosenLine?.line_type === 'tray' ? orderScanned.map((entry) => entry.id) : [],
+        null
+      ),
+    onSuccess: () => {
+      setOrderScanned([])
+      void orders.refetch()
+    }
+  })
 
   const resolveMutation = useMutation({
     mutationFn: (input: string) => resolveLabel(input),
@@ -241,6 +281,9 @@ function ScannerView() {
             ? current
             : [...current, { id: target.object_id, code: resolved.current_code ?? resolved.code ?? '', display: target.display }]
         )
+      }
+      if (resolved.status === 'active' && resolved.target && resolved.capabilities?.includes('order_allocate') && chosenLine) {
+        orderAllocation.mutate(resolved)
       }
       if (resolved.status === 'active' && resolved.target && resolved.capabilities?.includes('health_inspection')) {
         const target = resolved.target
@@ -343,6 +386,78 @@ function ScannerView() {
           )}
         </Col>
         <Col lg={6}>
+          <h2>
+            Order allocation <Badge bg="primary">{orderScanned.length}</Badge>
+          </h2>
+          <Row className="g-2 mb-2">
+            <Col md={6}>
+              <Form.Select
+                value={salesOrder}
+                onChange={(event) => {
+                  setSalesOrder(event.target.value === '' ? '' : Number(event.target.value))
+                  setSalesLine('')
+                  setOrderScanned([])
+                }}
+              >
+                <option value="">Choose an order</option>
+                {(orders.data ?? [])
+                  .filter((entry) => ['quote', 'draft', 'confirmed', 'partially_fulfilled'].includes(entry.status))
+                  .map((entry) => (
+                    <option key={entry.pk} value={entry.pk}>
+                      {entry.order_number}
+                    </option>
+                  ))}
+              </Form.Select>
+            </Col>
+            <Col md={6}>
+              <Form.Select
+                value={salesLine}
+                disabled={!chosenOrder}
+                onChange={(event) => {
+                  setSalesLine(event.target.value === '' ? '' : Number(event.target.value))
+                  setOrderScanned([])
+                }}
+              >
+                <option value="">Choose a line before scanning</option>
+                {(chosenOrder?.lines ?? []).map((line) => (
+                  <option key={line.pk} value={line.pk}>
+                    {line.description} ({line.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length}/{line.quantity})
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+          </Row>
+          {orderConflict && <Alert variant="warning">Scan not added: {orderConflict}</Alert>}
+          {chosenLine && <p className="text-muted">Scan {chosenLine.line_type === 'seedling' ? 'plant' : 'tray'} labels to validate them against this line.</p>}
+          {orderScanned.length > 0 && (
+            <>
+              <ul className="list-group mb-2">
+                {orderScanned.map((entry) => (
+                  <li className="list-group-item d-flex justify-content-between" key={entry.id}>
+                    <span>
+                      {entry.display}
+                      <br />
+                      <small className="font-monospace">{entry.code}</small>
+                    </span>
+                    <Button variant="outline-danger" onClick={() => setOrderScanned(orderScanned.filter((item) => item.id !== entry.id))}>
+                      Remove
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <Button
+                className="mb-4"
+                disabled={
+                  !chosenLine ||
+                  orderScanned.length + (chosenLine?.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length ?? 0) >
+                    (chosenLine?.quantity ?? 0)
+                }
+                onClick={() => saveOrderAllocation.mutate()}
+              >
+                Add scans to order
+              </Button>
+            </>
+          )}
           <h2>
             Health inspection{' '}
             <Badge bg="warning" text="dark">

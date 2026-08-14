@@ -51,6 +51,7 @@ function RegisterTotals({ totals }: TotalsProps) {
     { label: 'Growing', value: totals.growing },
     { label: 'Available', value: totals.available, variant: 'text-success' },
     { label: 'Quarantined', value: totals.quarantined, variant: 'text-warning' },
+    { label: 'Reserved', value: totals.reserved, variant: 'text-primary' },
     { label: 'Unresolved', value: totals.unresolved },
     { label: 'Retained', value: totals.retained },
     { label: 'Lost', value: totals.failed + totals.culled, variant: 'text-danger' }
@@ -116,6 +117,7 @@ function NurseryRegisterView() {
   const [readyTo, setReadyTo] = React.useState('')
   const [stageOverdue, setStageOverdue] = React.useState(false)
   const [quarantined, setQuarantined] = React.useState<boolean | undefined>(undefined)
+  const [reserved, setReserved] = React.useState<boolean | undefined>(undefined)
   const [page, setPage] = React.useState(1)
   const [selection, setSelection] = React.useState<RegisterSelection>(EMPTY_SELECTION)
 
@@ -137,6 +139,7 @@ function NurseryRegisterView() {
     expected_ready_to: readyTo || undefined,
     stage_overdue: stageOverdue || undefined,
     quarantined,
+    reserved,
     ordering,
     page,
     page_size: PAGE_SIZE
@@ -201,6 +204,17 @@ function NurseryRegisterView() {
             <Form.Label>Search</Form.Label>
             <Form.Control type="search" placeholder="Plant number, batch code, or crop" value={search} onChange={(event) => narrow(setSearch)(event.target.value)} />
           </Form.Group>
+        </Col>
+        <Col md={3}>
+          <Form.Label>Reservation</Form.Label>
+          <Form.Select
+            value={reserved === undefined ? '' : String(reserved)}
+            onChange={(event) => narrow(setReserved)(event.target.value === '' ? undefined : event.target.value === 'true')}
+          >
+            <option value="">Any status</option>
+            <option value="true">Reserved</option>
+            <option value="false">Not reserved</option>
+          </Form.Select>
         </Col>
         <Col md={3}>
           <Form.Group controlId="register-seed-tray">
