@@ -57,42 +57,30 @@ interface SeedTrayCellGridProps {
   cells: Array<SeedTrayCell>
   model: SeedTrayModel
   cellQuantities: { [cellPk: number]: number }
-  quantity: number
-  onUpdateCellQuantity: (cellPk: number, qty: number) => void
+  onToggleCell: (cellPk: number) => void
 }
 
 class SeedTrayCellGrid extends React.PureComponent<SeedTrayCellGridProps> {
   render() {
-    const { cells, model, cellQuantities, quantity, onUpdateCellQuantity } = this.props
+    const { cells, model, cellQuantities, onToggleCell } = this.props
     const cellGrid = buildSeedTrayCellGrid(model, cells)
     const cellGridRows = cellGrid.map((rowCells, rowIndex) => (
       <tr key={rowIndex}>
         {rowCells.map((cell, columnIndex) => (
-          <td key={cell?.pk ?? `empty-${rowIndex}-${columnIndex}`} style={{ padding: '8px', border: '1px solid #ccc', textAlign: 'center' }}>
+          <td key={cell?.pk ?? `empty-${rowIndex}-${columnIndex}`} style={{ padding: '4px', border: '1px solid #ccc', textAlign: 'center' }}>
             {cell && (
-              <>
-                <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+              <Button
+                type="button"
+                variant={cellQuantities[cell.pk] ? 'primary' : 'outline-secondary'}
+                aria-pressed={Boolean(cellQuantities[cell.pk])}
+                onClick={() => onToggleCell(cell.pk)}
+                style={{ minWidth: '76px', minHeight: '64px' }}
+              >
+                <div style={{ fontWeight: 'bold' }}>
                   Cell {cell.x_position}, {cell.y_position}
                 </div>
-                <input
-                  type="number"
-                  min="0"
-                  placeholder="Qty"
-                  value={cellQuantities[cell.pk] || ''}
-                  onChange={(e) => {
-                    const rawValue = e.target.value
-                    const parsed = parseInt(rawValue, 10)
-
-                    if (Number.isNaN(parsed)) {
-                      return
-                    }
-
-                    const clamped = Math.max(0, parsed)
-                    onUpdateCellQuantity(cell.pk, clamped)
-                  }}
-                  style={{ width: '50px' }}
-                />
-              </>
+                <div>{cellQuantities[cell.pk] ? `${cellQuantities[cell.pk]} seed${cellQuantities[cell.pk] === 1 ? '' : 's'}` : 'Tap to select'}</div>
+              </Button>
             )}
           </td>
         ))}
@@ -103,9 +91,7 @@ class SeedTrayCellGrid extends React.PureComponent<SeedTrayCellGridProps> {
 
     return (
       <div style={{ marginBottom: '8px' }}>
-        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>
-          Select cells and quantities ({cellTotal} / {quantity}):
-        </div>
+        <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>{cellTotal} seeds selected</div>
         <Table border={1} cellPadding={5} cellSpacing={0} style={{ width: 'auto' }}>
           <tbody>{cellGridRows}</tbody>
         </Table>
@@ -132,6 +118,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   const [location, setLocation] = React.useState<string>()
   const [notes, setNotes] = React.useState<string>()
   const [cellQuantities, setCellQuantities] = React.useState<Record<number, number>>({})
+  const [seedsPerCell, setSeedsPerCell] = React.useState(1)
   const [batchChoice, setBatchChoice] = React.useState<BatchChoice>({})
   const [error, setError] = React.useState<string>()
   const packetVariety = packetVarietyPk(seedPacket, seedPackets, seeds)
@@ -165,19 +152,27 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   function updateSeedTray(selectedSeedTray: SelectOption | null) {
     const value = selectedSeedTray?.value
     setCellQuantities({})
+    setQuantity(value === undefined || value === null ? 1 : 0)
     setSeedTray(value === undefined || value === null ? undefined : Number(value))
   }
 
-  function updateCellQuantity(cellPk: number, qty: number) {
-    setCellQuantities((currentQuantities) => {
-      const updated = { ...currentQuantities }
-      if (qty > 0) {
-        updated[cellPk] = qty
-      } else {
-        delete updated[cellPk]
-      }
-      return updated
-    })
+  function updateSeedsPerCell(event: React.ChangeEvent<HTMLInputElement>) {
+    const nextSeedsPerCell = Math.max(1, parseInt(event.target.value, 10) || 1)
+    const updated = Object.fromEntries(Object.keys(cellQuantities).map((cellPk) => [cellPk, nextSeedsPerCell]))
+    setSeedsPerCell(nextSeedsPerCell)
+    setCellQuantities(updated)
+    setQuantity(Object.keys(updated).length * nextSeedsPerCell)
+  }
+
+  function toggleCell(cellPk: number) {
+    const updated = { ...cellQuantities }
+    if (updated[cellPk]) {
+      delete updated[cellPk]
+    } else {
+      updated[cellPk] = seedsPerCell
+    }
+    setCellQuantities(updated)
+    setQuantity(Object.values(updated).reduce((sum, cellQuantity) => sum + cellQuantity, 0))
   }
 
   async function add() {
@@ -231,6 +226,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   }
   const trayOptions = seedTrays.map((tray) => ({ value: tray.pk, label: `${tray.pk} (${seedTrayModels[tray.model]?.description})` }))
   const selectedSeedTrayModel = seedTray === undefined ? undefined : seedTrayModels[seedTrays.find((tray) => tray.pk === seedTray)?.model ?? 0]
+  const hasSelectedCells = Object.keys(cellQuantities).length > 0
 
   return (
     <>
@@ -249,7 +245,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
           <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
         </td>
         <td>
-          <input type="number" defaultValue={quantity} onChange={updateQuantity} />
+          <input type="number" min="0" value={quantity} readOnly={hasSelectedCells} onChange={updateQuantity} />
         </td>
         <td></td>
         <td>
@@ -269,8 +265,10 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
       {seedTray !== undefined && selectedSeedTrayModel && seedTrayCells.length > 0 && (
         <tr>
           <td colSpan={8} style={{ padding: '16px' }}>
-            <div style={{ marginBottom: '8px', fontWeight: 'bold' }}>Select cells and quantities:</div>
-            <SeedTrayCellGrid cells={seedTrayCells} model={selectedSeedTrayModel} cellQuantities={cellQuantities} quantity={quantity} onUpdateCellQuantity={updateCellQuantity} />
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+              Seeds per selected cell: <input type="number" min="1" value={seedsPerCell} onChange={updateSeedsPerCell} style={{ width: '70px' }} />
+            </label>
+            <SeedTrayCellGrid cells={seedTrayCells} model={selectedSeedTrayModel} cellQuantities={cellQuantities} onToggleCell={toggleCell} />
           </td>
         </tr>
       )}
