@@ -11,6 +11,7 @@ from workspaces.models import Workspace, get_current_workspace
 from health.models import HealthObservation, HealthObservationType
 from health.operations import quarantine_observation
 from health.services import preview_observation, record_observation
+from plantings.lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
 
 from .models import LabelCode, LabelPrintJob, LabelTemplate
 from .services import ensure_identity, replace_code, void_code
@@ -67,6 +68,16 @@ class LabelResolutionTests(TestCase):
         )
         constrained = self.resolve(self.code.code)
         self.assertIn('health_release', constrained.data['capabilities'])
+
+    def test_ready_unreserved_nursery_plant_can_be_scanned_into_an_order(self):
+        """Order allocation is offered only while exact stock is available."""
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        plant = self.identity.target
+        record_germination_event(plant, self.user)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        resolved = self.resolve(self.code.code)
+        self.assertIn('order_allocate', resolved.data['capabilities'])
 
     def test_unknown_replaced_void_and_wrong_workspace_are_explicit(self):
         """Every unusable scan explains its condition without target leakage."""

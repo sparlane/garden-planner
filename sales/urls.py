@@ -1,9 +1,6 @@
 """URL routing for customer sales."""
 
 from django.urls import include, path
-from rest_framework import routers
-
-
-router = routers.SimpleRouter()
+from .rest import router
 
 urlpatterns = [path('', include(router.urls))]
