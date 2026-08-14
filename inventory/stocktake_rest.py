@@ -4,7 +4,6 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -28,6 +27,7 @@ from .stocktakes import (
     request_recount,
     resolve_variance,
     scope_rows,
+    transition_stocktake,
 )
 
 
@@ -345,9 +345,7 @@ class NurseryStocktakeViewSet(
 
     def _transition(self, pk, allowed, next_status):
         stocktake = self._get(pk)
-        if stocktake.status not in allowed:
-            raise serializers.ValidationError({'status': 'This transition is not available.'})
-        Stocktake.objects.filter(pk=stocktake.pk).update(status=next_status, updated=timezone.now())
+        _run(transition_stocktake, stocktake, allowed, next_status)
         return Response(stocktake_data(self._get(pk)))
 
     @action(detail=True, methods=['post'])

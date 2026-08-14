@@ -287,6 +287,18 @@ def open_stocktake(workspace, user, scope, *, blind=True, notes=''):
     return stocktake
 
 
+def transition_stocktake(stocktake, allowed_statuses, next_status):
+    """Atomically apply a lightweight status transition to a current row."""
+    updated = Stocktake.objects.filter(
+        pk=stocktake.pk,
+        status__in=allowed_statuses,
+    ).update(status=next_status, updated=timezone.now())
+    if updated != 1:
+        raise ValidationError({'status': 'This transition is not available.'})
+    stocktake.refresh_from_db()
+    return stocktake
+
+
 @transaction.atomic
 def record_count(stocktake, user, target_id, *, counted_quantity=None,
                  observed_location=None, observed_state='', code_snapshot='',
@@ -355,7 +367,9 @@ def begin_review(stocktake, user):
     stocktake = Stocktake.objects.select_for_update().get(pk=stocktake.pk)
     if stocktake.status not in {Stocktake.Status.OPEN, Stocktake.Status.PAUSED}:
         raise ValidationError({'status': 'Only an open stocktake can enter review.'})
-    targets = list(stocktake.targets.select_for_update().select_related('accepted_count'))
+    targets = list(
+        stocktake.targets.select_for_update(of=('self',)).select_related('accepted_count')
+    )
     pending_quantities = [
         target.pk for target in targets
         if target.target_type in QUANTITY_TARGETS and target.accepted_count_id is None
