@@ -13,7 +13,7 @@ from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
 
-from .ledger import unit_physical_state
+from .ledger import UnitMovementRequest, post_unit_movement, unit_physical_state
 from .models import (
     InventoryItem,
     InventoryUnit,
@@ -163,6 +163,42 @@ class SerializedInventoryTests(TestCase):
         first.refresh_from_db()
         self.assertIsNone(first.current_location_id)
         self.assertEqual(unit_physical_state(first), 'lost')
+
+    def test_commerce_dispatch_and_customer_return_are_exact_unit_actions(self):
+        """Sales can dispatch and restore only the named serialized unit."""
+        self.post_receipt(quantity='1', cost='12')
+        unit = InventoryUnit.objects.get()
+        sold = post_unit_movement(
+            self.workspace,
+            self.user,
+            UnitMovementRequest(
+                unit=unit,
+                movement_type=StockMovement.MovementType.SALE,
+                occurred_at=timezone.now(),
+                reason='Order fulfillment',
+                reference='fulfillment:1',
+            ),
+        )
+        unit.refresh_from_db()
+        self.assertEqual(unit_physical_state(unit), 'dispatched')
+        self.assertFalse(unit.active)
+        returned = post_unit_movement(
+            self.workspace,
+            self.user,
+            UnitMovementRequest(
+                unit=unit,
+                movement_type=StockMovement.MovementType.CUSTOMER_RETURN,
+                destination=self.store,
+                occurred_at=timezone.now(),
+                reason='Customer return',
+                reference='return:1',
+            ),
+        )
+        unit.refresh_from_db()
+        self.assertEqual(sold.source_id, self.store.pk)
+        self.assertEqual(returned.destination_id, self.store.pk)
+        self.assertEqual(unit_physical_state(unit), 'returned')
+        self.assertTrue(unit.active)
 
     def test_serialized_collection_filters_and_generic_actions_reject_units(self):
         """The public collection reports derived unit facts without lot writes."""

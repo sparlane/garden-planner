@@ -35,6 +35,9 @@ class LifecycleState(models.TextChoices):
     LOST = 'lost', 'Lost'
     CULLED = 'culled', 'Culled'
     HARVESTED = 'harvested', 'Harvested'
+    SOLD = 'sold', 'Sold'
+    QUARANTINED = 'quarantined', 'Returned quarantined'
+    DISCARDED = 'discarded', 'Returned discarded'
 
 
 #: The state each fact leaves behind. `transplanted` and `corrected` are absent
@@ -48,6 +51,10 @@ STATE_AFTER = {
     EventType.LOST: LifecycleState.LOST,
     EventType.CULLED: LifecycleState.CULLED,
     EventType.HARVEST_FINISHED: LifecycleState.HARVESTED,
+    EventType.SOLD: LifecycleState.SOLD,
+    EventType.RETURNED_AVAILABLE: LifecycleState.AVAILABLE,
+    EventType.RETURNED_QUARANTINED: LifecycleState.QUARANTINED,
+    EventType.RETURNED_DISCARDED: LifecycleState.DISCARDED,
 }
 
 #: The states each fact may be recorded from. `germinated` is absent because it
@@ -85,6 +92,10 @@ ALLOWED_FROM = {
         LifecycleState.AVAILABLE,
         LifecycleState.RETAINED,
     },
+    EventType.SOLD: {LifecycleState.AVAILABLE},
+    EventType.RETURNED_AVAILABLE: {LifecycleState.SOLD},
+    EventType.RETURNED_QUARANTINED: {LifecycleState.SOLD},
+    EventType.RETURNED_DISCARDED: {LifecycleState.SOLD},
 }
 
 #: States that resolve a plant. Retained is final for availability without
@@ -96,6 +107,8 @@ FINAL_STATES = {
     LifecycleState.LOST,
     LifecycleState.CULLED,
     LifecycleState.HARVESTED,
+    LifecycleState.SOLD,
+    LifecycleState.DISCARDED,
 }
 
 #: States in which a plant is offerable to somebody else.
@@ -109,6 +122,8 @@ CLOSES_LOCATION = {
     EventType.LOST,
     EventType.CULLED,
     EventType.HARVEST_FINISHED,
+    EventType.SOLD,
+    EventType.RETURNED_DISCARDED,
 }
 
 #: Facts an operator may record directly against a plant.

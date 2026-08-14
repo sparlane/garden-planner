@@ -82,6 +82,33 @@ class LifecycleStateDerivationTests(TestCase):
         summary = plant_lifecycle_summary(self.plant)
         self.assertEqual(summary.state, LifecycleState.AVAILABLE)
 
+    def test_commerce_events_sell_and_reopen_a_plant_explicitly(self):
+        """A returned plant is sellable only for the available outcome."""
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.READY))
+        record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.SOLD))
+        self.assertEqual(plant_lifecycle_summary(self.plant).state, LifecycleState.SOLD)
+        record_lifecycle_event(
+            self.plant,
+            self.user,
+            OutcomeRequest(EventType.RETURNED_AVAILABLE),
+        )
+        self.assertTrue(plant_lifecycle_summary(self.plant).sellable)
+
+    def test_quarantined_and_discarded_returns_are_not_sellable(self):
+        """Every return outcome has a distinct auditable lifecycle state."""
+        for event_type, expected in (
+                (EventType.RETURNED_QUARANTINED, LifecycleState.QUARANTINED),
+                (EventType.RETURNED_DISCARDED, LifecycleState.DISCARDED)):
+            with self.subTest(event_type=event_type):
+                plant = make_specific_plant()
+                record_germination_event(plant, self.user)
+                record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+                record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.SOLD))
+                record_lifecycle_event(plant, self.user, OutcomeRequest(event_type))
+                summary = plant_lifecycle_summary(plant)
+                self.assertEqual(summary.state, expected)
+                self.assertFalse(summary.sellable)
+
     def test_each_final_outcome_derives_its_state_and_metadata(self):
         """Every resolving fact reports itself as the final outcome."""
         for event_type, expected_state in FINAL_OUTCOMES:
@@ -141,6 +168,26 @@ class LifecycleStateAnnotationTests(TestCase):
                 self.user,
                 OutcomeRequest(event_type, occurred_at=start + timedelta(days=2)),
             )
+            plants[name] = plant
+
+        for name, returned_event in (
+                ('sold', None),
+                ('quarantined', EventType.RETURNED_QUARANTINED),
+                ('discarded', EventType.RETURNED_DISCARDED)):
+            plant = self.germinated_plant(start)
+            record_lifecycle_event(
+                plant, self.user,
+                OutcomeRequest(EventType.READY, occurred_at=start + timedelta(days=1)),
+            )
+            record_lifecycle_event(
+                plant, self.user,
+                OutcomeRequest(EventType.SOLD, occurred_at=start + timedelta(days=2)),
+            )
+            if returned_event:
+                record_lifecycle_event(
+                    plant, self.user,
+                    OutcomeRequest(returned_event, occurred_at=start + timedelta(days=3)),
+                )
             plants[name] = plant
 
         plants['transplanted'] = self.germinated_plant(start)

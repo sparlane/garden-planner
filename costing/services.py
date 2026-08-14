@@ -65,6 +65,9 @@ DISPOSITION_OF_STATE = {
     LifecycleState.FAILED: 'production_loss',
     LifecycleState.CULLED: 'production_loss',
     LifecycleState.HARVESTED: 'harvested_output',
+    LifecycleState.SOLD: 'cogs',
+    LifecycleState.QUARANTINED: 'plant_inventory',
+    LifecycleState.DISCARDED: 'production_loss',
 }
 
 #: Every bucket a batch's value can sit in. `cogs` stays empty until tasks 44

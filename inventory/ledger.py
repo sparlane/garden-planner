@@ -872,6 +872,8 @@ def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-br
         StockMovement.MovementType.ADJUSTMENT_LOSS,
         StockMovement.MovementType.WASTE,
         StockMovement.MovementType.ADJUSTMENT_GAIN,
+        StockMovement.MovementType.SALE,
+        StockMovement.MovementType.CUSTOMER_RETURN,
     }
     if request.movement_type not in allowed:
         raise ValidationError({'movement_type': 'Use a supported unit action.'})
@@ -883,6 +885,7 @@ def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-br
     elif request.movement_type in {
         StockMovement.MovementType.ADJUSTMENT_LOSS,
         StockMovement.MovementType.WASTE,
+        StockMovement.MovementType.SALE,
     }:
         if not source:
             raise ValidationError({'unit': 'The unit is not currently on hand.'})
@@ -891,11 +894,17 @@ def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-br
                 'unit': 'Move or dispose of active plants before removing this tray.',
             })
         destination = None
-    else:
+    elif request.movement_type == StockMovement.MovementType.ADJUSTMENT_GAIN:
         if state not in {'lost', 'retired'}:
             raise ValidationError({'unit': 'Only a lost or retired unit can be returned.'})
         if not destination:
             raise ValidationError({'destination': 'A return destination is required.'})
+        source = None
+    else:
+        if state != 'dispatched':
+            raise ValidationError({'unit': 'Only a dispatched unit can be returned.'})
+        if not destination:
+            raise ValidationError({'destination': 'A customer return destination is required.'})
         source = None
     if destination is not None:
         _check_unit_destination_capacity(unit, destination, request.reason)

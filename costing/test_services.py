@@ -430,6 +430,14 @@ class DispositionTests(CostingServiceTestCase):
         breakdown = batch_cost_breakdown(self.batch)
         self.assertEqual(breakdown['totals']['production_loss'], '1.0800')
 
+    def test_a_sold_plant_moves_value_to_cogs(self):
+        """Commerce disposition classifies the frozen plant value as COGS."""
+        record_lifecycle_event(self.lost, self.user, OutcomeRequest(EventType.READY))
+        record_lifecycle_event(self.lost, self.user, OutcomeRequest(EventType.SOLD))
+        breakdown = batch_cost_breakdown(self.batch)
+        self.assertEqual(breakdown['totals']['cogs'], '1.0800')
+        self.assertEqual(breakdown['totals']['plant_inventory'], '1.0800')
+
     def test_an_outcome_needs_no_reallocation(self):
         """The bucket is derived, so no layer has to move when it changes."""
         record_lifecycle_event(
