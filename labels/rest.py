@@ -148,7 +148,7 @@ def _target_active(identity):
     return True
 
 
-def _resolution(code, workspace):  # pylint: disable=too-many-locals
+def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     """Build the safe scan contract for a code visible to this workspace."""
     if code.workspace_id != workspace.pk:
         return {'status': 'wrong_workspace', 'message': 'This code belongs to another workspace.'}
@@ -164,6 +164,26 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals
         summary = derive_state(identity.target.lifecycle_events.all())
         if summary.state in ('growing', 'available', 'retained'):
             capabilities.append('bulk_select')
+        if workspace.mode == Workspace.Mode.NURSERY and summary.state == 'available':
+            from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
+
+            reserved = SalesOrderAllocation.objects.filter(
+                plant=identity.target,
+                status=SalesOrderAllocation.Status.RESERVED,
+            ).exists()
+            if not reserved and not is_quarantined(identity.target):
+                capabilities.append('order_allocate')
+    if resolution_status == LabelCode.Status.ACTIVE and key == ('seedtrays', 'seedtray'):
+        from inventory.ledger import unit_physical_state  # pylint: disable=import-outside-toplevel
+        from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel,reimported
+
+        unit = identity.target.inventory_unit
+        reserved = SalesOrderAllocation.objects.filter(
+            inventory_unit=unit,
+            status=SalesOrderAllocation.Status.RESERVED,
+        ).exists()
+        if workspace.mode == Workspace.Mode.NURSERY and unit_physical_state(unit) == 'available' and not reserved:
+            capabilities.append('order_allocate')
     active_cohort = resolution_status == LabelCode.Status.ACTIVE
     active_cohort = active_cohort and key == ('plantings', 'plantcohort')
     active_cohort = active_cohort and identity.target.quantity > 0

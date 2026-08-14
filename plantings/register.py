@@ -13,7 +13,7 @@ projected from append-only Nursery observations.
 from datetime import timedelta
 from typing import NamedTuple
 
-from django.db.models import BooleanField, Case, Count, DateField, DateTimeField, DecimalField, DurationField, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value, When
+from django.db.models import BooleanField, Case, Count, DateField, DateTimeField, DecimalField, DurationField, Exists, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value, When
 from django.db.models.functions import Coalesce, Now
 from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
@@ -23,6 +23,7 @@ from inventory.rest_query import parse_boolean, parse_date, parse_datetime, pars
 from locations.models import Location
 from labels.models import LabelCode
 from health.availability import quarantine_expression, with_quarantine
+from sales.models import SalesOrderAllocation
 
 from .lifecycle import FINAL_STATES, SELLABLE_STATES, LifecycleState, with_lifecycle_state
 from .models import NurseryObservation, SpecificPlant, SpecificPlantLocation
@@ -66,6 +67,7 @@ class RegisterFilters(NamedTuple):
     states: tuple = ()
     sellable: object = None
     quarantined: object = None
+    reserved: object = None
     germinated_from: object = None
     germinated_to: object = None
     location_type: object = None
@@ -107,6 +109,7 @@ def parse_register_filters(query_params):
         states=states,
         sellable=parse_boolean(query_params.get('sellable'), 'sellable'),
         quarantined=parse_boolean(query_params.get('quarantined'), 'quarantined'),
+        reserved=parse_boolean(query_params.get('reserved'), 'reserved'),
         germinated_from=parse_datetime(query_params.get('germinated_from'), 'germinated_from'),
         germinated_to=parse_datetime(query_params.get('germinated_to'), 'germinated_to'),
         location_type=location_type,
@@ -190,10 +193,19 @@ def register_projection(workspace):
         .select_related(f'{_BATCH}__variety__plant')
     )
     queryset = with_quarantine(queryset)
+    queryset = queryset.annotate(
+        reserved=Exists(
+            SalesOrderAllocation.objects.filter(
+                plant_id=OuterRef('pk'),
+                status=SalesOrderAllocation.Status.RESERVED,
+            ),
+        ),
+    )
     return queryset.annotate(
         sellable=Case(
             When(
                 ~quarantine_expression(),
+                reserved=False,
                 lifecycle_state__in=sorted(SELLABLE_STATES),
                 then=Value(True),
             ),
@@ -293,6 +305,8 @@ def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
         queryset = queryset.filter(sellable=filters.sellable)
     if filters.quarantined is not None:
         queryset = queryset.filter(quarantined=filters.quarantined)
+    if filters.reserved is not None:
+        queryset = queryset.filter(reserved=filters.reserved)
     if filters.germinated_from is not None:
         queryset = queryset.filter(germinated__gte=filters.germinated_from)
     if filters.germinated_to is not None:
@@ -366,17 +380,30 @@ def register_totals(queryset):
     names the matching plants constrained by an active health case. Reserved is
     absent until task 44 records it.
     """
-    counted = {'total': Count('pk')}
-    for state in LifecycleState:
-        counted[state.value] = Count('pk', filter=Q(lifecycle_state=state.value))
-    counted['unresolved'] = Count(
-        'pk',
-        filter=~Q(lifecycle_state__in=sorted(FINAL_STATES)),
-    )
-    counted['quarantined'] = Count(
-        'pk', filter=quarantine_expression(),
-    )
-    totals = queryset.order_by().aggregate(**counted)
+    totals = {
+        'total': 0,
+        'unresolved': 0,
+        'quarantined': 0,
+        'reserved': 0,
+        **{state.value: 0 for state in LifecycleState},
+    }
+    core_rows = queryset.order_by().values(
+        'lifecycle_state', 'quarantined', 'reserved',
+    ).annotate(count=Count('pk'))
+    for row in core_rows:
+        count = row['count']
+        state = row['lifecycle_state']
+        totals['total'] += count
+        if state not in FINAL_STATES:
+            totals['unresolved'] += count
+        if row['quarantined']:
+            totals['quarantined'] += count
+        if row['reserved']:
+            totals['reserved'] += count
+        if state != LifecycleState.AVAILABLE or (
+            not row['quarantined'] and not row['reserved']
+        ):
+            totals[state] += count
     totals['stage_counts'] = {
         str(row['current_stage']): row['count']
         for row in queryset.order_by().values('current_stage').annotate(count=Count('pk'))
