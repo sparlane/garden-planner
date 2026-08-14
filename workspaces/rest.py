@@ -16,6 +16,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'mode',
             'currency_code',
             'default_tax_rate',
+            'sales_prices_include_tax',
             'timezone',
             'measurement_system',
             'override_tolerance_percent',

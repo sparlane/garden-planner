@@ -33,6 +33,7 @@ urlpatterns = [
     path("seedtrays/", include('seedtrays.urls')),
     path("applications/", include('applications.urls')),
     path("costing/", include('costing.urls')),
+    path("sales/", include('sales.urls')),
     path("labels/", include('labels.urls')),
     path("work/", include('work.urls')),
     path("health/", include('health.urls')),

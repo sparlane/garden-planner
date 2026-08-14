@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     "seedtrays",
     "applications",
     "costing",
+    "sales",
     "labels",
     "work",
     "health",
