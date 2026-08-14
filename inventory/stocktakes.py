@@ -40,6 +40,11 @@ IDENTITY_TARGETS = {
     StocktakeTarget.TargetType.TRAY,
     StocktakeTarget.TargetType.PLANT,
 }
+IDENTITY_TARGET_MAPPING = {
+    'seedtray': StocktakeTarget.TargetType.TRAY,
+    'plantcohort': StocktakeTarget.TargetType.COHORT,
+    'specificplant': StocktakeTarget.TargetType.PLANT,
+}
 
 
 def _digest(value):
@@ -297,6 +302,29 @@ def transition_stocktake(stocktake, allowed_statuses, next_status):
         raise ValidationError({'status': 'This transition is not available.'})
     stocktake.refresh_from_db()
     return stocktake
+
+
+@transaction.atomic
+def resolve_identity_target(stocktake, identity):
+    """Resolve a scanned identity to one frozen or unexpected count target."""
+    stocktake = Stocktake.objects.select_for_update().get(pk=stocktake.pk)
+    target_type = IDENTITY_TARGET_MAPPING.get(identity.target_content_type.model)
+    if target_type is None:
+        raise ValidationError({'code': 'This identity cannot be counted in a stocktake.'})
+    key = f'{target_type}:{identity.target_object_id}'
+    target, _created = StocktakeTarget.objects.get_or_create(
+        stocktake=stocktake,
+        target_key=key,
+        defaults={
+            'target_type': target_type,
+            'target_object_id': identity.target_object_id,
+            'display': identity.target_snapshot.get('display', key),
+            'expected_snapshot': {},
+            'source_revision': '',
+            'unexpected': True,
+        },
+    )
+    return target
 
 
 @transaction.atomic
