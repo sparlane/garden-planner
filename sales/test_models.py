@@ -1,6 +1,7 @@
 """Model and arithmetic contracts for customer sales."""
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -8,6 +9,7 @@ from django.test import TestCase
 
 from workspaces.models import get_current_workspace
 
+from .calculations import line_position_amounts, proportional_refund
 from .models import Customer, SalesOrder, SalesOrderLine
 from .services import create_order, update_pricing_mode
 
@@ -103,3 +105,41 @@ class SalesOrderArithmeticTests(TestCase):
         order.refresh_from_db()
         with self.assertRaises(ValidationError):
             update_pricing_mode(order, True)
+
+    def test_position_amounts_reconcile_rounding_to_the_line(self):
+        """The final exact item carries only the deterministic remainder."""
+        line = SimpleNamespace(
+            quantity=3,
+            gross_ex_tax=Decimal('10'),
+            discount_ex_tax=Decimal('1'),
+            subtotal_ex_tax=Decimal('9'),
+            tax_total=Decimal('1.35'),
+            total_incl_tax=Decimal('10.35'),
+        )
+        positions = line_position_amounts(line)
+        for field in (
+                'gross_ex_tax', 'discount_ex_tax', 'subtotal_ex_tax',
+                'tax_total', 'total_incl_tax'):
+            self.assertEqual(
+                sum(position[field] for position in positions.values()),
+                getattr(line, field),
+            )
+
+    def test_partial_refund_preserves_source_tax_and_discount_ratios(self):
+        """A value correction remains tied to original recognized terms."""
+        line = SimpleNamespace(
+            pk=1,
+            gross_ex_tax=Decimal('10.0000'),
+            discount_ex_tax=Decimal('1.0000'),
+            subtotal_ex_tax=Decimal('9.0000'),
+            tax_total=Decimal('1.3500'),
+            total_incl_tax=Decimal('10.3500'),
+        )
+        result = proportional_refund(Decimal('5.1750'), [{
+            'line': line,
+            'remaining_total': Decimal('10.3500'),
+        }])[0]
+        self.assertEqual(result['gross_ex_tax'], Decimal('5.0000'))
+        self.assertEqual(result['discount_ex_tax'], Decimal('0.5000'))
+        self.assertEqual(result['subtotal_ex_tax'], Decimal('4.5000'))
+        self.assertEqual(result['tax_total'], Decimal('0.6750'))

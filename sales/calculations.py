@@ -80,3 +80,71 @@ def refresh_order_totals(order):
     for field, value in values.items():
         setattr(order, field, value)
     return order
+
+
+def distribute_money(total, count):
+    """Split a snapshotted amount exactly across stable one-based positions."""
+    total = money(total)
+    if count < 1:
+        raise ValueError('A money distribution needs at least one position.')
+    share = money(total / count)
+    values = [share] * count
+    values[-1] = money(values[-1] + total - sum(values))
+    return values
+
+
+def line_position_amounts(line):
+    """Return the canonical commercial amounts for every exact item position."""
+    fields = (
+        'gross_ex_tax', 'discount_ex_tax', 'subtotal_ex_tax',
+        'tax_total', 'total_incl_tax',
+    )
+    distributed = {
+        field: distribute_money(getattr(line, field), line.quantity)
+        for field in fields
+    }
+    return {
+        position: {
+            field: distributed[field][position - 1]
+            for field in fields
+        }
+        for position in range(1, line.quantity + 1)
+    }
+
+
+def proportional_refund(amount, available_lines):  # pylint: disable=too-many-locals
+    """Allocate an inclusive refund and preserve each source line's ratios."""
+    amount = money(amount)
+    ordered = sorted(available_lines, key=lambda row: row['line'].pk)
+    available_total = money(sum(row['remaining_total'] for row in ordered))
+    if amount <= 0 or amount > available_total:
+        raise ValueError('Refund amount exceeds the selected refundable value.')
+    inclusive = []
+    remaining = amount
+    for index, row in enumerate(ordered):
+        if index == len(ordered) - 1:
+            share = remaining
+        else:
+            share = money(amount * row['remaining_total'] / available_total)
+            share = min(share, row['remaining_total'], remaining)
+        inclusive.append(share)
+        remaining = money(remaining - share)
+    if remaining:
+        inclusive[-1] = money(inclusive[-1] + remaining)
+    result = []
+    for row, total in zip(ordered, inclusive):
+        source = row['line']
+        fraction = total / source.total_incl_tax
+        subtotal = money(source.subtotal_ex_tax * fraction)
+        tax = money(total - subtotal)
+        gross = money(source.gross_ex_tax * fraction)
+        discount = money(gross - subtotal)
+        result.append({
+            'line': source,
+            'gross_ex_tax': gross,
+            'discount_ex_tax': discount,
+            'subtotal_ex_tax': subtotal,
+            'tax_total': tax,
+            'total_incl_tax': total,
+        })
+    return result
