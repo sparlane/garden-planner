@@ -1,6 +1,7 @@
 """Workspace-scoped customer, order, and reservation REST workflows."""
 
-# pylint: disable=too-many-ancestors
+# pylint: disable=too-many-ancestors,missing-class-docstring
+# pylint: disable=missing-function-docstring,abstract-method
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import QueryDict
@@ -9,6 +10,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from health.models import HealthObservation, HealthObservationType
+from inventory.models import StockLot
+from locations.models import Location
 from plantings.register import parse_register_filters, register_queryset
 from workspaces.models import Workspace
 from workspaces.scoping import (
@@ -17,7 +21,32 @@ from workspaces.scoping import (
     RequireWorkspaceModeMixin,
 )
 
-from .models import Customer, ReservationEvent, SalesOrder, SalesOrderAllocation, SalesOrderLine
+from .commerce import (
+    order_commerce_summary,
+    post_fulfillment,
+    post_refund,
+    post_return,
+    record_payment,
+    reverse_fulfillment,
+    reverse_payment,
+    reverse_refund,
+    reverse_return,
+)
+from .models import (
+    Customer,
+    Fulfillment,
+    FulfillmentLine,
+    FulfillmentPackagingLine,
+    Payment,
+    Refund,
+    RefundLine,
+    ReservationEvent,
+    SalesOrder,
+    SalesOrderAllocation,
+    SalesOrderLine,
+    SalesReturn,
+    SalesReturnLine,
+)
 from .services import (
     allocate_targets,
     cancel_order,
@@ -117,6 +146,7 @@ class SalesOrderSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSer
     status = serializers.ChoiceField(choices=SalesOrder.Status.choices, required=False)
     lines = SalesOrderLineSerializer(many=True, read_only=True)
     margin = serializers.SerializerMethodField()
+    commerce = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesOrder
@@ -125,7 +155,7 @@ class SalesOrderSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSer
             'requested_date', 'currency_code', 'prices_include_tax', 'notes',
             'gross_ex_tax', 'discount_total_ex_tax', 'subtotal_ex_tax',
             'tax_total', 'total_incl_tax', 'created_by', 'created', 'updated',
-            'lines', 'margin',
+            'lines', 'margin', 'commerce',
         ]
         read_only_fields = [
             'order_number', 'gross_ex_tax', 'discount_total_ex_tax',
@@ -139,6 +169,10 @@ class SalesOrderSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSer
     def get_margin(self, order):
         """Expose a clearly qualified ex-tax margin preview."""
         return order_margin(order)
+
+    def get_commerce(self, order):
+        """Expose physical, recognized, refunded, and cash totals separately."""
+        return order_commerce_summary(order)
 
     def validate(self, attrs):
         """Reserve status changes for explicit transition actions."""
@@ -215,6 +249,176 @@ class ReasonSerializer(ActionSerializer):  # pylint: disable=abstract-method
     """Optional audit reason for a document transition."""
 
     reason = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class CommerceRecordSerializer(serializers.ModelSerializer):
+    """Shared immutable action state derived from reversal links."""
+
+    status = serializers.SerializerMethodField()
+
+    def get_status(self, record):
+        if record.reversal_of_id:
+            return 'reversal'
+        if hasattr(record, 'reversal'):
+            return 'reversed'
+        return 'posted'
+
+
+class FulfillmentLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FulfillmentLine
+        fields = [
+            'pk', 'allocation', 'commercial_position', 'gross_ex_tax',
+            'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
+            'total_incl_tax', 'cogs_amount', 'cogs_provisional',
+            'currency_code', 'lifecycle_event', 'stock_movement',
+        ]
+
+
+class FulfillmentPackagingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FulfillmentPackagingLine
+        fields = [
+            'pk', 'lot', 'source', 'quantity', 'base_unit', 'unit_cost',
+            'cogs_amount', 'currency_code', 'stock_movement',
+        ]
+
+
+class FulfillmentSerializer(CommerceRecordSerializer):
+    lines = FulfillmentLineSerializer(many=True, read_only=True)
+    packaging_lines = FulfillmentPackagingSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Fulfillment
+        fields = [
+            'pk', 'fulfillment_number', 'fulfilled_at', 'status', 'notes',
+            'operation_key', 'created_by', 'created', 'reversal_of', 'lines',
+            'packaging_lines',
+        ]
+
+
+class PaymentSerializer(CommerceRecordSerializer):
+    class Meta:
+        model = Payment
+        fields = [
+            'pk', 'paid_on', 'amount', 'currency_code', 'method',
+            'external_reference', 'notes', 'status', 'operation_key',
+            'created_by', 'created', 'reversal_of',
+        ]
+
+
+class SalesReturnLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SalesReturnLine
+        fields = [
+            'pk', 'fulfillment_line', 'outcome', 'destination',
+            'lifecycle_event', 'return_movement', 'discard_movement',
+        ]
+
+
+class SalesReturnSerializer(CommerceRecordSerializer):
+    lines = SalesReturnLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = SalesReturn
+        fields = [
+            'pk', 'returned_at', 'reason', 'notes', 'status',
+            'health_observation', 'quarantine_case', 'operation_key',
+            'created_by', 'created', 'reversal_of', 'lines',
+        ]
+
+
+class RefundLineSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RefundLine
+        fields = [
+            'pk', 'fulfillment_line', 'gross_ex_tax', 'discount_ex_tax',
+            'subtotal_ex_tax', 'tax_total', 'total_incl_tax',
+        ]
+
+
+class RefundSerializer(CommerceRecordSerializer):
+    lines = RefundLineSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Refund
+        fields = [
+            'pk', 'payment', 'sales_return', 'refunded_at', 'amount',
+            'currency_code', 'reason', 'notes', 'status', 'operation_key',
+            'created_by', 'created', 'reversal_of', 'lines',
+        ]
+
+
+class PackagingWriteSerializer(serializers.Serializer):
+    lot = serializers.PrimaryKeyRelatedField(queryset=StockLot.objects.all())
+    source = serializers.PrimaryKeyRelatedField(queryset=Location.objects.all())
+    quantity = serializers.DecimalField(max_digits=18, decimal_places=9, min_value=0)
+
+
+class FulfillmentWriteSerializer(ActionSerializer):
+    operation_key = serializers.UUIDField()
+    allocation_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), allow_empty=False,
+    )
+    packaging = PackagingWriteSerializer(many=True, required=False, default=list)
+    fulfilled_at = serializers.DateTimeField(required=False)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class PaymentWriteSerializer(ActionSerializer):
+    operation_key = serializers.UUIDField()
+    paid_on = serializers.DateField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0)
+    method = serializers.ChoiceField(choices=Payment.Method.choices)
+    external_reference = serializers.CharField(required=False, allow_blank=True, default='')
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ReturnItemWriteSerializer(serializers.Serializer):
+    fulfillment_line = serializers.PrimaryKeyRelatedField(
+        queryset=FulfillmentLine.objects.all(),
+    )
+    outcome = serializers.ChoiceField(choices=SalesReturnLine.Outcome.choices)
+    destination = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.all(), required=False, allow_null=True,
+    )
+
+
+class ReturnWriteSerializer(ActionSerializer):
+    operation_key = serializers.UUIDField()
+    items = ReturnItemWriteSerializer(many=True, allow_empty=False)
+    returned_at = serializers.DateTimeField(required=False)
+    reason = serializers.CharField(allow_blank=False)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    observation_type = serializers.PrimaryKeyRelatedField(
+        queryset=HealthObservationType.objects.all(), required=False,
+        allow_null=True,
+    )
+    severity = serializers.ChoiceField(
+        choices=HealthObservation.Severity.choices, required=False, allow_null=True,
+    )
+    follow_up_due_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class RefundWriteSerializer(ActionSerializer):
+    operation_key = serializers.UUIDField()
+    payment = serializers.PrimaryKeyRelatedField(queryset=Payment.objects.all())
+    sales_return = serializers.PrimaryKeyRelatedField(
+        queryset=SalesReturn.objects.all(), required=False, allow_null=True,
+    )
+    fulfillment_lines = serializers.PrimaryKeyRelatedField(
+        queryset=FulfillmentLine.objects.all(), many=True, allow_empty=False,
+    )
+    amount = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0)
+    refunded_at = serializers.DateTimeField(required=False)
+    reason = serializers.CharField(allow_blank=False)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ReverseWriteSerializer(ActionSerializer):
+    operation_key = serializers.UUIDField()
+    occurred_at = serializers.DateTimeField(required=False)
+    reason = serializers.CharField(allow_blank=False)
 
 
 class CustomerViewSet(
@@ -377,6 +581,115 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
         values.is_valid(raise_exception=True)
         order = _run(cancel_order, self.get_object(), request.user, values.validated_data['reason'])
         return Response(self.get_serializer(order).data)
+
+    @action(detail=True, methods=['get', 'post'], url_path='fulfillments')
+    def fulfillments(self, request, pk=None):  # pylint: disable=unused-argument
+        """List fulfillment history or atomically post one dispatch."""
+        order = self.get_object()
+        if request.method == 'GET':
+            rows = order.fulfillments.prefetch_related('lines', 'packaging_lines')
+            return Response(FulfillmentSerializer(rows, many=True).data)
+        values = FulfillmentWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(post_fulfillment, order, request.user, **values.validated_data)
+        return Response(FulfillmentSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=['post'],
+        url_path=r'fulfillments/(?P<document_id>[^/.]+)/reverse',
+    )
+    def reverse_fulfillment_record(self, request, document_id=None, pk=None):  # pylint: disable=unused-argument
+        """Append a reversal for one fulfillment in this order."""
+        order = self.get_object()
+        original = order.fulfillments.filter(pk=document_id).first()
+        if original is None:
+            raise ValidationError({'fulfillment': 'Choose a fulfillment from this order.'})
+        values = ReverseWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(reverse_fulfillment, original, request.user, **values.validated_data)
+        return Response(FulfillmentSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get', 'post'], url_path='payments')
+    def payments(self, request, pk=None):  # pylint: disable=unused-argument
+        """List payment history or record operational cash."""
+        order = self.get_object()
+        if request.method == 'GET':
+            return Response(PaymentSerializer(order.payments.all(), many=True).data)
+        values = PaymentWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(record_payment, order, request.user, **values.validated_data)
+        return Response(PaymentSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=['post'],
+        url_path=r'payments/(?P<document_id>[^/.]+)/reverse',
+    )
+    def reverse_payment_record(self, request, document_id=None, pk=None):  # pylint: disable=unused-argument
+        """Append a reversal for one payment in this order."""
+        order = self.get_object()
+        original = order.payments.filter(pk=document_id).first()
+        if original is None:
+            raise ValidationError({'payment': 'Choose a payment from this order.'})
+        values = ReverseWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(reverse_payment, original, request.user, **values.validated_data)
+        return Response(PaymentSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get', 'post'], url_path='returns')
+    def returns(self, request, pk=None):  # pylint: disable=unused-argument
+        """List physical returns or post explicit item outcomes."""
+        order = self.get_object()
+        if request.method == 'GET':
+            return Response(SalesReturnSerializer(
+                order.returns.prefetch_related('lines'), many=True,
+            ).data)
+        values = ReturnWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(post_return, order, request.user, **values.validated_data)
+        return Response(SalesReturnSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=['post'],
+        url_path=r'returns/(?P<document_id>[^/.]+)/reverse',
+    )
+    def reverse_return_record(self, request, document_id=None, pk=None):  # pylint: disable=unused-argument
+        """Append a reversal for one physical return in this order."""
+        order = self.get_object()
+        original = order.returns.filter(pk=document_id).first()
+        if original is None:
+            raise ValidationError({'sales_return': 'Choose a return from this order.'})
+        values = ReverseWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(reverse_return, original, request.user, **values.validated_data)
+        return Response(SalesReturnSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get', 'post'], url_path='refunds')
+    def refunds(self, request, pk=None):  # pylint: disable=unused-argument
+        """List classified refunds or post a paid-value correction."""
+        order = self.get_object()
+        if request.method == 'GET':
+            return Response(RefundSerializer(
+                order.refunds.prefetch_related('lines'), many=True,
+            ).data)
+        values = RefundWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(post_refund, order, request.user, **values.validated_data)
+        return Response(RefundSerializer(row).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True, methods=['post'],
+        url_path=r'refunds/(?P<document_id>[^/.]+)/reverse',
+    )
+    def reverse_refund_record(self, request, document_id=None, pk=None):  # pylint: disable=unused-argument
+        """Append a reversal for one refund in this order."""
+        order = self.get_object()
+        original = order.refunds.filter(pk=document_id).first()
+        if original is None:
+            raise ValidationError({'refund': 'Choose a refund from this order.'})
+        values = ReverseWriteSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        row = _run(reverse_refund, original, request.user, **values.validated_data)
+        return Response(RefundSerializer(row).data, status=status.HTTP_201_CREATED)
 
 
 router = routers.SimpleRouter()
