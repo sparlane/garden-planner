@@ -70,3 +70,27 @@ class StocktakeVarianceFilters(BaseReportFilters):  # pylint: disable=abstract-m
     stocktake = serializers.IntegerField(required=False, min_value=1)
     location = serializers.IntegerField(required=False, min_value=1)
     kind = serializers.CharField(required=False)
+
+
+class ProductionFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Filters for batch production outcomes and cost reconciliation."""
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+    variety = serializers.IntegerField(required=False, min_value=1)
+    batch = serializers.IntegerField(required=False, min_value=1)
+    location = serializers.IntegerField(required=False, min_value=1)
+    garden_square = serializers.IntegerField(required=False, min_value=1)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('date_from') and attrs.get('date_to'):
+            if attrs['date_to'] < attrs['date_from']:
+                raise serializers.ValidationError({
+                    'date_to': 'The end must not be before the start.',
+                })
+        return attrs
+
+
+class TraceFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Pagination-only schema for one exact traceability identity."""

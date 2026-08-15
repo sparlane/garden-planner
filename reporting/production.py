@@ -1,0 +1,166 @@
+"""Production outcome and input-cost reconciliation reports."""
+
+from collections import Counter
+from decimal import Decimal
+
+from django.db.models import Q
+
+from costing.services import batch_cost_breakdown
+from plantings.lifecycle import lifecycle_summaries
+from plantings.models import (
+    CohortOperation,
+    GardenRowDirectSowPlanting,
+    GardenSquareDirectSowPlanting,
+    PlantCohort,
+    ProductionBatch,
+    SeedTrayPlanting,
+    SpecificPlant,
+)
+
+from .common import Report, decimal_string
+
+
+def _sown_quantity(batch):
+    """Total controlled sowing quantity across every supported planting shape."""
+    total = 0
+    for model in (
+            SeedTrayPlanting, GardenRowDirectSowPlanting,
+            GardenSquareDirectSowPlanting):
+        total += sum(model.objects.filter(batch=batch).values_list('quantity', flat=True))
+    return total
+
+
+def _original_cohort_output(batch):
+    """Count observed cohort output once, including later losses and promotions."""
+    return sum(
+        event.quantity_after
+        for operation in CohortOperation.objects.filter(
+            workspace=batch.workspace,
+            action=CohortOperation.Action.OBSERVE,
+            events__cohort__batch=batch,
+        ).prefetch_related('events')
+        for event in operation.events.all()
+        if event.cohort.batch_id == batch.pk
+    )
+
+
+def _batch_row(batch):  # pylint: disable=too-many-locals
+    plants = list(SpecificPlant.objects.filter(batch=batch).order_by('pk'))
+    summaries = lifecycle_summaries([plant.pk for plant in plants])
+    states = Counter(summary.state for summary in summaries.values())
+    cohorts = list(PlantCohort.objects.filter(batch=batch))
+    cohort_states = Counter()
+    for cohort in cohorts:
+        cohort_states[cohort.lifecycle_state] += cohort.quantity
+    identified_output = sum(plant.promoted_from_cohort_id is None for plant in plants)
+    original_output = identified_output + _original_cohort_output(batch)
+    current_output = sum(
+        count for state, count in states.items()
+        if state not in {'failed', 'lost', 'culled', 'donated', 'harvested', 'sold', 'discarded'}
+    ) + sum(cohort.quantity for cohort in cohorts)
+    sown = _sown_quantity(batch)
+    cost = batch_cost_breakdown(batch)
+    total = cost['final_total'] or cost['provisional_total']
+    unit_cost = None
+    if total is not None and original_output:
+        unit_cost = Decimal(total) / Decimal(original_output)
+    return {
+        'batch_id': batch.pk,
+        'batch_code': batch.code,
+        'variety_id': batch.variety_id,
+        'variety_name': batch.variety.name,
+        'status': batch.status,
+        'actual_start': batch.actual_start,
+        'output_finalized_at': batch.output_finalized_at,
+        'sown_quantity': sown,
+        'original_output': original_output,
+        'output_rate': (
+            decimal_string(Decimal(original_output) / Decimal(sown), 6)
+            if sown else None
+        ),
+        'current_seedlings': current_output,
+        'individual_states': dict(sorted(states.items())),
+        'cohort_states': dict(sorted(cohort_states.items())),
+        'production_loss': cost['totals']['production_loss'],
+        'plant_inventory_value': cost['totals']['plant_inventory'],
+        'cogs_value': cost['totals']['cogs'],
+        'unresolved_value': cost['totals']['unresolved'],
+        'unattributed_value': cost['totals']['unattributed'],
+        'provisional_total': cost['provisional_total'],
+        'final_total': cost['final_total'],
+        'unit_cost': decimal_string(unit_cost, 4),
+        'currency_code': cost['currency_code'],
+        'provisional': cost['provisional'],
+        'unvalued': cost['unknown_cost'],
+        'input_layers': cost['layers'],
+        'reconciliation': cost['totals'],
+    }
+
+
+def production_batches(workspace, filters):
+    """Report batch inputs, output rates, current stock, outcomes, and costs."""
+    queryset = ProductionBatch.objects.filter(workspace=workspace).select_related(
+        'variety',
+    )
+    if filters.get('batch'):
+        queryset = queryset.filter(pk=filters['batch'])
+    if filters.get('variety'):
+        queryset = queryset.filter(variety_id=filters['variety'])
+    if filters.get('date_from'):
+        queryset = queryset.filter(actual_start__date__gte=filters['date_from'])
+    if filters.get('date_to'):
+        queryset = queryset.filter(actual_start__date__lte=filters['date_to'])
+    if filters.get('location'):
+        queryset = queryset.filter(
+            Q(
+                specific_plants__locations__location_id=filters['location'],
+                specific_plants__locations__ended__isnull=True,
+            ) | Q(cohorts__location_id=filters['location']),
+        )
+    if filters.get('garden_square'):
+        queryset = queryset.filter(
+            specific_plants__locations__garden_square_id=filters['garden_square'],
+            specific_plants__locations__ended__isnull=True,
+        )
+    rows = [_batch_row(batch) for batch in queryset.distinct().order_by('-created', '-pk')]
+    provisional = sum(row['provisional'] for row in rows)
+    unvalued = sum(row['unvalued'] for row in rows)
+    quality = []
+    if provisional:
+        quality.append({
+            'code': 'provisional_production_cost', 'count': provisional,
+            'message': 'Open output keeps production cost provisional.',
+            'drill_down': '/reports/production-batches/?provisional=true',
+        })
+    if unvalued:
+        quality.append({
+            'code': 'unvalued_production_input', 'count': unvalued,
+            'message': 'One or more exact input lots have unknown cost.',
+            'drill_down': '/reports/production-batches/?unvalued=true',
+        })
+    return Report(
+        name='production-batches', filters=filters, rows=rows,
+        columns=tuple(rows[0]) if rows else (
+            'batch_id', 'batch_code', 'variety_id', 'variety_name', 'status',
+            'actual_start', 'output_finalized_at', 'sown_quantity',
+            'original_output', 'output_rate', 'current_seedlings',
+            'individual_states', 'cohort_states', 'production_loss',
+            'plant_inventory_value', 'cogs_value', 'unresolved_value',
+            'unattributed_value', 'provisional_total', 'final_total', 'unit_cost',
+            'currency_code', 'provisional', 'unvalued', 'input_layers',
+            'reconciliation',
+        ),
+        totals={
+            'batches': len(rows),
+            'current_seedlings': sum(row['current_seedlings'] for row in rows),
+            'provisional_batches': provisional,
+            'unvalued_batches': unvalued,
+        },
+        reconciliation={
+            'cost_equation': (
+                'total = plant inventory + COGS + production loss + unresolved '
+                '+ unattributed + harvested output'
+            ),
+        },
+        data_quality=quality,
+    )
