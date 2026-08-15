@@ -9,9 +9,13 @@ from .common import csv_response, normalized_filters, report_response
 from .filters import (
     InventoryBalanceFilters,
     MovementFilters,
+    ProductionFilters,
     SerializedTrayFilters,
     StocktakeVarianceFilters,
+    TraceFilters,
 )
+from .production import production_batches
+from .traceability import lot_trace, plant_trace
 from .inventory import (
     inventory_balances,
     movement_history,
@@ -81,3 +85,40 @@ StocktakeVarianceExportView = _view(
     'StocktakeVarianceExportView', StocktakeVarianceFilters,
     stocktake_variances, True,
 )
+ProductionView = _view(
+    'ProductionView', ProductionFilters, production_batches,
+)
+ProductionExportView = _view(
+    'ProductionExportView', ProductionFilters, production_batches, True,
+)
+
+
+class TraceView(ReportView):  # pylint: disable=arguments-differ
+    """Bind an exact plant or lot URL identity into the trace service."""
+
+    filter_class = TraceFilters
+    trace_builder = None
+
+    def get(self, request, identity):  # pylint: disable=not-callable,arguments-differ
+        """Render one exact identity's bidirectional trace."""
+        serializer = self.filter_class(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        filters = normalized_filters(serializer)
+        report = self.trace_builder(  # pylint: disable=not-callable
+            self._workspace(), identity, filters,
+        )
+        if self.export:
+            return csv_response(report)
+        return report_response(request, report)
+
+
+def _trace_view(name, builder, export=False):
+    return type(name, (TraceView,), {
+        'trace_builder': staticmethod(builder), 'export': export,
+    })
+
+
+PlantTraceView = _trace_view('PlantTraceView', plant_trace)
+PlantTraceExportView = _trace_view('PlantTraceExportView', plant_trace, True)
+LotTraceView = _trace_view('LotTraceView', lot_trace)
+LotTraceExportView = _trace_view('LotTraceExportView', lot_trace, True)
