@@ -7,13 +7,17 @@ from workspaces.scoping import RequireWorkspaceModeMixin
 
 from .common import csv_response, normalized_filters, report_response
 from .filters import (
+    CommerceFilters,
+    DashboardFilters,
     InventoryBalanceFilters,
     MovementFilters,
+    OrderFilters,
     ProductionFilters,
     SerializedTrayFilters,
     StocktakeVarianceFilters,
     TraceFilters,
 )
+from .commerce import dashboard_report, order_report, profitability_report
 from .production import production_batches
 from .traceability import lot_trace, plant_trace
 from .inventory import (
@@ -122,3 +126,15 @@ PlantTraceView = _trace_view('PlantTraceView', plant_trace)
 PlantTraceExportView = _trace_view('PlantTraceExportView', plant_trace, True)
 LotTraceView = _trace_view('LotTraceView', lot_trace)
 LotTraceExportView = _trace_view('LotTraceExportView', lot_trace, True)
+
+OrderView = _view('OrderView', OrderFilters, order_report)
+OrderExportView = _view('OrderExportView', OrderFilters, order_report, True)
+ProfitabilityView = _view(
+    'ProfitabilityView', CommerceFilters, profitability_report,
+)
+ProfitabilityExportView = _view(
+    'ProfitabilityExportView', CommerceFilters, profitability_report, True,
+)
+DashboardView = _view(
+    'DashboardView', DashboardFilters, dashboard_report,
+)
