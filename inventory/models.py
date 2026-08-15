@@ -693,6 +693,9 @@ class StockLot(WorkspaceOwnedModel):
 
     class Meta:
         ordering = ['item__name', 'identifier', 'pk']
+        indexes = [
+            models.Index(fields=['workspace', 'expires_on'], name='stock_lot_expiry_idx'),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=['workspace', 'item', 'identifier'],
@@ -1405,6 +1408,9 @@ class StockMovement(WorkspaceOwnedModel):
 
     class Meta:
         ordering = ['occurred_at', 'pk']
+        indexes = [
+            models.Index(fields=['workspace', 'occurred_at'], name='stock_move_date_idx'),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(quantity__gt=0),
