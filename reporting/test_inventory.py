@@ -7,6 +7,8 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -174,3 +176,32 @@ class InventoryReportTests(APITestCase):
         self.client.force_authenticate(user=None)
         response = self.client.get('/reports/inventory-balances/')
         self.assertEqual(response.status_code, 403)
+
+    def test_movement_report_query_count_does_not_grow_with_rows(self):
+        lot = make_stock_lot(
+            workspace=self.workspace, location=self.location,
+            quantity=Decimal('100'),
+        )
+        with CaptureQueriesContext(connection) as small:
+            response = self.client.get('/reports/inventory-movements/', {
+                'lot': lot.pk,
+            })
+        self.assertEqual(response.status_code, 200)
+        StockMovement.objects.bulk_create([
+            StockMovement(
+                workspace=self.workspace,
+                lot=lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('1'),
+                source=self.location,
+                occurred_at=timezone.now(),
+                reference=f'PERF-{index}',
+            )
+            for index in range(20)
+        ])
+        with CaptureQueriesContext(connection) as large:
+            response = self.client.get('/reports/inventory-movements/', {
+                'lot': lot.pk,
+            })
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(large), len(small) + 1)

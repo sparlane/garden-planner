@@ -94,3 +94,40 @@ class ProductionFilters(BaseReportFilters):  # pylint: disable=abstract-method
 
 class TraceFilters(BaseReportFilters):  # pylint: disable=abstract-method
     """Pagination-only schema for one exact traceability identity."""
+
+
+class CommerceFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Shared exact dimensions for order and profitability reports."""
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+    variety = serializers.IntegerField(required=False, min_value=1)
+    batch = serializers.IntegerField(required=False, min_value=1)
+    customer = serializers.IntegerField(required=False, min_value=1)
+    location = serializers.IntegerField(required=False, min_value=1)
+    garden_square = serializers.IntegerField(required=False, min_value=1)
+    fulfillment = serializers.CharField(required=False, allow_blank=False)
+    order = serializers.CharField(required=False, allow_blank=False)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('date_from') and attrs.get('date_to'):
+            if attrs['date_to'] < attrs['date_from']:
+                raise serializers.ValidationError({
+                    'date_to': 'The end must not be before the start.',
+                })
+        return attrs
+
+
+class OrderFilters(CommerceFilters):  # pylint: disable=abstract-method
+    """Operational order-state filters."""
+
+    status = serializers.CharField(required=False)
+    overdue = serializers.BooleanField(required=False)
+
+
+class DashboardFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Optional period override for the Nursery dashboard."""
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)

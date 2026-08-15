@@ -109,6 +109,9 @@ class SalesOrder(WorkspaceOwnedModel):
 
     class Meta:
         ordering = ['-created', '-pk']
+        indexes = [
+            models.Index(fields=['workspace', 'status', 'requested_date'], name='sales_order_report_idx'),
+        ]
         constraints = [
             models.UniqueConstraint(fields=['workspace', 'order_number'], name='sales_order_workspace_number_unique'),
         ]
@@ -383,6 +386,9 @@ class Fulfillment(ImmutableCommerceModel):
 
     class Meta:
         ordering = ['fulfilled_at', 'pk']
+        indexes = [
+            models.Index(fields=['workspace', 'fulfilled_at'], name='sales_fulfill_date_idx'),
+        ]
         constraints = [
             models.UniqueConstraint(
                 fields=['workspace', 'fulfillment_number'],
@@ -516,6 +522,9 @@ class Payment(ImmutableCommerceModel):
 
     class Meta:
         ordering = ['paid_on', 'pk']
+        indexes = [
+            models.Index(fields=['workspace', 'paid_on'], name='sales_payment_date_idx'),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(amount__gt=0),
@@ -552,6 +561,9 @@ class SalesReturn(ImmutableCommerceModel):
 
     class Meta:
         ordering = ['returned_at', 'pk']
+        indexes = [
+            models.Index(fields=['workspace', 'returned_at'], name='sales_return_date_idx'),
+        ]
         constraints = [models.UniqueConstraint(
             fields=['workspace', 'operation_key'],
             name='sales_return_workspace_operation_unique',
@@ -628,6 +640,9 @@ class Refund(ImmutableCommerceModel):
 
     class Meta:
         ordering = ['refunded_at', 'pk']
+        indexes = [
+            models.Index(fields=['workspace', 'refunded_at'], name='sales_refund_date_idx'),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(amount__gt=0),

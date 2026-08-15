@@ -3,16 +3,21 @@
 from django.urls import path
 
 from .rest import (
+    DashboardView,
     InventoryBalanceExportView,
     InventoryBalanceView,
     MovementExportView,
     MovementView,
+    OrderExportView,
+    OrderView,
     LotTraceExportView,
     LotTraceView,
     PlantTraceExportView,
     PlantTraceView,
     ProductionExportView,
     ProductionView,
+    ProfitabilityExportView,
+    ProfitabilityView,
     SerializedTrayExportView,
     SerializedTrayView,
     StocktakeVarianceExportView,
@@ -21,6 +26,7 @@ from .rest import (
 
 
 urlpatterns = [
+    path('dashboard/', DashboardView.as_view()),
     path('inventory-balances/', InventoryBalanceView.as_view()),
     path('inventory-balances/export/', InventoryBalanceExportView.as_view()),
     path('serialized-trays/', SerializedTrayView.as_view()),
@@ -31,6 +37,10 @@ urlpatterns = [
     path('stocktake-variances/export/', StocktakeVarianceExportView.as_view()),
     path('production-batches/', ProductionView.as_view()),
     path('production-batches/export/', ProductionExportView.as_view()),
+    path('orders/', OrderView.as_view()),
+    path('orders/export/', OrderExportView.as_view()),
+    path('profitability/', ProfitabilityView.as_view()),
+    path('profitability/export/', ProfitabilityExportView.as_view()),
     path('traceability/plants/<int:identity>/', PlantTraceView.as_view()),
     path(
         'traceability/plants/<int:identity>/export/',

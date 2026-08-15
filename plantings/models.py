@@ -1344,6 +1344,7 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
         ordering = ['occurred_at', 'pk']
         indexes = [
             models.Index(fields=['plant', 'occurred_at'], name='plant_lifecycle_replay_idx'),
+            models.Index(fields=['workspace', 'occurred_at'], name='plant_event_report_idx'),
         ]
         constraints = [
             models.UniqueConstraint(
