@@ -18,6 +18,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
   const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health'
   const inventoryActive = pathname === '/inventory' || pathname.startsWith('/inventory/') || pathname.startsWith('/applications') || pathname.startsWith('/locations')
   const salesActive = pathname === '/sales' || pathname.startsWith('/sales/')
+  const reportsActive = pathname === '/reports' || pathname.startsWith('/reports/')
 
   return (
     <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
@@ -44,6 +45,28 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               Stock
             </NavDropdown.Item>
           </NavDropdown>
+          {workspace.mode === 'nursery' && (
+            <NavDropdown title="Reports" active={reportsActive}>
+              <NavDropdown.Item as={NavLink} to="/reports" end>
+                Dashboard
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/profitability">
+                Profitability
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/inventory">
+                Inventory
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/production">
+                Production
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/orders">
+                Orders and cash
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/traceability">
+                Traceability
+              </NavDropdown.Item>
+            </NavDropdown>
+          )}
           {workspace.mode === 'nursery' && (
             <NavDropdown title="Sales" active={salesActive}>
               <NavDropdown.Item as={NavLink} to="/sales/orders">
