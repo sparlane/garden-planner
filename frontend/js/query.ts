@@ -4,6 +4,10 @@ import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 import { WorkFilters } from './types/work'
 
 const queryKeys = {
+  reports: {
+    all: ['reports'] as const,
+    detail: (report: string, filters: string) => ['reports', report, filters] as const
+  },
   sales: {
     all: ['sales'] as const,
     customers: ['sales', 'customers'] as const,

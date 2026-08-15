@@ -34,6 +34,7 @@ import { LabelsView, ScannerView } from './labels.js'
 import { WorkQueueView } from './work.js'
 import { HealthView } from './health.js'
 import { CustomerListView, SalesOrderDetailView, SalesOrderListView } from './sales.js'
+import { ReportsView } from './reports.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -167,6 +168,25 @@ function FrontEndPage() {
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
         <Route path="/applications" element={<InputApplicationsView />} />
+        <Route
+          path="/reports"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <ReportsView page="dashboard" />
+            </WorkspaceModeRoute>
+          }
+        />
+        {(['inventory', 'production', 'orders', 'profitability', 'traceability'] as const).map((page) => (
+          <Route
+            key={page}
+            path={`/reports/${page}`}
+            element={
+              <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+                <ReportsView page={page} />
+              </WorkspaceModeRoute>
+            }
+          />
+        ))}
         <Route
           path="/sales/orders"
           element={
