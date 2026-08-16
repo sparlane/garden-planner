@@ -4,14 +4,21 @@ import { Badge, Button, Table } from 'react-bootstrap'
 import { formatDateTime } from '../utils'
 import { PlantLifecycleEvent, PlantLifecycleEventType, PlantLifecycleState, PlantOutcomeAction, SpecificPlant } from '../types/plantings'
 
+// Every derived state and recorded fact the server can report, including the
+// ones sales and health produce. The Record types make tsc refuse a state or an
+// event that nothing here knows how to name.
 const STATE_LABELS: Record<PlantLifecycleState, string> = {
   growing: 'Growing',
   available: 'Available',
   retained: 'Retained',
   donated: 'Donated',
   failed: 'Failed',
+  lost: 'Lost',
   culled: 'Culled',
-  harvested: 'Harvested'
+  harvested: 'Harvested',
+  sold: 'Sold',
+  quarantined: 'Returned quarantined',
+  discarded: 'Returned discarded'
 }
 
 const STATE_VARIANTS: Record<PlantLifecycleState, string> = {
@@ -20,8 +27,12 @@ const STATE_VARIANTS: Record<PlantLifecycleState, string> = {
   retained: 'primary',
   donated: 'info',
   failed: 'danger',
+  lost: 'dark',
   culled: 'dark',
-  harvested: 'primary'
+  harvested: 'primary',
+  sold: 'info',
+  quarantined: 'warning',
+  discarded: 'dark'
 }
 
 const EVENT_LABELS: Record<PlantLifecycleEventType, string> = {
@@ -30,9 +41,15 @@ const EVENT_LABELS: Record<PlantLifecycleEventType, string> = {
   transplanted: 'Planted out',
   retained: 'Retained',
   failed: 'Failed',
+  lost: 'Lost during stocktake',
   culled: 'Culled',
   donated: 'Donated',
   harvest_finished: 'Harvest finished',
+  sold: 'Sold',
+  returned_available: 'Returned available',
+  returned_quarantined: 'Returned quarantined',
+  returned_discarded: 'Returned discarded',
+  released_available: 'Released from quarantine',
   corrected: 'Corrected'
 }
 

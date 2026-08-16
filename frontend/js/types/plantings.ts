@@ -243,9 +243,27 @@ interface SpecificPlantMove {
   override_reason?: string
 }
 
-type PlantLifecycleEventType = 'germinated' | 'ready' | 'transplanted' | 'retained' | 'failed' | 'culled' | 'donated' | 'harvest_finished' | 'corrected'
+// These mirror plantings.models.PlantLifecycleEvent.EventType and
+// plantings.lifecycle.LifecycleState in full, including the commerce facts the
+// server records from sales and health rather than from a button here.
+type PlantLifecycleEventType =
+  | 'germinated'
+  | 'ready'
+  | 'transplanted'
+  | 'retained'
+  | 'failed'
+  | 'lost'
+  | 'culled'
+  | 'donated'
+  | 'harvest_finished'
+  | 'sold'
+  | 'returned_available'
+  | 'returned_quarantined'
+  | 'returned_discarded'
+  | 'released_available'
+  | 'corrected'
 
-type PlantLifecycleState = 'growing' | 'available' | 'retained' | 'donated' | 'failed' | 'culled' | 'harvested'
+type PlantLifecycleState = 'growing' | 'available' | 'retained' | 'donated' | 'failed' | 'lost' | 'culled' | 'harvested' | 'sold' | 'quarantined' | 'discarded'
 
 type PlantOutcomeAction = 'ready' | 'retain' | 'fail' | 'cull' | 'donate' | 'finish-harvest'
 
