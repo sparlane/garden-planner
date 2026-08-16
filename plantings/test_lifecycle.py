@@ -199,6 +199,51 @@ class LifecycleStateAnnotationTests(TestCase):
                 )
             plants[name] = plant
 
+        plants['held_back'] = self.germinated_plant(start)
+        record_lifecycle_event(
+            plants['held_back'],
+            self.user,
+            OutcomeRequest(EventType.READY, occurred_at=start + timedelta(days=1)),
+        )
+        record_lifecycle_event(
+            plants['held_back'],
+            self.user,
+            OutcomeRequest(
+                EventType.HELD_BACK,
+                occurred_at=start + timedelta(days=2),
+                reason='Gone leggy in the heat.',
+            ),
+        )
+
+        plants['offered_again'] = self.germinated_plant(start)
+        for day, event_type, reason in (
+                (1, EventType.READY, ''),
+                (2, EventType.HELD_BACK, 'Gone leggy in the heat.'),
+                (3, EventType.READY, '')):
+            record_lifecycle_event(
+                plants['offered_again'],
+                self.user,
+                OutcomeRequest(
+                    event_type, occurred_at=start + timedelta(days=day), reason=reason,
+                ),
+            )
+
+        plants['retention_ended'] = self.germinated_plant(start)
+        record_lifecycle_event(
+            plants['retention_ended'],
+            self.user,
+            OutcomeRequest(EventType.RETAINED, occurred_at=start + timedelta(days=1)),
+        )
+        record_lifecycle_event(
+            plants['retention_ended'],
+            self.user,
+            OutcomeRequest(
+                EventType.RETENTION_ENDED,
+                occurred_at=start + timedelta(days=2),
+                reason='Back into sale stock.',
+            ),
+        )
+
         plants['transplanted'] = self.germinated_plant(start)
         record_lifecycle_event(
             plants['transplanted'],
