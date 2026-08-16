@@ -384,6 +384,35 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_packet_payload_carries_the_lot_codes_printed_on_the_packet(self):
+        """The sowing picker can match a packet by the codes a gardener can read."""
+        packet = self.post_draft(
+            self.create_draft(QuantityCertainty.EXACT, '10')['pk'],
+        )
+
+        inventory = packet['inventory']
+        self.assertEqual(
+            inventory['supplier_lot_reference'],
+            'SUPPLIER-LOT-1',
+        )
+        self.assertTrue(inventory['lot_identifier'])
+
+        # The picker reads the list route, not the detail one it was posted to.
+        listed = self.client.get('/seeds/packets/')
+        self.assertEqual(listed.status_code, 200)
+        entry = next(
+            candidate for candidate in listed.data
+            if candidate['pk'] == packet['pk']
+        )
+        self.assertEqual(
+            entry['inventory']['supplier_lot_reference'],
+            'SUPPLIER-LOT-1',
+        )
+        self.assertEqual(
+            entry['inventory']['lot_identifier'],
+            inventory['lot_identifier'],
+        )
+
     def test_seed_drafts_are_flagged_and_refused_by_the_general_receipt_api(self):
         """The general receiving screen can neither see nor post a seed draft."""
         draft = self.create_draft(QuantityCertainty.EXACT, '10')

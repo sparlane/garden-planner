@@ -312,6 +312,8 @@ def packet_inventory_snapshot(packet):
         empty = remaining == 0
     return {
         'lot': packet.stock_lot_id,
+        'lot_identifier': packet.stock_lot.identifier,
+        'supplier_lot_reference': packet.stock_lot.supplier_lot_reference,
         'location': packet.storage_location_id,
         'quantity_certainty': certainty,
         'received_quantity': initial,
