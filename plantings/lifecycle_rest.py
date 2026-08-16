@@ -19,6 +19,7 @@ from .lifecycle import (
     OUTCOME_EVENTS,
     EventType,
     OutcomeRequest,
+    availability_intervals,
     plant_lifecycle_summary,
     record_bulk_outcome,
     record_lifecycle_event,
@@ -150,6 +151,8 @@ class PlantLifecycleSerializerMixin:
         'sellable',
         'final_outcome',
         'final_outcome_at',
+        'state_since',
+        'first_ready_at',
     ]
 
     def _summary(self, plant):
@@ -158,6 +161,14 @@ class PlantLifecycleSerializerMixin:
         if cached is None:
             cached = plant_lifecycle_summary(plant)
             setattr(plant, '_lifecycle_summary', cached)
+        return cached
+
+    def _intervals(self, plant):
+        """Derive one plant's offered spans at most once per response."""
+        cached = getattr(plant, '_lifecycle_intervals', None)
+        if cached is None:
+            cached = availability_intervals(list(plant.lifecycle_events.all()))
+            setattr(plant, '_lifecycle_intervals', cached)
         return cached
 
     def get_lifecycle_state(self, plant):
@@ -175,6 +186,26 @@ class PlantLifecycleSerializerMixin:
     def get_final_outcome_at(self, plant):
         """Return when this plant was resolved, if it has been."""
         return self._summary(plant).final_outcome_at
+
+    def get_state_since(self, plant):
+        """Return when the plant's current state began."""
+        return self._summary(plant).state_since
+
+    def get_first_ready_at(self, plant):
+        """Return when this plant was first offered, if it ever was."""
+        intervals = self._intervals(plant)
+        return intervals[0].started if intervals else None
+
+    def get_availability_intervals(self, plant):
+        """Return every span this plant was offered, oldest first.
+
+        A held-back plant offered again has more than one, so the repeated
+        cycle stays readable where only the latest state would hide it.
+        """
+        return [
+            {'started': interval.started, 'ended': interval.ended}
+            for interval in self._intervals(plant)
+        ]
 
 
 class PlantOutcomeViewSetMixin:

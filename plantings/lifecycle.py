@@ -195,6 +195,7 @@ class LifecycleSummary(NamedTuple):
     sellable: bool
     final_outcome: object = None
     final_outcome_at: object = None
+    state_since: object = None
 
 
 class OutcomeRequest(NamedTuple):
@@ -245,27 +246,35 @@ def states_without_exits(state_after=None, allowed_from=None, final_states=None)
     }
 
 
-def derive_state(events):
-    """Replay one plant's facts into its current summary.
+def _surviving_state_events(events):
+    """Return one plant's state-changing facts a correction has not struck.
 
-    Reversed events and the corrections that reverse them are both skipped, so
-    a correction restores whatever the surviving facts imply.
+    Reversed events and the corrections that reverse them are both dropped, so
+    a correction restores whatever the surviving facts imply. Everything that
+    replays a history starts here, so no two readings can disagree about which
+    facts still count.
     """
     corrected_ids = {
         event.reversal_of_id
         for event in events
         if event.reversal_of_id is not None
     }
+    return [
+        event
+        for event in sorted(events, key=lambda event: (event.occurred_at, event.pk))
+        if event.pk not in corrected_ids and event.event_type in STATE_AFTER
+    ]
+
+
+def derive_state(events):
+    """Replay one plant's facts into its current summary."""
     state = LifecycleState.GROWING
     outcome = None
     outcome_at = None
-    for event in sorted(events, key=lambda event: (event.occurred_at, event.pk)):
-        if event.pk in corrected_ids:
-            continue
-        next_state = STATE_AFTER.get(event.event_type)
-        if next_state is None:
-            continue
-        state = next_state
+    state_since = None
+    for event in _surviving_state_events(events):
+        state = STATE_AFTER[event.event_type]
+        state_since = event.occurred_at
         if is_final(state):
             outcome, outcome_at = event.event_type, event.occurred_at
         else:
@@ -275,12 +284,52 @@ def derive_state(events):
         sellable=state in SELLABLE_STATES,
         final_outcome=outcome,
         final_outcome_at=outcome_at,
+        state_since=state_since,
     )
+
+
+class AvailabilityInterval(NamedTuple):
+    """One span a plant spent offerable, open-ended while it still is."""
+
+    started: object
+    ended: object = None
+
+
+def availability_intervals(events):
+    """Return every span this plant was offerable, oldest first.
+
+    A plant graded ready, held back, and graded ready again produces two
+    spans, so a screen can report how long stock has actually been on offer
+    rather than only the state the newest fact left behind. A correction
+    strikes its target out of the replay, so a `ready` recorded in error
+    leaves no span at all, while holding back leaves a closed one.
+    """
+    intervals = []
+    started = None
+    for event in _surviving_state_events(events):
+        offerable = STATE_AFTER[event.event_type] in SELLABLE_STATES
+        if offerable and started is None:
+            started = event.occurred_at
+        elif not offerable and started is not None:
+            intervals.append(AvailabilityInterval(started, event.occurred_at))
+            started = None
+    if started is not None:
+        intervals.append(AvailabilityInterval(started))
+    return intervals
 
 
 #: The facts `derive_state` reads. Every other event type records something that
 #: happened without changing the condition it leaves behind.
 STATE_EVENT_TYPES = tuple(STATE_AFTER)
+
+#: The facts that put a plant on offer. Derived rather than listed, so a fact
+#: added to `STATE_AFTER` with a sellable destination cannot be missed by the
+#: first-offered date the register reports.
+OFFERING_EVENTS = tuple(
+    event_type
+    for event_type, state in STATE_AFTER.items()
+    if state in SELLABLE_STATES
+)
 
 
 def effective_state_events(plant_ref):
@@ -309,13 +358,28 @@ def with_lifecycle_state(queryset):
     result filterable, sortable, countable, and pageable in the database. The
     two derivations share `STATE_AFTER`, `FINAL_STATES`, and `SELLABLE_STATES`
     so neither can quietly describe a different vocabulary from the other.
+
+    `first_ready_at` is the oldest surviving offering fact, which is the start
+    of the first span `availability_intervals` reports, and `last_state_at`
+    says when the current state began. Between them a screen can tell stock
+    held back yesterday from stock held back in March.
     """
     events = effective_state_events(OuterRef('pk'))
+    offers = (
+        PlantLifecycleEvent.objects
+        .filter(
+            plant=OuterRef('pk'),
+            event_type__in=OFFERING_EVENTS,
+            reversal__isnull=True,
+        )
+        .order_by('occurred_at', 'pk')
+    )
     return (
         queryset
         .annotate(
             last_state_event=Subquery(events.values('event_type')[:1]),
             last_state_at=Subquery(events.values('occurred_at')[:1]),
+            first_ready_at=Subquery(offers.values('occurred_at')[:1]),
         )
         .annotate(
             lifecycle_state=Case(

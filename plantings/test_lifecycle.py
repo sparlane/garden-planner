@@ -30,6 +30,7 @@ from .lifecycle import (
     LifecycleState,
     OutcomeRequest,
     STATE_AFTER,
+    availability_intervals,
     lifecycle_summaries,
     plant_lifecycle_summary,
     record_bulk_outcome,
@@ -281,7 +282,14 @@ class LifecycleStateAnnotationTests(TestCase):
             SpecificPlant.objects.filter(pk__in=[plant.pk for plant in plants]),
         )
         return {
-            row.pk: (row.lifecycle_state, row.sellable, row.final_outcome, row.final_outcome_at)
+            row.pk: (
+                row.lifecycle_state,
+                row.sellable,
+                row.final_outcome,
+                row.final_outcome_at,
+                row.last_state_at,
+                row.first_ready_at,
+            )
             for row in queryset
         }
 
@@ -293,22 +301,35 @@ class LifecycleStateAnnotationTests(TestCase):
         for name, plant in plants.items():
             with self.subTest(history=name):
                 summary = replayed[plant.pk]
+                intervals = availability_intervals(list(plant.lifecycle_events.all()))
                 self.assertEqual(
                     annotated[plant.pk],
-                    (summary.state, summary.sellable, summary.final_outcome, summary.final_outcome_at),
+                    (
+                        summary.state,
+                        summary.sellable,
+                        summary.final_outcome,
+                        summary.final_outcome_at,
+                        summary.state_since,
+                        intervals[0].started if intervals else None,
+                    ),
                 )
 
     def test_the_population_exercises_every_derived_state(self):
         """A new state cannot be added without being compared here."""
         plants = self.population()
-        derived = {state for state, _, _, _ in self.annotated(plants.values()).values()}
+        derived = {state for state, *_ in self.annotated(plants.values()).values()}
         self.assertEqual(derived, {state.value for state in LifecycleState})
 
     def test_a_correction_returns_the_annotation_to_the_surviving_facts(self):
         """A reversed outcome stops counting the moment it is corrected."""
         plants = self.population()
-        annotated = self.annotated([plants['corrected']])[plants['corrected'].pk]
-        self.assertEqual(annotated, (LifecycleState.AVAILABLE, True, None, None))
+        plant = plants['corrected']
+        ready_at = plant.lifecycle_events.get(event_type=EventType.READY).occurred_at
+        annotated = self.annotated([plant])[plant.pk]
+        self.assertEqual(
+            annotated,
+            (LifecycleState.AVAILABLE, True, None, None, ready_at, ready_at),
+        )
 
 
 class LifecycleTransitionTests(TestCase):

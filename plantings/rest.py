@@ -474,6 +474,8 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
     sellable = serializers.SerializerMethodField()
     final_outcome = serializers.SerializerMethodField()
     final_outcome_at = serializers.SerializerMethodField()
+    state_since = serializers.SerializerMethodField()
+    first_ready_at = serializers.SerializerMethodField()
     label_code = serializers.SerializerMethodField()
 
     class Meta:
@@ -545,12 +547,13 @@ class SpecificPlantDetailSerializer(SpecificPlantSerializer):
     """Add the chronological lifecycle history one plant screen needs."""
 
     lifecycle_events = PlantLifecycleEventSerializer(many=True, read_only=True)
+    availability_intervals = serializers.SerializerMethodField()
     growth = serializers.SerializerMethodField()
     nursery_observations = serializers.SerializerMethodField()
 
     class Meta(SpecificPlantSerializer.Meta):
         fields = SpecificPlantSerializer.Meta.fields + [
-            'lifecycle_events', 'growth', 'nursery_observations',
+            'lifecycle_events', 'availability_intervals', 'growth', 'nursery_observations',
         ]
 
     def get_growth(self, plant):
