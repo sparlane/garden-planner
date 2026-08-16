@@ -24,6 +24,8 @@ interface SeedCreate {
 
 interface SeedPacketInventory {
   lot: number
+  lot_identifier: string
+  supplier_lot_reference: string
   location: number
   quantity_certainty: SeedQuantityCertainty
   received_quantity: string | null
