@@ -20,7 +20,13 @@ from applications.services import (
 )
 from inventory.units import UnitCode
 from plantings.cohorts import change_cohort
-from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from plantings.lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    plant_lifecycle_summary,
+    record_lifecycle_event,
+)
 from plantings.models import CohortOperation, PlantCohort, SpecificPlantLocation
 from plantings.register import RegisterFilters, register_queryset
 from tests.factories import (
@@ -72,6 +78,16 @@ class HealthOperationTests(TestCase):
             idempotency_key=uuid4(), reason='Prevent spread while reviewed.',
         )[0]
 
+    def returned_plant(self):
+        """Return one plant a customer returned into quarantine."""
+        plant = make_specific_plant(workspace=self.workspace)
+        for event_type in (
+                EventType.READY, EventType.SOLD, EventType.RETURNED_QUARANTINED):
+            record_lifecycle_event(
+                plant, None, OutcomeRequest(event_type, reason='Commerce.'),
+            )
+        return plant
+
     def test_quarantine_changes_register_availability_without_lifecycle_change(self):
         plant = make_specific_plant(workspace=self.workspace)
         record_lifecycle_event(
@@ -93,6 +109,23 @@ class HealthOperationTests(TestCase):
         self.assertFalse(after.quarantined)
         self.assertTrue(after.sellable)
 
+    def test_releasing_an_overlay_quarantine_records_no_lifecycle_fact(self):
+        plant = make_specific_plant(workspace=self.workspace)
+        record_lifecycle_event(
+            plant, None, OutcomeRequest(EventType.READY, reason='Ready for sale.'),
+        )
+        case = self.quarantine(self.observe('plant', plant))
+        action = act_on_quarantine(
+            self.workspace, None, case,
+            action_name=QuarantineAction.Action.RELEASE,
+            idempotency_key=uuid4(), reason='Inspection found no remaining issue.',
+        )
+        self.assertEqual(
+            list(plant.lifecycle_events.values_list('event_type', flat=True)),
+            [EventType.READY],
+        )
+        self.assertFalse(action.results.exists())
+
     def test_overlapping_cases_must_each_be_released(self):
         plant = make_specific_plant(workspace=self.workspace)
         observation = self.observe('plant', plant)
@@ -108,6 +141,105 @@ class HealthOperationTests(TestCase):
             action_name='release', idempotency_key=uuid4(), reason='Second issue resolved.',
         )
         self.assertFalse(is_quarantined(plant))
+
+    def test_releasing_a_returned_plant_records_its_recovery(self):
+        plant = self.returned_plant()
+        case = self.quarantine(self.observe('plant', plant))
+        action = act_on_quarantine(
+            self.workspace, None, case,
+            action_name=QuarantineAction.Action.RELEASE,
+            idempotency_key=uuid4(), reason='Reassessed as healthy stock.',
+        )
+        row = register_queryset(self.workspace, RegisterFilters()).get(pk=plant.pk)
+        self.assertEqual(row.lifecycle_state, LifecycleState.AVAILABLE)
+        self.assertTrue(row.sellable)
+        self.assertFalse(row.quarantined)
+        result = action.results.get()
+        self.assertEqual(result.plant, plant)
+        self.assertEqual(
+            result.lifecycle_event.event_type, EventType.RELEASED_AVAILABLE,
+        )
+        self.assertEqual(
+            result.lifecycle_event.reference, f'quarantine-action:{action.pk}',
+        )
+        self.assertEqual(result.lifecycle_event.reason, 'Reassessed as healthy stock.')
+
+    def test_a_release_keeps_the_quarantine_it_resolved_on_the_record(self):
+        plant = self.returned_plant()
+        case = self.quarantine(self.observe('plant', plant))
+        act_on_quarantine(
+            self.workspace, None, case,
+            action_name=QuarantineAction.Action.RELEASE,
+            idempotency_key=uuid4(), reason='Reassessed as healthy stock.',
+        )
+        self.assertEqual(
+            list(
+                plant.lifecycle_events.order_by('occurred_at', 'pk')
+                .values_list('event_type', flat=True)
+            ),
+            [
+                EventType.READY,
+                EventType.SOLD,
+                EventType.RETURNED_QUARANTINED,
+                EventType.RELEASED_AVAILABLE,
+            ],
+        )
+
+    def test_culling_a_returned_plant_resolves_it_and_closes_its_location(self):
+        plant = self.returned_plant()
+        bench = make_location(workspace=self.workspace, location_type='quarantine')
+        make_specific_plant_location(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=bench,
+        )
+        case = self.quarantine(self.observe('plant', plant))
+        action = act_on_quarantine(
+            self.workspace, None, case,
+            action_name=QuarantineAction.Action.CULL,
+            idempotency_key=uuid4(), reason='Disease confirmed on reassessment.',
+        )
+        summary = plant_lifecycle_summary(plant)
+        self.assertEqual(summary.state, LifecycleState.CULLED)
+        self.assertEqual(summary.final_outcome, EventType.CULLED)
+        self.assertFalse(
+            SpecificPlantLocation.objects
+            .filter(specific_plant=plant, ended__isnull=True)
+            .exists()
+        )
+        result = action.results.get()
+        self.assertEqual(result.lifecycle_event.event_type, EventType.CULLED)
+
+    def test_a_release_resolves_only_the_members_quarantine_held(self):
+        returned = self.returned_plant()
+        live = make_specific_plant(workspace=self.workspace)
+        record_lifecycle_event(live, None, OutcomeRequest(EventType.READY))
+        scopes = [
+            {'type': 'plant', 'id': returned.pk},
+            {'type': 'plant', 'id': live.pk},
+        ]
+        preview = preview_observation(self.workspace, scopes)
+        observation = record_observation(
+            self.workspace, None, scopes=scopes,
+            reviewed_digest=preview['digest'],
+            observation_type=self.observation_type,
+            severity=HealthObservation.Severity.HIGH,
+            notes='Both benches inspected.',
+        )
+        action = act_on_quarantine(
+            self.workspace, None, self.quarantine(observation),
+            action_name=QuarantineAction.Action.RELEASE,
+            idempotency_key=uuid4(), reason='Nothing found on reassessment.',
+        )
+        self.assertEqual([result.plant for result in action.results.all()], [returned])
+        self.assertEqual(
+            plant_lifecycle_summary(live).state, LifecycleState.AVAILABLE,
+        )
+        self.assertEqual(
+            list(live.lifecycle_events.values_list('event_type', flat=True)),
+            [EventType.READY],
+        )
 
     def test_quarantine_move_preserves_physical_location_history(self):
         plant = make_specific_plant(workspace=self.workspace)
