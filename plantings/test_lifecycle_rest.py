@@ -199,18 +199,28 @@ class PlantOutcomeActionTests(PlantLifecycleRESTTestCase):
     """Each explicit outcome action appends one auditable event."""
 
     def test_every_outcome_action_records_its_event(self):
-        """The named actions cover the recordable dispositions."""
+        """The named actions cover the recordable dispositions.
+
+        The backward facts carry the state they are recorded from, because
+        holding back names an offer and ending a retention names a retention.
+        """
         actions = {
-            'ready': EventType.READY,
-            'retain': EventType.RETAINED,
-            'fail': EventType.FAILED,
-            'cull': EventType.CULLED,
-            'donate': EventType.DONATED,
-            'finish-harvest': EventType.HARVEST_FINISHED,
+            'ready': ((), EventType.READY),
+            'retain': ((), EventType.RETAINED),
+            'fail': ((), EventType.FAILED),
+            'cull': ((), EventType.CULLED),
+            'donate': ((), EventType.DONATED),
+            'finish-harvest': ((), EventType.HARVEST_FINISHED),
+            'hold-back': (('ready',), EventType.HELD_BACK),
+            'end-retention': (('retain',), EventType.RETENTION_ENDED),
         }
-        for outcome, event_type in actions.items():
+        for outcome, (priors, event_type) in actions.items():
             with self.subTest(outcome=outcome):
                 plant = make_specific_plant()
+                for prior in priors:
+                    self.assertEqual(
+                        self.post_outcome(plant.pk, prior).status_code, 201,
+                    )
                 response = self.post_outcome(
                     plant.pk,
                     outcome,
@@ -319,6 +329,79 @@ class PlantEventReversalActionTests(PlantLifecycleRESTTestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class BackwardTransitionActionTests(PlantLifecycleRESTTestCase):
+    """Withdrawing stock is offered beside the correction, not through it."""
+
+    def test_holding_back_returns_the_plant_to_production(self):
+        """The plant stops being sellable without becoming resolved."""
+        self.post_outcome(self.plant.pk, 'ready')
+        response = self.post_outcome(
+            self.plant.pk, 'hold-back', {'reason': 'Gone leggy in the heat.'},
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        data = self.get_plant(self.plant.pk)
+        self.assertEqual(data['lifecycle_state'], LifecycleState.GROWING)
+        self.assertFalse(data['sellable'])
+        self.assertIsNone(data['final_outcome'])
+
+    def test_holding_back_leaves_the_ready_fact_uncorrected(self):
+        """This is the whole distinction: the plant really was ready."""
+        ready = self.post_outcome(self.plant.pk, 'ready').data
+        self.post_outcome(
+            self.plant.pk, 'hold-back', {'reason': 'Gone leggy in the heat.'},
+        )
+        history = {
+            event['pk']: event
+            for event in self.get_plant(self.plant.pk)['lifecycle_events']
+        }
+        self.assertIsNone(history[ready['pk']]['reversed_by'])
+        self.assertEqual(
+            [event['event_type'] for event in history.values()],
+            [EventType.READY, EventType.HELD_BACK],
+        )
+
+    def test_a_backward_action_requires_a_reason(self):
+        """The API refuses an unexplained withdrawal, as the service does."""
+        for outcome, prior in (('hold-back', 'ready'), ('end-retention', 'retain')):
+            with self.subTest(outcome=outcome):
+                plant = make_specific_plant()
+                self.post_outcome(plant.pk, prior)
+                response = self.post_outcome(plant.pk, outcome)
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertIn('reason', response.data)
+
+    def test_a_backward_action_is_refused_from_the_wrong_state(self):
+        """Only stock on offer can be held back."""
+        response = self.post_outcome(
+            self.plant.pk, 'hold-back', {'reason': 'Gone leggy in the heat.'},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('event_type', response.data)
+
+    def test_a_backward_action_leaves_the_location_alone(self):
+        """Withdrawing stock changes the plan for it, not its bench."""
+        self.post_outcome(self.plant.pk, 'ready')
+        self.post_outcome(
+            self.plant.pk, 'hold-back', {'reason': 'Gone leggy in the heat.'},
+        )
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+
+    def test_a_held_back_plant_is_offered_again_by_grading_it(self):
+        """A repeated cycle is three facts, not one fact recorded twice."""
+        self.post_outcome(self.plant.pk, 'ready')
+        self.post_outcome(
+            self.plant.pk, 'hold-back', {'reason': 'Gone leggy in the heat.'},
+        )
+        self.assertEqual(self.post_outcome(self.plant.pk, 'ready').status_code, 201)
+        data = self.get_plant(self.plant.pk)
+        self.assertEqual(data['lifecycle_state'], LifecycleState.AVAILABLE)
+        self.assertEqual(
+            [event['event_type'] for event in data['lifecycle_events']],
+            [EventType.READY, EventType.HELD_BACK, EventType.READY],
+        )
+
+
 class BulkPlantOutcomeActionTests(PlantLifecycleRESTTestCase):
     """A selected list of plants yields one event per plant."""
 
@@ -393,3 +476,33 @@ class BulkPlantOutcomeActionTests(PlantLifecycleRESTTestCase):
         })
         self.assertEqual(response.status_code, 400)
         self.assertIn('event_type', response.data)
+
+    def test_a_backward_fact_is_bulk_recordable_with_a_reason(self):
+        """Grading a whole batch down is the case this exists for."""
+        for plant_id in self.plant_ids:
+            self.post_outcome(plant_id, 'ready')
+        response = self._post_bulk({
+            'plants': self.plant_ids,
+            'event_type': EventType.HELD_BACK,
+            'reason': 'The whole batch has gone leggy.',
+        })
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(len(response.data), len(self.plant_ids))
+        for event in response.data:
+            self.assertEqual(event['event_type'], EventType.HELD_BACK)
+
+    def test_a_bulk_backward_fact_without_a_reason_records_nothing(self):
+        """The reason rule holds for the selection as it does for one plant."""
+        for plant_id in self.plant_ids:
+            self.post_outcome(plant_id, 'ready')
+        response = self._post_bulk({
+            'plants': self.plant_ids,
+            'event_type': EventType.HELD_BACK,
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('plants', response.data)
+        self.assertFalse(
+            PlantLifecycleEvent.objects.filter(
+                event_type=EventType.HELD_BACK,
+            ).exists(),
+        )
