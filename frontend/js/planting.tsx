@@ -53,6 +53,47 @@ function packetBalanceLabel(packet: SeedPacket): string {
   return `${formatQuantity(inventory.remaining_quantity)} ${inventory.base_unit} remaining (${inventory.quantity_certainty})`
 }
 
+// The codes a gardener can read off the packet in their hand. They are searchable
+// but kept out of the label, which is already a long line.
+interface PacketOption extends SelectOption {
+  codes: string
+  searchText: string
+}
+
+function packetSelectOptions(packets: Array<SeedPacket>, seeds: Array<Seed>, suppliers: Array<Supplier>, varieties: Array<PlantVariety>): Array<PacketOption> {
+  return packets.map((packet) => {
+    const seedData = seeds.find((candidate) => candidate.pk === packet.seeds)
+    const supplier = suppliers.find((candidate) => candidate.pk === seedData?.supplier)
+    const variety = varieties.find((candidate) => candidate.pk === seedData?.plant_variety)
+    const label = `${variety?.name} from ${supplier?.name} (Sow by: ${packet.sow_by || 'unknown'}; ${packetBalanceLabel(packet)})`
+    // supplier_lot_reference is blank on plenty of packets, and inventory is null
+    // for one with no stock lot, so drop the empties rather than print separators
+    // around nothing.
+    const codes = [seedData?.supplier_code, packet.inventory?.supplier_lot_reference, packet.inventory?.lot_identifier].filter(Boolean).join(' · ')
+    return { value: packet.pk, label, codes, searchText: `${label} ${codes}`.toLowerCase() }
+  })
+}
+
+function formatPacketOption(option: PacketOption, meta: { context: string }) {
+  // formatOptionLabel also renders the chosen value inside the closed control,
+  // where a second line would stretch the table row. Codes belong in the menu.
+  if (meta.context === 'value' || !option.codes) {
+    return option.label
+  }
+  return (
+    <div>
+      <div>{option.label}</div>
+      <div style={{ fontSize: '0.85em', color: '#6c757d' }}>{option.codes}</div>
+    </div>
+  )
+}
+
+// react-select's default filter only reads the label, so the codes need this to
+// be searchable at all.
+function filterPacketOption(option: { data: PacketOption }, input: string) {
+  return option.data.searchText.includes(input.toLowerCase())
+}
+
 interface SeedTrayCellGridProps {
   cells: Array<SeedTrayCell>
   model: SeedTrayModel
@@ -128,15 +169,10 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     enabled: Boolean(seedTray)
   })
 
-  function updateSeedPacket(event: React.ChangeEvent<HTMLSelectElement>) {
-    const { value } = event.target
-
+  function updateSeedPacket(selectedSeedPacket: SelectOption | null) {
+    const value = selectedSeedPacket?.value
     setBatchChoice({})
-    if (value === '' || value === undefined || value === null) {
-      setSeedPacket(undefined)
-      return
-    }
-    setSeedPacket(Number(value))
+    setSeedPacket(value === undefined || value === null ? undefined : Number(value))
   }
 
   function updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
@@ -213,17 +249,7 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     done()
   }
 
-  const packetOptions = [<option key="blank"></option>]
-  for (const seedPacketData of seedPackets) {
-    const seedData = seeds.find((candidate) => candidate.pk === seedPacketData.seeds)
-    const supplier = suppliers.find((candidate) => candidate.pk === seedData?.supplier)
-    const variety = varieties.find((candidate) => candidate.pk === seedData?.plant_variety)
-    packetOptions.push(
-      <option key={seedPacketData.pk} value={seedPacketData.pk}>
-        {variety?.name} from {supplier?.name} (Sow by: {seedPacketData.sow_by || 'unknown'}; {packetBalanceLabel(seedPacketData)})
-      </option>
-    )
-  }
+  const packetOptions = packetSelectOptions(seedPackets, seeds, suppliers, varieties)
   const trayOptions = seedTrays.map((tray) => ({ value: tray.pk, label: `${tray.pk} (${seedTrayModels[tray.model]?.description})` }))
   const selectedSeedTrayModel = seedTray === undefined ? undefined : seedTrayModels[seedTrays.find((tray) => tray.pk === seedTray)?.model ?? 0]
   const hasSelectedCells = Object.keys(cellQuantities).length > 0
@@ -239,7 +265,14 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
       )}
       <tr>
         <td>
-          <select onChange={updateSeedPacket}>{packetOptions}</select>
+          <Select
+            onChange={updateSeedPacket}
+            options={packetOptions}
+            value={packetOptions.find((option) => option.value === seedPacket) ?? null}
+            formatOptionLabel={formatPacketOption}
+            filterOption={filterPacketOption}
+            isClearable
+          />
         </td>
         <td>
           <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
@@ -278,16 +311,31 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
 
 interface SeedTrayPlantingRowProps {
   planting: SeedTrayPlantingDetails
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  seeds: Array<Seed>
   seedPackets: Array<SeedPacket>
   completePlanting: (plantingPk: number) => Promise<void>
   correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-function SeedTrayPlantingRow({ planting, seedPackets, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
+function SeedTrayPlantingRow({ planting, suppliers, varieties, seeds, seedPackets, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
   const [correcting, setCorrecting] = React.useState(false)
   const [packetPk, setPacketPk] = React.useState(planting.seeds_used)
   const [quantity, setQuantity] = React.useState(planting.quantity)
   const [reason, setReason] = React.useState('')
+
+  const packetOptions = packetSelectOptions(seedPackets, seeds, suppliers, varieties)
+
+  // A correction always replaces one packet with another, so there is no empty
+  // state to fall back to: backspace clearing the box must keep the current pick
+  // rather than post seeds_used: NaN.
+  function updatePacketPk(option: SelectOption | null) {
+    if (option?.value === undefined || option.value === null) {
+      return
+    }
+    setPacketPk(Number(option.value))
+  }
 
   async function correct() {
     await correctPlanting(planting.pk, { seeds_used: packetPk, quantity, reason })
@@ -325,13 +373,15 @@ function SeedTrayPlantingRow({ planting, seedPackets, completePlanting, correctP
         </Button>
         {correcting && (
           <div>
-            <select value={packetPk} onChange={(event) => setPacketPk(Number(event.target.value))}>
-              {seedPackets.map((packet) => (
-                <option key={packet.pk} value={packet.pk}>
-                  Packet #{packet.pk}: {packetBalanceLabel(packet)}
-                </option>
-              ))}
-            </select>
+            <div style={{ minWidth: '280px' }}>
+              <Select
+                onChange={updatePacketPk}
+                options={packetOptions}
+                value={packetOptions.find((option) => option.value === packetPk) ?? null}
+                formatOptionLabel={formatPacketOption}
+                filterOption={filterPacketOption}
+              />
+            </div>
             <input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
             <input required placeholder="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)} />
             <Button size="sm" disabled={!reason} onClick={correct}>
@@ -421,7 +471,18 @@ function SeedTrayPlantingTable() {
     )
   }
   for (const planting of plantings) {
-    rows.push(<SeedTrayPlantingRow key={planting.pk} planting={planting} seedPackets={seedPackets} completePlanting={completePlanting} correctPlanting={correctPlanting} />)
+    rows.push(
+      <SeedTrayPlantingRow
+        key={planting.pk}
+        planting={planting}
+        seedPackets={seedPackets}
+        seeds={seeds}
+        suppliers={suppliers}
+        varieties={varieties}
+        completePlanting={completePlanting}
+        correctPlanting={correctPlanting}
+      />
+    )
   }
   return (
     <Table>
@@ -503,15 +564,7 @@ function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, 
     done()
   }
 
-  const packetOptions = seedPackets.map((seedPacketData) => {
-    const seedData = seeds.find((candidate) => candidate.pk === seedPacketData.seeds)
-    const supplier = suppliers.find((candidate) => candidate.pk === seedData?.supplier)
-    const variety = varieties.find((candidate) => candidate.pk === seedData?.plant_variety)
-    return {
-      value: seedPacketData.pk,
-      label: `${variety?.name} from ${supplier?.name} (Sow by: ${seedPacketData.sow_by || 'unknown'}; ${packetBalanceLabel(seedPacketData)})`
-    }
-  })
+  const packetOptions = packetSelectOptions(seedPackets, seeds, suppliers, varieties)
   const locations = gardenBeds.flatMap((gardenBedData) =>
     gardenSquares
       .filter((square) => square.bed === gardenBedData.pk)
@@ -532,7 +585,13 @@ function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, 
       )}
       <tr>
         <td>
-          <Select onChange={updateSeedPacket} options={packetOptions} value={packetOptions.find((option) => option.value === seedPacket)} />
+          <Select
+            onChange={updateSeedPacket}
+            options={packetOptions}
+            value={packetOptions.find((option) => option.value === seedPacket) ?? null}
+            formatOptionLabel={formatPacketOption}
+            filterOption={filterPacketOption}
+          />
         </td>
         <td>
           <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
