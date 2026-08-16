@@ -56,6 +56,8 @@ STATE_AFTER = {
     EventType.RETURNED_QUARANTINED: LifecycleState.QUARANTINED,
     EventType.RETURNED_DISCARDED: LifecycleState.DISCARDED,
     EventType.RELEASED_AVAILABLE: LifecycleState.AVAILABLE,
+    EventType.HELD_BACK: LifecycleState.GROWING,
+    EventType.RETENTION_ENDED: LifecycleState.GROWING,
 }
 
 #: The states each fact may be recorded from. `germinated` is absent because it
@@ -67,6 +69,14 @@ STATE_AFTER = {
 #: Donation, harvest, planting out and sale stay closed, because handing a plant
 #: the nursery has not cleared to somebody else is the thing quarantine exists to
 #: prevent — release it first and the ordinary transitions apply.
+#:
+#: `held_back` and `retention_ended` are the backward facts: taking stock off
+#: offer, and returning a plant kept for the operation's own use to production.
+#: Both land in `growing` rather than restoring whatever the plant was before,
+#: because deciding a plant is offerable is a judgement somebody makes, and the
+#: `ready` that follows records it. That also keeps `ready` permitted only from
+#: `growing`, so a repeated cycle reads as separate offers rather than as one
+#: fact recorded twice.
 ALLOWED_FROM = {
     EventType.READY: {LifecycleState.GROWING},
     EventType.TRANSPLANTED: {
@@ -112,6 +122,8 @@ ALLOWED_FROM = {
     EventType.RETURNED_QUARANTINED: {LifecycleState.SOLD},
     EventType.RETURNED_DISCARDED: {LifecycleState.SOLD},
     EventType.RELEASED_AVAILABLE: {LifecycleState.QUARANTINED},
+    EventType.HELD_BACK: {LifecycleState.AVAILABLE},
+    EventType.RETENTION_ENDED: {LifecycleState.RETAINED},
 }
 
 #: States that resolve a plant. Retained is final for availability without
@@ -135,7 +147,9 @@ SELLABLE_STATES = {LifecycleState.AVAILABLE}
 #: only `returned_discarded` is, because it is the only one that destroys the
 #: plant: an available or quarantined return is physically back on a bench, and
 #: `post_return` opens the location that says which one. `released_available`
-#: leaves the plant exactly where the quarantine put it until somebody moves it.
+#: leaves the plant exactly where the quarantine put it until somebody moves it,
+#: and neither backward fact is listed either: holding stock back or ending a
+#: retention changes what the nursery will do with a plant, not where it stands.
 CLOSES_LOCATION = {
     EventType.DONATED,
     EventType.FAILED,
@@ -159,6 +173,18 @@ OUTCOME_EVENTS = (
     EventType.CULLED,
     EventType.DONATED,
     EventType.HARVEST_FINISHED,
+    EventType.HELD_BACK,
+    EventType.RETENTION_ENDED,
+)
+
+#: Facts recording that a plant's condition changed backwards. They are not
+#: corrections: a correction says a fact was never true, while these say it was
+#: true and then the situation changed, so both intervals stay in the history.
+#: Each requires a stated reason, because a plant leaving offer without one is
+#: indistinguishable from a mis-click by the time anybody reads the trail.
+BACKWARD_EVENTS = (
+    EventType.HELD_BACK,
+    EventType.RETENTION_ENDED,
 )
 
 
@@ -390,8 +416,14 @@ def _require_chronology(events, occurred_at):
         })
 
 
-def validate_outcome(plant, event_type, occurred_at):
-    """Check one plant admits a fact before anything is written."""
+def validate_outcome(plant, event_type, occurred_at, reason=''):
+    """Check one plant admits a fact before anything is written.
+
+    The reason defaults to none so that a caller which forgets to pass one
+    refuses a backward fact rather than recording an unexplained withdrawal.
+    """
+    if event_type in BACKWARD_EVENTS:
+        _require_reason(reason)
     events = _plant_events(plant)
     _require_chronology(events, occurred_at)
     _require_transition(derive_state(events).state, event_type)
@@ -447,7 +479,7 @@ def record_lifecycle_event(plant, user, request):
     """Record one validated fact about a plant and close its location if final."""
     plant = _lock_plant(plant)
     request = request.at(timezone.now())
-    validate_outcome(plant, request.event_type, request.occurred_at)
+    validate_outcome(plant, request.event_type, request.occurred_at, request.reason)
     return _apply_outcome(plant, user, request)
 
 
@@ -529,7 +561,9 @@ def record_bulk_outcome(plant_ids, user, request):
     errors = []
     for plant in plants:
         try:
-            validate_outcome(plant, request.event_type, request.occurred_at)
+            validate_outcome(
+                plant, request.event_type, request.occurred_at, request.reason,
+            )
         except ValidationError as exc:
             errors.append(f'Plant {plant.pk}: {" ".join(exc.messages)}')
     if errors:
