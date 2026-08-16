@@ -10,7 +10,7 @@ import { PlantCostBreakdown } from '../types/costing'
 import { SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
 import { formatDate, formatDateTime, formatMoney } from '../utils'
-import { LifecycleStateBadge, PlantLifecycleHistory } from './lifecycle'
+import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
 
 function locationLabel(location: SpecificPlantLocation): string {
   if (location.location_type === 'seed_tray_cell') {
@@ -196,8 +196,12 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
                 <dd className="col-sm-7">{formatDateTime(plant.germinated)}</dd>
                 <dt className="col-sm-5">Offerable</dt>
                 <dd className="col-sm-7">{plant.sellable ? 'Yes' : 'No'}</dd>
+                <dt className="col-sm-5">In this state since</dt>
+                <dd className="col-sm-7">{plant.state_since === null ? 'Not recorded' : formatDateTime(plant.state_since)}</dd>
                 <dt className="col-sm-5">Final outcome</dt>
-                <dd className="col-sm-7">{plant.final_outcome === null ? 'Not resolved' : `${plant.final_outcome} on ${formatDateTime(plant.final_outcome_at ?? '')}`}</dd>
+                <dd className="col-sm-7">
+                  {plant.final_outcome === null ? 'Not resolved' : `${EVENT_LABELS[plant.final_outcome]} on ${formatDateTime(plant.final_outcome_at ?? '')}`}
+                </dd>
               </dl>
               {plant.notes && <p className="mt-2 mb-0">{plant.notes}</p>}
             </Card.Body>
@@ -216,6 +220,14 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
             <Card.Header>Lifecycle history</Card.Header>
             <Card.Body>
               <PlantLifecycleHistory events={events} />
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={6}>
+          <Card>
+            <Card.Header>When it was offered</Card.Header>
+            <Card.Body>
+              <PlantAvailabilitySpans intervals={plant.availability_intervals} />
             </Card.Body>
           </Card>
         </Col>

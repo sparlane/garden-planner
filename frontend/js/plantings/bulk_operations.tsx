@@ -10,6 +10,7 @@ import { queryKeys } from '../query'
 import { Location } from '../types/locations'
 import { BulkPlantAction, BulkPlantAtomicity, BulkPlantOperationRequest, BulkPlantPreview, NurseryRegisterFilters } from '../types/plantings'
 import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
+import { STATE_LABELS } from './lifecycle'
 import { EMPTY_SELECTION, RegisterSelection } from './register_list'
 
 const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
@@ -18,7 +19,9 @@ const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
   { value: 'grade', label: 'Update grade' },
   { value: 'repot', label: 'Pot on or repot' },
   { value: 'ready', label: 'Mark ready' },
+  { value: 'hold_back', label: 'Hold back from sale' },
   { value: 'retain', label: 'Retain' },
+  { value: 'end_retention', label: 'End retention' },
   { value: 'donate', label: 'Donate' },
   { value: 'fail', label: 'Record failed' },
   { value: 'cull', label: 'Cull' },
@@ -408,9 +411,9 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                   {preview.plants.slice(0, 100).map((row) => (
                     <tr key={row.plant}>
                       <td>#{row.plant}</td>
-                      <td>{row.before.lifecycle_state}</td>
+                      <td>{STATE_LABELS[row.before.lifecycle_state]}</td>
                       <td>
-                        {row.after.lifecycle_state}
+                        {STATE_LABELS[row.after.lifecycle_state]}
                         {row.after.location_type ? ` at ${row.after.location_type.replaceAll('_', ' ')}` : ''}
                       </td>
                       <td>{row.eligible ? 'Eligible' : row.conflicts.join(' ')}</td>

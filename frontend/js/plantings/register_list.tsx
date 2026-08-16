@@ -121,6 +121,7 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
             </td>
             <td>
               <LifecycleStateBadge state={row.lifecycle_state} />
+              {row.state_since !== null && <div className="text-muted small">since {formatDate(row.state_since)}</div>}
               {row.quarantined && (
                 <div>
                   <Badge bg="warning" text="dark">

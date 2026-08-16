@@ -22,6 +22,8 @@ const ORDERING_OPTIONS: Array<{ value: NurseryRegisterOrdering; label: string }>
   { value: 'location', label: 'Location' },
   { value: 'standing_at', label: 'Where it is standing' },
   { value: 'state', label: 'State' },
+  { value: 'state_since', label: 'In this state longest' },
+  { value: 'first_ready', label: 'First offered' },
   { value: 'batch', label: 'Batch' },
   { value: '-cost', label: 'Most expensive first' },
   { value: 'expected_ready', label: 'Ready date' }

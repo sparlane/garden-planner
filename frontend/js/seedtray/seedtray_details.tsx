@@ -37,7 +37,7 @@ import {
   postSpecificPlantOutcome,
   reverseSpecificPlantEvent
 } from '../api/plantings'
-import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons } from '../plantings/lifecycle'
+import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, REASON_PROMPTS, REASON_REQUIRED_ACTIONS } from '../plantings/lifecycle'
 import { ApiErrorAlert } from '../api_error_alert'
 import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
@@ -600,7 +600,8 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       ])
   })
   const outcomeMutation = useMutation({
-    mutationFn: ({ plantPk, outcome }: { plantPk: number; outcome: PlantOutcomeAction }) => postSpecificPlantOutcome(plantPk, outcome),
+    mutationFn: ({ plantPk, outcome, reason }: { plantPk: number; outcome: PlantOutcomeAction; reason?: string }) =>
+      postSpecificPlantOutcome(plantPk, outcome, reason ? { reason } : {}),
     onSuccess: (_event, variables) => invalidatePlantLifecycle(variables.plantPk)
   })
   const reverseMutation = useMutation({
@@ -733,12 +734,21 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     ])
   }
 
+  // A backward fact says the situation changed, so the server requires a
+  // reason for it. The correction below asks a deliberately different question:
+  // it claims the fact was never true at all.
   async function handleRecordOutcome(plant: SpecificPlant, outcome: PlantOutcomeAction) {
-    await outcomeMutation.mutateAsync({ plantPk: plant.pk, outcome })
+    if (!REASON_REQUIRED_ACTIONS.includes(outcome)) {
+      await outcomeMutation.mutateAsync({ plantPk: plant.pk, outcome })
+      return
+    }
+    const reason = globalThis.prompt(REASON_PROMPTS[outcome])
+    if (!reason || !reason.trim()) return
+    await outcomeMutation.mutateAsync({ plantPk: plant.pk, outcome, reason })
   }
 
   async function handleReverseEvent(plant: SpecificPlant, event: PlantLifecycleEvent) {
-    const reason = globalThis.prompt('Why was this recorded in error?')
+    const reason = globalThis.prompt('Why was this recorded in error? To record that the situation has since changed, use the outcome buttons instead.')
     if (!reason || !reason.trim()) return
     await reverseMutation.mutateAsync({ plantPk: plant.pk, event: event.pk, reason })
   }
