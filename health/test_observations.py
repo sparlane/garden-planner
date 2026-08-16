@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
 from plantings.models import PlantCohort, SpecificPlantLocation
 from tests.api import RESTContractTestCase
 from tests.factories import (
@@ -265,3 +266,77 @@ class HealthObservationRestTests(RESTContractTestCase):
             if row['target_type'] == 'specificplant'
         )
         self.assertEqual(plant_link['active_health_alerts'], 1)
+
+
+class QuarantineActionRestTests(RESTContractTestCase):
+    """A returned quarantined plant is resolved through the health endpoints."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.observation_type = HealthObservationType.objects.get(
+            workspace=self.workspace, code='pest-signs',
+        )
+
+    def returned_case(self):
+        """Return one open case over a plant a customer returned quarantined."""
+        plant = make_specific_plant(workspace=self.workspace)
+        for event_type in (
+                EventType.READY, EventType.SOLD, EventType.RETURNED_QUARANTINED):
+            record_lifecycle_event(plant, None, OutcomeRequest(event_type))
+        scopes = [{'type': 'plant', 'id': plant.pk}]
+        preview = self.client.post(
+            '/health/observations/preview/', {'scopes': scopes}, format='json',
+        )
+        observation = self.client.post('/health/observations/', {
+            'scopes': scopes,
+            'reviewed_digest': preview.data['digest'],
+            'observation_type': self.observation_type.pk,
+            'severity': 'high',
+        }, format='json')
+        case = self.client.post(
+            f"/health/observations/{observation.data['pk']}/quarantine/",
+            {'idempotency_key': str(uuid4()), 'reason': 'Returned as diseased.'},
+            format='json',
+        )
+        self.assertEqual(case.status_code, 201, case.data)
+        return plant, case.data['pk']
+
+    def register_row(self, plant):
+        """Return the plant as the nursery register reports it."""
+        response = self.client.get(f'/plantings/register/?plant={plant.pk}')
+        self.assertEqual(response.status_code, 200, response.data)
+        return next(
+            row for row in response.data['results'] if row['pk'] == plant.pk
+        )
+
+    def test_release_returns_the_plant_to_saleable_stock(self):
+        plant, case_pk = self.returned_case()
+        self.assertEqual(self.register_row(plant)['lifecycle_state'], 'quarantined')
+        response = self.client.post(
+            f'/health/quarantines/{case_pk}/release/',
+            {'idempotency_key': str(uuid4()), 'reason': 'Recovered in isolation.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['active'])
+        row = self.register_row(plant)
+        self.assertEqual(row['lifecycle_state'], 'available')
+        self.assertTrue(row['sellable'])
+        self.assertFalse(row['quarantined'])
+
+    def test_cull_resolves_the_plant_the_return_could_not(self):
+        plant, case_pk = self.returned_case()
+        response = self.client.post(
+            f'/health/quarantines/{case_pk}/cull/',
+            {'idempotency_key': str(uuid4()), 'reason': 'Disease confirmed.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['active'])
+        row = self.register_row(plant)
+        self.assertEqual(row['lifecycle_state'], 'culled')
+        self.assertEqual(row['final_outcome'], 'culled')
+        self.assertFalse(row['sellable'])

@@ -19,6 +19,7 @@ from plantings.cohorts import change_cohort
 from plantings.lifecycle import (
     EventType,
     FINAL_STATES,
+    LifecycleState,
     OutcomeRequest,
     plant_lifecycle_summary,
     record_lifecycle_event,
@@ -240,6 +241,34 @@ def quarantine_observation(
     return case, action
 
 
+def _release_members(user, action, plants):
+    """Record recovery for the members quarantine holds as a lifecycle state.
+
+    A case opened over an observation quarantines plants that are still growing,
+    available or retained; there quarantine is an availability overlay and the
+    lifecycle state is deliberately untouched, so releasing has no lifecycle
+    consequence to record. Only a customer return puts a plant into
+    `quarantined` itself, and those are the plants a release resolves — as a
+    fact saying the plant recovered, not as a correction denying it was ever
+    quarantined.
+
+    Cohorts are skipped because they carry no lifecycle state of their own.
+    """
+    for plant in plants:
+        if plant_lifecycle_summary(plant).state != LifecycleState.QUARANTINED:
+            continue
+        event = record_lifecycle_event(
+            plant, user,
+            OutcomeRequest(
+                EventType.RELEASED_AVAILABLE, occurred_at=action.occurred_at,
+                reason=action.reason, reference=f'quarantine-action:{action.pk}',
+            ),
+        )
+        QuarantineActionResult.objects.create(
+            action=action, plant=plant, lifecycle_event=event,
+        )
+
+
 def _cull_members(workspace, user, action, plants, cohorts):
     for plant in plants:
         event = record_lifecycle_event(
@@ -333,7 +362,9 @@ def act_on_quarantine(
     )
     if destination:
         _move_members(workspace, user, action, plants, cohorts, destination, reason)
-    if action_name == QuarantineAction.Action.CULL:
+    if action_name == QuarantineAction.Action.RELEASE:
+        _release_members(user, action, plants)
+    elif action_name == QuarantineAction.Action.CULL:
         _cull_members(workspace, user, action, plants, cohorts)
     elif action_name == QuarantineAction.Action.ESCALATE:
         _escalate_case(workspace, user, action, plants, cohorts)
