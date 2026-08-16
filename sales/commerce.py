@@ -675,12 +675,6 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         operation_key=operation_key, request_fingerprint=fingerprint,
         created_by=_actor(user),
     )
-    if original.quarantine_case_id:
-        act_on_quarantine(
-            original.workspace, user, original.quarantine_case,
-            action_name='release', idempotency_key=uuid5(operation_key, 'release'),
-            reason=reason, occurred_at=occurred_at,
-        )
     for line in original.lines.all():
         if line.discard_movement_id:
             reverse_movement(line.discard_movement, user, reason, occurred_at)
@@ -695,5 +689,16 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         SalesOrderAllocation.objects.filter(
             pk=line.fulfillment_line.allocation_id,
         ).update(status=SalesOrderAllocation.Status.FULFILLED, updated=timezone.now())
+    # Closing the case comes last on purpose. A release records the fact that a
+    # quarantined plant recovered, and this reversal says the return that
+    # quarantined it never happened at all. Reversing the return facts first
+    # leaves every plant back at sold, so the release closes the case without
+    # claiming a recovery from a quarantine nothing now records.
+    if original.quarantine_case_id:
+        act_on_quarantine(
+            original.workspace, user, original.quarantine_case,
+            action_name='release', idempotency_key=uuid5(operation_key, 'release'),
+            reason=reason, occurred_at=occurred_at,
+        )
     recompute_order_status(original.order)
     return reversal

@@ -5,6 +5,7 @@
 from decimal import Decimal
 from uuid import uuid4
 
+from health.availability import is_quarantined
 from health.models import HealthObservationType, QuarantineCase
 from inventory.models import InventoryItem, StockMovement
 from locations.models import Location
@@ -235,8 +236,8 @@ class CommerceRESTTests(RESTContractTestCase):
         allocation = SalesOrderAllocation.objects.get(pk=allocations[0]['pk'])
         self.assertEqual(allocation.status, SalesOrderAllocation.Status.RESERVED)
 
-    def test_quarantined_return_opens_a_formal_health_case(self):
-        plant = self.available_plant()
+    def quarantined_return(self, plant):
+        """Sell one plant and take it back into quarantine as damaged."""
         order, allocations = self.confirmed_order([plant])
         fulfillment = self.fulfill(order, [allocations[0]['pk']])
         quarantine = Location.objects.create(
@@ -255,6 +256,73 @@ class CommerceRESTTests(RESTContractTestCase):
             }],
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertIsNotNone(response.data['health_observation'])
-        self.assertTrue(QuarantineCase.objects.filter(pk=response.data['quarantine_case']).exists())
+        return order, response.data
+
+    def act_on_case(self, sales_return, action_name, reason):
+        """Close the case a quarantined return opened, as an operator would."""
+        response = self.client.post(
+            f"/health/quarantines/{sales_return['quarantine_case']}/{action_name}/",
+            {'idempotency_key': str(uuid4()), 'reason': reason},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['active'])
+        return response.data
+
+    def test_quarantined_return_opens_a_formal_health_case(self):
+        plant = self.available_plant()
+        _order, sales_return = self.quarantined_return(plant)
+        self.assertIsNotNone(sales_return['health_observation'])
+        self.assertTrue(
+            QuarantineCase.objects.filter(pk=sales_return['quarantine_case']).exists()
+        )
         self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.QUARANTINED)
+
+    def test_a_released_return_becomes_saleable_stock_again(self):
+        plant = self.available_plant()
+        _order, sales_return = self.quarantined_return(plant)
+        self.act_on_case(sales_return, 'release', 'Recovered in isolation.')
+        summary = plant_lifecycle_summary(plant)
+        self.assertEqual(summary.state, LifecycleState.AVAILABLE)
+        self.assertTrue(summary.sellable)
+        resold, allocations = self.confirmed_order([plant])
+        self.fulfill(resold, [allocations[0]['pk']])
+        self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.SOLD)
+
+    def test_a_culled_return_is_resolved_without_denying_the_quarantine(self):
+        plant = self.available_plant()
+        _order, sales_return = self.quarantined_return(plant)
+        self.act_on_case(sales_return, 'cull', 'Disease confirmed on assessment.')
+        summary = plant_lifecycle_summary(plant)
+        self.assertEqual(summary.state, LifecycleState.CULLED)
+        self.assertEqual(summary.final_outcome, EventType.CULLED)
+        self.assertEqual(
+            list(
+                plant.lifecycle_events.order_by('occurred_at', 'pk')
+                .values_list('event_type', flat=True)
+            ),
+            [
+                EventType.GERMINATED,
+                EventType.READY,
+                EventType.SOLD,
+                EventType.RETURNED_QUARANTINED,
+                EventType.CULLED,
+            ],
+        )
+
+    def test_reversing_a_quarantined_return_restores_the_sale(self):
+        plant = self.available_plant()
+        order, sales_return = self.quarantined_return(plant)
+        reversed_return = self.client.post(
+            f"{self.orders_url}{order['pk']}/returns/{sales_return['pk']}/reverse/",
+            {'operation_key': str(uuid4()), 'reason': 'Return was entered in error.'},
+            format='json',
+        )
+        self.assertEqual(reversed_return.status_code, 201, reversed_return.data)
+        self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.SOLD)
+        self.assertFalse(
+            plant.lifecycle_events
+            .filter(event_type=EventType.RELEASED_AVAILABLE)
+            .exists()
+        )
+        self.assertFalse(is_quarantined(plant))
