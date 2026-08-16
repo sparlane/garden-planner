@@ -261,11 +261,13 @@ type PlantLifecycleEventType =
   | 'returned_quarantined'
   | 'returned_discarded'
   | 'released_available'
+  | 'held_back'
+  | 'retention_ended'
   | 'corrected'
 
 type PlantLifecycleState = 'growing' | 'available' | 'retained' | 'donated' | 'failed' | 'lost' | 'culled' | 'harvested' | 'sold' | 'quarantined' | 'discarded'
 
-type PlantOutcomeAction = 'ready' | 'retain' | 'fail' | 'cull' | 'donate' | 'finish-harvest'
+type PlantOutcomeAction = 'ready' | 'retain' | 'fail' | 'cull' | 'donate' | 'finish-harvest' | 'hold-back' | 'end-retention'
 
 interface PlantLifecycleEvent {
   pk: number
@@ -311,10 +313,20 @@ interface SpecificPlant {
   quarantined: boolean
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
+  state_since: string | null
+  first_ready_at: string | null
+}
+
+// One span a plant spent on offer. A plant held back and graded ready again
+// has more than one, which is what the latest state alone cannot show.
+interface AvailabilityInterval {
+  started: string
+  ended: string | null
 }
 
 interface SpecificPlantDetail extends SpecificPlant {
   lifecycle_events: Array<PlantLifecycleEvent>
+  availability_intervals: Array<AvailabilityInterval>
   growth: NurseryGrowth
   nursery_observations: Array<NurseryObservation>
 }
@@ -380,6 +392,11 @@ interface NurseryRegisterRow {
   germinated: string
   age_days: number
   lifecycle_state: PlantLifecycleState
+  // When the current state began, and when the plant was first put on offer.
+  // A plant held back yesterday and one held back in March both read
+  // `growing`; these are what tell them apart.
+  state_since: string | null
+  first_ready_at: string | null
   sellable: boolean
   quarantined: boolean
   reserved: boolean
@@ -423,6 +440,10 @@ type NurseryRegisterOrdering =
   | '-cost'
   | 'state'
   | '-state'
+  | 'state_since'
+  | '-state_since'
+  | 'first_ready'
+  | '-first_ready'
   | 'batch'
   | '-batch'
   | 'expected_ready'
@@ -481,7 +502,7 @@ interface NurseryRegisterSelection {
   plants: Array<number>
 }
 
-type BulkPlantAction = 'germinate' | 'move' | 'stage' | 'grade' | 'repot' | 'ready' | 'retain' | 'donate' | 'fail' | 'cull' | 'finish_harvest'
+type BulkPlantAction = 'germinate' | 'move' | 'stage' | 'grade' | 'repot' | 'ready' | 'retain' | 'donate' | 'fail' | 'cull' | 'finish_harvest' | 'hold_back' | 'end_retention'
 type BulkPlantAtomicity = 'all_or_nothing' | 'eligible_only'
 
 interface BulkPlantOperationRequest {
@@ -911,6 +932,7 @@ interface NurseryPlanVariance {
 }
 
 export {
+  AvailabilityInterval,
   BatchAction,
   BulkPlantOutcome,
   HARVEST_UNIT_LABELS,

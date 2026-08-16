@@ -14,7 +14,12 @@ from tests.factories import (
     make_specific_plant_location,
 )
 
-from .lifecycle import EventType, LifecycleState
+from .lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    record_lifecycle_event,
+)
 from .models import PlantLifecycleEvent, SpecificPlantLocation
 
 
@@ -386,6 +391,47 @@ class BackwardTransitionActionTests(PlantLifecycleRESTTestCase):
         )
         self.location.refresh_from_db()
         self.assertIsNone(self.location.ended)
+
+    def test_the_actions_each_state_accepts_are_the_ones_the_screen_offers(self):
+        """This repository has no JavaScript test runner, so the matrix that
+        `ACTION_STATES` in `frontend/js/plantings/lifecycle.tsx` mirrors is
+        pinned here. A button offered for a state the server refuses returns a
+        400 with nothing on screen explaining it, which is how a quarantined
+        plant came to show **Ready** and **Donate**.
+        """
+        histories = {
+            'growing': (),
+            'available': (EventType.READY,),
+            'retained': (EventType.RETAINED,),
+            'quarantined': (
+                EventType.READY, EventType.SOLD, EventType.RETURNED_QUARANTINED,
+            ),
+        }
+        accepted = {
+            'growing': {'ready', 'retain', 'finish-harvest', 'fail', 'cull', 'donate'},
+            'available': {
+                'hold-back', 'retain', 'finish-harvest', 'fail', 'cull', 'donate',
+            },
+            'retained': {'end-retention', 'finish-harvest', 'fail', 'cull', 'donate'},
+            'quarantined': {'retain', 'fail', 'cull'},
+        }
+        every_action = {
+            'ready', 'hold-back', 'retain', 'end-retention',
+            'finish-harvest', 'fail', 'cull', 'donate',
+        }
+        for state, priors in histories.items():
+            for outcome in sorted(every_action):
+                with self.subTest(state=state, outcome=outcome):
+                    plant = make_specific_plant()
+                    for prior in priors:
+                        record_lifecycle_event(
+                            plant, self.user, OutcomeRequest(prior),
+                        )
+                    response = self.post_outcome(
+                        plant.pk, outcome, {'reason': 'Recorded by test.'},
+                    )
+                    expected = 201 if outcome in accepted[state] else 400
+                    self.assertEqual(response.status_code, expected, response.data)
 
     def test_the_detail_reports_every_span_the_plant_was_offered(self):
         """Only the latest state would hide the second offer entirely."""
