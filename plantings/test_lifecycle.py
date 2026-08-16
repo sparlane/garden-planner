@@ -7,7 +7,12 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections
-from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
+from django.test import (
+    SimpleTestCase,
+    TestCase,
+    TransactionTestCase,
+    skipUnlessDBFeature,
+)
 from django.utils import timezone
 
 from tests.factories import (
@@ -19,9 +24,12 @@ from tests.factories import (
 from workspaces.models import Workspace
 
 from .lifecycle import (
+    ALLOWED_FROM,
     EventType,
+    FINAL_STATES,
     LifecycleState,
     OutcomeRequest,
+    STATE_AFTER,
     lifecycle_summaries,
     plant_lifecycle_summary,
     record_bulk_outcome,
@@ -29,6 +37,7 @@ from .lifecycle import (
     record_lifecycle_event,
     record_transplant_event,
     reverse_lifecycle_event,
+    states_without_exits,
     with_lifecycle_state,
 )
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
@@ -336,6 +345,130 @@ class LifecycleTransitionTests(TestCase):
                 ),
             )
         self.assertIn('occurred_at', caught.exception.message_dict)
+
+
+class QuarantinedTransitionTests(TestCase):
+    """A returned quarantined plant can be assessed and resolved."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='assessor')
+
+    def quarantined_plant(self):
+        """Return one plant a customer returned into quarantine."""
+        plant = make_specific_plant()
+        record_germination_event(plant, self.user)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.SOLD))
+        record_lifecycle_event(
+            plant, self.user, OutcomeRequest(EventType.RETURNED_QUARANTINED),
+        )
+        return plant
+
+    def test_releasing_a_recovered_plant_makes_it_available_again(self):
+        """Recovery is a fact of its own, not a denial of the quarantine."""
+        plant = self.quarantined_plant()
+        record_lifecycle_event(
+            plant, self.user, OutcomeRequest(EventType.RELEASED_AVAILABLE),
+        )
+        summary = plant_lifecycle_summary(plant)
+        self.assertEqual(summary.state, LifecycleState.AVAILABLE)
+        self.assertTrue(summary.sellable)
+        self.assertIsNone(summary.final_outcome)
+        self.assertEqual(
+            list(
+                plant.lifecycle_events
+                .filter(event_type=EventType.RETURNED_QUARANTINED)
+                .values_list('reversal_of', flat=True)
+            ),
+            [None],
+        )
+
+    def test_a_plant_that_does_not_recover_can_be_resolved(self):
+        """Quarantine ends in an outcome without denying it happened."""
+        for event_type, expected in (
+                (EventType.CULLED, LifecycleState.CULLED),
+                (EventType.FAILED, LifecycleState.FAILED),
+                (EventType.LOST, LifecycleState.LOST),
+                (EventType.RETAINED, LifecycleState.RETAINED)):
+            with self.subTest(event_type=event_type):
+                plant = self.quarantined_plant()
+                record_lifecycle_event(plant, self.user, OutcomeRequest(event_type))
+                summary = plant_lifecycle_summary(plant)
+                self.assertEqual(summary.state, expected)
+                self.assertEqual(summary.final_outcome, event_type)
+
+    def test_a_quarantined_plant_cannot_be_cleared_except_by_release(self):
+        """Handing on an uncleared plant is what quarantine exists to stop.
+
+        `ready` is refused with them because release is the fact that says a
+        quarantined plant is offerable again.
+        """
+        for event_type in (
+                EventType.DONATED,
+                EventType.HARVEST_FINISHED,
+                EventType.SOLD,
+                EventType.READY):
+            with self.subTest(event_type=event_type):
+                plant = self.quarantined_plant()
+                with self.assertRaises(ValidationError) as caught:
+                    record_lifecycle_event(plant, self.user, OutcomeRequest(event_type))
+                self.assertIn('event_type', caught.exception.message_dict)
+
+    def test_a_quarantined_plant_cannot_be_planted_out(self):
+        """Planting out spreads whatever the quarantine is holding back."""
+        plant = self.quarantined_plant()
+        with self.assertRaises(ValidationError):
+            record_transplant_event(plant, self.user, timezone.now())
+
+    def test_release_is_rejected_from_every_other_state(self):
+        """Release names a quarantine; nothing else has one to end."""
+        plant = make_specific_plant()
+        record_germination_event(plant, self.user)
+        for prior in (None, EventType.READY, EventType.SOLD):
+            with self.subTest(prior=prior):
+                if prior is not None:
+                    record_lifecycle_event(plant, self.user, OutcomeRequest(prior))
+                with self.assertRaises(ValidationError) as caught:
+                    record_lifecycle_event(
+                        plant, self.user, OutcomeRequest(EventType.RELEASED_AVAILABLE),
+                    )
+                self.assertIn('event_type', caught.exception.message_dict)
+
+    def test_a_released_plant_can_be_sold_again(self):
+        """Release restores the plant to ordinary saleable stock."""
+        plant = self.quarantined_plant()
+        record_lifecycle_event(
+            plant, self.user, OutcomeRequest(EventType.RELEASED_AVAILABLE),
+        )
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.SOLD))
+        self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.SOLD)
+
+
+class LifecycleReachabilityTests(SimpleTestCase):
+    """No state may be added without a way out of it."""
+
+    def test_every_non_final_state_accepts_at_least_one_fact(self):
+        """A plant is never stuck somewhere only a correction can undo."""
+        self.assertEqual(states_without_exits(), set())
+
+    def test_a_state_added_without_a_transition_is_reported(self):
+        """The invariant catches the omission rather than assuming care."""
+        state_after = {**STATE_AFTER, EventType.CORRECTED: LifecycleState.QUARANTINED}
+        allowed_from = {
+            event_type: {
+                state for state in sources if state != LifecycleState.QUARANTINED
+            }
+            for event_type, sources in ALLOWED_FROM.items()
+        }
+        self.assertEqual(
+            states_without_exits(
+                state_after=state_after,
+                allowed_from=allowed_from,
+                final_states=FINAL_STATES,
+            ),
+            {LifecycleState.QUARANTINED},
+        )
 
 
 class LifecycleLocationClosureTests(TestCase):
