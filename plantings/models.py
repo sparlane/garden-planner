@@ -1429,6 +1429,8 @@ class BulkPlantOperation(WorkspaceOwnedModel):
         FAIL = 'fail', 'Fail'
         CULL = 'cull', 'Cull'
         FINISH_HARVEST = 'finish_harvest', 'Finish harvest'
+        HOLD_BACK = 'hold_back', 'Hold back'
+        END_RETENTION = 'end_retention', 'End retention'
 
     class Atomicity(models.TextChoices):
         """How conflicts in a confirmed selection are handled."""

@@ -24,7 +24,12 @@ from tests.factories import (
 )
 from workspaces.models import Workspace
 
-from .lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from .lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    record_lifecycle_event,
+)
 from .bulk_operations import BulkOperationConflict, concrete_request, execute_bulk_operation
 from .growth import current_growth
 from .models import (
@@ -85,6 +90,51 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
         self.assertEqual(response.data['conflicts'], 1)
         self.assertEqual(PlantLifecycleEvent.objects.count(), before)
         self.assertFalse(BulkPlantOperation.objects.exists())
+
+    def test_holding_a_selection_back_projects_and_records_growing(self):
+        """The preview's resulting state comes from the same map the write does."""
+        for plant in self.plants:
+            record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        payload = self.payload(
+            BulkPlantOperation.Action.HOLD_BACK,
+            reason='The whole batch has gone leggy.',
+        )
+        preview = self.client.post(
+            '/plantings/bulk-operations/preview/', payload, format='json',
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['eligible'], 3)
+        self.assertEqual(
+            {row['after']['lifecycle_state'] for row in preview.data['plants']},
+            {LifecycleState.GROWING},
+        )
+        response = self.client.post(
+            '/plantings/bulk-operations/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            PlantLifecycleEvent.objects.filter(
+                event_type=EventType.HELD_BACK,
+            ).count(),
+            3,
+        )
+
+    def test_a_bulk_backward_action_without_a_reason_conflicts_on_review(self):
+        """The missing reason surfaces in the preview, not at apply time."""
+        for plant in self.plants:
+            record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        payload = self.payload(BulkPlantOperation.Action.HOLD_BACK, reason='')
+        response = self.client.post(
+            '/plantings/bulk-operations/preview/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['eligible'], 0)
+        self.assertEqual(response.data['conflicts'], 3)
+        self.assertFalse(
+            PlantLifecycleEvent.objects.filter(
+                event_type=EventType.HELD_BACK,
+            ).exists(),
+        )
 
     def test_all_or_nothing_conflict_applies_and_audits_nothing(self):
         """A rejected confirmed attempt is not retained as an operation."""

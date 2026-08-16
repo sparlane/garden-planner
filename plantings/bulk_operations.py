@@ -14,8 +14,8 @@ from locations.occupancy import capacity_chain, location_occupancy
 
 from .batches import lock_batch_with_plants
 from .lifecycle import (
+    STATE_AFTER,
     EventType,
-    LifecycleState,
     OutcomeRequest,
     is_final,
     plant_lifecycle_summary,
@@ -40,6 +40,8 @@ ACTION_EVENTS = {
     BulkPlantOperation.Action.FAIL: EventType.FAILED,
     BulkPlantOperation.Action.CULL: EventType.CULLED,
     BulkPlantOperation.Action.FINISH_HARVEST: EventType.HARVEST_FINISHED,
+    BulkPlantOperation.Action.HOLD_BACK: EventType.HELD_BACK,
+    BulkPlantOperation.Action.END_RETENTION: EventType.RETENTION_ENDED,
 }
 
 
@@ -107,7 +109,12 @@ def _plant_conflicts(plant, request):
     """Return conflicts independent of aggregate destination capacity."""
     try:
         if request.action in ACTION_EVENTS:
-            validate_outcome(plant, ACTION_EVENTS[request.action], request.occurred_at)
+            validate_outcome(
+                plant,
+                ACTION_EVENTS[request.action],
+                request.occurred_at,
+                request.reason,
+            )
         elif request.action == BulkPlantOperation.Action.MOVE:
             active = (
                 SpecificPlantLocation.objects
@@ -189,16 +196,12 @@ def _load_plants(workspace, plant_ids, lock):
 
 
 def _projected_state(request):
-    """Return the state an eligible lifecycle action leaves behind."""
-    event = ACTION_EVENTS.get(request.action)
-    return {
-        EventType.READY: LifecycleState.AVAILABLE,
-        EventType.RETAINED: LifecycleState.RETAINED,
-        EventType.DONATED: LifecycleState.DONATED,
-        EventType.FAILED: LifecycleState.FAILED,
-        EventType.CULLED: LifecycleState.CULLED,
-        EventType.HARVEST_FINISHED: LifecycleState.HARVESTED,
-    }.get(event)
+    """Return the state an eligible lifecycle action leaves behind.
+
+    Read from `STATE_AFTER` rather than repeated here, so the preview cannot
+    describe a different outcome from the one the write actually derives.
+    """
+    return STATE_AFTER.get(ACTION_EVENTS.get(request.action))
 
 
 def _plant_preview(workspace, request, lock=False):  # pylint: disable=too-many-locals

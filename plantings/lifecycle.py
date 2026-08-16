@@ -516,6 +516,10 @@ def reverse_lifecycle_event(event, user, reason, occurred_at=None):
     The original stays visible; the plant's state is re-derived from the facts
     that survive. A closed location is not reopened, because where a plant has
     been remains true — record the replacement location instead.
+
+    This says the fact was never true. Where it was true and the situation
+    then changed, record that instead: `BACKWARD_EVENTS` names the facts for
+    it, and they leave both intervals in the history rather than erasing one.
     """
     _require_reason(reason)
     plant = _lock_plant(event.plant)

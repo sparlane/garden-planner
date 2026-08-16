@@ -95,7 +95,12 @@ class BulkOutcomeSerializer(OutcomeSerializer):  # pylint: disable=abstract-meth
 
 
 class ReverseEventSerializer(ActionSerializer):  # pylint: disable=abstract-method
-    """Validate which recorded fact was wrong and why."""
+    """Validate which recorded fact was wrong and why.
+
+    The reason answers "why was this recorded in error", not "why did the
+    situation change". A plant that genuinely was ready and is now being held
+    back uses `hold-back`, which keeps both intervals in the history.
+    """
 
     event = serializers.IntegerField()
     reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
@@ -209,9 +214,25 @@ class PlantOutcomeViewSetMixin:
         """Record the final harvest that ends this plant's cultivation."""
         return self._record_outcome(request, EventType.HARVEST_FINISHED)
 
+    @action(detail=True, methods=['post'], url_path='hold-back')
+    def hold_back(self, request, pk=None):  # pylint: disable=unused-argument
+        """Take this plant off offer without denying it was ever ready."""
+        return self._record_outcome(request, EventType.HELD_BACK)
+
+    @action(detail=True, methods=['post'], url_path='end-retention')
+    def end_retention(self, request, pk=None):  # pylint: disable=unused-argument
+        """Return a retained plant to production, to be graded ready again."""
+        return self._record_outcome(request, EventType.RETENTION_ENDED)
+
     @action(detail=True, methods=['post'], url_path='reverse-event')
     def reverse_event(self, request, pk=None):  # pylint: disable=unused-argument
-        """Correct a mistaken fact by appending its reversal."""
+        """Correct a mistaken fact by appending its reversal.
+
+        This is for a fact that was never true. Where the fact was true and
+        the situation then changed, record the change: `hold-back` withdraws
+        stock from offer and `end-retention` returns a retained plant to
+        production, and both leave the original fact standing.
+        """
         values = _action_values(request, ReverseEventSerializer)
         plant = self.get_object()
         event = get_object_or_404(
