@@ -82,6 +82,12 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     germinated = serializers.DateTimeField(read_only=True)
     age_days = serializers.SerializerMethodField()
     lifecycle_state = serializers.CharField(read_only=True)
+    state_since = serializers.DateTimeField(
+        source='last_state_at',
+        read_only=True,
+        allow_null=True,
+    )
+    first_ready_at = serializers.DateTimeField(read_only=True, allow_null=True)
     sellable = serializers.BooleanField(read_only=True)
     quarantined = serializers.BooleanField(read_only=True)
     reserved = serializers.BooleanField(read_only=True)

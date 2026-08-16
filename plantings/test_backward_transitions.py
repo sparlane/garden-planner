@@ -13,9 +13,11 @@ from .lifecycle import (
     EventType,
     LifecycleState,
     OutcomeRequest,
+    availability_intervals,
     plant_lifecycle_summary,
     record_germination_event,
     record_lifecycle_event,
+    reverse_lifecycle_event,
 )
 
 
@@ -203,3 +205,117 @@ class BackwardTransitionTests(TestCase):
             caught.exception.message_dict['event_type'],
             ['A growing plant cannot be recorded as held back from sale.'],
         )
+
+
+class AvailabilityIntervalTests(TestCase):
+    """A repeated cycle is reported as spans, not as one latest state."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = get_user_model().objects.create_user(username='interval')
+        self.start = timezone.now() - timedelta(days=30)
+        self.plant = make_specific_plant(germinated=self.start)
+        record_germination_event(self.plant, self.user)
+
+    def record(self, event_type, day, reason=''):
+        """Record one fact a fixed number of days into the history."""
+        return record_lifecycle_event(
+            self.plant,
+            self.user,
+            OutcomeRequest(
+                event_type,
+                occurred_at=self.start + timedelta(days=day),
+                reason=reason,
+            ),
+        )
+
+    def intervals(self):
+        """Return the plant's offered spans as recorded so far."""
+        return availability_intervals(list(self.plant.lifecycle_events.all()))
+
+    def test_a_plant_never_offered_has_no_intervals(self):
+        """Growing stock has not been on offer at all."""
+        self.assertEqual(self.intervals(), [])
+
+    def test_an_offered_plant_has_one_open_interval(self):
+        """Stock currently on offer has no end date yet."""
+        self.record(EventType.READY, 1)
+        intervals = self.intervals()
+        self.assertEqual(len(intervals), 1)
+        self.assertEqual(intervals[0].started, self.start + timedelta(days=1))
+        self.assertIsNone(intervals[0].ended)
+
+    def test_holding_back_closes_the_interval_it_ends(self):
+        """The plant was ready for exactly that long, and the span says so."""
+        self.record(EventType.READY, 1)
+        self.record(EventType.HELD_BACK, 5, reason='Gone leggy in the heat.')
+        self.assertEqual(
+            self.intervals(),
+            [(self.start + timedelta(days=1), self.start + timedelta(days=5))],
+        )
+
+    def test_a_repeated_cycle_reports_every_offer(self):
+        """This is what only the latest state cannot show."""
+        self.record(EventType.READY, 1)
+        self.record(EventType.HELD_BACK, 5, reason='Gone leggy in the heat.')
+        self.record(EventType.READY, 12)
+        self.record(EventType.HELD_BACK, 20, reason='Wanted for next season.')
+        self.record(EventType.READY, 25)
+        intervals = self.intervals()
+        self.assertEqual(len(intervals), 3)
+        self.assertEqual(
+            [interval.ended for interval in intervals],
+            [
+                self.start + timedelta(days=5),
+                self.start + timedelta(days=20),
+                None,
+            ],
+        )
+
+    def test_a_correction_leaves_no_interval_where_holding_back_leaves_one(self):
+        """The two mechanisms are told apart by what the history keeps."""
+        mistake = self.record(EventType.READY, 1)
+        reverse_lifecycle_event(
+            mistake,
+            self.user,
+            'Recorded against the wrong plant.',
+            occurred_at=self.start + timedelta(days=2),
+        )
+        self.assertEqual(self.intervals(), [])
+
+        other = make_specific_plant(germinated=self.start)
+        record_germination_event(other, self.user)
+        for event_type, day, reason in (
+                (EventType.READY, 1, ''),
+                (EventType.HELD_BACK, 2, 'Gone leggy in the heat.')):
+            record_lifecycle_event(
+                other,
+                self.user,
+                OutcomeRequest(
+                    event_type,
+                    occurred_at=self.start + timedelta(days=day),
+                    reason=reason,
+                ),
+            )
+        self.assertEqual(
+            len(availability_intervals(list(other.lifecycle_events.all()))),
+            1,
+        )
+
+    def test_a_sale_closes_the_interval_and_a_return_opens_another(self):
+        """Every fact reaching a sellable state starts a span, not only ready."""
+        self.record(EventType.READY, 1)
+        self.record(EventType.SOLD, 5)
+        self.record(EventType.RETURNED_AVAILABLE, 9)
+        intervals = self.intervals()
+        self.assertEqual(len(intervals), 2)
+        self.assertEqual(intervals[0].ended, self.start + timedelta(days=5))
+        self.assertEqual(intervals[1].started, self.start + timedelta(days=9))
+
+    def test_the_summary_reports_when_the_current_state_began(self):
+        """A screen can tell stock held back yesterday from stock held in March."""
+        self.record(EventType.READY, 1)
+        self.record(EventType.HELD_BACK, 5, reason='Gone leggy in the heat.')
+        summary = plant_lifecycle_summary(self.plant)
+        self.assertEqual(summary.state, LifecycleState.GROWING)
+        self.assertEqual(summary.state_since, self.start + timedelta(days=5))

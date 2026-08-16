@@ -46,6 +46,8 @@ ORDERINGS = {
     'standing_at': ('standing_at_label', 'pk'),
     'cost': ('cost', 'pk'),
     'state': ('lifecycle_state', 'pk'),
+    'state_since': ('last_state_at', 'pk'),
+    'first_ready': ('first_ready_at', 'pk'),
     'batch': ('batch_code', 'pk'),
     'germinated': ('germinated', 'pk'),
     'expected_ready': ('current_expected_ready', 'pk'),

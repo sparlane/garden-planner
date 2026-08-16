@@ -387,6 +387,21 @@ class BackwardTransitionActionTests(PlantLifecycleRESTTestCase):
         self.location.refresh_from_db()
         self.assertIsNone(self.location.ended)
 
+    def test_the_detail_reports_every_span_the_plant_was_offered(self):
+        """Only the latest state would hide the second offer entirely."""
+        self.post_outcome(self.plant.pk, 'ready')
+        self.post_outcome(
+            self.plant.pk, 'hold-back', {'reason': 'Gone leggy in the heat.'},
+        )
+        self.post_outcome(self.plant.pk, 'ready')
+        data = self.get_plant(self.plant.pk)
+        intervals = data['availability_intervals']
+        self.assertEqual(len(intervals), 2)
+        self.assertIsNotNone(intervals[0]['ended'])
+        self.assertIsNone(intervals[1]['ended'])
+        self.assertEqual(data['first_ready_at'], intervals[0]['started'])
+        self.assertEqual(data['state_since'], intervals[1]['started'])
+
     def test_a_held_back_plant_is_offered_again_by_grading_it(self):
         """A repeated cycle is three facts, not one fact recorded twice."""
         self.post_outcome(self.plant.pk, 'ready')

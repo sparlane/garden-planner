@@ -161,6 +161,7 @@ class RegisterContractTests(RegisterTestCase):
             'expected_ready',
             'final_outcome',
             'final_outcome_at',
+            'first_ready_at',
             'garden_square',
             'germinated',
             'grade',
@@ -183,6 +184,7 @@ class RegisterContractTests(RegisterTestCase):
             'stage_overdue',
             'standing_at',
             'standing_at_label',
+            'state_since',
             'variety',
             'variety_name',
         ])
