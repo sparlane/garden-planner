@@ -55,10 +55,18 @@ STATE_AFTER = {
     EventType.RETURNED_AVAILABLE: LifecycleState.AVAILABLE,
     EventType.RETURNED_QUARANTINED: LifecycleState.QUARANTINED,
     EventType.RETURNED_DISCARDED: LifecycleState.DISCARDED,
+    EventType.RELEASED_AVAILABLE: LifecycleState.AVAILABLE,
 }
 
 #: The states each fact may be recorded from. `germinated` is absent because it
 #: is only valid for a plant with no history at all.
+#:
+#: A quarantined plant is one a customer returned as diseased or damaged, so it
+#: accepts the facts an assessment can honestly reach: release when it recovers,
+#: retention when it needs growing on instead, and the three ways of losing it.
+#: Donation, harvest, planting out and sale stay closed, because handing a plant
+#: the nursery has not cleared to somebody else is the thing quarantine exists to
+#: prevent — release it first and the ordinary transitions apply.
 ALLOWED_FROM = {
     EventType.READY: {LifecycleState.GROWING},
     EventType.TRANSPLANTED: {
@@ -66,21 +74,28 @@ ALLOWED_FROM = {
         LifecycleState.AVAILABLE,
         LifecycleState.RETAINED,
     },
-    EventType.RETAINED: {LifecycleState.GROWING, LifecycleState.AVAILABLE},
+    EventType.RETAINED: {
+        LifecycleState.GROWING,
+        LifecycleState.AVAILABLE,
+        LifecycleState.QUARANTINED,
+    },
     EventType.FAILED: {
         LifecycleState.GROWING,
         LifecycleState.AVAILABLE,
         LifecycleState.RETAINED,
+        LifecycleState.QUARANTINED,
     },
     EventType.LOST: {
         LifecycleState.GROWING,
         LifecycleState.AVAILABLE,
         LifecycleState.RETAINED,
+        LifecycleState.QUARANTINED,
     },
     EventType.CULLED: {
         LifecycleState.GROWING,
         LifecycleState.AVAILABLE,
         LifecycleState.RETAINED,
+        LifecycleState.QUARANTINED,
     },
     EventType.DONATED: {
         LifecycleState.GROWING,
@@ -96,6 +111,7 @@ ALLOWED_FROM = {
     EventType.RETURNED_AVAILABLE: {LifecycleState.SOLD},
     EventType.RETURNED_QUARANTINED: {LifecycleState.SOLD},
     EventType.RETURNED_DISCARDED: {LifecycleState.SOLD},
+    EventType.RELEASED_AVAILABLE: {LifecycleState.QUARANTINED},
 }
 
 #: States that resolve a plant. Retained is final for availability without
@@ -115,7 +131,11 @@ FINAL_STATES = {
 SELLABLE_STATES = {LifecycleState.AVAILABLE}
 
 #: Facts that end a plant's presence in a physical location. A retained plant
-#: keeps growing where it is, so it is not listed.
+#: keeps growing where it is, so it is not listed. Of the three return outcomes
+#: only `returned_discarded` is, because it is the only one that destroys the
+#: plant: an available or quarantined return is physically back on a bench, and
+#: `post_return` opens the location that says which one. `released_available`
+#: leaves the plant exactly where the quarantine put it until somebody moves it.
 CLOSES_LOCATION = {
     EventType.DONATED,
     EventType.FAILED,
@@ -126,7 +146,11 @@ CLOSES_LOCATION = {
     EventType.RETURNED_DISCARDED,
 }
 
-#: Facts an operator may record directly against a plant.
+#: Facts an operator may record directly against a plant. `released_available`
+#: is absent on purpose: releasing is the health workflow's decision, and
+#: `act_on_quarantine` closes the case in the same transaction that records it.
+#: Recorded directly it would leave a plant available while its case stayed open
+#: and the quarantine overlay kept refusing the sale.
 OUTCOME_EVENTS = (
     EventType.READY,
     EventType.RETAINED,
@@ -170,6 +194,29 @@ class OutcomeRequest(NamedTuple):
 def is_final(state):
     """Return whether a derived state resolves the plant."""
     return state in FINAL_STATES
+
+
+def states_without_exits(state_after=None, allowed_from=None, final_states=None):
+    """Return the reachable non-final states that no fact may be recorded from.
+
+    A state that neither resolves a plant nor admits any next fact is a dead
+    end: the plant is stuck there, counted as live unresolved stock forever, and
+    the only way out is a correction claiming it was never there at all. That is
+    what `quarantined` was until releasing became a fact of its own.
+
+    The three vocabularies default to this module's, and are arguments so a
+    proposed one can be checked before it ships.
+    """
+    state_after = STATE_AFTER if state_after is None else state_after
+    allowed_from = ALLOWED_FROM if allowed_from is None else allowed_from
+    final_states = FINAL_STATES if final_states is None else final_states
+    # A plant with no history at all is growing, so growing is always reachable.
+    reachable = {LifecycleState.GROWING, *state_after.values()}
+    with_exits = {state for sources in allowed_from.values() for state in sources}
+    return {
+        state for state in reachable
+        if state not in final_states and state not in with_exits
+    }
 
 
 def derive_state(events):

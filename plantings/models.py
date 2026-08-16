@@ -1307,6 +1307,7 @@ class PlantLifecycleEvent(WorkspaceOwnedModel):
         RETURNED_AVAILABLE = 'returned_available', 'Returned available'
         RETURNED_QUARANTINED = 'returned_quarantined', 'Returned quarantined'
         RETURNED_DISCARDED = 'returned_discarded', 'Returned discarded'
+        RELEASED_AVAILABLE = 'released_available', 'Released from quarantine'
         CORRECTED = 'corrected', 'Corrected'
 
     plant = models.ForeignKey(
