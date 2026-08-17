@@ -60,11 +60,20 @@ interface PacketOption extends SelectOption {
   searchText: string
 }
 
+function byPk<T extends { pk: number }>(records: Array<T>): Map<number, T> {
+  return new Map(records.map((record) => [record.pk, record]))
+}
+
+// Index once per call rather than scanning three arrays for every packet: the
+// picker is rebuilt whenever the table renders, and every seed tray row shares it.
 function packetSelectOptions(packets: Array<SeedPacket>, seeds: Array<Seed>, suppliers: Array<Supplier>, varieties: Array<PlantVariety>): Array<PacketOption> {
+  const seedsByPk = byPk(seeds)
+  const suppliersByPk = byPk(suppliers)
+  const varietiesByPk = byPk(varieties)
   return packets.map((packet) => {
-    const seedData = seeds.find((candidate) => candidate.pk === packet.seeds)
-    const supplier = suppliers.find((candidate) => candidate.pk === seedData?.supplier)
-    const variety = varieties.find((candidate) => candidate.pk === seedData?.plant_variety)
+    const seedData = seedsByPk.get(packet.seeds)
+    const supplier = seedData === undefined ? undefined : suppliersByPk.get(seedData.supplier)
+    const variety = seedData === undefined ? undefined : varietiesByPk.get(seedData.plant_variety)
     const label = `${variety?.name} from ${supplier?.name} (Sow by: ${packet.sow_by || 'unknown'}; ${packetBalanceLabel(packet)})`
     // supplier_lot_reference is blank on plenty of packets, and inventory is null
     // for one with no stock lot, so drop the empties rather than print separators
@@ -92,6 +101,16 @@ function formatPacketOption(option: PacketOption, meta: { context: string }) {
 // be searchable at all.
 function filterPacketOption(option: { data: PacketOption }, input: string) {
   return option.data.searchText.includes(input.toLowerCase())
+}
+
+// react-select reports a cleared control as null and an empty option value as
+// undefined; both mean "nothing chosen" to every picker in this file.
+function selectOptionToPk(option: SelectOption | null): number | undefined {
+  const value = option?.value
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  return Number(value)
 }
 
 interface SeedTrayCellGridProps {
@@ -142,17 +161,16 @@ class SeedTrayCellGrid extends React.PureComponent<SeedTrayCellGridProps> {
 }
 
 interface NewSeedTrayPlantingRowProps {
-  suppliers: Array<Supplier>
-  varieties: Array<PlantVariety>
   seeds: Array<Seed>
   seedPackets: Array<SeedPacket>
+  packetOptions: Array<PacketOption>
   seedTrays: Array<SeedTray>
   seedTrayModels: { [key: number]: SeedTrayModel }
   done: () => void
   createPlanting: (data: SeedTrayPlantingCreate) => Promise<void>
 }
 
-function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seedTrays, seedTrayModels, done, createPlanting }: NewSeedTrayPlantingRowProps) {
+function NewSeedTrayPlantingRow({ seeds, seedPackets, packetOptions, seedTrays, seedTrayModels, done, createPlanting }: NewSeedTrayPlantingRowProps) {
   const [seedPacket, setSeedPacket] = React.useState<number>()
   const [quantity, setQuantity] = React.useState(1)
   const [seedTray, setSeedTray] = React.useState<number>()
@@ -170,9 +188,8 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   })
 
   function updateSeedPacket(selectedSeedPacket: SelectOption | null) {
-    const value = selectedSeedPacket?.value
     setBatchChoice({})
-    setSeedPacket(value === undefined || value === null ? undefined : Number(value))
+    setSeedPacket(selectOptionToPk(selectedSeedPacket))
   }
 
   function updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
@@ -186,10 +203,10 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
   }
 
   function updateSeedTray(selectedSeedTray: SelectOption | null) {
-    const value = selectedSeedTray?.value
+    const trayPk = selectOptionToPk(selectedSeedTray)
     setCellQuantities({})
-    setQuantity(value === undefined || value === null ? 1 : 0)
-    setSeedTray(value === undefined || value === null ? undefined : Number(value))
+    setQuantity(trayPk === undefined ? 1 : 0)
+    setSeedTray(trayPk)
   }
 
   function updateSeedsPerCell(event: React.ChangeEvent<HTMLInputElement>) {
@@ -249,7 +266,6 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
     done()
   }
 
-  const packetOptions = packetSelectOptions(seedPackets, seeds, suppliers, varieties)
   const trayOptions = seedTrays.map((tray) => ({ value: tray.pk, label: `${tray.pk} (${seedTrayModels[tray.model]?.description})` }))
   const selectedSeedTrayModel = seedTray === undefined ? undefined : seedTrayModels[seedTrays.find((tray) => tray.pk === seedTray)?.model ?? 0]
   const hasSelectedCells = Object.keys(cellQuantities).length > 0
@@ -311,30 +327,26 @@ function NewSeedTrayPlantingRow({ suppliers, varieties, seeds, seedPackets, seed
 
 interface SeedTrayPlantingRowProps {
   planting: SeedTrayPlantingDetails
-  suppliers: Array<Supplier>
-  varieties: Array<PlantVariety>
-  seeds: Array<Seed>
-  seedPackets: Array<SeedPacket>
+  packetOptions: Array<PacketOption>
   completePlanting: (plantingPk: number) => Promise<void>
   correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-function SeedTrayPlantingRow({ planting, suppliers, varieties, seeds, seedPackets, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
+function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
   const [correcting, setCorrecting] = React.useState(false)
   const [packetPk, setPacketPk] = React.useState(planting.seeds_used)
   const [quantity, setQuantity] = React.useState(planting.quantity)
   const [reason, setReason] = React.useState('')
 
-  const packetOptions = packetSelectOptions(seedPackets, seeds, suppliers, varieties)
-
   // A correction always replaces one packet with another, so there is no empty
   // state to fall back to: backspace clearing the box must keep the current pick
   // rather than post seeds_used: NaN.
   function updatePacketPk(option: SelectOption | null) {
-    if (option?.value === undefined || option.value === null) {
+    const nextPacketPk = selectOptionToPk(option)
+    if (nextPacketPk === undefined) {
       return
     }
-    setPacketPk(Number(option.value))
+    setPacketPk(nextPacketPk)
   }
 
   async function correct() {
@@ -454,6 +466,10 @@ function SeedTrayPlantingTable() {
     await correctionMutation.mutateAsync({ pk: plantingPk, data })
   }
 
+  // Every row's correction picker offers the same packets, so build the options
+  // once here rather than once per row, and only when the source data changes.
+  const packetOptions = React.useMemo(() => packetSelectOptions(seedPackets, seeds, suppliers, varieties), [seedPackets, seeds, suppliers, varieties])
+
   const rows = []
   if (showPlantingAdd) {
     rows.push(
@@ -461,8 +477,7 @@ function SeedTrayPlantingTable() {
         key="new"
         seedPackets={seedPackets}
         seeds={seeds}
-        suppliers={suppliers}
-        varieties={varieties}
+        packetOptions={packetOptions}
         seedTrays={seedTrays}
         seedTrayModels={seedTrayModels}
         createPlanting={createPlanting}
@@ -471,18 +486,7 @@ function SeedTrayPlantingTable() {
     )
   }
   for (const planting of plantings) {
-    rows.push(
-      <SeedTrayPlantingRow
-        key={planting.pk}
-        planting={planting}
-        seedPackets={seedPackets}
-        seeds={seeds}
-        suppliers={suppliers}
-        varieties={varieties}
-        completePlanting={completePlanting}
-        correctPlanting={correctPlanting}
-      />
-    )
+    rows.push(<SeedTrayPlantingRow key={planting.pk} planting={planting} packetOptions={packetOptions} completePlanting={completePlanting} correctPlanting={correctPlanting} />)
   }
   return (
     <Table>
@@ -509,17 +513,16 @@ function SeedTrayPlantingTable() {
 }
 
 interface NewGardenSquarePlantingRowProps {
-  suppliers: Array<Supplier>
-  varieties: Array<PlantVariety>
   seeds: Array<Seed>
   seedPackets: Array<SeedPacket>
+  packetOptions: Array<PacketOption>
   gardenBeds: Array<GardenBed>
   gardenSquares: Array<GardenSquare>
   done: () => void
   createPlanting: (data: GardenSquareDirectPlantingCreate) => Promise<void>
 }
 
-function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, gardenBeds, gardenSquares, done, createPlanting }: NewGardenSquarePlantingRowProps) {
+function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenBeds, gardenSquares, done, createPlanting }: NewGardenSquarePlantingRowProps) {
   const [seedPacket, setSeedPacket] = React.useState<number>()
   const [quantity, setQuantity] = React.useState(1)
   const [location, setLocation] = React.useState<number>()
@@ -529,9 +532,8 @@ function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, 
   const packetVariety = packetVarietyPk(seedPacket, seedPackets, seeds)
 
   function updateSeedPacket(selectedSeedPacket: SelectOption | null) {
-    const value = selectedSeedPacket?.value
     setBatchChoice({})
-    setSeedPacket(value === undefined || value === null ? undefined : Number(value))
+    setSeedPacket(selectOptionToPk(selectedSeedPacket))
   }
 
   function updateQuantity(event: React.ChangeEvent<HTMLInputElement>) {
@@ -540,8 +542,7 @@ function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, 
   }
 
   function updateLocation(selectedLocation: SelectOption | null) {
-    const value = selectedLocation?.value
-    setLocation(value === undefined || value === null ? undefined : Number(value))
+    setLocation(selectOptionToPk(selectedLocation))
   }
 
   async function add() {
@@ -564,7 +565,6 @@ function NewGardenSquarePlantingRow({ suppliers, varieties, seeds, seedPackets, 
     done()
   }
 
-  const packetOptions = packetSelectOptions(seedPackets, seeds, suppliers, varieties)
   const locations = gardenBeds.flatMap((gardenBedData) =>
     gardenSquares
       .filter((square) => square.bed === gardenBedData.pk)
@@ -813,8 +813,7 @@ function GardenSquarePlantingTable() {
         key="new"
         seedPackets={seedPackets}
         seeds={seeds}
-        suppliers={suppliers}
-        varieties={varieties}
+        packetOptions={packetSelectOptions(seedPackets, seeds, suppliers, varieties)}
         gardenSquares={gardenSquares}
         gardenBeds={gardenBeds}
         createPlanting={createPlanting}
