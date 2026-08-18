@@ -113,6 +113,59 @@ function selectOptionToPk(option: SelectOption | null): number | undefined {
   return Number(value)
 }
 
+interface SowingCorrectionPanelProps {
+  packetOptions: Array<PacketOption>
+  // A garden square row can be a transplant, which carries no packet of its own.
+  packet: number | undefined
+  sownQuantity: number
+  apply: (data: SowingCorrection) => Promise<void>
+  done: () => void
+}
+
+// Every sowing is corrected the same way whatever it was sown into, so both
+// planting screens share this panel rather than keeping the fields in step by hand.
+function SowingCorrectionPanel({ packetOptions, packet, sownQuantity, apply, done }: SowingCorrectionPanelProps) {
+  const [packetPk, setPacketPk] = React.useState(packet)
+  const [quantity, setQuantity] = React.useState(sownQuantity)
+  const [reason, setReason] = React.useState('')
+
+  // A correction always replaces one packet with another, so there is no empty
+  // state to fall back to: backspace clearing the box must keep the current pick
+  // rather than post seeds_used: NaN.
+  function updatePacketPk(option: SelectOption | null) {
+    const nextPacketPk = selectOptionToPk(option)
+    if (nextPacketPk === undefined) {
+      return
+    }
+    setPacketPk(nextPacketPk)
+  }
+
+  async function correct() {
+    await apply({ seeds_used: packetPk, quantity, reason })
+    setReason('')
+    done()
+  }
+
+  return (
+    <div>
+      <div style={{ minWidth: '280px' }}>
+        <Select
+          onChange={updatePacketPk}
+          options={packetOptions}
+          value={packetOptions.find((option) => option.value === packetPk) ?? null}
+          formatOptionLabel={formatPacketOption}
+          filterOption={filterPacketOption}
+        />
+      </div>
+      <input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+      <input required placeholder="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+      <Button size="sm" disabled={!reason} onClick={correct}>
+        Apply correction
+      </Button>
+    </div>
+  )
+}
+
 interface SeedTrayCellGridProps {
   cells: Array<SeedTrayCell>
   model: SeedTrayModel
@@ -334,26 +387,6 @@ interface SeedTrayPlantingRowProps {
 
 function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
   const [correcting, setCorrecting] = React.useState(false)
-  const [packetPk, setPacketPk] = React.useState(planting.seeds_used)
-  const [quantity, setQuantity] = React.useState(planting.quantity)
-  const [reason, setReason] = React.useState('')
-
-  // A correction always replaces one packet with another, so there is no empty
-  // state to fall back to: backspace clearing the box must keep the current pick
-  // rather than post seeds_used: NaN.
-  function updatePacketPk(option: SelectOption | null) {
-    const nextPacketPk = selectOptionToPk(option)
-    if (nextPacketPk === undefined) {
-      return
-    }
-    setPacketPk(nextPacketPk)
-  }
-
-  async function correct() {
-    await correctPlanting(planting.pk, { seeds_used: packetPk, quantity, reason })
-    setCorrecting(false)
-    setReason('')
-  }
 
   return (
     <tr>
@@ -384,22 +417,13 @@ function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correc
           Correct sowing
         </Button>
         {correcting && (
-          <div>
-            <div style={{ minWidth: '280px' }}>
-              <Select
-                onChange={updatePacketPk}
-                options={packetOptions}
-                value={packetOptions.find((option) => option.value === packetPk) ?? null}
-                formatOptionLabel={formatPacketOption}
-                filterOption={filterPacketOption}
-              />
-            </div>
-            <input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
-            <input required placeholder="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)} />
-            <Button size="sm" disabled={!reason} onClick={correct}>
-              Apply correction
-            </Button>
-          </div>
+          <SowingCorrectionPanel
+            packetOptions={packetOptions}
+            packet={planting.seeds_used}
+            sownQuantity={planting.quantity}
+            apply={(data) => correctPlanting(planting.pk, data)}
+            done={() => setCorrecting(false)}
+          />
         )}
       </td>
     </tr>
@@ -617,24 +641,15 @@ function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenB
 
 interface GardenSquarePlantingRowProps {
   planting: GardenSquarePlanting
-  seedPackets: Array<SeedPacket>
+  packetOptions: Array<PacketOption>
   completePlanting: (planting: GardenSquarePlanting) => Promise<void>
   correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-function GardenSquarePlantingRow({ planting, seedPackets, completePlanting, correctPlanting }: GardenSquarePlantingRowProps) {
+function GardenSquarePlantingRow({ planting, packetOptions, completePlanting, correctPlanting }: GardenSquarePlantingRowProps) {
   const [correcting, setCorrecting] = React.useState(false)
-  const [packetPk, setPacketPk] = React.useState(planting.seeds_used)
-  const [quantity, setQuantity] = React.useState(planting.quantity)
-  const [reason, setReason] = React.useState('')
   const planted = planting.transplanted ? `${formatDate(planting.transplanted)} (S: ${formatDate(planting.planted)})` : formatDate(planting.planted)
   const directSowing = !planting.transplanted && planting.specific_plant_pk === undefined
-
-  async function correct() {
-    await correctPlanting(planting.planting_pk, { seeds_used: packetPk, quantity, reason })
-    setCorrecting(false)
-    setReason('')
-  }
 
   return (
     <tr>
@@ -660,20 +675,13 @@ function GardenSquarePlantingRow({ planting, seedPackets, completePlanting, corr
           </Button>
         )}
         {correcting && (
-          <div>
-            <select value={packetPk} onChange={(event) => setPacketPk(Number(event.target.value))}>
-              {seedPackets.map((packet) => (
-                <option key={packet.pk} value={packet.pk}>
-                  Packet #{packet.pk}: {packetBalanceLabel(packet)}
-                </option>
-              ))}
-            </select>
-            <input type="number" min="1" value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
-            <input required placeholder="Correction reason" value={reason} onChange={(event) => setReason(event.target.value)} />
-            <Button size="sm" disabled={!reason} onClick={correct}>
-              Apply correction
-            </Button>
-          </div>
+          <SowingCorrectionPanel
+            packetOptions={packetOptions}
+            packet={planting.seeds_used}
+            sownQuantity={planting.quantity}
+            apply={(data) => correctPlanting(planting.planting_pk, data)}
+            done={() => setCorrecting(false)}
+          />
         )}
       </td>
     </tr>
@@ -806,6 +814,10 @@ function GardenSquarePlantingTable() {
       All Beds
     </option>
   )
+  // Every row's correction picker offers the same packets, so build the options
+  // once here rather than once per row, and only when the source data changes.
+  const packetOptions = React.useMemo(() => packetSelectOptions(seedPackets, seeds, suppliers, varieties), [seedPackets, seeds, suppliers, varieties])
+
   const rows = []
   if (showPlantingAdd) {
     rows.push(
@@ -813,7 +825,7 @@ function GardenSquarePlantingTable() {
         key="new"
         seedPackets={seedPackets}
         seeds={seeds}
-        packetOptions={packetSelectOptions(seedPackets, seeds, suppliers, varieties)}
+        packetOptions={packetOptions}
         gardenSquares={gardenSquares}
         gardenBeds={gardenBeds}
         createPlanting={createPlanting}
@@ -830,7 +842,7 @@ function GardenSquarePlantingTable() {
         <GardenSquarePlantingRow
           key={planting.transplanting_pk ? 't' + planting.transplanting_pk : planting.planting_pk}
           planting={planting}
-          seedPackets={seedPackets}
+          packetOptions={packetOptions}
           completePlanting={completePlanting}
           correctPlanting={correctPlanting}
         />
