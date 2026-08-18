@@ -87,11 +87,13 @@ class GardenGeometryAPITests(TestCase):
             size_x=100,
             size_y=100,
         )
+        # Placed away from the origin so the payloads below can exercise a
+        # zero placement without colliding with it.
         self.bed = GardenBed.objects.create(
             area=self.area,
             name='Geometry bed',
-            placement_x=0,
-            placement_y=0,
+            placement_x=50,
+            placement_y=50,
             size_x=50,
             size_y=50,
         )

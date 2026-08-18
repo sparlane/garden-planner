@@ -140,7 +140,11 @@ class SquareMetreTests(TestCase):
 
     def test_a_millimetre_grid_normalizes_to_square_metres(self):
         """A 300 x 300 mm square is 0.09 m2."""
-        bed = make_garden_bed()
+        bed = make_garden_bed(
+            area=make_garden_area(size_x=300, size_y=300),
+            size_x=300,
+            size_y=300,
+        )
         make_garden_geometry_confirmation(
             area=bed.area,
             length_unit=GardenGeometryConfirmation.LengthUnit.MILLIMETRE,

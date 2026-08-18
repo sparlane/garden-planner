@@ -14,6 +14,8 @@ from django.utils import timezone
 
 from workspaces.models import WorkspaceOwnedModel
 
+from .layout import placement_errors
+
 
 #: Smallest grid step a confirmation can record, matching ``cell_length``'s
 #: six decimal places.
@@ -125,11 +127,24 @@ class GardenGeometryConfirmation(WorkspaceOwnedModel):
 
 
 class GardenBed(WorkspaceOwnedModel):
+    """A rectangle of growing ground placed on an area's grid.
+
+    ``kind`` records what the gardener said they were making rather than
+    leaving a later screen to guess it from the name. It changes nothing about
+    how the rectangle is measured or validated: a raised bed and a patch of
+    open ground occupy their area the same way.
     """
-    A Garden bed
-    """
+
+    class Kind(models.TextChoices):
+        """What a bed physically is, as the gardener described it."""
+
+        IN_GROUND = 'in_ground', 'In-ground bed'
+        RAISED = 'raised', 'Raised bed'
+        CONTAINER = 'container', 'Container or planter'
+
     area = models.ForeignKey(GardenArea, on_delete=models.PROTECT)
     name = models.TextField(max_length=1024)
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.IN_GROUND)
     placement_x = models.IntegerField(validators=[MinValueValidator(0)])
     placement_y = models.IntegerField(validators=[MinValueValidator(0)])
     size_x = models.IntegerField(validators=[MinValueValidator(1)])
@@ -149,6 +164,37 @@ class GardenBed(WorkspaceOwnedModel):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        """Keep this bed inside its area, off its neighbours, and in one workspace."""
+        super().clean()
+        if not self.area_id:
+            return
+        parent = self.area
+        if parent.workspace_id != self.workspace_id:
+            raise ValidationError(
+                {'area': 'The area belongs to a different workspace.'},
+            )
+        siblings = GardenBed.objects.filter(area_id=self.area_id)
+        if self.pk:
+            siblings = siblings.exclude(pk=self.pk)
+        errors = placement_errors(
+            self,
+            parent,
+            siblings.only('name', 'placement_x', 'placement_y', 'size_x', 'size_y'),
+            'The bed',
+            f'area "{parent.name}"',
+        )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        # The check constraints restate the field validators that
+        # ``clean_fields`` has already run, and the database enforces them on
+        # the insert regardless. Skipping them keeps a template that writes a
+        # few hundred squares to one round trip per row.
+        self.full_clean(validate_constraints=False)
+        super().save(*args, **kwargs)
 
 
 class GardenRow(WorkspaceOwnedModel):
@@ -177,6 +223,37 @@ class GardenRow(WorkspaceOwnedModel):
     def __str__(self):
         return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
 
+    def clean(self):
+        """Keep this row inside its bed, off its neighbours, and in one workspace."""
+        super().clean()
+        if not self.bed_id:
+            return
+        parent = self.bed
+        if parent.workspace_id != self.workspace_id:
+            raise ValidationError(
+                {'bed': 'The bed belongs to a different workspace.'},
+            )
+        siblings = GardenRow.objects.filter(bed_id=self.bed_id)
+        if self.pk:
+            siblings = siblings.exclude(pk=self.pk)
+        errors = placement_errors(
+            self,
+            parent,
+            siblings.only('name', 'placement_x', 'placement_y', 'size_x', 'size_y'),
+            'The row',
+            f'bed "{parent.name}"',
+        )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        # The check constraints restate the field validators that
+        # ``clean_fields`` has already run, and the database enforces them on
+        # the insert regardless. Skipping them keeps a template that writes a
+        # few hundred squares to one round trip per row.
+        self.full_clean(validate_constraints=False)
+        super().save(*args, **kwargs)
+
 
 class GardenSquare(WorkspaceOwnedModel):
     """
@@ -203,6 +280,37 @@ class GardenSquare(WorkspaceOwnedModel):
 
     def __str__(self):
         return f'{self.name} ({self.size_x},{self.size_y}) @ ({self.placement_x},{self.placement_y}) in {self.bed}'
+
+    def clean(self):
+        """Keep this square inside its bed, off its neighbours, and in one workspace."""
+        super().clean()
+        if not self.bed_id:
+            return
+        parent = self.bed
+        if parent.workspace_id != self.workspace_id:
+            raise ValidationError(
+                {'bed': 'The bed belongs to a different workspace.'},
+            )
+        siblings = GardenSquare.objects.filter(bed_id=self.bed_id)
+        if self.pk:
+            siblings = siblings.exclude(pk=self.pk)
+        errors = placement_errors(
+            self,
+            parent,
+            siblings.only('name', 'placement_x', 'placement_y', 'size_x', 'size_y'),
+            'The square',
+            f'bed "{parent.name}"',
+        )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        # The check constraints restate the field validators that
+        # ``clean_fields`` has already run, and the database enforces them on
+        # the insert regardless. Skipping them keeps a template that writes a
+        # few hundred squares to one round trip per row.
+        self.full_clean(validate_constraints=False)
+        super().save(*args, **kwargs)
 
     def as_json(self):
         """
