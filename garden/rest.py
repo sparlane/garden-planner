@@ -1,12 +1,15 @@
 """
 Rest for Gardens
 """
-from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.exceptions import NON_FIELD_ERRORS, ValidationError as DjangoValidationError
+from django.db import transaction
+from django.db.models import ProtectedError
 
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+from rest_framework.settings import api_settings
 
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
@@ -27,7 +30,80 @@ _UNRESOLVED = object()
 
 def _model_errors(error):
     """Translate a Django validation error into DRF's field-error shape."""
-    return error.message_dict if hasattr(error, 'message_dict') else error.messages
+    if not hasattr(error, 'message_dict'):
+        return error.messages
+    errors = dict(error.message_dict)
+    # Django files errors with no field of their own under ``__all__``; DRF
+    # clients, and the frontend's error formatter, look for its own key.
+    if NON_FIELD_ERRORS in errors:
+        errors[api_settings.NON_FIELD_ERRORS_KEY] = errors.pop(NON_FIELD_ERRORS)
+    return errors
+
+
+#: The most geometry one request may lay down at once. A square-foot template
+#: covering a large bed is a few hundred squares; anything past this is a typo
+#: in a dimension rather than a garden.
+MAX_GEOMETRY_BATCH = 400
+
+
+class GeometryWriteMixin:
+    """Report model-level placement failures as field errors, not as 500s.
+
+    Beds, rows, and squares validate their placement in ``clean()`` and call
+    ``full_clean()`` from ``save()``, so a bad layout raises after the
+    serializer has already accepted the payload. Every write path has to
+    translate that, and a delete has to explain what is still standing there
+    rather than surfacing the FK protection as a server error.
+    """
+
+    def get_serializer(self, *args, **kwargs):
+        """Accept a whole layout in one request as well as a single record.
+
+        A layout template is chosen as one thing and should arrive as one
+        thing: the bed and the rows or squares dividing it are meaningless
+        apart, and writing them one request at a time would leave a half-built
+        bed behind whenever the browser or the network gave up in the middle.
+        """
+        data = kwargs.get('data')
+        if isinstance(data, list):
+            if len(data) > MAX_GEOMETRY_BATCH:
+                raise ValidationError(
+                    f'{len(data)} pieces of geometry were sent at once; '
+                    f'{MAX_GEOMETRY_BATCH} is the most one layout may lay down. '
+                    'Check the dimensions and the spacing.',
+                )
+            kwargs['many'] = True
+        return super().get_serializer(*args, **kwargs)
+
+    def perform_create(self, serializer):
+        """Create the records, reporting a placement failure as a field error.
+
+        The whole batch is one transaction, so a template that collides on its
+        last square leaves nothing behind. Each row is visible to the next
+        one's placement check inside that transaction, which is what catches a
+        template that overlaps itself.
+        """
+        try:
+            with transaction.atomic():
+                super().perform_create(serializer)
+        except DjangoValidationError as exc:
+            raise ValidationError(_model_errors(exc)) from exc
+
+    def perform_update(self, serializer):
+        """Save the change, reporting a placement failure as a field error."""
+        try:
+            super().perform_update(serializer)
+        except DjangoValidationError as exc:
+            raise ValidationError(_model_errors(exc)) from exc
+
+    def perform_destroy(self, instance):
+        """Remove the record, or explain what still refers to it."""
+        try:
+            super().perform_destroy(instance)
+        except ProtectedError as exc:
+            raise ValidationError(
+                'This is still referenced by recorded activity and cannot be removed.',
+            ) from exc
 
 
 class GardenGeometryConfirmationSerializer(serializers.ModelSerializer):
@@ -115,7 +191,7 @@ class GardenBedSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSeri
     """
     class Meta:
         model = GardenBed
-        fields = ['pk', 'area', 'name', 'placement_x', 'placement_y', 'size_x', 'size_y']
+        fields = ['pk', 'area', 'name', 'kind', 'placement_x', 'placement_y', 'size_x', 'size_y']
 
     workspace_field_lookups = {'area': 'workspace'}
 
@@ -142,7 +218,7 @@ class GardenSquareSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelS
     workspace_field_lookups = {'bed': 'workspace'}
 
 
-class GardenAreaViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenAreaViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Area
     """
@@ -185,7 +261,7 @@ class GardenAreaViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  #
         )
 
 
-class GardenBedViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenBedViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Bed
     """
@@ -193,7 +269,7 @@ class GardenBedViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # 
     serializer_class = GardenBedSerializer
 
 
-class GardenRowViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenRowViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Row
     """
@@ -201,7 +277,7 @@ class GardenRowViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # 
     serializer_class = GardenRowSerializer
 
 
-class GardenSquareViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class GardenSquareViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet for Garden Square
     """

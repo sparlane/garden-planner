@@ -17,6 +17,7 @@ from plantings.models import ProductionBatch
 from seedtrays.generations import open_generation_for
 from seedtrays.models import SeedTrayGeneration
 from tests.factories import (
+    make_garden_area,
     make_garden_bed,
     make_garden_geometry_confirmation,
     make_garden_square,
@@ -359,7 +360,12 @@ class SurfaceAreaTargetTests(ApplicationServiceTestCase):
             location=self.location,
             quantity='5000',
         )
-        self.bed = make_garden_bed()
+        # Wide enough for the 300 x 300 mm square these tests measure.
+        self.bed = make_garden_bed(
+            area=make_garden_area(size_x=300, size_y=300),
+            size_x=300,
+            size_y=300,
+        )
 
     def treatment_line(self, square, quantity, **overrides):
         """Build a surface-area treatment line over one square."""

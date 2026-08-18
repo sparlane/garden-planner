@@ -195,6 +195,17 @@ def make_garden_area(**overrides):
     return GardenArea.objects.create(**values)
 
 
+def _parent_workspace(overrides):
+    """Build a parent in the same workspace the child was asked for.
+
+    Geometry refuses to sit in a different workspace from its parent, so a
+    factory that invented the parent in the default workspace would make an
+    unsaveable record every time a test asked for a foreign one.
+    """
+    workspace = overrides.get('workspace')
+    return {} if workspace is None else {'workspace': workspace}
+
+
 def make_garden_geometry_confirmation(**overrides):
     """Confirm what one area's grid step physically measures."""
     values = {
@@ -202,7 +213,7 @@ def make_garden_geometry_confirmation(**overrides):
         'cell_length': Decimal('1'),
     }
     if 'area' not in overrides:
-        values['area'] = make_garden_area()
+        values['area'] = make_garden_area(**_parent_workspace(overrides))
     values.update(overrides)
     return GardenGeometryConfirmation.objects.create(**values)
 
@@ -217,7 +228,7 @@ def make_garden_bed(**overrides):
         'size_y': 50,
     }
     if 'area' not in overrides:
-        values['area'] = make_garden_area()
+        values['area'] = make_garden_area(**_parent_workspace(overrides))
     values.update(overrides)
     return GardenBed.objects.create(**values)
 
@@ -232,7 +243,7 @@ def make_garden_row(**overrides):
         'size_y': 1,
     }
     if 'bed' not in overrides:
-        values['bed'] = make_garden_bed()
+        values['bed'] = make_garden_bed(**_parent_workspace(overrides))
     values.update(overrides)
     return GardenRow.objects.create(**values)
 
@@ -247,7 +258,7 @@ def make_garden_square(**overrides):
         'size_y': 1,
     }
     if 'bed' not in overrides:
-        values['bed'] = make_garden_bed()
+        values['bed'] = make_garden_bed(**_parent_workspace(overrides))
     values.update(overrides)
     return GardenSquare.objects.create(**values)
 

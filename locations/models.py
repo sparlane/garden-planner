@@ -52,6 +52,7 @@ class Location(WorkspaceOwnedModel):
         GREENHOUSE = 'greenhouse', 'Greenhouse'
         TUNNEL = 'tunnel', 'Tunnel'
         BENCH = 'bench', 'Bench'
+        CONTAINER = 'container', 'Pot or container'
         BAY = 'bay', 'Bay'
         RECEIVING = 'receiving', 'Receiving'
         STORAGE = 'storage', 'Storage'
