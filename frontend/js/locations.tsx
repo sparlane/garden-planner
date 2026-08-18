@@ -6,13 +6,14 @@ import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { createLocation, getLocationOccupancy, getLocations, updateLocation } from './api/locations'
 import { queryKeys } from './query'
 import { CapacityBasis, Location, LocationCreate, LocationType } from './types/locations'
-import { ApiError } from './utils'
+import { errorsByField } from './utils'
 
 const TYPE_LABELS: Record<LocationType, string> = {
   site: 'Site',
   greenhouse: 'Greenhouse',
   tunnel: 'Tunnel',
   bench: 'Bench',
+  container: 'Pot or container',
   bay: 'Bay',
   receiving: 'Receiving',
   storage: 'Storage',
@@ -31,7 +32,21 @@ const HIDDEN_TYPES: Array<LocationType> = ['seed_packet']
 
 // The types an operator can choose. Adjustment is a ledger balancing point the
 // stock workflows create against, not somewhere anything physically stands.
-const SELECTABLE_TYPES: Array<LocationType> = ['site', 'greenhouse', 'tunnel', 'bench', 'bay', 'receiving', 'storage', 'growing', 'dispatch', 'hold', 'staging', 'quarantine']
+const SELECTABLE_TYPES: Array<LocationType> = [
+  'site',
+  'greenhouse',
+  'tunnel',
+  'bench',
+  'container',
+  'bay',
+  'receiving',
+  'storage',
+  'growing',
+  'dispatch',
+  'hold',
+  'staging',
+  'quarantine'
+]
 
 const BASIS_LABELS: Record<CapacityBasis, string> = {
   none: 'Not tracked',
@@ -207,18 +222,6 @@ function LocationForm({ parents, onCreated }: LocationFormProps) {
 
 // DRF reports field errors as {field: [message]}; flatten to the first message
 // per field so a form control can show it beneath itself.
-function errorsByField(error: unknown): Record<string, string> {
-  const body = error instanceof ApiError ? error.body : null
-  if (!body || typeof body !== 'object') return {}
-  const errors: Record<string, string> = {}
-  for (const [field, detail] of Object.entries(body as Record<string, unknown>)) {
-    errors[field] = Array.isArray(detail) ? String(detail[0]) : String(detail)
-  }
-  return errors
-}
-
-// Capacities arrive at their stored scale, so a bench holding two trays says
-// "2.000". Only strip after a decimal point exists, or 100 would become 1.
 function trimZeros(value: string | null): string {
   if (value === null) return ''
   return value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value

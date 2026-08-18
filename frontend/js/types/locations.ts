@@ -1,5 +1,19 @@
 type LocationType =
-  'site' | 'greenhouse' | 'tunnel' | 'bench' | 'bay' | 'receiving' | 'storage' | 'growing' | 'dispatch' | 'hold' | 'staging' | 'quarantine' | 'adjustment' | 'seed_packet'
+  | 'site'
+  | 'greenhouse'
+  | 'tunnel'
+  | 'bench'
+  | 'container'
+  | 'bay'
+  | 'receiving'
+  | 'storage'
+  | 'growing'
+  | 'dispatch'
+  | 'hold'
+  | 'staging'
+  | 'quarantine'
+  | 'adjustment'
+  | 'seed_packet'
 
 // The dimension a location's usable space is measured in. Only this one
 // dimension is compared against capacity_value; unlike dimensions are never

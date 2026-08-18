@@ -57,6 +57,7 @@ const queryKeys = {
   garden: {
     all: ['garden'] as const,
     areas: ['garden', 'areas'] as const,
+    area: (pk: number) => ['garden', 'areas', pk] as const,
     beds: ['garden', 'beds'] as const,
     rows: ['garden', 'rows'] as const,
     squares: ['garden', 'squares'] as const

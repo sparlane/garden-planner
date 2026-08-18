@@ -19,10 +19,15 @@ interface ConfirmGardenGeometry {
   notes?: string
 }
 
+// What the gardener said they were making. It changes nothing about how the
+// rectangle is measured; it only lets a screen name what it is drawing.
+type GardenBedKind = 'in_ground' | 'raised' | 'container'
+
 interface GardenBed {
   pk: number
   area: number
   name: string
+  kind: GardenBedKind
   placement_x: number
   placement_y: number
   size_x: number
@@ -50,4 +55,48 @@ interface GardenSquare {
   size_y: number
 }
 
-export { ConfirmGardenGeometry, GardenArea, GardenBed, GardenLengthUnit, GardenRow, GardenSquare }
+interface GardenAreaCreate {
+  name: string
+  size_x: number
+  size_y: number
+}
+
+interface GardenBedCreate {
+  area: number
+  name: string
+  kind: GardenBedKind
+  placement_x: number
+  placement_y: number
+  size_x: number
+  size_y: number
+}
+
+// A row and a square are placed the same way; only the bed they divide and the
+// shape they take differ, so one create shape serves both.
+interface GardenChildCreate {
+  bed: number
+  name: string
+  placement_x: number
+  placement_y: number
+  size_x: number
+  size_y: number
+}
+
+type GardenRowCreate = GardenChildCreate
+
+type GardenSquareCreate = GardenChildCreate
+
+export {
+  ConfirmGardenGeometry,
+  GardenArea,
+  GardenAreaCreate,
+  GardenBed,
+  GardenBedCreate,
+  GardenBedKind,
+  GardenChildCreate,
+  GardenLengthUnit,
+  GardenRow,
+  GardenRowCreate,
+  GardenSquare,
+  GardenSquareCreate
+}

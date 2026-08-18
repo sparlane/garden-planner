@@ -3,46 +3,29 @@ import 'bootstrap/dist/css/bootstrap.css'
 import './garden.css'
 
 import React, { useMemo, useState } from 'react'
-import type { KeyboardEvent } from 'react'
-import { Button, Modal } from 'react-bootstrap'
+import { Alert, Button, Modal } from 'react-bootstrap'
 import Select from 'react-select'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 
-import { GardenArea, GardenBed, GardenSquare } from './types/garden'
+import { GardenArea, GardenBed, GardenRow, GardenSquare } from './types/garden'
 import { GardenSquarePlanting } from './types/plantings'
-import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
+import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
 import { getHarvests, getPlantingGardenSquaresCurrent } from './api/plantings'
 import { HarvestForm, HarvestFormBatch, HarvestFormPlant } from './plantings/harvest_form'
 import { InputApplicationForm } from './applications/application_form'
 import { ConfirmGeometryForm } from './garden/geometry'
+import { GardenCanvas } from './garden/canvas'
 import { HarvestTable } from './plantings/harvest_list'
 import { SelectOption } from './types/others'
 import { queryKeys } from './query'
 
-const OUTLINE_WIDTH = 100
-
 interface GardenAreaDisplayProps {
   area: GardenArea
   gardenBeds: Array<GardenBed>
+  rows: Array<GardenRow>
   squares: Array<GardenSquare>
   plantings: Array<GardenSquarePlanting>
-}
-
-interface GardenSquareElementProps {
-  area: GardenArea
-  bed: GardenBed
-  square: GardenSquare
-  plantings: Array<GardenSquarePlanting>
-  onSelect: (squarePk: number) => void
-}
-
-interface GardenBedElementProps {
-  area: GardenArea
-  bed: GardenBed
-  squares: Array<GardenSquare>
-  plantingsBySquare: Map<number, Array<GardenSquarePlanting>>
-  onSelectSquare: (squarePk: number) => void
 }
 
 interface GardenSquareDetailsModalProps {
@@ -51,10 +34,6 @@ interface GardenSquareDetailsModalProps {
   square: GardenSquare
   plantings: Array<GardenSquarePlanting>
   onClose: () => void
-}
-
-function calculateSvgY(area: GardenArea, offsetY: number, placementY: number, sizeY: number): number {
-  return OUTLINE_WIDTH + area.size_y - (offsetY + placementY + sizeY)
 }
 
 function plantingName(planting: GardenSquarePlanting): string {
@@ -78,46 +57,6 @@ function formatDateRange(early?: string, late?: string): string | undefined {
     return early
   }
   return `${early} to ${late}`
-}
-
-function GardenSquareElement({ area, bed, square, plantings, onSelect }: GardenSquareElementProps) {
-  const description = squareDescription(square, plantings)
-  const className = plantings.length > 0 ? 'garden-square garden-square--planted' : 'garden-square garden-square--empty'
-
-  function handleKeyDown(event: KeyboardEvent<SVGGElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') {
-      return
-    }
-
-    event.preventDefault()
-    onSelect(square.pk)
-  }
-
-  return (
-    <g className="garden-square-control" role="button" tabIndex={0} aria-label={description} aria-haspopup="dialog" onClick={() => onSelect(square.pk)} onKeyDown={handleKeyDown}>
-      <title>{description}</title>
-      <rect
-        className={className}
-        x={OUTLINE_WIDTH + bed.placement_x + square.placement_x}
-        y={calculateSvgY(area, bed.placement_y, square.placement_y, square.size_y)}
-        width={square.size_x}
-        height={square.size_y}
-      />
-    </g>
-  )
-}
-
-function GardenBedElement({ area, bed, squares, plantingsBySquare, onSelectSquare }: GardenBedElementProps) {
-  return (
-    <g>
-      <rect className="garden-bed" x={OUTLINE_WIDTH + bed.placement_x} y={calculateSvgY(area, 0, bed.placement_y, bed.size_y)} width={bed.size_x} height={bed.size_y}>
-        <title>{bed.name}</title>
-      </rect>
-      {squares.map((square) => (
-        <GardenSquareElement key={square.pk} area={area} bed={bed} square={square} plantings={plantingsBySquare.get(square.pk) ?? []} onSelect={onSelectSquare} />
-      ))}
-    </g>
-  )
 }
 
 // Everything a harvest form needs about this square is already in the current
@@ -256,7 +195,7 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: Gar
   )
 }
 
-function GardenAreaDisplay({ area, gardenBeds, squares, plantings }: GardenAreaDisplayProps) {
+function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings }: GardenAreaDisplayProps) {
   const [selectedSquarePk, setSelectedSquarePk] = useState<number>()
   const plantingsBySquare = useMemo(() => {
     const groupedPlantings = new Map<number, Array<GardenSquarePlanting>>()
@@ -267,39 +206,20 @@ function GardenAreaDisplay({ area, gardenBeds, squares, plantings }: GardenAreaD
     }
     return groupedPlantings
   }, [plantings])
-  const squaresByBed = useMemo(() => {
-    const groupedSquares = new Map<number, Array<GardenSquare>>()
-    for (const square of squares) {
-      const bedSquares = groupedSquares.get(square.bed) ?? []
-      bedSquares.push(square)
-      groupedSquares.set(square.bed, bedSquares)
-    }
-    return groupedSquares
-  }, [squares])
   const selectedSquare = squares.find((square) => square.pk === selectedSquarePk)
   const selectedBed = selectedSquare === undefined ? undefined : gardenBeds.find((bed) => bed.pk === selectedSquare.bed)
-  const viewWidth = area.size_x + OUTLINE_WIDTH * 2
-  const viewHeight = area.size_y + OUTLINE_WIDTH * 2
-  const titleId = `garden-area-${area.pk}-title`
 
   return (
     <>
-      <div className="garden-area-container">
-        <svg className="garden-area-display" viewBox={`0 0 ${viewWidth} ${viewHeight}`} role="group" aria-labelledby={titleId}>
-          <title id={titleId}>{area.name} garden layout</title>
-          <rect className="garden-area-outline" x={OUTLINE_WIDTH / 2} y={OUTLINE_WIDTH / 2} width={area.size_x + OUTLINE_WIDTH} height={area.size_y + OUTLINE_WIDTH} />
-          {gardenBeds.map((bed) => (
-            <GardenBedElement
-              key={bed.pk}
-              area={area}
-              bed={bed}
-              squares={squaresByBed.get(bed.pk) ?? []}
-              plantingsBySquare={plantingsBySquare}
-              onSelectSquare={setSelectedSquarePk}
-            />
-          ))}
-        </svg>
-      </div>
+      <GardenCanvas
+        area={area}
+        beds={gardenBeds}
+        rows={rows}
+        squares={squares}
+        describeSquare={(square) => squareDescription(square, plantingsBySquare.get(square.pk) ?? [])}
+        squareClassName={(square) => ((plantingsBySquare.get(square.pk) ?? []).length > 0 ? 'garden-square garden-square--planted' : 'garden-square garden-square--empty')}
+        onSelectSquare={setSelectedSquarePk}
+      />
       {selectedSquare !== undefined && (
         <GardenSquareDetailsModal
           area={area}
@@ -325,6 +245,10 @@ function GardenDisplay() {
     queryKey: queryKeys.garden.beds,
     queryFn: ({ signal }) => getGardenBeds(signal)
   })
+  const { data: rows = [] } = useQuery({
+    queryKey: queryKeys.garden.rows,
+    queryFn: ({ signal }) => getGardenRows(signal)
+  })
   const { data: squares = [] } = useQuery({
     queryKey: queryKeys.garden.squares,
     queryFn: ({ signal }) => getGardenSquares(signal)
@@ -349,16 +273,36 @@ function GardenDisplay() {
   if (areaId !== undefined) {
     const area = areas.find((candidate) => candidate.pk === selectedArea)
     if (area) {
-      areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={beds.filter((bed) => bed.area === area.pk)} squares={squares} plantings={plantings} />
+      const areaBeds = beds.filter((bed) => bed.area === area.pk)
+      const bedPks = new Set(areaBeds.map((bed) => bed.pk))
+      areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={areaBeds} rows={rows.filter((row) => bedPks.has(row.bed))} squares={squares} plantings={plantings} />
     } else if (!areasPending) {
       areaView = <div>Garden area not found.</div>
     }
+  }
+
+  // A workspace with no garden yet has nothing to select between, and the bare
+  // empty picker that used to stand here said so to nobody. Setup is the only
+  // way to create an area, so it is what this screen offers instead.
+  if (areas.length === 0 && !areasPending) {
+    return (
+      <Alert variant="info">
+        <Alert.Heading>There is no garden here yet</Alert.Heading>
+        <p>Set up a garden to lay out an area, its beds, and where things are kept. It takes a few minutes and you can leave it and come back.</p>
+        <Link className="btn btn-primary" to="/setup">
+          Set up my garden
+        </Link>
+      </Alert>
+    )
   }
 
   return (
     <>
       <Select onChange={updateSelectedGardenArea} options={areaOptions} value={areaOptions.find((option) => option.value === selectedArea)} />
       <div>{areaView}</div>
+      <p className="mt-3">
+        <Link to="/setup">Add another garden area</Link>
+      </p>
     </>
   )
 }

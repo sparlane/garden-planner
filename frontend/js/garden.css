@@ -23,6 +23,19 @@
   stroke-width: 50;
 }
 
+/* A row is a strip of a bed, drawn under any squares so both can be read when
+   a bed is described both ways. */
+.garden-row {
+  fill: #a3b18a;
+  fill-opacity: 0.45;
+  stroke: #6c757d;
+  stroke-width: 10;
+}
+
+.garden-setup-preview {
+  max-width: 40rem;
+}
+
 .garden-square-control {
   cursor: pointer;
   outline: none;
