@@ -34,6 +34,19 @@ class Workspace(models.Model):
         GARDEN = 'garden', 'Garden'
         NURSERY = 'nursery', 'Nursery'
 
+    class SetupState(models.TextChoices):
+        """How far the guided garden setup has got.
+
+        This records the gardener's answer, not the state of their data. A
+        workspace with no garden yet is only offered setup while this is
+        ``pending``, so somebody who declined once is not asked again, and
+        somebody who finished can still reopen it to add another area.
+        """
+
+        PENDING = 'pending', 'Not started'
+        SKIPPED = 'skipped', 'Skipped'
+        COMPLETE = 'complete', 'Complete'
+
     class MeasurementSystem(models.TextChoices):
         """Supported display measurement systems."""
 
@@ -107,6 +120,16 @@ class Workspace(models.Model):
         default=False,
         help_text=(
             'Require a stocktake reviewer to be different from every counter.'
+        ),
+    )
+    garden_setup_state = models.CharField(
+        max_length=16,
+        choices=SetupState.choices,
+        default=SetupState.PENDING,
+        help_text=(
+            'Whether the guided garden setup has been finished or declined. '
+            'An established workspace is never offered it, because it already '
+            'has a garden.'
         ),
     )
     created = models.DateTimeField(auto_now_add=True)
