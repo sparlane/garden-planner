@@ -22,4 +22,11 @@ function updateLocation(pk: number, changes: LocationUpdate): Promise<Response> 
   return csrfPatch(`${LOCATIONS_URL}${pk}/`, changes)
 }
 
-export { createLocation, getLocationOccupancy, getLocations, updateLocation }
+// Installs the ordinary places a household garden needs — a shed, a seed store,
+// a potting bench, a holding area. Asking twice creates nothing the second
+// time, so the setup wizard can be left and resumed at this step.
+function installHouseholdLocations(): Promise<Array<Location>> {
+  return csrfPost('/garden/setup/household-locations/', {}).then((response) => response.json() as Promise<Array<Location>>)
+}
+
+export { createLocation, getLocationOccupancy, getLocations, installHouseholdLocations, updateLocation }

@@ -258,8 +258,28 @@ function formatMoney(value: string | number | null | undefined, currencyCode: st
   return `${whole}.${trimmed.padEnd(2, '0')} ${currencyCode}`
 }
 
+// DRF reports a rejected write as {field: [message]}. Forms want one message
+// per field, so this flattens it and drops anything that is not shaped that
+// way — a network failure has already been published to the global alert.
+function errorsByField(error: unknown): Record<string, string> {
+  if (!(error instanceof ApiError) || typeof error.body !== 'object' || error.body === null) {
+    return {}
+  }
+
+  const fields: Record<string, string> = {}
+  for (const [field, messages] of Object.entries(error.body as Record<string, unknown>)) {
+    if (Array.isArray(messages) && messages.length > 0) {
+      fields[field] = String(messages[0])
+    } else if (typeof messages === 'string') {
+      fields[field] = messages
+    }
+  }
+  return fields
+}
+
 export {
   ApiError,
+  errorsByField,
   csrfDelete,
   csrfPost,
   csrfPatch,

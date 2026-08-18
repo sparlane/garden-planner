@@ -11,6 +11,7 @@ import { PlantsView } from './plants.js'
 import { SeedStockTable, SeedSuppliersTable, SeedTable } from './seeds.js'
 import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
+import { GardenSetup } from './garden/setup.js'
 import { SeedTrayModelsTable, SeedTraysTable } from './seedtrays.js'
 import { ApiErrorAlert } from './api_error_alert.js'
 import { queryClient, queryKeys } from './query.js'
@@ -108,6 +109,10 @@ function FrontEndPage() {
       <Routes>
         <Route path="/gardens" element={<GardenDisplay />} />
         <Route path="/gardens/:areaId" element={<GardenDisplay />} />
+        {/* Ungated: laying out ground matters in both profiles, and a nursery
+            with no geometry is as stuck as a garden with none. */}
+        <Route path="/setup" element={<GardenSetup workspace={workspace} />} />
+        <Route path="/setup/:areaId" element={<GardenSetup workspace={workspace} />} />
         <Route path="/plants" element={<PlantsView />} />
         <Route path="/seeds/suppliers" element={<SeedSuppliersTable />} />
         <Route path="/seeds" element={<SeedTable />} />

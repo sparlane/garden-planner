@@ -6,6 +6,10 @@ import { updateWorkspace } from './api/workspace'
 import { queryKeys } from './query'
 import { Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
 
+// The guided setup owns garden_setup_state; this screen edits everything else,
+// and must not send that field back and undo a gardener's answer.
+type WorkspaceProfile = Omit<WorkspaceUpdate, 'garden_setup_state'>
+
 interface WorkspaceSettingsProps {
   workspace: Workspace
 }
@@ -26,7 +30,7 @@ function WorkspaceModeRoute({ workspace, enabledModes, children }: WorkspaceMode
 
 function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
   const queryClient = useQueryClient()
-  const [form, setForm] = React.useState<WorkspaceUpdate>({
+  const [form, setForm] = React.useState<WorkspaceProfile>({
     name: workspace.name,
     mode: workspace.mode,
     currency_code: workspace.currency_code,
@@ -58,7 +62,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     })
   }, [workspace])
 
-  function updateField<Field extends keyof WorkspaceUpdate>(field: Field, value: WorkspaceUpdate[Field]) {
+  function updateField<Field extends keyof WorkspaceProfile>(field: Field, value: WorkspaceProfile[Field]) {
     setForm((current) => ({ ...current, [field]: value }))
   }
 
@@ -129,7 +133,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
         </Form.Group>
         <Form.Group className="mb-3" controlId="workspace-measurement">
           <Form.Label>Display measurements</Form.Label>
-          <Form.Select value={form.measurement_system} onChange={(event) => updateField('measurement_system', event.target.value as WorkspaceUpdate['measurement_system'])}>
+          <Form.Select value={form.measurement_system} onChange={(event) => updateField('measurement_system', event.target.value as WorkspaceProfile['measurement_system'])}>
             <option value="metric">Metric</option>
             <option value="imperial">Imperial</option>
           </Form.Select>

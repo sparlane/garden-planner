@@ -31,6 +31,13 @@ function GPTopBar({ workspace }: GPTopBarProps) {
           <Nav.Link as={NavLink} to="/gardens">
             Gardens
           </Nav.Link>
+          {/* Offered until the gardener finishes it or says no. Skipping is
+              recorded, so declining once takes this away for good. */}
+          {workspace.garden_setup_state === 'pending' && (
+            <Nav.Link as={NavLink} to="/setup">
+              Set up garden
+            </Nav.Link>
+          )}
           <Nav.Link as={NavLink} to="/plants">
             Plants
           </Nav.Link>
