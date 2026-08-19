@@ -4,7 +4,7 @@ import { Alert, Button, Form } from 'react-bootstrap'
 
 import { updateWorkspace } from './api/workspace'
 import { queryKeys } from './query'
-import { Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
+import { GardenExperience, Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
 
 // The guided setup owns garden_setup_state; this screen edits everything else,
 // and must not send that field back and undo a gardener's answer.
@@ -33,6 +33,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
   const [form, setForm] = React.useState<WorkspaceProfile>({
     name: workspace.name,
     mode: workspace.mode,
+    garden_experience: workspace.garden_experience,
     currency_code: workspace.currency_code,
     default_tax_rate: workspace.default_tax_rate,
     sales_prices_include_tax: workspace.sales_prices_include_tax,
@@ -51,6 +52,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     setForm({
       name: workspace.name,
       mode: workspace.mode,
+      garden_experience: workspace.garden_experience,
       currency_code: workspace.currency_code,
       default_tax_rate: workspace.default_tax_rate,
       sales_prices_include_tax: workspace.sales_prices_include_tax,
@@ -87,6 +89,22 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
             <option value="nursery">Nursery</option>
           </Form.Select>
         </Form.Group>
+        {form.mode === 'garden' && (
+          <Form.Group className="mb-3" controlId="workspace-garden-experience">
+            <Form.Label>Garden experience</Form.Label>
+            <Form.Select
+              value={form.garden_experience}
+              onChange={(event) => updateField('garden_experience', event.target.value as GardenExperience)}
+              aria-describedby="workspace-garden-experience-help"
+            >
+              <option value="basic">Basic</option>
+              <option value="advanced">Advanced</option>
+            </Form.Select>
+            <Form.Text id="workspace-garden-experience-help">
+              Basic hides supplier, price, tax, receiving, and costing fields and fills them in for you. Advanced shows every field. Switching changes no existing record.
+            </Form.Text>
+          </Form.Group>
+        )}
         <Form.Group className="mb-3" controlId="workspace-currency">
           <Form.Label>Currency code</Form.Label>
           <Form.Control

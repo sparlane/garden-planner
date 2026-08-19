@@ -1,6 +1,12 @@
 type WorkspaceMode = 'garden' | 'nursery'
 type MeasurementSystem = 'metric' | 'imperial'
 
+// How much stock, costing, and traceability detail Garden-profile screens
+// show. Meaningful only while mode is 'garden' — a Nursery workspace behaves
+// as Advanced regardless of this value. Use isAdvanced() from workspace_mode
+// rather than comparing this field directly.
+type GardenExperience = 'basic' | 'advanced'
+
 // Whether guided garden setup has been finished or declined. It records the
 // gardener's answer, not the state of their data: an established workspace is
 // never offered setup because it already has a garden.
@@ -9,6 +15,7 @@ type GardenSetupState = 'pending' | 'skipped' | 'complete'
 interface Workspace {
   name: string
   mode: WorkspaceMode
+  garden_experience: GardenExperience
   currency_code: string
   default_tax_rate: string
   sales_prices_include_tax: boolean
@@ -26,6 +33,7 @@ type WorkspaceUpdate = Pick<
   Workspace,
   | 'name'
   | 'mode'
+  | 'garden_experience'
   | 'currency_code'
   | 'default_tax_rate'
   | 'sales_prices_include_tax'
@@ -37,4 +45,4 @@ type WorkspaceUpdate = Pick<
   | 'garden_setup_state'
 >
 
-export { GardenSetupState, MeasurementSystem, Workspace, WorkspaceMode, WorkspaceUpdate }
+export { GardenExperience, GardenSetupState, MeasurementSystem, Workspace, WorkspaceMode, WorkspaceUpdate }
