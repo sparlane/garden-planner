@@ -14,6 +14,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         fields = [
             'name',
             'mode',
+            'garden_experience',
             'currency_code',
             'default_tax_rate',
             'sales_prices_include_tax',

@@ -53,11 +53,33 @@ class Workspace(models.Model):
         METRIC = 'metric', 'Metric'
         IMPERIAL = 'imperial', 'Imperial'
 
+    class GardenExperience(models.TextChoices):
+        """How much stock, costing, and traceability detail Garden screens show.
+
+        Meaningful only while ``mode`` is Garden: a Nursery workspace behaves
+        as Advanced regardless of this value, because those workflows need
+        the underlying records. Use ``is_advanced`` rather than comparing
+        this field directly, so that rule lives in one place.
+        """
+
+        BASIC = 'basic', 'Basic'
+        ADVANCED = 'advanced', 'Advanced'
+
     name = models.CharField(max_length=255)
     mode = models.CharField(
         max_length=16,
         choices=Mode.choices,
         default=Mode.GARDEN,
+    )
+    garden_experience = models.CharField(
+        max_length=16,
+        choices=GardenExperience.choices,
+        default=GardenExperience.BASIC,
+        help_text=(
+            'Whether Garden-profile screens show simplified defaults or full '
+            'stock, costing, and traceability detail. Ignored in Nursery '
+            'profile, which always behaves as Advanced.'
+        ),
     )
     currency_code = models.CharField(
         max_length=3,
@@ -149,6 +171,16 @@ class Workspace(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def is_advanced(self):
+        """Whether stock, costing, and traceability detail should be shown.
+
+        True for every Nursery workspace, and for a Garden workspace whose
+        gardener has opted into Advanced. Callers should use this instead of
+        comparing ``mode`` and ``garden_experience`` separately.
+        """
+        return self.mode == self.Mode.NURSERY or self.garden_experience == self.GardenExperience.ADVANCED
 
 
 def get_default_workspace_id():
