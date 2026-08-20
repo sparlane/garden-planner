@@ -188,6 +188,7 @@ interface GardenSquarePlantingLocation extends Omit<GardenSquare, 'area' | 'bed'
 }
 
 interface GardenSquarePlanting {
+  garden_planting_pk?: number
   specific_plant_pk?: number
   transplanting_pk?: number
   transplanted?: string
@@ -201,10 +202,66 @@ interface GardenSquarePlanting {
   planted: string
   location: GardenSquarePlantingLocation
   notes: string
+  source?: GardenPlantingSource
+  perennial?: boolean
+  quantity_is_approximate?: boolean
+  date_is_approximate?: boolean
   germination_date_early?: string
   germination_date_late?: string
   maturity_date_early?: string
   maturity_date_late?: string
+}
+
+type GardenPlantingSource = 'direct_seed' | 'indoor_raised_seed' | 'purchased_plant' | 'cutting' | 'division' | 'bulb_tuber_corm' | 'bare_root' | 'volunteer' | 'existing_unknown'
+type GardenPlantingTracking = 'aggregate' | 'individual'
+type GardenPlantingDateBasis = 'planted' | 'first_observed'
+
+interface GardenQuickAddEntry {
+  plant: number
+  variety?: number
+  new_variety_name?: string
+  batch?: number
+  source: GardenPlantingSource
+  tracking: GardenPlantingTracking
+  quantity: number
+  quantity_is_approximate?: boolean
+  recorded_on: string
+  date_basis: GardenPlantingDateBasis
+  date_is_approximate?: boolean
+  perennial?: boolean
+  garden_square?: number
+  location?: number
+  seed_packet?: number
+  seed_quantity_used?: string
+  supplier?: number
+  purchase_cost?: string
+  individual_names?: Array<string>
+  override_reason?: string
+  notes?: string
+}
+
+interface GardenQuickAddWarning {
+  entry: number
+  code: 'possible_duplicate' | 'location_occupied'
+  message: string
+}
+
+interface GardenQuickAddReview {
+  entries: Array<GardenQuickAddEntry>
+  warnings: Array<GardenQuickAddWarning>
+  confirmation_token: string
+}
+
+interface GardenQuickAddedPlanting extends GardenQuickAddEntry {
+  pk: number
+  plant_name: string
+  variety: number
+  variety_name: string
+  batch: number
+  batch_code: string
+  location_label: string
+  individual_names: Array<string>
+  finished_on: string | null
 }
 
 // Where a plant is. A plant in a tray records the cell rather than the bench
@@ -986,6 +1043,13 @@ export {
   GardenSquareTransplanting,
   SeedTrayPlantingDetails,
   GardenSquarePlanting,
+  GardenPlantingSource,
+  GardenPlantingTracking,
+  GardenPlantingDateBasis,
+  GardenQuickAddEntry,
+  GardenQuickAddReview,
+  GardenQuickAddWarning,
+  GardenQuickAddedPlanting,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
