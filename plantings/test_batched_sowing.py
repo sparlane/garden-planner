@@ -122,6 +122,23 @@ class BatchedSowingRESTTests(RESTContractTestCase):
         self.assertEqual(batch.created_by, self.user)
         self.assertEqual(batch.transitions.count(), 2)
 
+    def test_a_blank_inline_code_is_generated(self):
+        """A Basic-mode sowing can leave the code for the server to fill in."""
+        response = self._sow_square(new_batch={'code': ''})
+
+        self.assertEqual(response.status_code, 201, response.data)
+        batch = ProductionBatch.objects.get(pk=response.data['batch'])
+        self.assertTrue(batch.code.startswith('CROP-'))
+        self.assertTrue(batch.code_is_generated)
+
+    def test_an_omitted_inline_code_is_generated(self):
+        """The code key itself is optional, not only allowed to be blank."""
+        response = self._sow_square(new_batch={})
+
+        self.assertEqual(response.status_code, 201, response.data)
+        batch = ProductionBatch.objects.get(pk=response.data['batch'])
+        self.assertTrue(batch.code.startswith('CROP-'))
+
     def test_a_sowing_needs_exactly_one_batch_choice(self):
         """Batches are never silently generated, nor chosen twice."""
         neither = self._sow_square()

@@ -194,6 +194,7 @@ class ProductionBatchSerializer(
 
     variety_name = serializers.CharField(source='variety.name', read_only=True)
     plant_name = serializers.CharField(source='variety.plant.name', read_only=True)
+    code_is_generated = serializers.BooleanField(read_only=True)
     sowing_count = serializers.SerializerMethodField()
     seeds_sown = serializers.SerializerMethodField()
     plants_observed = serializers.SerializerMethodField()
@@ -206,6 +207,7 @@ class ProductionBatchSerializer(
         fields = [
             'pk',
             'code',
+            'code_is_generated',
             'variety',
             'variety_name',
             'plant_name',
@@ -278,10 +280,14 @@ class ProductionBatchSerializer(
         )
 
     def validate_code(self, value):
-        """Keep batch codes unique and meaningful inside one workspace."""
+        """Keep a typed batch code unique inside one workspace.
+
+        A blank code is left to `create_batch` to fill in, so there is
+        nothing to check for one.
+        """
         code = value.strip()
         if not code:
-            raise serializers.ValidationError('A batch code is required.')
+            return code
         duplicates = ProductionBatch.objects.filter(
             workspace=self.context['view'].get_current_workspace(),
             code=code,
@@ -317,7 +323,7 @@ class ProductionBatchSerializer(
             self.context['view'].get_current_workspace(),
             self.context['request'].user,
             BatchRequest(
-                code=validated_data['code'],
+                code=validated_data.get('code', ''),
                 variety=validated_data['variety'],
                 planned_start=validated_data.get('planned_start'),
                 notes=validated_data.get('notes', ''),
@@ -387,7 +393,13 @@ class InlineBatchSerializer(serializers.Serializer):  # pylint: disable=abstract
     caller supplies only the descriptive fields.
     """
 
-    code = serializers.CharField(max_length=64, allow_blank=False, trim_whitespace=True)
+    code = serializers.CharField(
+        max_length=64,
+        allow_blank=True,
+        required=False,
+        default='',
+        trim_whitespace=True,
+    )
     planned_start = serializers.DateField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
 

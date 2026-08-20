@@ -3,6 +3,7 @@ Models for Plantings
 """
 # pylint: disable=duplicate-code,too-many-lines
 from decimal import Decimal
+from uuid import uuid4
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -23,6 +24,15 @@ from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayGeneration
 from garden.models import GardenRow, GardenSquare
 from workspaces.models import WorkspaceOwnedModel
+
+#: Prefix marking a code this app generated rather than an operator typed,
+#: the same convention `LOT-`/`ASSET-` use in `inventory.models`.
+BATCH_CODE_PREFIX = 'CROP-'
+
+
+def generate_batch_code():
+    """Return a distinct, recognizable code for a batch nobody named."""
+    return f'{BATCH_CODE_PREFIX}{uuid4().hex.upper()[:8]}'
 
 
 class ProductionBatch(WorkspaceOwnedModel):
@@ -49,7 +59,11 @@ class ProductionBatch(WorkspaceOwnedModel):
         NONE = 'none', 'None'
         NEEDS_REPAIR = 'needs_repair', 'Needs repair'
 
-    code = models.CharField(max_length=64)
+    code = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text='A code left blank is filled in with a generated one on save.',
+    )
     variety = models.ForeignKey(
         PlantVariety,
         on_delete=models.PROTECT,
@@ -96,18 +110,27 @@ class ProductionBatch(WorkspaceOwnedModel):
     def __str__(self):
         return self.code
 
+    @property
+    def code_is_generated(self):
+        """Whether this code was filled in rather than typed by an operator."""
+        return self.code.startswith(BATCH_CODE_PREFIX)
+
     def clean(self):
-        """Require a usable code and a variety inside this workspace."""
+        """Require a variety inside this workspace.
+
+        A blank code is filled in by `save()` before validation runs, so
+        this only guards a caller that validates without saving.
+        """
         super().clean()
         errors = {}
-        if not self.code.strip():
-            errors['code'] = 'A batch code is required.'
         if self.variety_id and self.variety.workspace_id != self.workspace_id:
             errors['variety'] = 'The variety belongs to a different workspace.'
         if errors:
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
+        if not self.code.strip():
+            self.code = generate_batch_code()
         self.full_clean()
         super().save(*args, **kwargs)
 
