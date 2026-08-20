@@ -2,7 +2,7 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import { Alert, Button, Form, Table } from 'react-bootstrap'
+import { Alert, Badge, Button, Form, Table } from 'react-bootstrap'
 import Select from 'react-select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
@@ -10,6 +10,8 @@ import { Supplier, SupplierCreate } from './types/suppliers'
 import { Seed, SeedCreate, SeedPacket, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation, SeedQuantityCertainty } from './types/seeds'
 import { PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
+import { Workspace } from './types/workspace'
+import { isAdvanced } from './workspace_mode'
 import { getPlantVarieties } from './api/plants'
 import {
   addSeed,
@@ -113,7 +115,14 @@ class SeedSupplierRow extends React.Component<SeedSupplierRowProps> {
   render() {
     return (
       <tr>
-        <td>{this.props.supplier.name}</td>
+        <td>
+          {this.props.supplier.name}
+          {this.props.supplier.is_system_default && (
+            <Badge className="ms-2" bg="secondary">
+              System default
+            </Badge>
+          )}
+        </td>
         <td>
           <a href={this.props.supplier.website}>{this.props.supplier.website}</a>
         </td>
@@ -242,19 +251,19 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
   }
 
   async add() {
-    let { supplier } = this.state
-    if (!supplier) {
-      supplier = this.props.suppliers[0].pk
-    }
     let { variety } = this.state
     if (!variety) {
       variety = this.props.varieties[0].pk
     }
     const data: SeedCreate = {
-      supplier: supplier,
       plant_variety: variety,
       base_unit: this.state.baseUnit,
       notes: this.state.notes
+    }
+    // Left unset, the server fills in the workspace's system-default
+    // supplier — the Basic Garden path for seed nobody bought from anyone.
+    if (this.state.supplier !== undefined) {
+      data.supplier = this.state.supplier
     }
     if (this.state.supplierCode !== undefined && this.state.supplierCode !== '') {
       data.supplier_code = this.state.supplierCode
@@ -401,13 +410,15 @@ interface PacketReceiptFormProps {
   draft?: SeedPacketReceiptDraft
   onSave: (data: SeedPacketReceiptCreate) => Promise<void>
   onCancel: () => void
+  workspace: Workspace
 }
 
-function PacketReceiptForm({ seeds, suppliers, varieties, draft, onSave, onCancel }: PacketReceiptFormProps) {
+function PacketReceiptForm({ seeds, suppliers, varieties, draft, onSave, onCancel, workspace }: PacketReceiptFormProps) {
+  const priceRequired = isAdvanced(workspace)
   const [seedPk, setSeedPk] = React.useState<number | undefined>(draft?.seeds)
   const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>(draft?.quantity_certainty ?? 'unknown')
   const [quantity, setQuantity] = React.useState(draft?.quantity ? formatQuantity(draft.quantity) : '')
-  const [price, setPrice] = React.useState(draft?.line_price ?? '')
+  const [price, setPrice] = React.useState(draft?.line_price ?? (priceRequired ? '' : '0'))
   const [receivedDate, setReceivedDate] = React.useState(draft?.received_date ?? new Date().toISOString().slice(0, 10))
   const [sowBy, setSowBy] = React.useState(draft?.sow_by ?? '')
   const [supplierLot, setSupplierLot] = React.useState(draft?.supplier_lot_reference ?? '')
@@ -512,7 +523,7 @@ function PacketReceiptForm({ seeds, suppliers, varieties, draft, onSave, onCance
           </Form.Group>
           <Form.Group className="col-md-2">
             <Form.Label>Line price</Form.Label>
-            <Form.Control required type="number" min="0" step="0.0001" value={price} onChange={(event) => setPrice(event.target.value)} />
+            <Form.Control required={priceRequired} type="number" min="0" step="0.0001" value={price} onChange={(event) => setPrice(event.target.value)} />
             {fieldError('line_price')}
           </Form.Group>
           <Form.Group className="col-md-2">
@@ -655,7 +666,7 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
   )
 }
 
-function SeedStockTable() {
+function SeedStockTable({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const [showReceipt, setShowReceipt] = React.useState(false)
   const [editingDraft, setEditingDraft] = React.useState<SeedPacketReceiptDraft | null>(null)
@@ -706,7 +717,9 @@ function SeedStockTable() {
         </tr>
       </thead>
       <tbody>
-        {showReceipt && <PacketReceiptForm seeds={seeds} suppliers={suppliers} varieties={varieties} onSave={createReceipt} onCancel={() => setShowReceipt(false)} />}
+        {showReceipt && (
+          <PacketReceiptForm seeds={seeds} suppliers={suppliers} varieties={varieties} onSave={createReceipt} onCancel={() => setShowReceipt(false)} workspace={workspace} />
+        )}
         {drafts.map((draft) => (
           <ReceiptDraftRow
             key={`draft-${draft.pk}`}
@@ -726,6 +739,7 @@ function SeedStockTable() {
             draft={editingDraft}
             onSave={saveDraft}
             onCancel={() => setEditingDraft(null)}
+            workspace={workspace}
           />
         )}
         {packets.map((packet) => (

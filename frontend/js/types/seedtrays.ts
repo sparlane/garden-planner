@@ -16,11 +16,12 @@ interface SeedTrayModel extends SeedTrayModelCreate {
 }
 
 interface SeedTrayReceiptCreate {
-  supplier: number
+  // Omit to let the workspace's system-default supplier stand in.
+  supplier?: number
   received_date: string
   supplier_reference?: string
   quantity: number
-  line_cost_ex_tax: string
+  line_cost_ex_tax?: string
   destination: number
   tax_rate?: string
   tax_recoverable?: boolean

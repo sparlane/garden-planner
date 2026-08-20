@@ -14,7 +14,9 @@ interface Seed {
 }
 
 interface SeedCreate {
-  supplier: number
+  // Omit to let the workspace's system-default supplier stand in — the
+  // Basic Garden path for seed nobody bought from anyone.
+  supplier?: number
   plant_variety: number
   base_unit: 'seed' | 'seed_cluster'
   supplier_code?: string

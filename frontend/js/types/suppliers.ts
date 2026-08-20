@@ -3,6 +3,7 @@ interface Supplier {
   name: string
   website: string
   notes: string
+  is_system_default: boolean
 }
 
 interface SupplierCreate {

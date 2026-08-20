@@ -14,6 +14,7 @@ import { GardenBed, GardenSquare } from './types/garden'
 import { GardenSquareDirectPlantingCreate, GardenSquarePlanting, SeedTrayPlantingCreate, SeedTrayPlantingDetails, SowingCorrection } from './types/plantings'
 import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
+import { Workspace } from './types/workspace'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
 import { formatDate, formatDateRange, formatQuantity } from './utils'
 import {
@@ -221,9 +222,10 @@ interface NewSeedTrayPlantingRowProps {
   seedTrayModels: { [key: number]: SeedTrayModel }
   done: () => void
   createPlanting: (data: SeedTrayPlantingCreate) => Promise<void>
+  workspace: Workspace
 }
 
-function NewSeedTrayPlantingRow({ seeds, seedPackets, packetOptions, seedTrays, seedTrayModels, done, createPlanting }: NewSeedTrayPlantingRowProps) {
+function NewSeedTrayPlantingRow({ seeds, seedPackets, packetOptions, seedTrays, seedTrayModels, done, createPlanting, workspace }: NewSeedTrayPlantingRowProps) {
   const [seedPacket, setSeedPacket] = React.useState<number>()
   const [quantity, setQuantity] = React.useState(1)
   const [seedTray, setSeedTray] = React.useState<number>()
@@ -285,7 +287,7 @@ function NewSeedTrayPlantingRow({ seeds, seedPackets, packetOptions, seedTrays, 
     if (seedPacket === undefined) {
       return
     }
-    if (!isChoiceComplete(batchChoice)) {
+    if (!isChoiceComplete(batchChoice, workspace)) {
       setError('Choose an existing batch or name a new one')
       return
     }
@@ -344,7 +346,7 @@ function NewSeedTrayPlantingRow({ seeds, seedPackets, packetOptions, seedTrays, 
           />
         </td>
         <td>
-          <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
+          <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} workspace={workspace} />
         </td>
         <td>
           <input type="number" min="0" value={quantity} readOnly={hasSelectedCells} onChange={updateQuantity} />
@@ -430,7 +432,7 @@ function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correc
   )
 }
 
-function SeedTrayPlantingTable() {
+function SeedTrayPlantingTable({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const [showPlantingAdd, setShowPlantingAdd] = React.useState(false)
   const { data: suppliers = [] } = useQuery({
@@ -506,6 +508,7 @@ function SeedTrayPlantingTable() {
         seedTrayModels={seedTrayModels}
         createPlanting={createPlanting}
         done={() => setShowPlantingAdd(false)}
+        workspace={workspace}
       />
     )
   }
@@ -544,9 +547,10 @@ interface NewGardenSquarePlantingRowProps {
   gardenSquares: Array<GardenSquare>
   done: () => void
   createPlanting: (data: GardenSquareDirectPlantingCreate) => Promise<void>
+  workspace: Workspace
 }
 
-function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenBeds, gardenSquares, done, createPlanting }: NewGardenSquarePlantingRowProps) {
+function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenBeds, gardenSquares, done, createPlanting, workspace }: NewGardenSquarePlantingRowProps) {
   const [seedPacket, setSeedPacket] = React.useState<number>()
   const [quantity, setQuantity] = React.useState(1)
   const [location, setLocation] = React.useState<number>()
@@ -573,7 +577,7 @@ function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenB
     if (seedPacket === undefined || location === undefined) {
       return
     }
-    if (!isChoiceComplete(batchChoice)) {
+    if (!isChoiceComplete(batchChoice, workspace)) {
       setError('Choose an existing batch or name a new one')
       return
     }
@@ -618,7 +622,7 @@ function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenB
           />
         </td>
         <td>
-          <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} />
+          <BatchChooser variety={packetVariety} value={batchChoice} onChange={setBatchChoice} workspace={workspace} />
         </td>
         <td>
           <input type="number" defaultValue={quantity} onChange={updateQuantity} />
@@ -688,7 +692,7 @@ function GardenSquarePlantingRow({ planting, packetOptions, completePlanting, co
   )
 }
 
-function GardenSquarePlantingTable() {
+function GardenSquarePlantingTable({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const [showPlantingAdd, setShowPlantingAdd] = React.useState(false)
   const [filterGardenArea, setFilterGardenArea] = React.useState<number>()
@@ -830,6 +834,7 @@ function GardenSquarePlantingTable() {
         gardenBeds={gardenBeds}
         createPlanting={createPlanting}
         done={() => setShowPlantingAdd(false)}
+        workspace={workspace}
       />
     )
   }

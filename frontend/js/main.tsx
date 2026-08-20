@@ -48,7 +48,7 @@ function SeedTrayDetailsRoute() {
   return <SeedTrayDetails seedTrayPk={seedTrayPk} />
 }
 
-function ProductionBatchDetailRoute() {
+function ProductionBatchDetailRoute({ workspace }: { workspace: Workspace }) {
   const { batchId } = useParams()
   const batchPk = Number(batchId)
 
@@ -56,7 +56,7 @@ function ProductionBatchDetailRoute() {
     return <div>Batch not found.</div>
   }
 
-  return <ProductionBatchDetailView batchPk={batchPk} />
+  return <ProductionBatchDetailView batchPk={batchPk} workspace={workspace} />
 }
 
 function PlantDetailRoute({ workspace }: { workspace: Workspace }) {
@@ -107,8 +107,8 @@ function FrontEndPage() {
       <GPTopBar workspace={workspace} />
       <ApiErrorAlert />
       <Routes>
-        <Route path="/gardens" element={<GardenDisplay />} />
-        <Route path="/gardens/:areaId" element={<GardenDisplay />} />
+        <Route path="/gardens" element={<GardenDisplay workspace={workspace} />} />
+        <Route path="/gardens/:areaId" element={<GardenDisplay workspace={workspace} />} />
         {/* Ungated: laying out ground matters in both profiles, and a nursery
             with no geometry is as stuck as a garden with none. */}
         <Route path="/setup" element={<GardenSetup workspace={workspace} />} />
@@ -116,14 +116,14 @@ function FrontEndPage() {
         <Route path="/plants" element={<PlantsView />} />
         <Route path="/seeds/suppliers" element={<SeedSuppliersTable />} />
         <Route path="/seeds" element={<SeedTable />} />
-        <Route path="/seeds/stock" element={<SeedStockTable />} />
+        <Route path="/seeds/stock" element={<SeedStockTable workspace={workspace} />} />
         <Route path="/seedtrays/models" element={<SeedTrayModelsTable />} />
         <Route path="/seedtrays" element={<SeedTraysTable />} />
         <Route path="/seedtrays/:trayId" element={<SeedTrayDetailsRoute />} />
-        <Route path="/plantings/batches" element={<ProductionBatchTable />} />
-        <Route path="/plantings/batches/:batchId" element={<ProductionBatchDetailRoute />} />
-        <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable />} />
-        <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable />} />
+        <Route path="/plantings/batches" element={<ProductionBatchTable workspace={workspace} />} />
+        <Route path="/plantings/batches/:batchId" element={<ProductionBatchDetailRoute workspace={workspace} />} />
+        <Route path="/plantings/seedtrays" element={<SeedTrayPlantingTable workspace={workspace} />} />
+        <Route path="/plantings/garden-squares" element={<GardenSquarePlantingTable workspace={workspace} />} />
         <Route
           path="/plantings/register"
           element={

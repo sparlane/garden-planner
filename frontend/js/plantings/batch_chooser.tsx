@@ -5,6 +5,9 @@ import { Form } from 'react-bootstrap'
 import { getProductionBatches } from '../api/plantings'
 import { queryKeys } from '../query'
 import { NewBatchInline } from '../types/plantings'
+import { Workspace } from '../types/workspace'
+import { isAdvanced } from '../workspace_mode'
+import { chooseBatchOption, newBatchCodePlaceholder, newBatchOption } from './batch_terms'
 
 const NEW_BATCH = 'new'
 
@@ -17,13 +20,23 @@ interface BatchChooserProps {
   variety?: number
   value: BatchChoice
   onChange: (choice: BatchChoice) => void
+  workspace: Workspace
 }
 
-function isChoiceComplete(choice: BatchChoice): boolean {
+/**
+ * Whether a choice is ready to submit.
+ *
+ * A generated code is only offered in Basic mode: Advanced still requires an
+ * operator to type one, since that is the audience task 60 leaves untouched.
+ */
+function isChoiceComplete(choice: BatchChoice, workspace: Workspace): boolean {
   if (choice.batch !== undefined) {
     return true
   }
-  return Boolean(choice.new_batch?.code.trim())
+  if (choice.new_batch === undefined) {
+    return false
+  }
+  return !isAdvanced(workspace) || Boolean(choice.new_batch.code.trim())
 }
 
 /**
@@ -33,8 +46,9 @@ function isChoiceComplete(choice: BatchChoice): boolean {
  * sowing, so the alternative is creating one inline rather than picking an
  * incompatible batch.
  */
-function BatchChooser({ variety, value, onChange }: BatchChooserProps) {
+function BatchChooser({ variety, value, onChange, workspace }: BatchChooserProps) {
   const creating = value.new_batch !== undefined
+  const codeRequired = isAdvanced(workspace)
   const { data: batches = [] } = useQuery({
     queryKey: queryKeys.plantings.batches('active', variety ?? '', '', false),
     queryFn: ({ signal }) => getProductionBatches({ status: 'active', variety }, signal),
@@ -58,20 +72,20 @@ function BatchChooser({ variety, value, onChange }: BatchChooserProps) {
   return (
     <>
       <Form.Select aria-label="Production batch" value={creating ? NEW_BATCH : (value.batch ?? '')} onChange={(event) => updateSelection(event.target.value)}>
-        <option value="">Choose a batch…</option>
+        <option value="">{chooseBatchOption(workspace)}</option>
         {batches.map((batch) => (
           <option key={batch.pk} value={batch.pk}>
             {batch.code} ({batch.seeds_sown} sown)
           </option>
         ))}
-        <option value={NEW_BATCH}>Create a new batch…</option>
+        <option value={NEW_BATCH}>{newBatchOption(workspace)}</option>
       </Form.Select>
       {creating && (
         <Form.Control
           className="mt-1"
-          required
+          required={codeRequired}
           maxLength={64}
-          placeholder="New batch code"
+          placeholder={codeRequired ? newBatchCodePlaceholder(workspace) : 'Leave blank to generate one'}
           value={value.new_batch?.code ?? ''}
           onChange={(event) => onChange({ new_batch: { code: event.target.value } })}
         />
