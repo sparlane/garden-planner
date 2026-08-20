@@ -14,7 +14,8 @@ class SupplierSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Supplier
-        fields = ['pk', 'name', 'website', 'notes']
+        fields = ['pk', 'name', 'website', 'notes', 'is_system_default']
+        read_only_fields = ['is_system_default']
 
 
 class SupplierViewSet(

@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from locations.models import Location
+from supplies.defaults import ensure_default_supplier
 from workspaces.models import get_current_workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -100,6 +101,11 @@ class StockReceiptLineSerializer(
             'updated',
         ]
         read_only_fields = ['lot', 'created', 'updated']
+        extra_kwargs = {
+            # A Basic Garden gift or swap has no price; zero is a legitimate
+            # cost, not a placeholder for one that was never entered.
+            'line_cost_ex_tax': {'required': False},
+        }
 
     workspace_field_lookups = {
         'item': 'workspace',
@@ -135,6 +141,7 @@ class StockReceiptLineSerializer(
             )
         if destination and not destination.active:
             raise ValidationError({'destination': 'The location is inactive.'})
+        attrs.setdefault('line_cost_ex_tax', Decimal('0'))
         certainty = attrs.get(
             'quantity_certainty',
             getattr(self.instance, 'quantity_certainty', QuantityCertainty.EXACT),
@@ -201,6 +208,7 @@ class StockReceiptSerializer(
             'movement_ids',
         ]
         extra_kwargs = {
+            'supplier': {'required': False},
             'currency_code': {'required': False},
             'tax_rate': {'required': False},
         }
@@ -231,6 +239,7 @@ class StockReceiptSerializer(
             workspace = get_current_workspace()
             attrs.setdefault('currency_code', workspace.currency_code)
             attrs.setdefault('tax_rate', workspace.default_tax_rate)
+            attrs.setdefault('supplier', ensure_default_supplier(workspace))
         return attrs
 
     @transaction.atomic

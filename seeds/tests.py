@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 from inventory.models import QuantityCertainty, StockMovement, StockReceipt
 from seeds.models import SeedPacketQuantityReconciliation
 from seeds.services import packet_inventory_snapshot, reverse_packet_reconciliation
+from supplies.models import Supplier
 from plantings.models import (
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
@@ -76,6 +77,22 @@ class SeedRESTContractTests(RESTContractTestCase):
             format='json',
         )
         self.assertEqual(response.status_code, 405)
+
+    def test_a_seed_catalog_entry_with_no_supplier_uses_the_system_default(self):
+        """Seed saved or gifted rather than bought needs no supplier chosen."""
+        variety = make_plant_variety()
+        response = self.client.post(
+            '/seeds/seeds/',
+            {
+                'plant_variety': variety.pk,
+                'base_unit': 'seed',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        supplier = Supplier.objects.get(pk=response.data['supplier'])
+        self.assertEqual(supplier.name, 'Unknown / home garden')
+        self.assertTrue(supplier.is_system_default)
 
     def test_current_and_all_packet_routes_apply_empty_filter(self):
         """The current route omits empty packets while the all route retains them."""
@@ -274,6 +291,21 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
         )
         self.assertEqual(response.status_code, 201)
         return response.data
+
+    def test_a_draft_with_no_price_defaults_to_zero(self):
+        """A gifted or saved packet is receivable without inventing a cost."""
+        response = self.client.post(
+            '/seeds/packet-receipts/',
+            {
+                'seeds': self.seeds_pk,
+                'quantity_certainty': QuantityCertainty.EXACT,
+                'quantity': '20',
+                'received_date': '2026-08-02',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['line_price'], '0.0000')
 
     def test_unknown_receipt_posts_lot_without_inventing_quantity(self):
         """A priced packet can be received while its contents remain unknown."""

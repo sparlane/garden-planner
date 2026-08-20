@@ -108,6 +108,40 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
             },
         )
 
+    def test_receiving_with_no_supplier_or_cost_uses_safe_defaults(self):
+        """A Basic Garden tray nobody bought from anyone still receives cleanly."""
+        tray_model = self.assert_create_retrieve(
+            '/seedtrays/seedtraymodels/',
+            {
+                'identifier': 'propagation-basic',
+                'description': 'Basic-mode propagation tray',
+                'height': 6,
+                'x_size': 30,
+                'y_size': 20,
+                'x_cells': 3,
+                'y_cells': 2,
+                'cell_size_ml': 45,
+            },
+        )
+        location = Location.objects.create(
+            name='Basic receipt store',
+            code='BASIC-RECEIPT-STORE',
+            location_type=Location.LocationType.STORAGE,
+        )
+        response = self.client.post(
+            f"/seedtrays/seedtraymodels/{tray_model['pk']}/receive/",
+            {
+                'received_date': '2026-08-02',
+                'quantity': 1,
+                'destination': location.pk,
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        tray = response.data['trays'][0]
+        unit = InventoryUnit.objects.get(pk=tray['inventory_unit'])
+        self.assertEqual(unit.acquisition_cost, 0)
+        self.assertTrue(unit.source_lot.receipt_line.receipt.supplier.is_system_default)
+
     def test_nested_cell_routes_are_scoped_to_url_tray(self):
         """Nested list and detail routes cannot expose another tray's cells."""
         own_cell = make_seed_tray_cell(tray=self.tray)

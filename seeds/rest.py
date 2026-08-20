@@ -17,6 +17,8 @@ from workspaces.scoping import (
     CurrentWorkspaceViewSetMixin,
 )
 
+from supplies.defaults import ensure_default_supplier
+
 from .models import SeedPacket, SeedPacketReceiptDraft, Seeds
 from .services import (
     create_packet_receipt_draft,
@@ -58,6 +60,11 @@ class SeedsSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializ
             'inventory_item',
             'base_unit',
         ]
+        extra_kwargs = {
+            # A Basic Garden workflow may not have a supplier to name; a
+            # blank value resolves to the workspace's system default below.
+            'supplier': {'required': False},
+        }
 
     workspace_field_lookups = {
         'supplier': 'workspace',
@@ -76,6 +83,10 @@ class SeedsSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializ
     @transaction.atomic
     def create(self, validated_data):
         base_unit = validated_data.pop('base_unit', UnitCode.SEED)
+        validated_data.setdefault(
+            'supplier',
+            ensure_default_supplier(validated_data['workspace']),
+        )
         seeds = Seeds.objects.create(**validated_data)
         item = create_seed_inventory_item(seeds.workspace, seeds, base_unit)
         seeds.inventory_item = item
@@ -188,6 +199,8 @@ class PacketReceiptDraftSerializer(
         max_digits=18,
         decimal_places=4,
         min_value=Decimal('0'),
+        required=False,
+        default=Decimal('0'),
     )
     supplier_lot_reference = serializers.CharField(
         allow_blank=True,
