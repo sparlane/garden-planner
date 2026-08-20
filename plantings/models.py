@@ -12,6 +12,8 @@ from django.db import models
 from django.utils import timezone
 
 from inventory.models import (
+    MONEY_DECIMAL_PLACES,
+    MONEY_MAX_DIGITS,
     POSITIVE_DECIMAL,
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
@@ -22,6 +24,7 @@ from locations.models import Location
 from plants.models import PlantVariety
 from seeds.models import SeedPacket
 from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayGeneration
+from supplies.models import Supplier
 from garden.models import GardenRow, GardenSquare
 from workspaces.models import WorkspaceOwnedModel
 
@@ -178,6 +181,174 @@ class ProductionBatchTransition(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Batch transitions cannot be deleted.')
+
+
+class GardenPlanting(WorkspaceOwnedModel):
+    """A source-neutral statement that plants entered a household garden."""
+
+    class Source(models.TextChoices):
+        """How this planting entered the garden, without implying lineage."""
+
+        DIRECT_SEED = 'direct_seed', 'Direct seed'
+        INDOOR_RAISED_SEED = 'indoor_raised_seed', 'Indoor-raised seed'
+        PURCHASED_PLANT = 'purchased_plant', 'Purchased plant'
+        CUTTING = 'cutting', 'Cutting'
+        DIVISION = 'division', 'Division'
+        BULB_TUBER_CORM = 'bulb_tuber_corm', 'Bulb, tuber, or corm'
+        BARE_ROOT = 'bare_root', 'Bare root'
+        VOLUNTEER = 'volunteer', 'Volunteer'
+        EXISTING_UNKNOWN = 'existing_unknown', 'Existing or unknown'
+
+    class Tracking(models.TextChoices):
+        """Whether quantity remains grouped or creates individual identities."""
+
+        AGGREGATE = 'aggregate', 'Aggregate crop or patch'
+        INDIVIDUAL = 'individual', 'Individual plants'
+
+    class DateBasis(models.TextChoices):
+        """What the gardener knows the recorded calendar date to mean."""
+
+        PLANTED = 'planted', 'Planted'
+        FIRST_OBSERVED = 'first_observed', 'First observed'
+
+    batch = models.ForeignKey(
+        ProductionBatch,
+        on_delete=models.PROTECT,
+        related_name='garden_plantings',
+    )
+    source = models.CharField(max_length=24, choices=Source.choices)
+    tracking = models.CharField(max_length=16, choices=Tracking.choices)
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    quantity_is_approximate = models.BooleanField(default=False)
+    recorded_on = models.DateField()
+    date_basis = models.CharField(max_length=16, choices=DateBasis.choices)
+    date_is_approximate = models.BooleanField(default=False)
+    perennial = models.BooleanField(default=False)
+    garden_square = models.ForeignKey(
+        GardenSquare,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='quick_plantings',
+    )
+    location = models.ForeignKey(
+        Location,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='quick_plantings',
+    )
+    seed_packet = models.ForeignKey(
+        SeedPacket,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='garden_plantings',
+    )
+    seed_quantity_used = models.DecimalField(
+        max_digits=QUANTITY_MAX_DIGITS,
+        decimal_places=QUANTITY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(POSITIVE_DECIMAL)],
+    )
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='garden_plantings',
+    )
+    purchase_cost = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    finished_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['recorded_on', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(garden_square__isnull=False, location__isnull=True) | models.Q(garden_square__isnull=True, location__isnull=False)),
+                name='garden_planting_exactly_one_location',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quantity__gte=1),
+                name='garden_planting_quantity_gte_1',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(tracking='aggregate') | models.Q(quantity_is_approximate=False)),
+                name='garden_individual_quantity_exact',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(seed_packet__isnull=True, seed_quantity_used__isnull=True) | models.Q(seed_packet__isnull=False, seed_quantity_used__isnull=False)),
+                name='garden_seed_packet_quantity_together',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(finished_on__isnull=True) | models.Q(finished_on__gte=models.F('recorded_on')),
+                name='garden_planting_finish_not_before_start',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(tracking='aggregate') | models.Q(finished_on__isnull=True),
+                name='garden_individual_origin_not_finished',
+            ),
+        ]
+
+    def clean(self):
+        """Keep the entry, its optional provenance, and its place coherent."""
+        super().clean()
+        errors = {}
+        places = [self.garden_square_id is not None, self.location_id is not None]
+        if sum(places) != 1:
+            errors['location'] = 'Select exactly one garden square or location.'
+        owners = {
+            'batch': self.batch if self.batch_id else None,
+            'garden_square': self.garden_square if self.garden_square_id else None,
+            'location': self.location if self.location_id else None,
+            'seed_packet': self.seed_packet if self.seed_packet_id else None,
+            'supplier': self.supplier if self.supplier_id else None,
+        }
+        for field, owner in owners.items():
+            if owner is not None and owner.workspace_id != self.workspace_id:
+                errors[field] = 'This record belongs to a different workspace.'
+        if self.tracking == self.Tracking.INDIVIDUAL and self.quantity_is_approximate:
+            errors['quantity_is_approximate'] = 'Individual plant quantities must be exact.'
+        if bool(self.seed_packet_id) != bool(self.seed_quantity_used is not None):
+            errors['seed_packet'] = 'Provide a seed packet and exact quantity together.'
+        if self.seed_packet_id:
+            if self.source not in {self.Source.DIRECT_SEED, self.Source.INDOOR_RAISED_SEED}:
+                errors['seed_packet'] = 'Seed packets apply only to seed propagation sources.'
+            elif self.seed_packet.seeds.plant_variety_id != self.batch.variety_id:
+                errors['seed_packet'] = 'The seed packet variety does not match the planting cycle.'
+            if self.supplier_id or self.purchase_cost is not None:
+                errors['purchase_cost'] = 'Packet provenance and manual purchase details cannot be combined.'
+        if self.finished_on and self.finished_on < self.recorded_on:
+            errors['finished_on'] = 'Must be on or after the recorded date.'
+        if self.tracking == self.Tracking.INDIVIDUAL and self.finished_on:
+            errors['finished_on'] = 'Finish individual plants through their lifecycle records.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        place = self.garden_square or self.location
+        return f'{self.quantity} {self.batch.variety} at {place}'
 
 
 class Planting(WorkspaceOwnedModel):
@@ -406,6 +577,15 @@ class SpecificPlant(WorkspaceOwnedModel):
         blank=True,
         editable=False,
     )
+    garden_planting = models.ForeignKey(
+        GardenPlanting,
+        on_delete=models.PROTECT,
+        related_name='specific_plants',
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    name = models.CharField(max_length=255, blank=True, default='')
     germinated = models.DateTimeField(default=timezone.now)
     notes = models.TextField(null=True, blank=True)
 
@@ -413,8 +593,9 @@ class SpecificPlant(WorkspaceOwnedModel):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(
-                    models.Q(cell_planting__isnull=False, promoted_from_cohort__isnull=True),
-                    models.Q(cell_planting__isnull=True, promoted_from_cohort__isnull=False),
+                    models.Q(cell_planting__isnull=False, promoted_from_cohort__isnull=True, garden_planting__isnull=True),
+                    models.Q(cell_planting__isnull=True, promoted_from_cohort__isnull=False, garden_planting__isnull=True),
+                    models.Q(cell_planting__isnull=True, promoted_from_cohort__isnull=True, garden_planting__isnull=False),
                     _connector=models.Q.OR,
                 ),
                 name='specific_plant_exactly_one_origin',
@@ -424,13 +605,19 @@ class SpecificPlant(WorkspaceOwnedModel):
     def clean(self):
         """Keep the durable batch and whichever origin raised this plant aligned."""
         super().clean()
-        origins = [self.cell_planting_id is not None, self.promoted_from_cohort_id is not None]
+        origins = [
+            self.cell_planting_id is not None,
+            self.promoted_from_cohort_id is not None,
+            self.garden_planting_id is not None,
+        ]
         if sum(origins) != 1:
-            raise ValidationError('A plant must have exactly one tray-cell or cohort origin.')
-        origin_batch_id = (
-            self.cell_planting.seed_tray_planting.batch_id
-            if self.cell_planting_id else self.promoted_from_cohort.batch_id
-        )
+            raise ValidationError('A plant must have exactly one tray-cell, cohort, or garden origin.')
+        if self.cell_planting_id:
+            origin_batch_id = self.cell_planting.seed_tray_planting.batch_id
+        elif self.promoted_from_cohort_id:
+            origin_batch_id = self.promoted_from_cohort.batch_id
+        else:
+            origin_batch_id = self.garden_planting.batch_id
         if self.batch_id is None:
             setattr(self, 'batch_id', origin_batch_id)
         elif self.batch_id != origin_batch_id:
@@ -441,7 +628,7 @@ class SpecificPlant(WorkspaceOwnedModel):
         super().save(*args, **kwargs)
 
     def __str__(self):
-        origin = self.cell_planting or f'cohort {self.promoted_from_cohort_id}'
+        origin = self.cell_planting or self.garden_planting or f'cohort {self.promoted_from_cohort_id}'
         return f'Plant from {origin} germinated {self.germinated}'
 
 

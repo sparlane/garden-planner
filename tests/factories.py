@@ -24,6 +24,7 @@ from inventory.models import (
 from inventory.units import UnitCode
 from locations.models import Location
 from plantings.models import (
+    GardenPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     Harvest,
@@ -261,6 +262,23 @@ def make_garden_square(**overrides):
         values['bed'] = make_garden_bed(**_parent_workspace(overrides))
     values.update(overrides)
     return GardenSquare.objects.create(**values)
+
+
+def make_garden_planting(**overrides):
+    """Create a source-neutral garden planting at one square."""
+    values = {
+        'source': GardenPlanting.Source.EXISTING_UNKNOWN,
+        'tracking': GardenPlanting.Tracking.AGGREGATE,
+        'quantity': 1,
+        'recorded_on': date(2026, 1, 1),
+        'date_basis': GardenPlanting.DateBasis.FIRST_OBSERVED,
+    }
+    if 'batch' not in overrides:
+        values['batch'] = make_production_batch(**_parent_workspace(overrides))
+    if 'garden_square' not in overrides and 'location' not in overrides:
+        values['garden_square'] = make_garden_square(**_parent_workspace(overrides))
+    values.update(overrides)
+    return GardenPlanting.objects.create(**values)
 
 
 def make_seed_tray_model(**overrides):
