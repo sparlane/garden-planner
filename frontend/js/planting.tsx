@@ -36,6 +36,7 @@ import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
 import { BatchChooser, isChoiceComplete, type BatchChoice } from './plantings/batch_chooser'
 import { queryKeys } from './query'
+import { GardenQuickAddButton, GardenQuickAddedList } from './plantings/garden_quick_add'
 import { buildSeedTrayCellGrid } from './seedtray/grid'
 
 function packetVarietyPk(packetPk: number | undefined, packets: Array<SeedPacket>, seeds: Array<Seed>): number | undefined {
@@ -855,39 +856,49 @@ function GardenSquarePlantingTable({ workspace }: { workspace: Workspace }) {
     }
   }
   return (
-    <Table>
-      <thead>
-        <tr key="header">
-          <td>
-            Plant{' '}
-            <Button variant="link" className="p-0 align-baseline" aria-label="Add garden square planting" onClick={() => setShowPlantingAdd(true)}>
-              +
-            </Button>
-          </td>
-          <td>Batch</td>
-          <td>Quantity</td>
-          <td>Date</td>
-          <td>Location</td>
-          <td>Expected Germination</td>
-          <td>Expected Maturity</td>
-          <td>Notes</td>
-        </tr>
-        <tr key="filters">
-          <td></td>
-          <td></td>
-          <td></td>
-          <td></td>
-          <td>
-            <select onChange={updateGardenAreaFilter}>{areas}</select>
-            <select onChange={updateGardenBedFilter}>{beds}</select>
-          </td>
-          <td></td>
-          <td></td>
-          <td></td>
-        </tr>
-      </thead>
-      <tbody>{rows}</tbody>
-    </Table>
+    <>
+      {workspace.mode === 'garden' && (
+        <>
+          <div className="mb-3">
+            <GardenQuickAddButton />
+          </div>
+          <GardenQuickAddedList />
+        </>
+      )}
+      <Table>
+        <thead>
+          <tr key="header">
+            <td>
+              Plant{' '}
+              <Button variant="link" className="p-0 align-baseline" aria-label="Add garden square planting" onClick={() => setShowPlantingAdd(true)}>
+                +
+              </Button>
+            </td>
+            <td>Batch</td>
+            <td>Quantity</td>
+            <td>Date</td>
+            <td>Location</td>
+            <td>Expected Germination</td>
+            <td>Expected Maturity</td>
+            <td>Notes</td>
+          </tr>
+          <tr key="filters">
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td>
+              <select onChange={updateGardenAreaFilter}>{areas}</select>
+              <select onChange={updateGardenBedFilter}>{beds}</select>
+            </td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </Table>
+    </>
   )
 }
 

@@ -20,6 +20,7 @@ import { HarvestTable } from './plantings/harvest_list'
 import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
 import { queryKeys } from './query'
+import { GardenQuickAddButton } from './plantings/garden_quick_add'
 
 interface GardenAreaDisplayProps {
   area: GardenArea
@@ -114,7 +115,7 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, works
         </dl>
 
         {plantings.length === 0 ? (
-          <p className="mb-0">This square has no current plantings.</p>
+          <p>This square has no current plantings.</p>
         ) : (
           plantings.map((planting, index) => {
             const germinationDates = formatDateRange(planting.germination_date_early, planting.germination_date_late)
@@ -159,6 +160,12 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, works
               </section>
             )
           })
+        )}
+
+        {workspace.mode === 'garden' && (
+          <div className="my-3">
+            <GardenQuickAddButton initialSquare={square.pk} label="Add a planting here" />
+          </div>
         )}
 
         <section className="garden-square-harvest">

@@ -28,6 +28,9 @@ import {
   SeedTrayPlanting,
   GardenSquareTransplanting,
   GardenSquarePlanting,
+  GardenQuickAddEntry,
+  GardenQuickAddReview,
+  GardenQuickAddedPlanting,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
@@ -158,6 +161,21 @@ function getPlantingSeedTrayCurrent(signal?: AbortSignal): Promise<Array<SeedTra
 
 function getPlantingGardenSquaresCurrent(signal?: AbortSignal): Promise<Array<GardenSquarePlanting>> {
   return fetchAsJson<{ plantings: Array<GardenSquarePlanting> }>('/plantings/garden/squares/current/', signal).then((data) => data.plantings)
+}
+
+function previewGardenQuickAdd(entries: Array<GardenQuickAddEntry>): Promise<GardenQuickAddReview> {
+  return csrfPost('/plantings/garden-quick-add/preview/', { entries }).then((response) => response.json() as Promise<GardenQuickAddReview>)
+}
+
+function createGardenQuickAdd(review: GardenQuickAddReview): Promise<Array<GardenQuickAddedPlanting>> {
+  return csrfPost('/plantings/garden-quick-add/', {
+    entries: review.entries,
+    confirmation_token: review.confirmation_token
+  }).then((response) => response.json() as Promise<Array<GardenQuickAddedPlanting>>)
+}
+
+function getGardenQuickAddedPlantings(signal?: AbortSignal): Promise<Array<GardenQuickAddedPlanting>> {
+  return fetchAsJson<Array<GardenQuickAddedPlanting>>('/plantings/garden-quick-add/', signal)
 }
 
 function getSpecificPlantsBySeedTray(seedTrayPk: number, signal?: AbortSignal): Promise<Array<SpecificPlant>> {
@@ -367,6 +385,9 @@ export {
   completePlantingTransplantedGardenSquare,
   getPlantingSeedTrayCurrent,
   getPlantingGardenSquaresCurrent,
+  previewGardenQuickAdd,
+  createGardenQuickAdd,
+  getGardenQuickAddedPlantings,
   getSpecificPlantsBySeedTray,
   addSpecificPlant,
   addSpecificPlantLocation,
