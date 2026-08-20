@@ -52,7 +52,7 @@ from inventory.models import (
     StockMovement,
 )
 from inventory.units import UnitCode
-from plantings.models import PlantCohort, ProductionBatch, SowingStockPosting, SpecificPlant
+from plantings.models import GardenPlanting, PlantCohort, ProductionBatch, SowingStockPosting, SpecificPlant
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration, SeedTrayGenerationResidual
 from workspaces.models import WorkspaceOwnedModel
 
@@ -61,7 +61,7 @@ from workspaces.models import WorkspaceOwnedModel
 #: the ``source_type`` value selecting it, which lets the identity constraint be
 #: generated rather than written out once per source. It is kept in step with
 #: `CostAllocation.SourceType` by a test.
-SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual')
+SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting')
 
 #: Columns that can hold the thing a layer is allocated to. Same naming trick as
 #: `SOURCE_FIELDS`, and kept in step with `CostAllocation.TargetType` by a test.
@@ -163,6 +163,7 @@ class CostAllocation(WorkspaceOwnedModel):
         APPLICATION_LINE = 'application_line', 'Input application line'
         SOWING_POSTING = 'sowing_posting', 'Sowing stock posting'
         GENERATION_RESIDUAL = 'generation_residual', 'Tray generation residual'
+        GARDEN_PLANTING = 'garden_planting', 'Garden planting purchase'
 
     class TargetType(models.TextChoices):
         """What the cost was allocated to.
@@ -215,6 +216,13 @@ class CostAllocation(WorkspaceOwnedModel):
     )
     generation_residual = models.ForeignKey(
         SeedTrayGenerationResidual,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='cost_allocations',
+    )
+    garden_planting = models.ForeignKey(
+        GardenPlanting,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
@@ -424,6 +432,7 @@ class CostAllocation(WorkspaceOwnedModel):
             'run': self.run if self.run_id else None,
             'batch': self.batch if self.batch_id else None,
             'movement': self.movement if self.movement_id else None,
+            'garden_planting': self.garden_planting if self.garden_planting_id else None,
             'specific_plant': self.specific_plant if self.specific_plant_id else None,
             'plant_cohort': self.plant_cohort if self.plant_cohort_id else None,
             'seed_tray_generation': (

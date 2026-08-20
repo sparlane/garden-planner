@@ -37,6 +37,7 @@ from tests.factories import (
 from workspaces.models import Workspace
 
 from .models import (
+    GardenPlanting,
     GardenSquareDirectSowPlanting,
     SeedTrayPlanting,
     SowingStockPosting,
@@ -94,6 +95,39 @@ class SowingInventoryTests(APITestCase):
         )
         self.assertEqual(packet.status_code, 201)
         return SeedPacket.objects.get(pk=packet.data['pk'])
+
+    def test_quick_add_packet_attribution_posts_normal_consumption(self):
+        """Optional Garden packet lineage draws from the real packet once."""
+        variety = self.packet.seeds.plant_variety
+        entry = {
+            'plant': variety.plant_id,
+            'variety': variety.pk,
+            'source': GardenPlanting.Source.DIRECT_SEED,
+            'tracking': GardenPlanting.Tracking.AGGREGATE,
+            'quantity': 4,
+            'recorded_on': '2026-08-03',
+            'date_basis': GardenPlanting.DateBasis.PLANTED,
+            'garden_square': self.square.pk,
+            'seed_packet': self.packet.pk,
+            'seed_quantity_used': '4',
+        }
+        preview = self.client.post(
+            '/plantings/garden-quick-add/preview/',
+            {'entries': [entry]},
+            format='json',
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+
+        response = self.client.post(
+            '/plantings/garden-quick-add/',
+            {'entries': [entry], 'confirmation_token': preview.data['confirmation_token']},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        origin = GardenPlanting.objects.get(pk=response.data[0]['pk'])
+        self.assertEqual(origin.stock_postings.count(), 1)
+        self.assertEqual(origin.stock_postings.get().movement.quantity, 4)
 
     def test_each_sowing_type_posts_packet_consumption(self):
         """Row, square, and tray creates share the same stock contract."""

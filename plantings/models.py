@@ -497,6 +497,13 @@ class SowingStockPosting(WorkspaceOwnedModel):
         blank=True,
         related_name='stock_postings',
     )
+    garden_planting = models.ForeignKey(
+        GardenPlanting,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='stock_postings',
+    )
     replacement_of = models.OneToOneField(
         'self',
         on_delete=models.PROTECT,
@@ -511,9 +518,10 @@ class SowingStockPosting(WorkspaceOwnedModel):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(
-                    models.Q(row_planting__isnull=False, square_planting__isnull=True, tray_planting__isnull=True),
-                    models.Q(row_planting__isnull=True, square_planting__isnull=False, tray_planting__isnull=True),
-                    models.Q(row_planting__isnull=True, square_planting__isnull=True, tray_planting__isnull=False),
+                    models.Q(row_planting__isnull=False, square_planting__isnull=True, tray_planting__isnull=True, garden_planting__isnull=True),
+                    models.Q(row_planting__isnull=True, square_planting__isnull=False, tray_planting__isnull=True, garden_planting__isnull=True),
+                    models.Q(row_planting__isnull=True, square_planting__isnull=True, tray_planting__isnull=False, garden_planting__isnull=True),
+                    models.Q(row_planting__isnull=True, square_planting__isnull=True, tray_planting__isnull=True, garden_planting__isnull=False),
                     _connector=models.Q.OR,
                 ),
                 name='sowing_posting_exactly_one_planting',
@@ -528,6 +536,7 @@ class SowingStockPosting(WorkspaceOwnedModel):
             self.row_planting,
             self.square_planting,
             self.tray_planting,
+            self.garden_planting,
         ]
         selected = [planting for planting in plantings if planting is not None]
         if len(selected) != 1:

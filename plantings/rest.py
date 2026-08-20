@@ -22,6 +22,7 @@ from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspace
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
 from .batches import lock_batch_with_plants
 from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
+from .garden_quick_add import register_garden_quick_add_routes
 from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
@@ -470,6 +471,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
     """
     locations = SpecificPlantLocationSerializer(many=True, read_only=True)
     batch = serializers.IntegerField(source='batch_id', read_only=True)
+    garden_planting = serializers.IntegerField(source='garden_planting_id', read_only=True)
     lifecycle_state = serializers.SerializerMethodField()
     sellable = serializers.SerializerMethodField()
     final_outcome = serializers.SerializerMethodField()
@@ -483,6 +485,8 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
         fields = [
             'pk',
             'cell_planting',
+            'garden_planting',
+            'name',
             'batch',
             'germinated',
             'notes',
@@ -1082,6 +1086,7 @@ register_register_routes(router)
 register_growth_routes(router)
 register_cohort_routes(router)
 register_planning_routes(router)
+register_garden_quick_add_routes(router)
 
 
 def _register_bulk_routes():

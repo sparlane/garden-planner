@@ -37,6 +37,7 @@ def _effective_layers(queryset):
         'sowing_posting__movement__lot__receipt_line__receipt__supplier',
         'generation_residual__lot__item',
         'generation_residual__lot__receipt_line__receipt__supplier',
+        'garden_planting__supplier',
         'specific_plant', 'plant_cohort', 'seed_tray_cell',
     ).order_by('pk')
 
@@ -69,6 +70,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
         'cell_planting__seed_tray_planting__generation',
         'cell_planting__seed_tray_planting__seeds_used__seeds__supplier',
         'promoted_from_cohort',
+        'garden_planting__supplier',
     ).first()
     if plant is None:
         raise NotFound('Plant not found.')
@@ -96,6 +98,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
         'cogs_provisional': line.cogs_provisional,
     } for line in fulfillment_lines]
     origin = plant.cell_planting
+    garden_origin = plant.garden_planting
     sowing = origin.seed_tray_planting if origin else None
     seed_packet = sowing.seeds_used if sowing else None
     layers = list(_effective_layers(CostAllocation.objects.filter(specific_plant=plant)))
@@ -113,7 +116,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
             'generation_id': getattr(sowing, 'generation_id', None),
             'seed_packet_id': getattr(seed_packet, 'pk', None),
             'seed_supplier_id': (
-                seed_packet.seeds.supplier_id if seed_packet else None
+                seed_packet.seeds.supplier_id if seed_packet else getattr(garden_origin, 'supplier_id', None)
             ),
             'allocation_id': getattr(layer, 'pk', None),
             'source_type': getattr(layer, 'source_type', None),
