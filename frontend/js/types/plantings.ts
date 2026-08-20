@@ -75,7 +75,7 @@ interface ProductionBatchSowing {
   planted: string
   quantity: number
   removed: boolean
-  seeds_used: number
+  seeds_used: number | null
   seed_lot: number | null
   seed_tray: number | null
   location: string | null

@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .lifecycle import LifecycleState, is_final, lifecycle_summaries
 from .models import (
+    GardenPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     Harvest,
@@ -62,7 +63,7 @@ def _sowing_querysets(batch):
 
 def batch_sowing_count(batch):
     """Return how many sowings of any kind belong to this batch."""
-    return sum(queryset.count() for queryset in _sowing_querysets(batch))
+    return sum(queryset.count() for queryset in _sowing_querysets(batch)) + batch.garden_plantings.count()
 
 
 def batch_seeds_sown(batch):
@@ -70,6 +71,7 @@ def batch_seeds_sown(batch):
     total = 0
     for queryset in _sowing_querysets(batch):
         total += queryset.aggregate(total=Sum('quantity'))['total'] or 0
+    total += batch.garden_plantings.aggregate(total=Sum('seed_quantity_used'))['total'] or 0
     return total
 
 
@@ -79,6 +81,10 @@ def batch_open_sowings(batch):
     for queryset in _sowing_querysets(batch):
         for pk in queryset.filter(removed=False).order_by('pk').values_list('pk', flat=True):
             open_sowings.append(f'{queryset.model.__name__} #{pk}')
+    for pk in batch.garden_plantings.filter(
+            tracking=GardenPlanting.Tracking.AGGREGATE,
+            finished_on__isnull=True).order_by('pk').values_list('pk', flat=True):
+        open_sowings.append(f'GardenPlanting #{pk}')
     return open_sowings
 
 
