@@ -82,6 +82,27 @@ class ProductionBatchRESTTests(RESTContractTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('code', response.data)
 
+    def test_a_blank_code_is_generated_and_flagged(self):
+        """Basic mode can create a batch without typing a code."""
+        created = self._create(code='')
+
+        self.assertTrue(created['code'].startswith('CROP-'))
+        self.assertTrue(created['code_is_generated'])
+
+    def test_an_omitted_code_is_generated(self):
+        """The code field itself is optional, not only allowed to be blank."""
+        payload = {'variety': self.variety.pk}
+        response = self.client.post(self.url, payload, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data['code'].startswith('CROP-'))
+
+    def test_a_typed_code_is_not_flagged_as_generated(self):
+        """An operator-chosen code never carries the auto-generated badge."""
+        created = self._create()
+
+        self.assertFalse(created['code_is_generated'])
+
     def test_generic_updates_edit_only_descriptive_fields(self):
         """Status and lifecycle timestamps are action-controlled."""
         created = self._create()

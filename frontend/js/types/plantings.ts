@@ -13,6 +13,7 @@ interface NewBatchInline {
 interface ProductionBatch {
   pk: number
   code: string
+  code_is_generated: boolean
   variety: number
   variety_name: string
   plant_name: string
