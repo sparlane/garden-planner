@@ -22,6 +22,7 @@ from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
 from inventory.models import InventoryItem
 from plantings.models import (
+    GardenPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     SeedTrayCellPlanting,
@@ -52,6 +53,7 @@ SOWING_MODELS = (
     SeedTrayPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
+    GardenPlanting,
 )
 
 Basis = CostAllocation.Basis
@@ -206,6 +208,8 @@ def _seed_source(sowing):
             (row.cell_id, sowing.generation_id, row.quantity)
             for row in sowing.cell_plantings.order_by('cell_id')
         ])
+    elif isinstance(sowing, GardenPlanting) and sowing.tracking == GardenPlanting.Tracking.INDIVIDUAL:
+        shares = plant_shares(sowing.specific_plants.values_list('pk', flat=True))
     else:
         shares = unattributable_share(Basis.SEEDS_SOWN)
     return SourceInput(
@@ -224,6 +228,33 @@ def seed_sources(batch):
     """Return one source per sowing that still has a posted consumption."""
     sources = (_seed_source(sowing) for sowing in batch_sowings(batch))
     return [source for source in sources if source is not None]
+
+
+def garden_purchase_sources(batch):
+    """Return manually entered purchase costs without inventing stock lots."""
+    sources = []
+    entries = GardenPlanting.objects.filter(
+        batch=batch,
+        purchase_cost__isnull=False,
+    ).prefetch_related('specific_plants')
+    for entry in entries:
+        quantity = Decimal(entry.quantity)
+        shares = (
+            plant_shares(entry.specific_plants.values_list('pk', flat=True))
+            if entry.tracking == GardenPlanting.Tracking.INDIVIDUAL
+            else whole_source_share()
+        )
+        sources.append(SourceInput(
+            source_type=SourceType.GARDEN_PLANTING,
+            source=entry,
+            movement=None,
+            base_quantity=quantity,
+            base_unit='each',
+            unit_cost=Decimal(entry.purchase_cost) / quantity,
+            currency_code=entry.workspace.currency_code,
+            shares=tuple(shares),
+        ))
+    return sources
 
 
 # --------------------------------------------------------------------------
@@ -526,6 +557,7 @@ def batch_sources(batch):
     generation_ids = batch_generations(batch)
     cell_weights = cell_batch_weights(generation_ids)
     sources = seed_sources(batch)
+    sources += garden_purchase_sources(batch)
     sources += application_sources(batch, generation_ids, cell_weights)
     sources += residual_sources(batch, generation_ids)
     observed = plants_by_cell(batch)

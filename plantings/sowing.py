@@ -18,6 +18,7 @@ from seeds.services import (
 )
 
 from .models import (
+    GardenPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     SeedTrayPlanting,
@@ -46,6 +47,8 @@ def _planting_link(planting):
         return {'square_planting': planting}
     if isinstance(planting, SeedTrayPlanting):
         return {'tray_planting': planting}
+    if isinstance(planting, GardenPlanting):
+        return {'garden_planting': planting}
     raise ValidationError({'planting': 'Select a supported sowing type.'})
 
 
@@ -57,7 +60,7 @@ def _movement_request(planting, packet, quantity, reason='', correction=False):
         movement_type=StockMovement.MovementType.CONSUMPTION,
         quantity=Decimal(quantity),
         source=packet.storage_location,
-        occurred_at=None if correction else planting.planted,
+        occurred_at=None if correction else getattr(planting, 'planted', None),
         reason=reason,
         reference=f'{planting._meta.label} {planting.pk}',
         enforce_source_balance=not unknown,
@@ -67,7 +70,9 @@ def _movement_request(planting, packet, quantity, reason='', correction=False):
 @transaction.atomic
 def post_sowing_consumption(planting, user):
     """Consume the selected packet quantity and link it to a new sowing."""
-    packet = ensure_packet_inventory_identity(planting.seeds_used)
+    packet = ensure_packet_inventory_identity(
+        planting.seed_packet if isinstance(planting, GardenPlanting) else planting.seeds_used,
+    )
     if packet.workspace_id != planting.workspace_id:
         raise ValidationError({
             'seeds_used': 'The packet belongs to a different workspace.',
@@ -75,7 +80,11 @@ def post_sowing_consumption(planting, user):
     movement = post_stock_movement(
         planting.workspace,
         user,
-        _movement_request(planting, packet, planting.quantity),
+        _movement_request(
+            planting,
+            packet,
+            planting.seed_quantity_used if isinstance(planting, GardenPlanting) else planting.quantity,
+        ),
     )
     posting = SowingStockPosting.objects.create(
         workspace=planting.workspace,

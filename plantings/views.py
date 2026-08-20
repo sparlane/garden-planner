@@ -13,7 +13,7 @@ from gp.utils import get_request_data
 from plants.metadata import variety_days
 from plants.models import MaturityBasis
 from workspaces.models import get_current_workspace
-from .models import SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
+from .models import GardenPlanting, SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
 
 
 @login_required
@@ -129,7 +129,7 @@ def _add_nullable_days(value, days):
 
 
 @login_required
-def gardensquare_current(request):
+def gardensquare_current(request):  # pylint: disable=too-many-locals
     """
     List the GardenSquare plantings that are currently growing
     """
@@ -159,6 +159,33 @@ def gardensquare_current(request):
             'germination_date_late': _add_nullable_days(planting.planted, germination_max),
             'maturity_date_early': _add_nullable_days(planting.planted, maturity_min),
             'maturity_date_late': _add_nullable_days(planting.planted, maturity_max)
+        })
+    quick_aggregates = GardenPlanting.objects.filter(
+        workspace=workspace,
+        tracking=GardenPlanting.Tracking.AGGREGATE,
+        garden_square__isnull=False,
+        finished_on__isnull=True,
+    ).select_related('batch__variety__plant', 'garden_square__bed__area')
+    for planting in quick_aggregates:
+        variety = planting.batch.variety
+        _, _, maturity_min, maturity_max = _get_variety_days(variety)
+        planting_data.append({
+            'garden_planting_pk': planting.pk,
+            'planting_pk': planting.pk,
+            'batch': planting.batch_id,
+            'batch_code': planting.batch.code,
+            'plant': variety.plant.name,
+            'variety': variety.name,
+            'planted': planting.recorded_on,
+            'quantity': planting.quantity,
+            'quantity_is_approximate': planting.quantity_is_approximate,
+            'date_is_approximate': planting.date_is_approximate,
+            'source': planting.source,
+            'perennial': planting.perennial,
+            'location': planting.garden_square.as_json(),
+            'notes': planting.notes,
+            'maturity_date_early': _add_nullable_days(planting.recorded_on, maturity_min),
+            'maturity_date_late': _add_nullable_days(planting.recorded_on, maturity_max),
         })
     specific_garden_locations = SpecificPlantLocation.objects.filter(
         specific_plant__workspace=workspace,
@@ -214,32 +241,41 @@ def gardensquare_current(request):
     ).select_related(
         'specific_plant__cell_planting__seed_tray_planting__seeds_used__seeds__plant_variety__plant',
         'specific_plant__cell_planting__seed_tray_planting__batch',
+        'specific_plant__batch__variety__plant',
+        'specific_plant__garden_planting',
         'garden_square__bed__area',
     )
     for location in specific_plant_locations:
-        planting = location.specific_plant.cell_planting.seed_tray_planting
-        variety = planting.seeds_used.seeds.plant_variety
+        plant = location.specific_plant
+        quick_origin = plant.garden_planting
+        planting = plant.cell_planting.seed_tray_planting if plant.cell_planting_id else None
+        variety = plant.batch.variety
         germination_min, germination_max, maturity_min, maturity_max = _get_variety_days(variety)
+        planted = quick_origin.recorded_on if quick_origin else planting.planted
         planting_data.append({
-            'specific_plant_pk': location.specific_plant.pk,
+            'specific_plant_pk': plant.pk,
             'transplanting_pk': location.pk,
-            'planting_pk': planting.pk,
-            'batch': planting.batch_id,
-            'batch_code': planting.batch.code,
+            'garden_planting_pk': quick_origin.pk if quick_origin else None,
+            'planting_pk': quick_origin.pk if quick_origin else planting.pk,
+            'batch': plant.batch_id,
+            'batch_code': plant.batch.code,
             'transplanted': location.started,
             'plant': variety.plant.name,
             'variety': variety.name,
-            'planted': planting.planted,
+            'planted': planted,
             'quantity': 1,
+            'source': quick_origin.source if quick_origin else None,
+            'perennial': quick_origin.perennial if quick_origin else False,
+            'date_is_approximate': quick_origin.date_is_approximate if quick_origin else False,
             'location': location.garden_square.as_json(),
-            'notes': location.notes or location.specific_plant.notes,
-            'germination_date_early': _add_nullable_days(planting.planted, germination_min),
-            'germination_date_late': _add_nullable_days(planting.planted, germination_max),
+            'notes': location.notes or plant.notes,
+            'germination_date_early': _add_nullable_days(planted, germination_min),
+            'germination_date_late': _add_nullable_days(planted, germination_max),
             'maturity_date_early': _add_nullable_days(
-                _maturity_anchor(variety, planting.planted, location.started), maturity_min,
+                _maturity_anchor(variety, planted, location.started), maturity_min,
             ),
             'maturity_date_late': _add_nullable_days(
-                _maturity_anchor(variety, planting.planted, location.started), maturity_max,
+                _maturity_anchor(variety, planted, location.started), maturity_max,
             ),
         })
     return JsonResponse({'plantings': planting_data})
