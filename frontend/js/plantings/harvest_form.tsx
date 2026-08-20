@@ -6,6 +6,7 @@ import { addHarvest } from '../api/plantings'
 import { queryKeys } from '../query'
 import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
 import { HarvestGrade, HarvestUnitCode } from '../types/plantings'
+import { Workspace } from '../types/workspace'
 
 const UNIT_OPTIONS: Array<{ code: HarvestUnitCode; label: string }> = [
   { code: 'each', label: 'Each (count)' },
@@ -43,6 +44,7 @@ interface HarvestFormProps {
   gardenSquare?: number
   gardenRow?: number
   onRecorded?: () => void
+  workspace: Workspace
 }
 
 function invalidateHarvests(queryClient: ReturnType<typeof useQueryClient>, batchPk: number, finishedPlants: boolean) {
@@ -58,7 +60,7 @@ function invalidateHarvests(queryClient: ReturnType<typeof useQueryClient>, batc
   return Promise.all(families.map((queryKey) => queryClient.invalidateQueries({ queryKey })))
 }
 
-function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded }: HarvestFormProps) {
+function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded, workspace }: HarvestFormProps) {
   const queryClient = useQueryClient()
   const [batch, setBatch] = React.useState<number | ''>(batches.length === 1 ? batches[0].pk : '')
   const [harvestedAt, setHarvestedAt] = React.useState(localDatetimeInputValue())
@@ -123,7 +125,11 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
   }
 
   if (batches.length === 0) {
-    return <p className="text-muted mb-0">No crop here has a production batch to record a harvest against.</p>
+    return (
+      <p className="text-muted mb-0">
+        {workspace.mode === 'garden' ? 'Nothing here has a planting cycle to record a harvest against.' : 'No crop here has a production batch to record a harvest against.'}
+      </p>
+    )
   }
 
   return (
@@ -133,7 +139,7 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
           <Form.Group controlId="harvest-batch">
             <Form.Label>Crop</Form.Label>
             <Form.Select value={batch} onChange={(event) => setBatch(event.target.value === '' ? '' : Number(event.target.value))}>
-              <option value="">Choose a batch…</option>
+              <option value="">Choose a crop…</option>
               {batches.map((option) => (
                 <option key={option.pk} value={option.pk}>
                   {option.label}

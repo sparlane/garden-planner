@@ -147,9 +147,11 @@ function SeedTrayReceive({ done, models, suppliers, locations, receiveTrays }: S
   const receivingLocations = locations.filter((location) => location.code !== 'SYSTEM-TRAY-UNKNOWN' && location.location_type !== 'seed_packet')
 
   async function submit() {
-    if (!model || !supplier || !destination || quantity < 1) return
+    if (!model || !destination || quantity < 1) return
     await receiveTrays(model, {
-      supplier,
+      // Left unset, the server fills in the workspace's system-default
+      // supplier — the Basic Garden path for a tray nobody bought from anyone.
+      ...(supplier !== undefined && { supplier }),
       destination,
       received_date: receivedDate,
       quantity,
@@ -217,7 +219,7 @@ function SeedTrayReceive({ done, models, suppliers, locations, receiveTrays }: S
             <Form.Label>Notes</Form.Label>
             <Form.Control value={notes} onChange={(event) => setNotes(event.target.value)} />
           </Form.Group>
-          <Button onClick={submit} disabled={!model || !supplier || !destination || !receivedDate || quantity < 1}>
+          <Button onClick={submit} disabled={!model || !destination || !receivedDate || quantity < 1}>
             Receive
           </Button>
           <Button variant="secondary" onClick={done}>

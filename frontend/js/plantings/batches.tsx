@@ -8,6 +8,8 @@ import { getPlantVarieties } from '../api/plants'
 import { queryKeys } from '../query'
 import { formatDate, formatDateTime } from '../utils'
 import { PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
+import { Workspace } from '../types/workspace'
+import { isAdvanced } from '../workspace_mode'
 import { HarvestForm } from './harvest_form'
 import { ApplicationTargetOption, InputApplicationForm } from '../applications/application_form'
 import { ApplicationTable } from '../applications/application_list'
@@ -15,14 +17,7 @@ import { getInputApplications } from '../api/applications'
 import { FamilyTotals, HarvestTable } from './harvest_list'
 import { STATE_LABELS } from './lifecycle'
 import { BatchCosts } from './batch_costs'
-
-const STATUS_LABELS: Record<ProductionBatchStatus, string> = {
-  planned: 'Planned',
-  active: 'Active',
-  output_finalized: 'Output finalized',
-  completed: 'Completed',
-  cancelled: 'Cancelled'
-}
+import { addBatchCta, backToBatchListLink, batchCodeLabel, batchListHeading, batchStatusLabel, batchStatusLabels, createBatchCta, newBatchCta } from './batch_terms'
 
 const STATUS_VARIANTS: Record<ProductionBatchStatus, string> = {
   planned: 'secondary',
@@ -32,15 +27,17 @@ const STATUS_VARIANTS: Record<ProductionBatchStatus, string> = {
   cancelled: 'dark'
 }
 
-function BatchStatusBadge({ status }: { status: ProductionBatchStatus }) {
-  return <Badge bg={STATUS_VARIANTS[status]}>{STATUS_LABELS[status]}</Badge>
+function BatchStatusBadge({ status, workspace }: { status: ProductionBatchStatus; workspace: Workspace }) {
+  return <Badge bg={STATUS_VARIANTS[status]}>{batchStatusLabel(workspace, status)}</Badge>
 }
 
 interface NewBatchFormProps {
   done: () => void
+  workspace: Workspace
 }
 
-function NewBatchForm({ done }: NewBatchFormProps) {
+function NewBatchForm({ done, workspace }: NewBatchFormProps) {
+  const codeRequired = isAdvanced(workspace)
   const queryClient = useQueryClient()
   const [code, setCode] = React.useState('')
   const [variety, setVariety] = React.useState<number>()
@@ -74,13 +71,19 @@ function NewBatchForm({ done }: NewBatchFormProps) {
   return (
     <Card className="mb-3">
       <Card.Body>
-        <Card.Title>New batch</Card.Title>
+        <Card.Title>{newBatchCta(workspace)}</Card.Title>
         <Form onSubmit={submit}>
           <Row className="g-2 align-items-end">
             <Col md={3}>
               <Form.Group controlId="batch-code">
-                <Form.Label>Batch code</Form.Label>
-                <Form.Control required maxLength={64} value={code} onChange={(event) => setCode(event.target.value)} />
+                <Form.Label>{batchCodeLabel(workspace)}</Form.Label>
+                <Form.Control
+                  required={codeRequired}
+                  maxLength={64}
+                  placeholder={codeRequired ? undefined : 'Leave blank to generate one'}
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                />
               </Form.Group>
             </Col>
             <Col md={3}>
@@ -111,7 +114,7 @@ function NewBatchForm({ done }: NewBatchFormProps) {
           </Row>
           <div className="mt-3">
             <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? 'Creating…' : 'Create batch'}
+              {mutation.isPending ? 'Creating…' : createBatchCta(workspace)}
             </Button>
             <Button className="ms-2" variant="outline-secondary" onClick={done}>
               Cancel
@@ -123,7 +126,11 @@ function NewBatchForm({ done }: NewBatchFormProps) {
   )
 }
 
-function ProductionBatchTable() {
+interface ProductionBatchTableProps {
+  workspace: Workspace
+}
+
+function ProductionBatchTable({ workspace }: ProductionBatchTableProps) {
   const [showAdd, setShowAdd] = React.useState(false)
   const [status, setStatus] = React.useState<ProductionBatchStatus | ''>('')
   const [code, setCode] = React.useState('')
@@ -135,19 +142,19 @@ function ProductionBatchTable() {
 
   return (
     <main className="container py-3">
-      <h1>Production batches</h1>
+      <h1>{batchListHeading(workspace)}</h1>
       <p>A batch is the shared cultivation identity for one tracked crop: its sowings, plants, and lifecycle.</p>
       <div className="mb-3">
         <Button onClick={() => setShowAdd(true)} disabled={showAdd}>
-          Add batch
+          {addBatchCta(workspace)}
         </Button>
       </div>
-      {showAdd && <NewBatchForm done={() => setShowAdd(false)} />}
+      {showAdd && <NewBatchForm done={() => setShowAdd(false)} workspace={workspace} />}
       <Row className="g-2 mb-3">
         <Col md={3}>
           <Form.Select aria-label="Filter by status" value={status} onChange={(event) => setStatus(event.target.value as ProductionBatchStatus | '')}>
             <option value="">All statuses</option>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
+            {Object.entries(batchStatusLabels(workspace)).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -183,6 +190,11 @@ function ProductionBatchTable() {
               <tr key={batch.pk}>
                 <td>
                   <Link to={`/plantings/batches/${batch.pk}`}>{batch.code}</Link>
+                  {batch.code_is_generated && (
+                    <Badge className="ms-2" bg="secondary">
+                      Auto-generated
+                    </Badge>
+                  )}
                   {batch.repair_state === 'needs_repair' && (
                     <Badge className="ms-2" bg="warning" text="dark">
                       Needs repair
@@ -193,7 +205,7 @@ function ProductionBatchTable() {
                   {batch.plant_name} - {batch.variety_name}
                 </td>
                 <td>
-                  <BatchStatusBadge status={batch.status} />
+                  <BatchStatusBadge status={batch.status} workspace={workspace} />
                 </td>
                 <td>{batch.actual_start ? formatDate(batch.actual_start) : formatDate(batch.planned_start ?? '')}</td>
                 <td>{batch.sowing_count}</td>
@@ -287,9 +299,9 @@ function BatchActions({ batch }: BatchActionsProps) {
   )
 }
 
-function BatchSummary({ batch }: { batch: ProductionBatchDetail }) {
+function BatchSummary({ batch, workspace }: { batch: ProductionBatchDetail; workspace: Workspace }) {
   const entries: Array<[string, string | number]> = [
-    ['Status', STATUS_LABELS[batch.status]],
+    ['Status', batchStatusLabel(workspace, batch.status)],
     ['Planned start', batch.planned_start ? formatDate(batch.planned_start) : '—'],
     ['Actual start', batch.actual_start ? formatDateTime(batch.actual_start) : '—'],
     ['Output finalized', batch.output_finalized_at ? formatDateTime(batch.output_finalized_at) : '—'],
@@ -447,7 +459,7 @@ function BatchLocations({ batch }: { batch: ProductionBatchDetail }) {
   )
 }
 
-function BatchYield({ batch }: { batch: ProductionBatchDetail }) {
+function BatchYield({ batch, workspace }: { batch: ProductionBatchDetail; workspace: Workspace }) {
   const plants = batch.current_locations.map((location) => ({
     pk: location.specific_plant,
     label: `Plant ${location.specific_plant} @ ${location.label}`,
@@ -485,7 +497,7 @@ function BatchYield({ batch }: { batch: ProductionBatchDetail }) {
           other.
         </p>
         <h3 className="fs-6 mt-3">Record a harvest</h3>
-        <HarvestForm batches={[{ pk: batch.pk, label: batch.code }]} plants={plants} />
+        <HarvestForm batches={[{ pk: batch.pk, label: batch.code }]} plants={plants} workspace={workspace} />
       </Card.Body>
     </Card>
   )
@@ -533,7 +545,8 @@ function BatchHarvests({ batch }: { batch: ProductionBatchDetail }) {
   )
 }
 
-function BatchHistory({ batch }: { batch: ProductionBatchDetail }) {
+function BatchHistory({ batch, workspace }: { batch: ProductionBatchDetail; workspace: Workspace }) {
+  const labels = batchStatusLabels(workspace)
   return (
     <Card className="mb-3">
       <Card.Body>
@@ -551,7 +564,7 @@ function BatchHistory({ batch }: { batch: ProductionBatchDetail }) {
               <tr key={transition.pk}>
                 <td>{formatDateTime(transition.created)}</td>
                 <td>
-                  {transition.previous_status ? STATUS_LABELS[transition.previous_status] : 'Created'} → {STATUS_LABELS[transition.new_status]}
+                  {transition.previous_status ? labels[transition.previous_status] : 'Created'} → {labels[transition.new_status]}
                 </td>
                 <td>{transition.reason || '—'}</td>
               </tr>
@@ -565,9 +578,10 @@ function BatchHistory({ batch }: { batch: ProductionBatchDetail }) {
 
 interface BatchDetailsFormProps {
   batch: ProductionBatch
+  workspace: Workspace
 }
 
-function BatchDetailsForm({ batch }: BatchDetailsFormProps) {
+function BatchDetailsForm({ batch, workspace }: BatchDetailsFormProps) {
   const queryClient = useQueryClient()
   const [code, setCode] = React.useState(batch.code)
   const [plannedStart, setPlannedStart] = React.useState(batch.planned_start ?? '')
@@ -597,7 +611,7 @@ function BatchDetailsForm({ batch }: BatchDetailsFormProps) {
           <Row className="g-2">
             <Col md={4}>
               <Form.Group controlId="batch-detail-code">
-                <Form.Label>Batch code</Form.Label>
+                <Form.Label>{batchCodeLabel(workspace)}</Form.Label>
                 <Form.Control required maxLength={64} value={code} onChange={(event) => setCode(event.target.value)} />
               </Form.Group>
             </Col>
@@ -626,9 +640,10 @@ function BatchDetailsForm({ batch }: BatchDetailsFormProps) {
 
 interface ProductionBatchDetailViewProps {
   batchPk: number
+  workspace: Workspace
 }
 
-function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) {
+function ProductionBatchDetailView({ batchPk, workspace }: ProductionBatchDetailViewProps) {
   const { data: batch, isPending } = useQuery({
     queryKey: queryKeys.plantings.batch(batchPk),
     queryFn: ({ signal }) => getProductionBatch(batchPk, signal)
@@ -645,12 +660,13 @@ function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) 
     <main className="container py-3">
       <div className="d-flex align-items-center gap-3">
         <h1 className="mb-0">{batch.code}</h1>
-        <BatchStatusBadge status={batch.status} />
+        {batch.code_is_generated && <Badge bg="secondary">Auto-generated</Badge>}
+        <BatchStatusBadge status={batch.status} workspace={workspace} />
       </div>
       <p className="text-muted">
         {batch.plant_name} - {batch.variety_name}
       </p>
-      <Link to="/plantings/batches">← All batches</Link>
+      <Link to="/plantings/batches">{backToBatchListLink(workspace)}</Link>
       {batch.repair_state === 'needs_repair' && (
         <Alert className="mt-3" variant="warning">
           <Alert.Heading>This migrated batch needs repair</Alert.Heading>
@@ -658,20 +674,20 @@ function ProductionBatchDetailView({ batchPk }: ProductionBatchDetailViewProps) 
         </Alert>
       )}
       <div className="mt-3">
-        <BatchSummary batch={batch} />
+        <BatchSummary batch={batch} workspace={workspace} />
         <BatchActions batch={batch} />
-        <BatchDetailsForm batch={batch} />
+        <BatchDetailsForm batch={batch} workspace={workspace} />
         <BatchSowings batch={batch} />
         <BatchLifecycleStates batch={batch} />
-        <BatchYield batch={batch} />
+        <BatchYield batch={batch} workspace={workspace} />
         <BatchHarvests batch={batch} />
         <BatchInputs batch={batch} />
-        <BatchCosts batchPk={batch.pk} />
+        {isAdvanced(workspace) && <BatchCosts batchPk={batch.pk} />}
         <BatchLocations batch={batch} />
-        <BatchHistory batch={batch} />
+        <BatchHistory batch={batch} workspace={workspace} />
       </div>
     </main>
   )
 }
 
-export { ProductionBatchTable, ProductionBatchDetailView, STATUS_LABELS }
+export { ProductionBatchTable, ProductionBatchDetailView }

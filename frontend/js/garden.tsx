@@ -18,6 +18,7 @@ import { ConfirmGeometryForm } from './garden/geometry'
 import { GardenCanvas } from './garden/canvas'
 import { HarvestTable } from './plantings/harvest_list'
 import { SelectOption } from './types/others'
+import { Workspace } from './types/workspace'
 import { queryKeys } from './query'
 
 interface GardenAreaDisplayProps {
@@ -26,6 +27,7 @@ interface GardenAreaDisplayProps {
   rows: Array<GardenRow>
   squares: Array<GardenSquare>
   plantings: Array<GardenSquarePlanting>
+  workspace: Workspace
 }
 
 interface GardenSquareDetailsModalProps {
@@ -34,6 +36,7 @@ interface GardenSquareDetailsModalProps {
   square: GardenSquare
   plantings: Array<GardenSquarePlanting>
   onClose: () => void
+  workspace: Workspace
 }
 
 function plantingName(planting: GardenSquarePlanting): string {
@@ -86,7 +89,7 @@ function SquareHarvests({ squarePk }: { squarePk: number }) {
   return <HarvestTable harvests={harvests} showLocation={false} />
 }
 
-function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: GardenSquareDetailsModalProps) {
+function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, workspace }: GardenSquareDetailsModalProps) {
   return (
     <Modal show onHide={onClose} size="lg" aria-labelledby="garden-square-details-title">
       <Modal.Header closeButton>
@@ -160,7 +163,7 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: Gar
 
         <section className="garden-square-harvest">
           <h2 className="h5">Record a harvest</h2>
-          <HarvestForm batches={squareBatches(plantings)} plants={squarePlants(plantings)} gardenSquare={square.pk} />
+          <HarvestForm batches={squareBatches(plantings)} plants={squarePlants(plantings)} gardenSquare={square.pk} workspace={workspace} />
         </section>
 
         <section className="garden-square-harvest">
@@ -195,7 +198,7 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose }: Gar
   )
 }
 
-function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings }: GardenAreaDisplayProps) {
+function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings, workspace }: GardenAreaDisplayProps) {
   const [selectedSquarePk, setSelectedSquarePk] = useState<number>()
   const plantingsBySquare = useMemo(() => {
     const groupedPlantings = new Map<number, Array<GardenSquarePlanting>>()
@@ -227,13 +230,14 @@ function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings }: Garde
           square={selectedSquare}
           plantings={plantingsBySquare.get(selectedSquare.pk) ?? []}
           onClose={() => setSelectedSquarePk(undefined)}
+          workspace={workspace}
         />
       )}
     </>
   )
 }
 
-function GardenDisplay() {
+function GardenDisplay({ workspace }: { workspace: Workspace }) {
   const navigate = useNavigate()
   const { areaId } = useParams()
   const selectedArea = areaId === undefined ? undefined : Number(areaId)
@@ -275,7 +279,17 @@ function GardenDisplay() {
     if (area) {
       const areaBeds = beds.filter((bed) => bed.area === area.pk)
       const bedPks = new Set(areaBeds.map((bed) => bed.pk))
-      areaView = <GardenAreaDisplay key={area.pk} area={area} gardenBeds={areaBeds} rows={rows.filter((row) => bedPks.has(row.bed))} squares={squares} plantings={plantings} />
+      areaView = (
+        <GardenAreaDisplay
+          key={area.pk}
+          area={area}
+          gardenBeds={areaBeds}
+          rows={rows.filter((row) => bedPks.has(row.bed))}
+          squares={squares}
+          plantings={plantings}
+          workspace={workspace}
+        />
+      )
     } else if (!areasPending) {
       areaView = <div>Garden area not found.</div>
     }

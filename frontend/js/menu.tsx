@@ -6,6 +6,8 @@ import 'bootstrap/dist/css/bootstrap.css'
 import { Nav, Navbar, NavDropdown } from 'react-bootstrap'
 import { NavLink, useLocation } from 'react-router'
 import { Workspace } from './types/workspace'
+import { isAdvanced } from './workspace_mode'
+import { batchNavLabel } from './plantings/batch_terms'
 
 interface GPTopBarProps {
   workspace: Workspace
@@ -13,12 +15,13 @@ interface GPTopBarProps {
 
 function GPTopBar({ workspace }: GPTopBarProps) {
   const { pathname } = useLocation()
+  const advanced = isAdvanced(workspace)
   const seedsActive = pathname === '/seeds' || pathname.startsWith('/seeds/')
-  const seedTraysActive = pathname === '/seedtrays' || pathname.startsWith('/seedtrays/')
   const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health'
-  const inventoryActive = pathname === '/inventory' || pathname.startsWith('/inventory/') || pathname.startsWith('/applications') || pathname.startsWith('/locations')
+  const inventoryActive = pathname === '/inventory' || pathname.startsWith('/applications') || pathname.startsWith('/locations')
   const salesActive = pathname === '/sales' || pathname.startsWith('/sales/')
   const reportsActive = pathname === '/reports' || pathname.startsWith('/reports/')
+  const advancedActive = pathname === '/seedtrays/models' || pathname.startsWith('/inventory/receipts') || pathname.startsWith('/inventory/stocktakes')
 
   return (
     <Navbar expand="lg" bg="secondary" data-bs-theme="dark" collapseOnSelect>
@@ -29,7 +32,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
       <Navbar.Collapse id="responsive-navbar-nav">
         <Nav>
           <Nav.Link as={NavLink} to="/gardens">
-            Gardens
+            Garden
           </Nav.Link>
           {/* Offered until the gardener finishes it or says no. Skipping is
               recorded, so declining once takes this away for good. */}
@@ -84,14 +87,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               </NavDropdown.Item>
             </NavDropdown>
           )}
-          <NavDropdown title="Seed Trays" active={seedTraysActive}>
-            <NavDropdown.Item as={NavLink} to="/seedtrays/models">
-              Seed Tray Models
-            </NavDropdown.Item>
-            <NavDropdown.Item as={NavLink} to="/seedtrays" end>
-              Seed Trays
-            </NavDropdown.Item>
-          </NavDropdown>
+          <Nav.Link as={NavLink} to="/seedtrays" end>
+            Seed Trays
+          </Nav.Link>
           <NavDropdown title="Planting" active={plantingActive}>
             {workspace.mode === 'nursery' && (
               <>
@@ -113,7 +111,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               </>
             )}
             <NavDropdown.Item as={NavLink} to="/plantings/batches">
-              Batches
+              {batchNavLabel(workspace)}
             </NavDropdown.Item>
             <NavDropdown.Item as={NavLink} to="/plantings/seedtrays">
               Seed Trays
@@ -135,18 +133,23 @@ function GPTopBar({ workspace }: GPTopBarProps) {
             <NavDropdown.Item as={NavLink} to="/locations">
               Locations
             </NavDropdown.Item>
-            <NavDropdown.Item as={NavLink} to="/inventory/receipts">
-              Receiving
-            </NavDropdown.Item>
-            {workspace.mode === 'nursery' && (
-              <NavDropdown.Item as={NavLink} to="/inventory/stocktakes">
-                Stocktakes
-              </NavDropdown.Item>
-            )}
             <NavDropdown.Item as={NavLink} to="/applications">
               Input applications
             </NavDropdown.Item>
           </NavDropdown>
+          {advanced && (
+            <NavDropdown title="Advanced" active={advancedActive}>
+              <NavDropdown.Item as={NavLink} to="/seedtrays/models">
+                Seed Tray Models
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/inventory/receipts">
+                Receiving
+              </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/inventory/stocktakes">
+                Stocktakes
+              </NavDropdown.Item>
+            </NavDropdown>
+          )}
           <Nav.Link as={NavLink} to="/settings">
             Settings
           </Nav.Link>
