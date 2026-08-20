@@ -25,6 +25,7 @@ from .batches import (
     batch_plants_with_active_location,
     batch_posted_harvest_count,
     batch_seeds_sown,
+    batch_sowing_count,
     batch_specific_plants,
     batch_unresolved_plant_ids,
     cancel_batch,
@@ -35,7 +36,7 @@ from .batches import (
     lock_batch_for_sowing,
     reopen_batch,
 )
-from .models import ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
+from .models import GardenPlanting, ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
 from .yields import batch_harvest_finished_count, batch_harvest_totals
 
 
@@ -104,10 +105,10 @@ class BatchSowingSerializer(serializers.Serializer):  # pylint: disable=abstract
 
     pk = serializers.IntegerField(read_only=True)
     sowing_type = serializers.CharField(read_only=True)
-    planted = serializers.DateTimeField(read_only=True)
+    planted = serializers.CharField(read_only=True)
     quantity = serializers.IntegerField(read_only=True)
     removed = serializers.BooleanField(read_only=True)
-    seeds_used = serializers.IntegerField(read_only=True)
+    seeds_used = serializers.IntegerField(read_only=True, allow_null=True)
     seed_lot = serializers.IntegerField(read_only=True, allow_null=True)
     seed_tray = serializers.IntegerField(read_only=True, allow_null=True)
     location = serializers.CharField(read_only=True, allow_null=True)
@@ -136,13 +137,28 @@ def _describe_cells(sowing):
 
 def _describe_sowing(sowing):
     """Return one sowing's batch-level summary in a display-neutral shape."""
+    if isinstance(sowing, GardenPlanting):
+        return {
+            'pk': sowing.pk,
+            'sowing_type': type(sowing).__name__,
+            'planted': sowing.recorded_on.isoformat(),
+            'quantity': sowing.quantity,
+            'removed': sowing.finished_on is not None,
+            'seeds_used': sowing.seed_packet_id,
+            'seed_lot': sowing.seed_packet.stock_lot_id if sowing.seed_packet_id else None,
+            'seed_tray': None,
+            'location': str(sowing.garden_square or sowing.location),
+            'notes': sowing.notes,
+            'cells': [],
+            'plants_observed': sowing.specific_plants.count(),
+        }
     is_tray = hasattr(sowing, 'cell_plantings')
     location = getattr(sowing, 'location', None)
     cells = _describe_cells(sowing) if is_tray else []
     return {
         'pk': sowing.pk,
         'sowing_type': type(sowing).__name__,
-        'planted': sowing.planted,
+        'planted': sowing.planted.isoformat(),
         'quantity': sowing.quantity,
         'removed': sowing.removed,
         'seeds_used': sowing.seeds_used_id,
@@ -163,6 +179,10 @@ def _batch_sowings(batch):
             'seeds_used',
         ).order_by('planted', 'pk')
         sowings.extend(_describe_sowing(sowing) for sowing in queryset)
+    sowings.extend(
+        _describe_sowing(sowing)
+        for sowing in batch.garden_plantings.select_related('seed_packet').order_by('recorded_on', 'pk')
+    )
     return sowings
 
 
@@ -247,10 +267,7 @@ class ProductionBatchSerializer(
 
     def get_sowing_count(self, batch):
         """Return how many sowings this batch groups."""
-        return sum(
-            model.objects.filter(batch=batch).count()
-            for model in SOWING_MODELS
-        )
+        return batch_sowing_count(batch)
 
     def get_seeds_sown(self, batch):
         """Return the seeds or seed clusters sown, not the plants raised."""

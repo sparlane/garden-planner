@@ -118,6 +118,17 @@ class GardenQuickAddTests(APITestCase):
         self.assertEqual(layers.count(), 2)
         self.assertEqual([layer.amount for layer in layers], [6, 6])
 
+    def test_generated_cycle_exposes_the_quick_origin_in_advanced_detail(self):
+        """Switching presentation modes does not hide the technical origin."""
+        created = self.create_reviewed([self.entry()])
+
+        detail = self.client.get(f"/plantings/batches/{created.data[0]['batch']}/")
+
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.data['sowing_count'], 1)
+        self.assertEqual(detail.data['sowings'][0]['sowing_type'], 'GardenPlanting')
+        self.assertIsNone(detail.data['sowings'][0]['seeds_used'])
+
     def test_existing_occupancy_warns_but_can_be_confirmed(self):
         """A reviewed companion planting remains intentional and permitted."""
         self.create_reviewed([self.entry()])
