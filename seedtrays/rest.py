@@ -22,6 +22,7 @@ from inventory.models import (
 from inventory.serialized_rest import InventoryUnitSerializer
 from inventory.units import UnitCode
 from locations.models import Location
+from supplies.defaults import ensure_default_supplier
 from supplies.models import Supplier
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
@@ -117,7 +118,10 @@ class SeedTrayReceiptSerializer(
 ):
     """Validate an immediately posted receipt for one tray model."""
 
-    supplier = serializers.PrimaryKeyRelatedField(queryset=Supplier.objects.all())
+    supplier = serializers.PrimaryKeyRelatedField(
+        queryset=Supplier.objects.all(),
+        required=False,
+    )
     received_date = serializers.DateField()
     supplier_reference = serializers.CharField(allow_blank=True, required=False, default='')
     quantity = serializers.IntegerField(min_value=1)
@@ -125,6 +129,8 @@ class SeedTrayReceiptSerializer(
         max_digits=18,
         decimal_places=4,
         min_value=Decimal('0'),
+        required=False,
+        default=Decimal('0'),
     )
     destination = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(),
@@ -210,7 +216,7 @@ class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet)
         workspace = self.get_current_workspace()
         receipt = StockReceipt.objects.create(
             workspace=workspace,
-            supplier=values['supplier'],
+            supplier=values.get('supplier') or ensure_default_supplier(workspace),
             received_date=values['received_date'],
             supplier_reference=values['supplier_reference'],
             currency_code=workspace.currency_code,

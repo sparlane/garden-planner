@@ -481,6 +481,27 @@ class StockReceiptDraftTests(LedgerRestFixture):
             multiplier=Decimal('20000'),
         )
 
+    def test_a_receipt_with_no_supplier_uses_the_system_default(self):
+        """A Basic Garden gift or swap needs no named supplier to receive."""
+        payload = self.receipt_payload()
+        del payload['supplier']
+
+        response = self.client.post(self.receipt_url, payload, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        supplier = Supplier.objects.get(pk=response.data['supplier'])
+        self.assertEqual(supplier.name, 'Unknown / home garden')
+        self.assertTrue(supplier.is_system_default)
+
+    def test_a_line_with_no_price_defaults_to_zero(self):
+        """A price is a real fact and zero is a legitimate one, not a stub."""
+        payload = self.receipt_payload()
+        del payload['lines'][0]['line_cost_ex_tax']
+
+        created = self.create_draft(**payload)
+
+        self.assertEqual(created['lines'][0]['line_cost_ex_tax'], '0.0000')
+
     def test_draft_receipt_claims_no_balance_until_posted(self):
         """A saved draft normalizes for review while moving no stock at all."""
         created = self.create_draft()
