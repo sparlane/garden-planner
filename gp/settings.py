@@ -10,13 +10,29 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+import importlib
+import os
 from datetime import timedelta
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
-# Import other settings
-from gp.local_settings import *
+# Import other settings. GP_SITE_SETTINGS names the module holding the
+# site-specific settings, so the same checkout can run the test suite against
+# PostgreSQL (gp.ci_settings) without disturbing gp/local_settings.py.
+SITE_SETTINGS_MODULE = os.environ.get("GP_SITE_SETTINGS", "gp.local_settings")
+
+try:
+    _site_settings = importlib.import_module(SITE_SETTINGS_MODULE)
+except ImportError as error:
+    raise ImproperlyConfigured(
+        f"Unable to import site settings module {SITE_SETTINGS_MODULE!r}. "
+        "Run setup-venv.sh or correct GP_SITE_SETTINGS."
+    ) from error
+
+globals().update(
+    {name: value for name, value in vars(_site_settings).items() if name.isupper()}
+)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -139,6 +155,10 @@ STATIC_ROOT = BASE_DIR / "static"
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Reports which tests a backend could not run instead of leaving the reader to
+# work out what "OK (skipped=21)" cost them.
+TEST_RUNNER = "gp.test_runner.GardenTestRunner"
 
 LOGIN_REDIRECT_URL = "/"
 
