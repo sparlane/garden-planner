@@ -4,6 +4,8 @@
 /static/
 __pycache__/
 /db.sqlite3
+# Clones left behind when a --parallel run on SQLite dies in teardown.
+/default_*.sqlite3
 /frontend/static/
 /gp/local_settings.py
 /gp/secretkey.txt

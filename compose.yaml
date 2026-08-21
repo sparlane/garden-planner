@@ -1,0 +1,35 @@
+# Throwaway PostgreSQL for the local test suite.
+#
+# This is not a development or deployment database: it holds nothing between
+# `docker compose down` and the next `up`, and the suite creates and drops its
+# own `test_garden_tracker` inside it.
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: garden_tracker
+      POSTGRES_USER: garden_tracker
+      POSTGRES_PASSWORD: garden_tracker
+    # Published on 55432 so the container cannot collide with a PostgreSQL
+    # already listening on 5432. Override with DB_PORT, which test-venv.sh
+    # reads as well, to move both ends together.
+    ports:
+      - "127.0.0.1:${DB_PORT:-55432}:5432"
+    # Durability is worthless for a database whose contents are discarded after
+    # every run, and turning it off is most of the difference between a loop
+    # that gets run before each commit and one that does not. Locking and
+    # transaction semantics, which is what the concurrency tests exercise, are
+    # unaffected.
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U garden_tracker -d garden_tracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

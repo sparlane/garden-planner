@@ -63,15 +63,17 @@ Features
   - `setup-venv.sh` creates a Python virtual environment, installs Python dependencies, builds the frontend (npm), creates SQLite development settings when needed, generates a secret key, applies migrations, and collects static files.
   - `setup-db.sh` applies `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` to explicitly selected PostgreSQL settings. `start-wsgi.sh` serves the app in deployments.
   - `check-code.sh` for style/lint checks (pycodestyle, pylint).
+  - `test-venv.sh` runs the backend suite, on PostgreSQL when one is reachable. `compose.yaml` provides that database.
 
 - Local-first defaults
   - `gp/local_settings.dev.py.template` is the canonical local configuration and uses `db.sqlite3`.
   - `gp/local_settings.postgresql.py.template` is available for deployments that use PostgreSQL.
+  - `gp/ci_settings.py` holds the PostgreSQL settings the test suite uses, in CI and locally. `GP_SITE_SETTINGS` names the module `gp/settings.py` reads site settings from, so selecting it for a test run leaves `gp/local_settings.py` untouched.
 
 Tech stack
 - Django (Python) backend, Django REST Framework for APIs
 - React + Bootstrap (JavaScript) frontend components
-- SQLite for local development; PostgreSQL for deployment
+- SQLite for local development; PostgreSQL for deployment and for running the tests
 - Node/npm for frontend build; esbuild configuration present
 - Shell scripts for environment setup and build automation
 
@@ -80,6 +82,7 @@ Prerequisites
 - Python 3.12+ (required by Django 6)
 - Node.js 22.22+ and npm (required by React Router)
 - Bash-compatible shell for `setup-venv.sh`
+- Docker with Compose, to run the PostgreSQL the test suite uses. Not needed to run the application itself; see "Running the tests".
 
 Quick start (recommended)
 1. Clone the repo:
@@ -158,6 +161,22 @@ Development notes
     ```
     Restart the application afterward. Rotation invalidates existing sessions, password-reset links, and other values signed with the old key.
 
+- Running the tests:
+  - Start the test database, then run the suite:
+    ```bash
+    docker compose up -d db
+    ./test-venv.sh
+    ```
+    `compose.yaml` runs the same PostgreSQL 18 image CI does, published on `127.0.0.1:55432` so it cannot collide with a server already using 5432. It stores nothing between `docker compose down` and the next `up`; the suite creates and drops its own `test_garden_tracker` inside it.
+  - Run PostgreSQL. Roughly two dozen tests are decorated `@skipUnlessDBFeature('has_select_for_update')` and cover the row locking that protects the inventory ledger, sales allocations, stocktake corrections, and quarantine transitions. SQLite reports that feature as false, so all of them skip and the run still reports `OK`.
+  - `./test-venv.sh` uses PostgreSQL whenever one answers and otherwise falls back to `gp/local_settings.py`, warning both times: once about the fallback, and once after the summary naming how many tests the backend could not run.
+    - `--postgresql` requires it and fails with setup instructions when no server answers. Use it in scripts.
+    - `--sqlite` keeps the old behaviour for a quick check of something unrelated to locking.
+    - `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASS` select another server. `GP_TEST_DB` presets the same choice as the flags, and `GP_FAIL_ON_SKIP=1` turns any skipped test into a failure, as CI sets.
+    - Remaining arguments go to `manage.py test`, so `./test-venv.sh sales.test_concurrency -v 2` works as usual.
+  - The PostgreSQL run defaults to `--parallel auto`; pass your own `--parallel` to override it. Parallel runs on the SQLite path still crash in teardown, which is why it is not the default there.
+  - Run the suite before each commit, as the project's commit rule asks.
+
 - Linting and checks:
   - `./check-code.sh` runs pycodestyle and pylint (uses `venv`).
 
@@ -222,12 +241,13 @@ Project layout (high level)
 - locations/ — the shared catalog of physical places, referenced by stock, trays, and plants
 - work/ — Nursery task rules, source projections, acknowledged work, and action history
 - garden/, plants/, seeds/, plantings/, supplies/ — Django apps with models, views, rest.py, urls
-- setup-venv.sh, setup-db.sh, build-frontend.sh, start-wsgi.sh — helper scripts
+- setup-venv.sh, setup-db.sh, build-frontend.sh, start-wsgi.sh, test-venv.sh — helper scripts
+- compose.yaml — the throwaway PostgreSQL the test suite runs against
 - requirements.txt, package.json — dependency manifests
 
 Contributing
 - Fork, create a feature branch, add tests, and open a PR.
-- Run backend tests with `./test-venv.sh` and linting with `./check-code.sh` before submitting.
+- Run backend tests with `./test-venv.sh` and linting with `./check-code.sh` before submitting. Start the test database first (`docker compose up -d db`) so the concurrency tests actually run; see "Running the tests".
 - Consider adding a CONTRIBUTING.md and CODE_OF_CONDUCT.md if you want contribution guidelines formalised.
 
 License
