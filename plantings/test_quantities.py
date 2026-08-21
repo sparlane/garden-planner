@@ -155,11 +155,13 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
                 self.assertEqual(
                     response.json(),
                     {
-                        'cell_plantings': [{
-                            'quantity': [
-                                'Ensure this value is greater than or equal to 1.'
-                            ],
-                        }],
+                        'cell_plantings': {
+                            '0': {
+                                'quantity': [
+                                    'Ensure this value is greater than or equal to 1.'
+                                ],
+                            },
+                        },
                     },
                 )
 

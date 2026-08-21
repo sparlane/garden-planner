@@ -285,7 +285,7 @@ class SeedTrayPlantingMembershipTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.json(),
-            {'cell_plantings': [{'cell': ['This field is required.']}]},
+            {'cell_plantings': {'0': {'cell': ['This field is required.']}}},
         )
         self.assertEqual(self.planting.cell_plantings.get(), self.cell_planting)
 
@@ -298,7 +298,7 @@ class SeedTrayPlantingMembershipTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.json(),
-            {'cell_plantings': [{'quantity': ['This field is required.']}]},
+            {'cell_plantings': {'0': {'quantity': ['This field is required.']}}},
         )
         self.assertEqual(self.planting.cell_plantings.get(), self.cell_planting)
 

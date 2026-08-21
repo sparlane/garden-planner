@@ -38,10 +38,25 @@ function invalidateReceipts(queryClient: ReturnType<typeof useQueryClient>) {
 function documentErrors(body: unknown): Array<string> {
   if (typeof body !== 'object' || body === null) return []
   return Object.entries(body as Record<string, unknown>).flatMap(([field, value]) => {
-    if (field === 'lines' && Array.isArray(value)) return []
+    if (field === 'lines' && typeof value === 'object' && value !== null) return []
     const messages = Array.isArray(value) ? value : [value]
     return messages.filter((message): message is string => typeof message === 'string')
   })
+}
+
+// DRF 3.18 reports nested list errors as an object keyed by the index of each
+// line that failed — {"0": {...}} — where earlier versions returned one entry
+// per submitted line. Both are flattened back to a positional array so the
+// editor can keep rendering errors against the row they belong to.
+function positionalLines(lines: unknown): Array<unknown> {
+  if (Array.isArray(lines)) return lines
+  if (typeof lines !== 'object' || lines === null) return []
+  const positional: Array<unknown> = []
+  for (const [index, entry] of Object.entries(lines as Record<string, unknown>)) {
+    if (!/^\d+$/.test(index)) return []
+    positional[Number(index)] = entry
+  }
+  return positional
 }
 
 // Positional, because the server returns line errors aligned with the lines the
@@ -49,9 +64,7 @@ function documentErrors(body: unknown): Array<string> {
 // one, so both are flattened to the first message.
 function lineFieldErrors(body: unknown): Array<Record<string, string>> {
   if (typeof body !== 'object' || body === null) return []
-  const lines = (body as Record<string, unknown>).lines
-  if (!Array.isArray(lines)) return []
-  return lines.map((entry) => {
+  return positionalLines((body as Record<string, unknown>).lines).map((entry) => {
     if (typeof entry !== 'object' || entry === null) return {}
     return Object.fromEntries(
       Object.entries(entry as Record<string, unknown>).map(([field, value]) => {

@@ -631,6 +631,21 @@ class StockReceiptDraftTests(LedgerRestFixture):
         self.assertEqual(StockMovement.objects.filter(lot=lot).count(), 0)
         self.assertEqual(posted.data['movement_ids'], [])
 
+    def test_line_errors_are_keyed_by_the_index_of_the_failing_line(self):
+        """The editor files a message against the row that earned it."""
+        rejected = self.client.post(
+            self.receipt_url,
+            self.receipt_payload(lines=[
+                self.line_payload(),
+                self.line_payload(quantity='0.000000000'),
+            ]),
+            format='json',
+        )
+
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(list(rejected.json()['lines']), ['1'])
+        self.assertIn('quantity', rejected.json()['lines']['1'])
+
     def test_receipt_lines_reject_inactive_items_conversions_and_locations(self):
         """Retired catalog entries stay visible in history but unselectable."""
         conversion = self.bag_conversion()
