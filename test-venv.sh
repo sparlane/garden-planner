@@ -73,8 +73,11 @@ then
 	echo "Running the suite on PostgreSQL ($DB_NAME@$DB_HOST:$DB_PORT)."
 	export GP_SITE_SETTINGS="${GP_SITE_SETTINGS:-gp.ci_settings}"
 	export DB_HOST DB_PORT DB_NAME
-	# --parallel first so an explicit one in "$@" overrides it.
-	exec venv/bin/python manage.py test --parallel auto "${args[@]}"
+	# --parallel first so an explicit one in "$@" overrides it. --noinput
+	# because an interrupted run leaves test_garden_tracker behind, and the
+	# prompt offering to delete it fails with EOFError in any non-interactive
+	# run, which reads as a configuration fault rather than stale state.
+	exec venv/bin/python manage.py test --parallel auto --noinput "${args[@]}"
 fi
 
-exec venv/bin/python manage.py test "${args[@]}"
+exec venv/bin/python manage.py test --noinput "${args[@]}"
