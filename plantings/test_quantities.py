@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, close_old_connections, transaction
 from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
@@ -15,6 +16,7 @@ from seeds.models import SeedPacket, Seeds
 from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
 from tests.factories import make_batch_for_packet, make_seed_tray, make_seed_tray_generation
+from workspaces.models import Workspace
 from .models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -649,6 +651,14 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
 @skipUnlessDBFeature('has_select_for_update')
 class ConcurrentGerminationTests(TransactionTestCase):
     """Concurrent observations can record multiple multigerm seedlings."""
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        Workspace.objects.get_or_create(
+            pk=settings.CURRENT_WORKSPACE_ID,
+            defaults={'name': 'My Garden'},
+        )
 
     def setUp(self):
         self.user = get_user_model().objects.create_user(username='concurrency-tester')
