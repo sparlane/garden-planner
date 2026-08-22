@@ -66,6 +66,34 @@ class Workspace(models.Model):
         ADVANCED = 'advanced', 'Advanced'
 
     name = models.CharField(max_length=255)
+    legal_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text=(
+            'The registered legal name of the entity making supplies, if it '
+            'differs from the name this workspace is known by. A taxable '
+            'supply document is issued under it.'
+        ),
+    )
+    trading_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text=(
+            'The name the business trades under, where that differs from its '
+            'legal name. Shown on a document alongside the legal name rather '
+            'than instead of it.'
+        ),
+    )
+    business_address = models.TextField(
+        blank=True,
+        default='',
+        help_text=(
+            'The seller address printed on taxable supply and correction '
+            'documents.'
+        ),
+    )
     mode = models.CharField(
         max_length=16,
         choices=Mode.choices,
