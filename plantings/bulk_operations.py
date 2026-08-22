@@ -503,10 +503,11 @@ def _apply_germination(operation, user, request):
         for _index in range(quantities[allocation.pk]):
             _create_germinated_plant(operation, user, request, allocation, notes)
 
+    from costing.models import CostAllocationRun  # pylint: disable=import-outside-toplevel
     from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
 
     for batch in locked_batches:
-        reallocate_batch(batch, user, 'bulk-germination')
+        reallocate_batch(batch, user, CostAllocationRun.Trigger.GERMINATION)
 
 
 @transaction.atomic
