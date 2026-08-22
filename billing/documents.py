@@ -306,6 +306,30 @@ def _previously_invoiced(order):
     return money(total)
 
 
+def document_information(document):
+    """Return what an already-issued document states, for the threshold rules.
+
+    The same question `_refuse_incomplete` asks before issuing, asked of a row
+    that exists. A printed document has to be able to show a reader that each
+    element its value band requires is present, and re-deriving the answer from
+    the stored document is the only way that claim stays true rather than being
+    asserted once at issue and never checked again.
+    """
+    lines = list(document.lines.all())
+    return DocumentInformation(
+        total_incl_tax=document.total_incl_tax,
+        taxable_supply=document.taxable_supply,
+        seller_name=document.seller_legal_name,
+        seller_gst_number=document.seller_gst_number,
+        document_date=document.issued_on,
+        gst_stated=document.taxable_supply,
+        line_descriptions=tuple(line.description for line in lines),
+        supply_quantities=tuple(line.quantity for line in lines),
+        buyer_name=document.buyer_name,
+        buyer_identification=document.buyer_identification,
+    )
+
+
 def _refuse_incomplete(document_values, line_values):
     """Refuse to issue a document its own value band would make defective."""
     information = DocumentInformation(
