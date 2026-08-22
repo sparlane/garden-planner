@@ -30,6 +30,7 @@ already an audited transition with a required reason.
 
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from applications.models import FACTOR_DECIMAL_PLACES
@@ -318,6 +319,12 @@ def reallocate_batch(batch, user, trigger, reason=''):
     ordinary events, most of which change no allocation, and storing a row for
     every check would bury the runs that did something.
     """
+    try:
+        trigger = CostAllocationRun.Trigger(trigger)
+    except ValueError as exc:
+        raise ValidationError({
+            'trigger': f'Value {trigger!r} is not a valid choice.',
+        }) from exc
     batch = lock_batch_with_plants(batch)
     reverse, post = _plan(batch)
     if not reverse and not post:

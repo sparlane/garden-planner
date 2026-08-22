@@ -11,6 +11,7 @@ and germinations recorded against its cells.
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -234,6 +235,11 @@ class SingleSeedlingTests(CostingServiceTestCase):
         self.apply_media([self.cells[0]], '0.04')
         self.plant = self.germinate(self.sowing, self.cells[0])[0]
         self.reallocate()
+
+    def test_reallocation_validates_its_trigger_before_an_idempotent_return(self):
+        """An invalid caller cannot hide behind a plan that needs no writes."""
+        with self.assertRaisesMessage(ValidationError, 'not a valid choice'):
+            reallocate_batch(self.batch, self.user, 'unknown-trigger')
 
     def test_the_plant_carries_its_seed_and_its_media(self):
         """Four clusters at 0.25 and 40 ml of two-dollar media is 1.08."""
