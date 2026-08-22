@@ -44,12 +44,41 @@ class GerminationPayloadSerializer(
 
     cell_planting = serializers.PrimaryKeyRelatedField(
         queryset=SeedTrayCellPlanting.objects.all(),
+        required=False,
+    )
+    cell_plantings = serializers.PrimaryKeyRelatedField(
+        queryset=SeedTrayCellPlanting.objects.all(),
+        many=True,
+        required=False,
     )
     quantity = serializers.IntegerField(min_value=1, max_value=MAX_BULK_PLANTS)
     notes = serializers.CharField(allow_blank=True, required=False, default='')
     workspace_field_lookups = {
         'cell_planting': 'seed_tray_planting__workspace',
+        'cell_plantings': 'seed_tray_planting__workspace',
     }
+
+    def validate(self, attrs):
+        """Normalize one or many cell allocations into one bounded selection."""
+        singular = attrs.pop('cell_planting', None)
+        allocations = attrs.get('cell_plantings', [])
+        if singular is not None and allocations:
+            raise ValidationError({
+                'cell_plantings': 'Choose either one cell allocation or a list, not both.',
+            })
+        if singular is not None:
+            allocations = [singular]
+        if not allocations:
+            raise ValidationError({'cell_plantings': 'Choose at least one cell allocation.'})
+        allocation_ids = [allocation.pk for allocation in allocations]
+        if len(set(allocation_ids)) != len(allocation_ids):
+            raise ValidationError({'cell_plantings': 'Each cell allocation may only be selected once.'})
+        if len(allocations) * attrs['quantity'] > MAX_BULK_PLANTS:
+            raise ValidationError({
+                'quantity': f'A germination operation may create at most {MAX_BULK_PLANTS} plants.',
+            })
+        attrs['cell_plantings'] = allocations
+        return attrs
 
     def create(self, validated_data):
         raise NotImplementedError

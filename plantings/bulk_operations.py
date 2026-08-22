@@ -296,25 +296,34 @@ def _preview_repot_application(workspace, plants, request):
 
 
 def _germination_preview(workspace, request, lock=False):
-    """Validate the source allocation for a quantity germination."""
-    allocation = request.action_payload['cell_planting']
-    queryset = SeedTrayCellPlanting.objects.filter(pk=allocation.pk)
+    """Validate every source allocation for a quantity germination."""
+    requested = request.action_payload['cell_plantings']
+    requested_ids = [allocation.pk for allocation in requested]
+    queryset = SeedTrayCellPlanting.objects.filter(
+        pk__in=requested_ids,
+        seed_tray_planting__workspace=workspace,
+    )
     if lock:
         queryset = queryset.select_for_update()
-    allocation = queryset.select_related('seed_tray_planting__batch').first()
+    allocations = list(
+        queryset.select_related('seed_tray_planting__batch').order_by('pk')
+    )
+    available_ids = {allocation.pk for allocation in allocations}
     conflicts = []
-    if allocation is None or allocation.seed_tray_planting.workspace_id != workspace.pk:
+    if any(allocation.pk not in available_ids for allocation in requested):
         conflicts.append('The cell allocation is unavailable in this workspace.')
+    quantity = request.action_payload['quantity']
+    selected = len(requested) * quantity
     return {
         'action': request.action,
-        'selected': request.action_payload['quantity'],
-        'eligible': 0 if conflicts else request.action_payload['quantity'],
+        'selected': selected,
+        'eligible': 0 if conflicts else selected,
         'conflicts': len(conflicts),
         'plants': [],
         'capacity': [],
         'source': {
-            'cell_planting': request.action_payload['cell_planting'].pk,
-            'quantity': request.action_payload['quantity'],
+            'cell_plantings': requested_ids,
+            'quantity': quantity,
             'conflicts': conflicts,
         },
     }
@@ -439,37 +448,51 @@ def _post_repot_application(workspace, user, plants, request):
 
 
 def _apply_germination(operation, user, request):
-    """Create individually auditable plants and reallocate their batch once."""
-    allocation = SeedTrayCellPlanting.objects.select_for_update().get(
-        pk=request.action_payload['cell_planting'].pk,
+    """Create auditable plants per cell and reallocate each affected batch once."""
+    allocation_ids = [
+        allocation.pk for allocation in request.action_payload['cell_plantings']
+    ]
+    allocations = list(
+        SeedTrayCellPlanting.objects.select_for_update()
+        .filter(pk__in=allocation_ids)
+        .select_related('seed_tray_planting__batch', 'cell')
+        .order_by('pk')
     )
-    batch = lock_batch_with_plants(allocation.seed_tray_planting.batch)
+    batches = {
+        allocation.seed_tray_planting.batch_id: allocation.seed_tray_planting.batch
+        for allocation in allocations
+    }
+    locked_batches = [
+        lock_batch_with_plants(batches[batch_id]) for batch_id in sorted(batches)
+    ]
     notes = request.action_payload.get('notes', '')
-    for _index in range(request.action_payload['quantity']):
-        plant = SpecificPlant.objects.create(
-            cell_planting=allocation,
-            germinated=request.occurred_at,
-            notes=notes,
-        )
-        location = SpecificPlantLocation.objects.create(
-            specific_plant=plant,
-            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
-            seed_tray_cell=allocation.cell,
-            started=request.occurred_at,
-        )
-        event = record_germination_event(plant, user)
-        BulkPlantOperationResult.objects.create(
-            workspace=operation.workspace,
-            operation=operation,
-            plant=plant,
-            status=BulkPlantOperationResult.Status.APPLIED,
-            lifecycle_event=event,
-            location=location,
-        )
+    for allocation in allocations:
+        for _index in range(request.action_payload['quantity']):
+            plant = SpecificPlant.objects.create(
+                cell_planting=allocation,
+                germinated=request.occurred_at,
+                notes=notes,
+            )
+            location = SpecificPlantLocation.objects.create(
+                specific_plant=plant,
+                location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+                seed_tray_cell=allocation.cell,
+                started=request.occurred_at,
+            )
+            event = record_germination_event(plant, user)
+            BulkPlantOperationResult.objects.create(
+                workspace=operation.workspace,
+                operation=operation,
+                plant=plant,
+                status=BulkPlantOperationResult.Status.APPLIED,
+                lifecycle_event=event,
+                location=location,
+            )
 
     from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
 
-    reallocate_batch(batch, user, 'bulk-germination')
+    for batch in locked_batches:
+        reallocate_batch(batch, user, 'bulk-germination')
 
 
 @transaction.atomic
