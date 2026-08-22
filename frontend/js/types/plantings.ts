@@ -596,7 +596,8 @@ interface BulkPlantPreview {
     available: number
   }>
   source?: {
-    cell_planting: number
+    cell_planting?: number
+    cell_plantings?: Array<number>
     quantity: number
     conflicts: Array<string>
   }

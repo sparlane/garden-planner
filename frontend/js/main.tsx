@@ -45,7 +45,7 @@ function SeedTrayDetailsRoute() {
     return <div>Seed tray not found.</div>
   }
 
-  return <SeedTrayDetails seedTrayPk={seedTrayPk} />
+  return <SeedTrayDetails key={seedTrayPk} seedTrayPk={seedTrayPk} />
 }
 
 function ProductionBatchDetailRoute({ workspace }: { workspace: Workspace }) {
