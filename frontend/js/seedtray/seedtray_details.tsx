@@ -73,6 +73,7 @@ type MoveForm = BaseMoveForm & (GardenSquareMove | SeedTrayMove)
 type InventoryAction = 'transfer' | 'loss' | 'retire' | 'return' | 'reconcile-opening'
 
 type CellPlantingEntry = { cellPlantingPk: number; quantity: number; plantingPk: number }
+type GerminationSelection = { cellPlantingPk: number; cellLabel: string; quantity: number }
 
 type CleanGenerationRequestPayload = {
   reason: string
@@ -134,7 +135,7 @@ type SeedTrayCellViewProps = {
   plants: Array<SpecificPlant>
   germinatedByCellPlanting: { [cellPlantingPk: number]: number }
   selectedCellPlantingPks: Array<number>
-  onToggleGermination: (cellPlantingPk: number) => void
+  onToggleGermination: (cellPlantingPk: number, cellLabel: string) => void
   onOpenMove: (plant: SpecificPlant) => void
   locationLabel: (loc: SpecificPlantLocation) => string
 }
@@ -199,7 +200,7 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
             size="sm"
             variant={selectedCellPlantingPks.includes(entry.cellPlantingPk) ? 'success' : 'outline-success'}
             style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 4 }}
-            onClick={() => onToggleGermination(entry.cellPlantingPk)}
+            onClick={() => onToggleGermination(entry.cellPlantingPk, `Cell ${cell.x_position}, ${cell.y_position}${entries.length > 1 ? ` · planting #${entry.plantingPk}` : ''}`)}
             aria-pressed={selectedCellPlantingPks.includes(entry.cellPlantingPk)}
           >
             {selectedCellPlantingPks.includes(entry.cellPlantingPk) ? 'Selected' : '+ Germination'}
@@ -261,49 +262,63 @@ const PlantLifecycleRow: React.FC<PlantLifecycleRowProps> = ({ plant, locationLa
 }
 
 type GerminationFormProps = {
-  cellPlantingPks: Array<number>
-  quantity: number
+  selections: Array<GerminationSelection>
   date: string
   notes: string
   onChangeDate: (value: string) => void
-  onChangeQuantity: (value: number) => void
+  onChangeQuantity: (cellPlantingPk: number, value: number) => void
   onChangeNotes: (value: string) => void
   onSave: () => void
   onCancel: () => void
 }
 
-const GerminationForm: React.FC<GerminationFormProps> = ({ cellPlantingPks, quantity, date, notes, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => (
-  <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 400 }}>
-    <h5>Record Germination</h5>
-    <p>
-      {cellPlantingPks.length} cell{cellPlantingPks.length === 1 ? '' : 's'} selected
-    </p>
-    <div>
-      <label>
-        Quantity per cell:{' '}
-        <input type="number" min={1} max={Math.floor(5000 / cellPlantingPks.length)} value={quantity} onChange={(e) => onChangeQuantity(Number(e.target.value))} />
-      </label>
+const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, notes, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => {
+  const totalQuantity = selections.reduce((total, selection) => total + selection.quantity, 0)
+  return (
+    <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 400 }}>
+      <h5>Record Germination</h5>
+      <p>
+        {selections.length} cell{selections.length === 1 ? '' : 's'} selected
+      </p>
+      {selections.map((selection) => {
+        const otherQuantity = totalQuantity - selection.quantity
+        return (
+          <div key={selection.cellPlantingPk} className="d-flex justify-content-between align-items-center gap-2 mb-2">
+            <label htmlFor={`germination-quantity-${selection.cellPlantingPk}`}>{selection.cellLabel}</label>
+            <input
+              id={`germination-quantity-${selection.cellPlantingPk}`}
+              aria-label={`Germinated quantity for ${selection.cellLabel}`}
+              type="number"
+              min={1}
+              max={5000 - otherQuantity}
+              value={selection.quantity}
+              onChange={(e) => onChangeQuantity(selection.cellPlantingPk, Number(e.target.value))}
+              style={{ width: 90 }}
+            />
+          </div>
+        )
+      })}
+      <div>
+        <label>
+          Date: <input type="datetime-local" value={date} onChange={(e) => onChangeDate(e.target.value)} />
+        </label>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label>
+          Notes: <input type="text" value={notes} onChange={(e) => onChangeNotes(e.target.value)} placeholder="Optional" />
+        </label>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <Button variant="success" onClick={onSave} disabled={!date || selections.some((selection) => selection.quantity < 1) || totalQuantity > 5000}>
+          Review {totalQuantity} plant{totalQuantity === 1 ? '' : 's'}
+        </Button>{' '}
+        <Button variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
-    <div>
-      <label>
-        Date: <input type="datetime-local" value={date} onChange={(e) => onChangeDate(e.target.value)} />
-      </label>
-    </div>
-    <div style={{ marginTop: 8 }}>
-      <label>
-        Notes: <input type="text" value={notes} onChange={(e) => onChangeNotes(e.target.value)} placeholder="Optional" />
-      </label>
-    </div>
-    <div style={{ marginTop: 8 }}>
-      <Button variant="success" onClick={onSave} disabled={!date || quantity < 1 || cellPlantingPks.length * quantity > 5000}>
-        Review {cellPlantingPks.length * quantity} plant{cellPlantingPks.length * quantity === 1 ? '' : 's'}
-      </Button>{' '}
-      <Button variant="secondary" onClick={onCancel}>
-        Cancel
-      </Button>
-    </div>
-  </div>
-)
+  )
+}
 
 type MovePlantFormProps = {
   form: MoveForm
@@ -523,9 +538,8 @@ const GenerationCard: React.FC<GenerationCardProps> = ({ generations, active, bu
 
 function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const cache = useQueryClient()
-  const [selectedCellPlantingPks, setSelectedCellPlantingPks] = React.useState<Array<number>>([])
+  const [germinationSelections, setGerminationSelections] = React.useState<Array<GerminationSelection>>([])
   const [germinationDate, setGerminationDate] = React.useState(localDatetimeInputValue())
-  const [germinationQuantity, setGerminationQuantity] = React.useState(1)
   const [germinationNotes, setGerminationNotes] = React.useState('')
   const [moveForm, setMoveForm] = React.useState<MoveForm>()
   const [inventoryAction, setInventoryAction] = React.useState<InventoryAction>()
@@ -679,6 +693,18 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return packets
   }, {})
   const { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting, cellTotals } = computeCellData(specificPlants, plantings)
+  const selectedCellPlantingPks = germinationSelections.map((selection) => selection.cellPlantingPk)
+  const allGerminationSelections = seedTrayCells.flatMap((row) =>
+    row.flatMap((cell) => {
+      if (!cell) return []
+      const entries = cellPlantingMap[cell.pk] ?? []
+      return entries.map((entry) => ({
+        cellPlantingPk: entry.cellPlantingPk,
+        cellLabel: `Cell ${cell.x_position}, ${cell.y_position}${entries.length > 1 ? ` · planting #${entry.plantingPk}` : ''}`,
+        quantity: 1
+      }))
+    })
+  )
   const isLoading = [
     seedTrayModelsQuery,
     seedTraysQuery,
@@ -691,7 +717,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   ].some((query) => query.isPending)
 
   async function handleRecordGermination() {
-    if (selectedCellPlantingPks.length === 0) return
+    if (germinationSelections.length === 0) return
     const parsedDate = parseLocalDatetimeInput(germinationDate)
     if (!parsedDate) return
     const request: BulkPlantOperationRequest = {
@@ -701,10 +727,12 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       occurred_at: parsedDate.toISOString(),
       reason: germinationNotes,
       plants: [],
-      selection_source: { mode: 'cell_plantings', cell_plantings: selectedCellPlantingPks },
+      selection_source: { mode: 'cell_plantings', cell_plantings: germinationSelections.map((selection) => selection.cellPlantingPk) },
       action_payload: {
-        cell_plantings: selectedCellPlantingPks,
-        quantity: germinationQuantity,
+        germinations: germinationSelections.map((selection) => ({
+          cell_planting: selection.cellPlantingPk,
+          quantity: selection.quantity
+        })),
         notes: germinationNotes
       }
     }
@@ -715,13 +743,20 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     }
     if (!globalThis.confirm(`Create ${review.eligible} individually tracked plant${review.eligible === 1 ? '' : 's'}?`)) return
     await germinationMutation.mutateAsync(request)
-    setSelectedCellPlantingPks([])
-    setGerminationQuantity(1)
+    setGerminationSelections([])
     setGerminationNotes('')
   }
 
-  function toggleGerminationSelection(cellPlantingPk: number) {
-    setSelectedCellPlantingPks((selected) => (selected.includes(cellPlantingPk) ? selected.filter((pk) => pk !== cellPlantingPk) : [...selected, cellPlantingPk]))
+  function toggleGerminationSelection(cellPlantingPk: number, cellLabel: string) {
+    setGerminationSelections((selected) =>
+      selected.some((selection) => selection.cellPlantingPk === cellPlantingPk)
+        ? selected.filter((selection) => selection.cellPlantingPk !== cellPlantingPk)
+        : [...selected, { cellPlantingPk, cellLabel, quantity: 1 }]
+    )
+  }
+
+  function changeGerminationQuantity(cellPlantingPk: number, quantity: number) {
+    setGerminationSelections((selected) => selected.map((selection) => (selection.cellPlantingPk === cellPlantingPk ? { ...selection, quantity } : selection)))
   }
 
   async function handleRecordMove() {
@@ -1092,22 +1127,11 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       </Table>
       <div className="d-flex align-items-center gap-2 mb-2">
         <span className="text-muted">Select one or more sown cells to record germination.</span>
-        <Button
-          size="sm"
-          variant="outline-success"
-          onClick={() =>
-            setSelectedCellPlantingPks(
-              Object.values(cellPlantingMap)
-                .flat()
-                .map((entry) => entry.cellPlantingPk)
-            )
-          }
-          disabled={Object.keys(cellPlantingMap).length === 0}
-        >
+        <Button size="sm" variant="outline-success" onClick={() => setGerminationSelections(allGerminationSelections)} disabled={allGerminationSelections.length === 0}>
           Select all sown cells
         </Button>
         {selectedCellPlantingPks.length > 0 && (
-          <Button size="sm" variant="outline-secondary" onClick={() => setSelectedCellPlantingPks([])}>
+          <Button size="sm" variant="outline-secondary" onClick={() => setGerminationSelections([])}>
             Clear selection
           </Button>
         )}
@@ -1137,15 +1161,14 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       </Table>
       {selectedCellPlantingPks.length > 0 && (
         <GerminationForm
-          cellPlantingPks={selectedCellPlantingPks}
-          quantity={germinationQuantity}
+          selections={germinationSelections}
           date={germinationDate}
           notes={germinationNotes}
           onChangeDate={setGerminationDate}
-          onChangeQuantity={setGerminationQuantity}
+          onChangeQuantity={changeGerminationQuantity}
           onChangeNotes={setGerminationNotes}
           onSave={handleRecordGermination}
-          onCancel={() => setSelectedCellPlantingPks([])}
+          onCancel={() => setGerminationSelections([])}
         />
       )}
       <Card className="mb-3">
