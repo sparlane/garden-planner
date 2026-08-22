@@ -598,7 +598,8 @@ interface BulkPlantPreview {
   source?: {
     cell_planting?: number
     cell_plantings?: Array<number>
-    quantity: number
+    quantity: number | null
+    germinations?: Array<{ cell_planting: number; quantity: number }>
     conflicts: Array<string>
   }
 }
