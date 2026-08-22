@@ -274,6 +274,46 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
             3,
         )
 
+    def test_garden_profile_can_preview_and_record_cell_germination(self):
+        """The shared seed-tray screen can germinate plants in Garden mode."""
+        self.workspace.mode = Workspace.Mode.GARDEN
+        self.workspace.save(update_fields=['mode'])
+        allocation = make_seed_tray_cell_planting(quantity=1)
+        payload = self.payload(
+            BulkPlantOperation.Action.GERMINATE,
+            plants=[],
+            action_payload={
+                'cell_planting': allocation.pk,
+                'quantity': 1,
+                'notes': '',
+            },
+        )
+
+        preview = self.client.post(
+            '/plantings/bulk-operations/preview/', payload, format='json',
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['eligible'], 1)
+
+        response = self.client.post(
+            '/plantings/bulk-operations/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(len(response.data['results']), 1)
+
+    def test_garden_profile_cannot_use_nursery_bulk_actions(self):
+        """The germination exception does not expose other bulk nursery work."""
+        self.workspace.mode = Workspace.Mode.GARDEN
+        self.workspace.save(update_fields=['mode'])
+
+        response = self.client.post(
+            '/plantings/bulk-operations/preview/',
+            self.payload(BulkPlantOperation.Action.CULL),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 403, response.data)
+
     def test_reviewed_stage_update_records_one_shared_observation(self):
         """Bulk stage work links every independently audited result to its fact."""
         stage = GrowthStage.objects.get(workspace=self.workspace, code='rooted')

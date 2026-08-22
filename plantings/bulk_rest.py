@@ -238,6 +238,15 @@ class BulkPlantOperationViewSet(
     queryset = BulkPlantOperation.objects.prefetch_related('results')
     serializer_class = BulkPlantOperationSerializer
 
+    def get_required_workspace_modes(self):
+        """Keep nursery work gated while allowing shared tray germination."""
+        if all((
+            self.action in {'create', 'preview'},
+            self.request.data.get('action') == BulkPlantOperation.Action.GERMINATE,
+        )):
+            return (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
+        return super().get_required_workspace_modes()
+
     def _request_values(self, request, require_key):
         serializer = BulkOperationRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
