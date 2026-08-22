@@ -38,6 +38,11 @@ const queryKeys = {
     all: ['workspace'] as const,
     current: ['workspace', 'current'] as const
   },
+  tax: {
+    all: ['tax'] as const,
+    gstStatus: ['tax', 'gst', 'status'] as const,
+    gstRegistrations: ['tax', 'gst', 'registrations'] as const
+  },
   locations: {
     all: ['locations'] as const,
     list: (status: string) => ['locations', 'list', status] as const,
