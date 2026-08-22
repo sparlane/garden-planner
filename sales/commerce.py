@@ -248,6 +248,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             fulfillment=fulfillment, allocation=allocation,
             commercial_position=position, cogs_amount=cogs_amount,
             cogs_provisional=provisional, currency_code=order.currency_code,
+            tax_treatment=allocation.line.tax_treatment,
             lifecycle_event=lifecycle_event, stock_movement=stock_movement,
             **amounts,
         )
@@ -498,11 +499,21 @@ def post_refund(order, user, *, operation_key, payment, fulfillment_lines,
         operation_key=operation_key, request_fingerprint=fingerprint,
         created_by=_actor(user),
     )
-    RefundLine.objects.bulk_create([
-        RefundLine(refund=refund, fulfillment_line=share.pop('line'), **share)
-        for share in shares
-    ])
+    RefundLine.objects.bulk_create([_refund_line(refund, share) for share in shares])
     return refund
+
+
+def _refund_line(refund, share):
+    """Build one refund line, carrying its source line's GST treatment.
+
+    The treatment travels with the money so a credit lands in the same box of
+    the return as the supply it reverses.
+    """
+    line = share.pop('line')
+    return RefundLine(
+        refund=refund, fulfillment_line=line,
+        tax_treatment=line.tax_treatment, **share,
+    )
 
 
 def order_commerce_summary(order):
