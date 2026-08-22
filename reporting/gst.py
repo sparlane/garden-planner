@@ -34,6 +34,8 @@ from tax.periods import (
     taxable_period_for,
 )
 from tax.recognition import SUPPLY, SUPPLY_CREDIT
+from tax.services import closures_by_label
+from tax.transition import basis_transitions
 from tax.turnover import registration_warnings
 
 from .common import Report, decimal_string
@@ -51,6 +53,7 @@ PERIOD_COLUMNS = (
     'purchases_incl_tax', 'input_tax', 'credit_adjustments', 'total_input_tax',
     'non_recoverable_tax', 'input_tax_awaiting_payment',
     'net_gst', 'net_gst_direction', 'entry_count', 'currency_code',
+    'filed', 'filed_at', 'filed_total_drift',
 )
 
 ENTRY_COLUMNS = (
@@ -110,18 +113,43 @@ def gst_period_report(workspace, filters):
     start, end = _date_bounds(workspace, filters)
     entries = derive_entries(workspace, start, end)
     periods = enumerate_periods(workspace, start, end, history=registration_history(workspace))
+    closures = closures_by_label(workspace)
     rows = []
     for period in periods:
-        rows.extend(_period_rows(period, entries))
+        rows.extend(_mark_filed(row, closures) for row in _period_rows(period, entries))
     return Report(
         name='gst-periods',
         filters=dict(filters),
         columns=PERIOD_COLUMNS,
         rows=rows,
-        totals=_period_totals(rows),
+        totals=_period_totals(rows, basis_transitions(workspace)),
         reconciliation=dict(RECONCILIATION),
         data_quality=_data_quality(workspace, entries, rows, end),
     )
+
+
+def _mark_filed(row, closures):
+    """Say whether a period was filed, and whether re-reading it still agrees.
+
+    A derived report follows a late correction automatically, which is right
+    everywhere except a period already reported to Inland Revenue. Comparing
+    what is derived now against what was filed is how that stops being
+    invisible.
+    """
+    closure = closures.get(row['period_label'])
+    if closure is None:
+        return {**row, 'filed': False, 'filed_at': None, 'filed_total_drift': None}
+    filed = closure.filed_totals.get(row['currency_code'], {}).get('net_gst')
+    drift = (
+        None if filed is None
+        else decimal_string(Decimal(row['net_gst']) - Decimal(filed), MONEY_PLACES)
+    )
+    return {
+        **row,
+        'filed': True,
+        'filed_at': closure.created.isoformat(),
+        'filed_total_drift': drift,
+    }
 
 
 def gst_entry_report(workspace, filters):
@@ -259,7 +287,7 @@ def _gst_number(period):
     return registration.gst_number if registration else ''
 
 
-def _period_totals(rows):
+def _period_totals(rows, transitions=()):
     """Sum the periods, per currency, withholding what cannot be consolidated."""
     summed = defaultdict(lambda: defaultdict(Decimal))
     money_fields = [
@@ -268,6 +296,9 @@ def _period_totals(rows):
             'period_label', 'period_start', 'period_end', 'clipped', 'basis',
             'filing_frequency', 'gst_number', 'registration',
             'net_gst_direction', 'entry_count', 'currency_code',
+            # Filing status is a fact about the period, not a measure of it,
+            # and drift is null wherever nothing was filed.
+            'filed', 'filed_at', 'filed_total_drift',
         }
     ]
     for row in rows:
@@ -288,10 +319,31 @@ def _period_totals(rows):
         'periods': len(rows),
         'currencies': currencies,
         'by_currency': per_currency,
+        'basis_transitions': [_transition_total(item) for item in transitions],
         # None means withheld, and must mean only that: consolidating two
         # currencies would need an exchange rate this application does not
         # hold. A range that simply saw no trading is nil, not unknown.
         'net_gst': _consolidated_net(currencies, per_currency),
+    }
+
+
+def _transition_total(transition):
+    """Render one basis change's outstanding adjustment beside the periods.
+
+    Change 5 asks for the transition work to be exposed rather than performed
+    silently, so it travels with the report the operator files from.
+    """
+    return {
+        'change_date': transition.change_date.isoformat(),
+        'previous_basis': transition.previous_basis,
+        'new_basis': transition.new_basis,
+        'direction': transition.direction,
+        'required': transition.required,
+        'complete': transition.complete,
+        'adjustment_tax': {
+            code: decimal_string(value, MONEY_PLACES)
+            for code, value in transition.adjustment_tax.items()
+        },
     }
 
 
@@ -379,6 +431,32 @@ def _data_quality(workspace, entries, rows, as_at):
             'line, so a receipt mixing standard-rated and zero-rated purchases '
             'cannot be represented.',
             kind=PURCHASE,
+        ))
+
+    drifted = [
+        row for row in rows
+        if row.get('filed') and row.get('filed_total_drift') not in (None, '0.0000')
+    ]
+    if drifted:
+        findings.append(_finding(
+            'filed_total_drift', len(drifted),
+            'A period already reported no longer derives the figure it was '
+            'filed on. A later correction has changed it, and the difference '
+            'belongs in a return rather than in a restatement.',
+        ))
+
+    outstanding = [item for item in basis_transitions(workspace) if item.required]
+    if outstanding:
+        findings.append(_finding(
+            'basis_transition_incomplete', len(outstanding),
+            'A change of accounting basis leaves a one-off adjustment for the '
+            'debtors outstanding at the change date. It is reported in the '
+            'totals and is not applied to any period automatically.',
+        ))
+        findings.append(_finding(
+            'creditors_unavailable', len(outstanding),
+            'The creditors side of a basis-change adjustment cannot be '
+            'computed: no supplier payment date is recorded anywhere yet.',
         ))
 
     currencies = {row['currency_code'] for row in rows if row['currency_code']}

@@ -10,7 +10,7 @@ from django.db import transaction
 
 from workspaces.models import get_current_workspace
 
-from .models import GstRegistration, TaxTreatmentCorrection
+from .models import GstPeriodClosure, GstRegistration, TaxTreatmentCorrection
 
 
 @transaction.atomic
@@ -119,3 +119,36 @@ def correct_tax_treatment(line, treatment, user, reason):
     ).update(tax_treatment=treatment)
     line.tax_treatment = treatment
     return correction
+
+
+@transaction.atomic
+def close_period(workspace, user, period, filed_totals, notes=''):
+    """Record that one taxable period has been reported, with its filed figures.
+
+    The figures are stored rather than derived, which is the one deliberate
+    exception to how this app works. Everything else is re-read from the
+    commerce records so it can never disagree with them — but a period already
+    filed is precisely the thing that must not silently follow a late
+    correction, and keeping what was filed is how the drift becomes visible.
+    """
+    closure = GstPeriodClosure(
+        workspace=workspace,
+        period_start=period.start,
+        period_end=period.end,
+        registration_id=period.registration_id,
+        basis=period.basis,
+        filing_frequency=period.frequency,
+        filed_totals=filed_totals,
+        notes=notes,
+        closed_by=user if user is not None and user.is_authenticated else None,
+    )
+    closure.save()
+    return closure
+
+
+def closures_by_label(workspace):
+    """Return every filed period, keyed by the label the report uses."""
+    return {
+        closure.label: closure
+        for closure in GstPeriodClosure.objects.filter(workspace=workspace)
+    }
