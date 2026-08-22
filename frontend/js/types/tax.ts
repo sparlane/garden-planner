@@ -41,6 +41,28 @@ interface GstTaxablePeriod {
   registration: number
 }
 
+// A threshold or eligibility finding. Nothing is ever refused on account of
+// one: a workspace that has outgrown its accounting basis does not stop being
+// on it, and refusing to record the truth would leave its returns
+// unproducible.
+interface GstWarning {
+  code: string
+  message: string
+  // Money as a decimal string, or null when the finding is not about an amount.
+  value: string | null
+  threshold: string | null
+}
+
+interface GstTurnover {
+  start: string
+  end: string
+  // Kept per currency and never totalled: there is no exchange rate here.
+  taxable: Record<string, string>
+  // Zero-rated-looking supplies nobody has classified. Counted neither
+  // towards nor against the threshold.
+  unclassified: Record<string, string>
+}
+
 interface GstStatus {
   as_at: string
   registered: boolean
@@ -49,6 +71,16 @@ interface GstStatus {
   has_history: boolean
   registration: GstRegistration | null
   taxable_period: GstTaxablePeriod | null
+  rolling_turnover: GstTurnover
+  registration_threshold: string
+  warnings: Array<GstWarning>
+}
+
+// The create response repeats the arrangement with its consequences attached,
+// so the operator learns at the moment of choosing that a frequency is one
+// their turnover has outgrown.
+interface GstRegistrationCreated extends GstRegistration {
+  warnings: Array<GstWarning>
 }
 
 type GstRegistrationCreate = Pick<
@@ -56,4 +88,4 @@ type GstRegistrationCreate = Pick<
   'registered' | 'effective_from' | 'gst_number' | 'basis' | 'filing_frequency' | 'period_anchor_month' | 'taxable_activity_start' | 'reason' | 'notes' | 'supersedes'
 >
 
-export { GstBasis, GstFrequency, GstRegistration, GstRegistrationCreate, GstStatus, GstTaxablePeriod }
+export { GstBasis, GstFrequency, GstRegistration, GstRegistrationCreate, GstRegistrationCreated, GstStatus, GstTaxablePeriod, GstTurnover, GstWarning }

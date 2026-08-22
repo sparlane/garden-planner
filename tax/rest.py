@@ -14,6 +14,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from inventory.ledger import quantize_money
 from workspaces.models import Workspace, get_current_workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -24,6 +25,7 @@ from workspaces.scoping import (
 from .models import GstRegistration
 from .periods import local_date, registration_history, taxable_period_for
 from .services import record_registration
+from .turnover import REGISTRATION_THRESHOLD, registration_warnings, rolling_turnover
 
 
 def _model_errors(error):
@@ -82,7 +84,30 @@ class GstRegistrationSerializer(CurrentWorkspaceSerializerMixin, serializers.Mod
         )
 
 
+class GstRegistrationCreateResponseMixin:  # pylint: disable=too-few-public-methods
+    """Return the eligibility consequences alongside the arrangement recorded.
+
+    Nothing is refused at the point of recording, so this is the moment the
+    operator finds out that the frequency they just chose is one their turnover
+    has outgrown. Saying it here rather than only on a later screen is the
+    difference between a warning and a discovery.
+    """
+
+    def create(self, request, *args, **kwargs):
+        """Create the arrangement, then answer with its warnings attached."""
+        response = super().create(request, *args, **kwargs)
+        workspace = get_current_workspace()
+        today = local_date(workspace, request_now())
+        registration = self.get_queryset().get(pk=response.data['pk'])
+        in_force = registration if registration.registered else None
+        response.data['warnings'] = registration_warnings(
+            workspace, today, registration=in_force,
+        )
+        return response
+
+
 class GstRegistrationViewSet(  # pylint: disable=too-many-ancestors
+    GstRegistrationCreateResponseMixin,
     RequireWorkspaceModeMixin,
     CurrentWorkspaceViewSetMixin,
     mixins.CreateModelMixin,
@@ -121,14 +146,19 @@ class GstStatusView(RequireWorkspaceModeMixin, APIView):
                 break
             registration = row
         period = taxable_period_for(workspace, today, history=history)
+        in_force = registration if registration and registration.registered else None
+        rolling = rolling_turnover(workspace, today)
         return Response({
             'as_at': today.isoformat(),
-            'registered': bool(registration and registration.registered),
+            'registered': bool(in_force),
             'has_history': bool(history),
             'registration': (
                 GstRegistrationSerializer(registration).data if registration else None
             ),
             'taxable_period': _period_payload(period),
+            'rolling_turnover': _turnover_payload(rolling),
+            'registration_threshold': str(quantize_money(REGISTRATION_THRESHOLD)),
+            'warnings': registration_warnings(workspace, today, registration=in_force),
         })
 
 
@@ -136,6 +166,22 @@ def request_now():
     """Return the current instant, isolated so a test can freeze it."""
     from django.utils import timezone  # pylint: disable=import-outside-toplevel
     return timezone.now()
+
+
+def _turnover_payload(rolling):
+    """Render turnover per currency, never totalled across them.
+
+    There is no exchange rate in this application — task 121 owns that — so
+    consolidating two currencies here would invent one.
+    """
+    return {
+        'start': rolling['start'].isoformat(),
+        'end': rolling['end'].isoformat(),
+        'taxable': {code: str(value) for code, value in rolling['taxable'].items()},
+        'unclassified': {
+            code: str(value) for code, value in rolling['unclassified'].items()
+        },
+    }
 
 
 def _period_payload(period):
