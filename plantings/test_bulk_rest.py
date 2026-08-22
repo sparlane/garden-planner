@@ -6,6 +6,7 @@ from uuid import uuid4
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import close_old_connections
+from django.db.models import F
 from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
@@ -18,6 +19,7 @@ from tests.factories import (
     make_location,
     make_inventory_item,
     make_stock_lot,
+    make_seed_tray_cell,
     make_seed_tray_cell_planting,
     make_specific_plant,
     make_specific_plant_location,
@@ -272,6 +274,56 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
                 ended__isnull=True,
             ).count(),
             3,
+        )
+
+    def test_multi_cell_germination_creates_unique_plants_in_each_cell(self):
+        """One reviewed action preserves the physical origin of every seedling."""
+        first = make_seed_tray_cell_planting(quantity=2)
+        second = make_seed_tray_cell_planting(
+            seed_tray_planting=first.seed_tray_planting,
+            cell=make_seed_tray_cell(
+                tray=first.seed_tray_planting.seed_tray,
+                x_position=1,
+            ),
+            quantity=2,
+        )
+        payload = self.payload(
+            BulkPlantOperation.Action.GERMINATE,
+            plants=[],
+            action_payload={
+                'cell_plantings': [second.pk, first.pk],
+                'quantity': 1,
+                'notes': 'Tray check.',
+            },
+        )
+
+        preview = self.client.post(
+            '/plantings/bulk-operations/preview/', payload, format='json',
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['selected'], 2)
+        self.assertEqual(
+            preview.data['source']['cell_plantings'],
+            [second.pk, first.pk],
+        )
+
+        response = self.client.post(
+            '/plantings/bulk-operations/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        plant_ids = [result['plant'] for result in response.data['results']]
+        plants = SpecificPlant.objects.filter(pk__in=plant_ids)
+        self.assertEqual(plants.count(), 2)
+        self.assertEqual(
+            set(plants.values_list('cell_planting_id', flat=True)),
+            {first.pk, second.pk},
+        )
+        self.assertEqual(
+            SpecificPlantLocation.objects.filter(
+                specific_plant__in=plants,
+                seed_tray_cell_id=F('specific_plant__cell_planting__cell_id'),
+            ).count(),
+            2,
         )
 
     def test_garden_profile_can_preview_and_record_cell_germination(self):
