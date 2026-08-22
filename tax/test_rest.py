@@ -97,6 +97,39 @@ class GstRegistrationContractTests(GstRegistrationRestTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('gst_number', response.data)
 
+    def test_every_rejected_gst_number_is_keyed_to_its_field(self):
+        """A list-shaped body would render nowhere, so the shape is the contract.
+
+        `errorsByField` returns `{}` for anything that is not DRF's
+        `{field: [message]}`, and this form has no non-field alert to fall back
+        on. A malformed number that came back as a bare list therefore failed
+        silently, which is what this pins shut. Each case here is genuinely
+        malformed: a doubled separator is not, because separators are stripped.
+        """
+        for value in ('AB-CDE-FGH', '4A-091-850', '49-091-85', '49-091-8501'):
+            with self.subTest(value=value):
+                response = self.client.post(
+                    URL,
+                    dict(REGISTERED, gst_number=value, effective_from='2026-01-01'),
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIsInstance(response.data, dict)
+                self.assertIn('gst_number', response.data)
+
+    def test_a_conventionally_grouped_number_is_accepted_and_stored_bare(self):
+        """Somebody copies the number as it is printed; storage stays canonical."""
+        for entered, stored in (('49-091-850', '049091850'), ('136-410-132', '136410132')):
+            with self.subTest(entered=entered):
+                GstRegistration.objects.all().delete()
+                response = self.client.post(
+                    URL,
+                    dict(REGISTERED, gst_number=entered, effective_from='2026-01-01'),
+                    format='json',
+                )
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(response.data['gst_number'], stored)
+
     def test_backdating_over_a_recorded_arrangement_is_reported(self):
         """The append-only rule has to reach the operator, not just the model."""
         self.register(effective_from=date(2026, 4, 1))

@@ -193,14 +193,16 @@ function GstRegistrationSettings() {
               <Form.Label>GST number</Form.Label>
               <Form.Control
                 required
-                maxLength={11}
+                maxLength={16}
                 value={form.gst_number}
                 onChange={(event) => updateField('gst_number', event.target.value)}
                 isInvalid={'gst_number' in fieldErrors}
                 aria-describedby="gst-number-help"
               />
               <Form.Control.Feedback type="invalid">{fieldErrors.gst_number}</Form.Control.Feedback>
-              <Form.Text id="gst-number-help">Eight or nine digits. Checked against Inland Revenue&apos;s check digit, so a transposed pair is caught here.</Form.Text>
+              <Form.Text id="gst-number-help">
+                Enter it however it is printed — 49-091-850, 136-410-132, or bare digits. Checked against Inland Revenue&apos;s check digit, so a transposed pair is caught here.
+              </Form.Text>
             </Form.Group>
             <Form.Group className="mb-3" controlId="gst-basis">
               <Form.Label>Accounting basis</Form.Label>

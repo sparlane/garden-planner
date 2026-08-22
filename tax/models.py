@@ -69,10 +69,19 @@ class GstRegistration(WorkspaceOwnedModel):
         help_text='The first day this arrangement applies to.',
     )
     gst_number = models.CharField(
-        max_length=11,
+        # Wider than any conventional format needs. A number is stored as nine
+        # bare digits, so nothing here is about storage: the length validator
+        # runs before `clean` does, and a tight limit would answer a mistyped
+        # separator with "no more than 11 characters" instead of the format
+        # message that actually tells somebody what to type.
+        max_length=16,
         blank=True,
         default='',
-        help_text='The nine-digit IRD/GST number the registration is held under.',
+        help_text=(
+            'The IRD/GST number the registration is held under. Entered in any '
+            'conventional form — 49-091-850, 136-410-132, or bare digits — and '
+            'stored as nine digits.'
+        ),
     )
     basis = models.CharField(
         max_length=16,
@@ -196,7 +205,12 @@ class GstRegistration(WorkspaceOwnedModel):
         if not self.gst_number:
             errors['gst_number'] = 'A registered workspace needs its GST number.'
         else:
+            # Normalizing here rather than in `save` is what keeps a badly
+            # formatted number a field error. Raised from `save` it arrived as
+            # a bare non-field error, which the settings form has nowhere to
+            # put, so a mistyped number failed silently.
             try:
+                self.gst_number = normalize_ird_number(self.gst_number)
                 validate_ird_number(self.gst_number)
             except ValidationError as exc:
                 errors['gst_number'] = exc.messages
@@ -289,8 +303,6 @@ class GstRegistration(WorkspaceOwnedModel):
             raise ValidationError(
                 'GST registration records are immutable; supersede them instead.',
             )
-        if self.gst_number:
-            self.gst_number = normalize_ird_number(self.gst_number)
         self.full_clean()
         super().save(*args, **kwargs)
 
