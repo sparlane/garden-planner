@@ -4,8 +4,8 @@ import { Alert, Badge, Button, Form, Spinner, Table } from 'react-bootstrap'
 
 import { createGstRegistration, getGstRegistrations, getGstStatus } from '../api/tax'
 import { queryKeys } from '../query'
-import { GstBasis, GstFrequency, GstRegistration, GstRegistrationCreate } from '../types/tax'
-import { errorsByField, formatDate } from '../utils'
+import { GstBasis, GstFrequency, GstRegistration, GstRegistrationCreate, GstStatus, GstWarning } from '../types/tax'
+import { errorsByField, formatDate, formatMoney } from '../utils'
 
 const BASIS_LABELS: Record<GstBasis, string> = {
   payments: 'Payments',
@@ -18,6 +18,11 @@ const FREQUENCY_LABELS: Record<GstFrequency, string> = {
   two_monthly: 'Two-monthly',
   six_monthly: 'Six-monthly'
 }
+
+// Compulsory registration and a basis a workspace has outgrown are different
+// kinds of finding, and the second must not be shouted at somebody who has
+// already done everything required of them.
+const URGENT_WARNING_CODES = ['threshold_exceeded', 'monthly_filing_required', 'payments_basis_ineligible', 'six_monthly_ineligible']
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -44,6 +49,42 @@ function describe(registration: GstRegistration): string {
   const basis = registration.basis ? BASIS_LABELS[registration.basis] : ''
   const frequency = registration.filing_frequency ? FREQUENCY_LABELS[registration.filing_frequency] : ''
   return `${basis} basis, ${frequency}`
+}
+
+function TurnoverBanner({ status }: { status: GstStatus }) {
+  const currencies = Object.keys(status.rolling_turnover.taxable)
+  if (currencies.length === 0) {
+    return null
+  }
+  return (
+    <p className="text-body-secondary">
+      Taxable supplies from {formatDate(status.rolling_turnover.start)} to {formatDate(status.rolling_turnover.end)}:{' '}
+      {currencies.map((code) => formatMoney(status.rolling_turnover.taxable[code], code)).join(', ')}. Registration becomes compulsory at{' '}
+      {formatMoney(status.registration_threshold, 'NZD')} in any twelve-month period.
+    </p>
+  )
+}
+
+function WarningList({ warnings }: { warnings: Array<GstWarning> }) {
+  if (warnings.length === 0) {
+    return null
+  }
+  return (
+    <>
+      {warnings.map((warning) => (
+        <Alert key={warning.code} variant={URGENT_WARNING_CODES.includes(warning.code) ? 'warning' : 'info'}>
+          {warning.message}
+          {warning.value && (
+            <>
+              {' '}
+              Measured: {formatMoney(warning.value, 'NZD')}
+              {warning.threshold && <> against {formatMoney(warning.threshold, 'NZD')}</>}.
+            </>
+          )}
+        </Alert>
+      ))}
+    </>
+  )
 }
 
 function GstRegistrationSettings() {
@@ -116,6 +157,9 @@ function GstRegistrationSettings() {
           )}
         </Alert>
       )}
+
+      {current && <TurnoverBanner status={current} />}
+      {current && <WarningList warnings={current.warnings} />}
 
       <h3 className="h5 mt-4">Record a change</h3>
       <Form onSubmit={submit}>
@@ -235,6 +279,7 @@ function GstRegistrationSettings() {
         </Button>
         {mutation.isSuccess && <span className="ms-3 text-success">Change recorded.</span>}
       </Form>
+      {mutation.isSuccess && mutation.data.warnings && <WarningList warnings={mutation.data.warnings} />}
 
       <h3 className="h5 mt-4">Recorded history</h3>
       {history.data && history.data.length === 0 && <p>No GST arrangement has been recorded yet.</p>}
