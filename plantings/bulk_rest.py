@@ -36,22 +36,43 @@ from .rest import SpecificPlantMoveSerializer
 MAX_BULK_PLANTS = 5000
 
 
+class GerminationSourceSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.Serializer,
+):  # pylint: disable=abstract-method
+    """Validate one selected cell and its observed seedling count."""
+
+    cell_planting = serializers.PrimaryKeyRelatedField(
+        queryset=SeedTrayCellPlanting.objects.all(),
+    )
+    quantity = serializers.IntegerField(min_value=1, max_value=MAX_BULK_PLANTS)
+    workspace_field_lookups = {
+        'cell_planting': 'seed_tray_planting__workspace',
+    }
+
+    def create(self, validated_data):
+        raise NotImplementedError
+
+    def update(self, instance, validated_data):
+        raise NotImplementedError
+
+
 class GerminationPayloadSerializer(
     CurrentWorkspaceSerializerMixin,
     serializers.Serializer,
 ):  # pylint: disable=abstract-method
-    """Validate the tray-cell source and number of plants observed."""
+    """Validate legacy uniform counts or per-cell germination observations."""
 
     cell_planting = serializers.PrimaryKeyRelatedField(
-        queryset=SeedTrayCellPlanting.objects.all(),
-        required=False,
+        queryset=SeedTrayCellPlanting.objects.all(), required=False,
     )
     cell_plantings = serializers.PrimaryKeyRelatedField(
-        queryset=SeedTrayCellPlanting.objects.all(),
-        many=True,
-        required=False,
+        queryset=SeedTrayCellPlanting.objects.all(), many=True, required=False,
     )
-    quantity = serializers.IntegerField(min_value=1, max_value=MAX_BULK_PLANTS)
+    quantity = serializers.IntegerField(
+        min_value=1, max_value=MAX_BULK_PLANTS, required=False,
+    )
+    germinations = GerminationSourceSerializer(many=True, required=False)
     notes = serializers.CharField(allow_blank=True, required=False, default='')
     workspace_field_lookups = {
         'cell_planting': 'seed_tray_planting__workspace',
@@ -59,25 +80,38 @@ class GerminationPayloadSerializer(
     }
 
     def validate(self, attrs):
-        """Normalize one or many cell allocations into one bounded selection."""
+        """Normalize every accepted request shape to per-cell quantities."""
         singular = attrs.pop('cell_planting', None)
-        allocations = attrs.get('cell_plantings', [])
-        if singular is not None and allocations:
+        allocations = attrs.pop('cell_plantings', [])
+        germinations = attrs.get('germinations', [])
+        selections_supplied = sum((singular is not None, bool(allocations), bool(germinations)))
+        if selections_supplied != 1:
             raise ValidationError({
-                'cell_plantings': 'Choose either one cell allocation or a list, not both.',
+                'germinations': 'Choose exactly one cell selection format.',
             })
-        if singular is not None:
-            allocations = [singular]
-        if not allocations:
-            raise ValidationError({'cell_plantings': 'Choose at least one cell allocation.'})
-        allocation_ids = [allocation.pk for allocation in allocations]
+        legacy_quantity = attrs.pop('quantity', None)
+        if germinations:
+            if legacy_quantity is not None:
+                raise ValidationError({
+                    'quantity': 'Set quantity on each selected cell.',
+                })
+        else:
+            if legacy_quantity is None:
+                raise ValidationError({'quantity': 'This field is required.'})
+            if singular is not None:
+                allocations = [singular]
+            germinations = [
+                {'cell_planting': allocation, 'quantity': legacy_quantity}
+                for allocation in allocations
+            ]
+        allocation_ids = [entry['cell_planting'].pk for entry in germinations]
         if len(set(allocation_ids)) != len(allocation_ids):
-            raise ValidationError({'cell_plantings': 'Each cell allocation may only be selected once.'})
-        if len(allocations) * attrs['quantity'] > MAX_BULK_PLANTS:
+            raise ValidationError({'germinations': 'Each cell allocation may only be selected once.'})
+        if sum(entry['quantity'] for entry in germinations) > MAX_BULK_PLANTS:
             raise ValidationError({
-                'quantity': f'A germination operation may create at most {MAX_BULK_PLANTS} plants.',
+                'germinations': f'A germination operation may create at most {MAX_BULK_PLANTS} plants.',
             })
-        attrs['cell_plantings'] = allocations
+        attrs['germinations'] = germinations
         return attrs
 
     def create(self, validated_data):
