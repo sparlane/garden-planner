@@ -161,6 +161,22 @@ class SalesOrderLine(models.Model):
         FIXED = 'fixed', 'Fixed amount'
         PERCENTAGE = 'percentage', 'Percentage'
 
+    class TaxTreatment(models.TextChoices):
+        """What kind of supply this line is for GST, which a rate cannot say.
+
+        A rate of zero is three different things — a zero-rated export, an
+        exempt supply, and something outside GST altogether — and a GST return
+        reports the first separately from the other two. `UNCLASSIFIED` is the
+        honest state for a zero-rated-looking line nobody has yet said which
+        of the three it is; it is never counted as zero-rated by default.
+        """
+
+        STANDARD = 'standard', 'Standard-rated'
+        ZERO_RATED = 'zero_rated', 'Zero-rated'
+        EXEMPT = 'exempt', 'Exempt'
+        OUT_OF_SCOPE = 'out_of_scope', 'Outside the scope of GST'
+        UNCLASSIFIED = 'unclassified', 'Not yet classified'
+
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
     line_type = models.CharField(max_length=16, choices=LineType.choices)
     variety = models.ForeignKey(PlantVariety, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
@@ -169,6 +185,11 @@ class SalesOrderLine(models.Model):
     quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     unit_price = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO_MONEY)])
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))])
+    # Left blank on the way in and derived in clean(): a rate above zero is a
+    # standard-rated supply by definition, while a rate of zero is genuinely
+    # unknown until somebody classifies it. Stored blank is refused by a check
+    # constraint, so a writer that skips validation cannot leave one behind.
+    tax_treatment = models.CharField(max_length=16, choices=TaxTreatment.choices, blank=True, default='')
     discount_type = models.CharField(max_length=16, choices=DiscountType.choices, default=DiscountType.NONE)
     discount_value = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO_MONEY, validators=[MinValueValidator(ZERO_MONEY)])
     gross_ex_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO_MONEY, editable=False)
@@ -187,11 +208,18 @@ class SalesOrderLine(models.Model):
                 name='sales_line_target_matches_type',
             ),
             models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_line_quantity_positive'),
+            # A standard-rated supply at a zero rate, or a zero-rated one at 15%,
+            # would each put the wrong figure in a different box of the return.
+            models.CheckConstraint(
+                condition=(models.Q(tax_treatment='standard', tax_rate__gt=0) | models.Q(tax_treatment__in=('zero_rated', 'exempt', 'out_of_scope', 'unclassified'), tax_rate=0)),
+                name='sales_line_tax_treatment_matches_rate',
+            ),
         ]
 
     def clean(self):
         super().clean()
         errors = {}
+        self._derive_tax_treatment()
         if self.order.status not in EDITABLE_ORDER_STATUSES:
             errors['order'] = 'Confirmed commercial terms are immutable.'
         if self.line_type == self.LineType.SEEDLING:
@@ -213,8 +241,33 @@ class SalesOrderLine(models.Model):
             errors['discount_value'] = 'A percentage discount cannot exceed 100.'
         if self.discount_type == self.DiscountType.FIXED and self.discount_value > entered_gross:
             errors['discount_value'] = 'A fixed discount cannot exceed the line gross.'
+        errors.update(self._tax_treatment_errors())
         if errors:
             raise ValidationError(errors)
+
+    def _derive_tax_treatment(self):
+        """Fill an unstated treatment from what the rate already establishes.
+
+        A rate above zero is a standard-rated supply; there is nothing to ask.
+        A rate of zero is a zero-rated export, an exempt supply, or something
+        outside GST, and guessing between them would put a figure in the wrong
+        box of a return — so it stays unclassified until somebody says.
+        """
+        if self.tax_treatment:
+            return
+        rate = Decimal(self.tax_rate or 0)
+        self.tax_treatment = (
+            self.TaxTreatment.STANDARD if rate > 0 else self.TaxTreatment.UNCLASSIFIED
+        )
+
+    def _tax_treatment_errors(self):
+        """Refuse a treatment the rate contradicts."""
+        rate = Decimal(self.tax_rate or 0)
+        if self.tax_treatment == self.TaxTreatment.STANDARD and rate <= 0:
+            return {'tax_treatment': 'A standard-rated line needs a tax rate above zero.'}
+        if self.tax_treatment != self.TaxTreatment.STANDARD and rate > 0:
+            return {'tax_treatment': 'Only a standard-rated line carries a tax rate.'}
+        return {}
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -412,6 +465,10 @@ class FulfillmentLine(models.Model):
         related_name='fulfillment_lines',
     )
     commercial_position = models.PositiveIntegerField()
+    # Snapshotted beside the money for the same reason the money is: this is
+    # the record of record for a GST return, and a later reclassification of
+    # the order line must not silently restate a period already reported.
+    tax_treatment = models.CharField(max_length=16, blank=True, default='')
     gross_ex_tax = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
     )
@@ -664,6 +721,9 @@ class RefundLine(models.Model):
     fulfillment_line = models.ForeignKey(
         FulfillmentLine, on_delete=models.PROTECT, related_name='refund_lines',
     )
+    # Carried from the fulfillment line it credits, so a credit lands in the
+    # same box of the return as the supply it reverses.
+    tax_treatment = models.CharField(max_length=16, blank=True, default='')
     gross_ex_tax = models.DecimalField(
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
     )

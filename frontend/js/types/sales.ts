@@ -13,6 +13,13 @@ type Customer = {
 
 type SalesOrderStatus = 'quote' | 'draft' | 'confirmed' | 'partially_fulfilled' | 'fulfilled' | 'cancelled'
 type SalesLineType = 'seedling' | 'tray'
+// What kind of supply a line is for GST. A rate of zero is three different
+// things — a zero-rated export, an exempt supply, and something outside GST —
+// and a return reports the first separately from the other two.
+// 'unclassified' is the honest state for a zero-rated-looking line nobody has
+// said which of the three it is; it is never counted as zero-rated by default.
+type SalesTaxTreatment = 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope' | 'unclassified'
+
 type SalesDiscountType = 'none' | 'fixed' | 'percentage'
 type SalesAllocationStatus = 'pending' | 'reserved' | 'released' | 'expired' | 'fulfilled' | 'returned'
 type CommerceStatus = 'posted' | 'reversed' | 'reversal'
@@ -49,6 +56,7 @@ interface SalesOrderLine {
   quantity: number
   unit_price: string
   tax_rate: string
+  tax_treatment: SalesTaxTreatment
   discount_type: SalesDiscountType
   discount_value: string
   prices_include_tax: boolean
@@ -119,6 +127,7 @@ interface FulfillmentLine {
   subtotal_ex_tax: string
   tax_total: string
   total_incl_tax: string
+  tax_treatment: SalesTaxTreatment
   cogs_amount: string | null
   cogs_provisional: boolean
   currency_code: string
@@ -220,6 +229,10 @@ interface SalesOrderLineWrite {
   quantity: number
   unit_price: string
   tax_rate?: string
+  // Omitted for a rated line: the server derives 'standard' from the rate.
+  // A zero-rated line has to say which of zero-rated, exempt or out-of-scope
+  // it is, or it is stored 'unclassified' and reported as a gap.
+  tax_treatment?: SalesTaxTreatment
   discount_type: SalesDiscountType
   discount_value: string
 }
@@ -239,6 +252,7 @@ export {
   SalesAllocationStatus,
   SalesDiscountType,
   SalesLineType,
+  SalesTaxTreatment,
   SalesCommerceSummary,
   SalesMargin,
   SalesOrder,

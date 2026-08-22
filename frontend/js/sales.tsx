@@ -33,9 +33,20 @@ import { getLocations } from './api/locations'
 import { getHealthObservationTypes } from './api/health'
 import { getPlantVarieties } from './api/plants'
 import { queryClient, queryKeys } from './query'
-import { AllocationPreview, Customer, SalesDiscountType, SalesLineType, SalesOrder, SalesOrderLine } from './types/sales'
+import { AllocationPreview, Customer, SalesDiscountType, SalesLineType, SalesOrder, SalesOrderLine, SalesTaxTreatment } from './types/sales'
 import { Workspace } from './types/workspace'
 import { formatDate, formatMoney, localDatetimeInputValue } from './utils'
+
+// 'Not yet classified' is shown as its own state rather than folded into
+// zero-rated: a GST return reports zero-rated supplies in their own box, and
+// counting an unclassified line there would be a guess nobody made.
+const TAX_TREATMENT_LABELS: Record<SalesTaxTreatment, string> = {
+  standard: 'standard-rated',
+  zero_rated: 'zero-rated',
+  exempt: 'exempt',
+  out_of_scope: 'outside GST',
+  unclassified: 'not yet classified'
+}
 
 function invalidateSales(orderPk?: number) {
   void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all })
@@ -191,6 +202,10 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
   const [quantity, setQuantity] = React.useState(1)
   const [unitPrice, setUnitPrice] = React.useState('')
   const [taxRate, setTaxRate] = React.useState(workspace.default_tax_rate)
+  // Only asked for when the rate is zero. A rate above zero is a standard-rated
+  // supply by definition and the server derives it; a rate of zero is three
+  // different kinds of supply that a GST return reports in different boxes.
+  const [taxTreatment, setTaxTreatment] = React.useState<SalesTaxTreatment>('unclassified')
   const [discountType, setDiscountType] = React.useState<SalesDiscountType>('none')
   const [discountValue, setDiscountValue] = React.useState('0')
   const mutation = useMutation({
@@ -204,6 +219,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
         quantity,
         unit_price: unitPrice,
         tax_rate: taxRate,
+        tax_treatment: Number(taxRate) > 0 ? undefined : taxTreatment,
         discount_type: discountType,
         discount_value: discountType === 'none' ? '0' : discountValue
       }),
@@ -254,6 +270,23 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
           <Form.Label>Tax %</Form.Label>
           <Form.Control type="number" min={0} max={100} step="0.0001" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} />
         </Col>
+        {Number(taxRate) === 0 && (
+          <Col md={2}>
+            <Form.Label htmlFor="line-tax-treatment">Kind of supply</Form.Label>
+            <Form.Select
+              id="line-tax-treatment"
+              value={taxTreatment}
+              onChange={(event) => setTaxTreatment(event.target.value as SalesTaxTreatment)}
+              aria-describedby="line-tax-treatment-help"
+            >
+              <option value="unclassified">Not yet classified</option>
+              <option value="zero_rated">Zero-rated</option>
+              <option value="exempt">Exempt</option>
+              <option value="out_of_scope">Outside GST</option>
+            </Form.Select>
+            <Form.Text id="line-tax-treatment-help">A GST return reports zero-rated supplies separately from exempt ones.</Form.Text>
+          </Col>
+        )}
         <Col md={1}>
           <Form.Label>Discount</Form.Label>
           <Form.Select value={discountType} onChange={(event) => setDiscountType(event.target.value as SalesDiscountType)}>
@@ -909,8 +942,8 @@ function SalesOrderDetailView({ orderPk, workspace }: { orderPk: number; workspa
             </span>
           </div>
           <div className="text-muted">
-            Discount {line.discount_type === 'percentage' ? `${line.discount_value}%` : formatMoney(line.discount_value, order.currency_code)} · Tax {line.tax_rate}% · Total{' '}
-            {formatMoney(line.total_incl_tax, order.currency_code)}
+            Discount {line.discount_type === 'percentage' ? `${line.discount_value}%` : formatMoney(line.discount_value, order.currency_code)} · Tax {line.tax_rate}% (
+            {TAX_TREATMENT_LABELS[line.tax_treatment]}) · Total {formatMoney(line.total_incl_tax, order.currency_code)}
           </div>
           <AllocationPanel order={order} line={line} />
         </Card>

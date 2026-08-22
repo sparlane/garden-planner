@@ -114,7 +114,8 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
         model = SalesOrderLine
         fields = [
             'pk', 'order', 'line_type', 'variety', 'tray_item', 'description',
-            'quantity', 'unit_price', 'tax_rate', 'discount_type', 'discount_value',
+            'quantity', 'unit_price', 'tax_rate', 'tax_treatment',
+            'discount_type', 'discount_value',
             'prices_include_tax', 'gross_ex_tax', 'discount_ex_tax',
             'subtotal_ex_tax', 'tax_total', 'total_incl_tax', 'allocations',
             'created', 'updated',
@@ -137,6 +138,9 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
             raise ValidationError({'order': 'Confirmed commercial terms are immutable.'})
         if self.instance is None and 'tax_rate' not in attrs:
             attrs['tax_rate'] = attrs['order'].workspace.default_tax_rate
+        # A blank treatment is filled by the model from the rate: above zero is
+        # a standard-rated supply by definition, and zero stays unclassified
+        # rather than being guessed at.
         return attrs
 
 
@@ -270,7 +274,7 @@ class FulfillmentLineSerializer(serializers.ModelSerializer):
         fields = [
             'pk', 'allocation', 'commercial_position', 'gross_ex_tax',
             'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
-            'total_incl_tax', 'cogs_amount', 'cogs_provisional',
+            'total_incl_tax', 'tax_treatment', 'cogs_amount', 'cogs_provisional',
             'currency_code', 'lifecycle_event', 'stock_movement',
         ]
 

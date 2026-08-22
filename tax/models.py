@@ -296,3 +296,66 @@ class GstRegistration(WorkspaceOwnedModel):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('GST registration records cannot be deleted.')
+
+
+class TaxTreatmentCorrection(WorkspaceOwnedModel):
+    """An audited reclassification of one confirmed order line's GST treatment.
+
+    `SalesOrderLine.clean` refuses every save once its order leaves quote or
+    draft, which is right: the price a customer agreed is not something to
+    edit afterwards. But it also means a line already confirmed can never be
+    reclassified, and every line that existed before this feature landed is
+    `unclassified` — so the zero-rated box of a GST return would be permanently
+    empty for exactly the workspaces that have history.
+
+    The narrow exception this record covers is a line whose rate is zero, where
+    moving between zero-rated, exempt and out-of-scope changes which box the
+    figure is reported in and moves no money at all. The guard exists to
+    protect the price; nothing here touches it. A line carrying a rate is
+    refused outright, and every correction is recorded with its actor and its
+    reason.
+    """
+
+    sales_order_line = models.ForeignKey(
+        'sales.SalesOrderLine',
+        on_delete=models.PROTECT,
+        related_name='tax_treatment_corrections',
+    )
+    previous_treatment = models.CharField(max_length=16)
+    treatment = models.CharField(max_length=16)
+    reason = models.TextField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+        indexes = [
+            models.Index(
+                fields=['workspace', 'sales_order_line'],
+                name='gst_treatment_line_idx',
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(treatment=models.F('previous_treatment')),
+                name='gst_treatment_correction_changes_something',
+            ),
+        ]
+
+    def __str__(self):
+        return f'line {self.sales_order_line_id}: {self.previous_treatment} to {self.treatment}'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Tax treatment corrections are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Tax treatment corrections cannot be deleted.')

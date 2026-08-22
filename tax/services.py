@@ -10,7 +10,7 @@ from django.db import transaction
 
 from workspaces.models import get_current_workspace
 
-from .models import GstRegistration
+from .models import GstRegistration, TaxTreatmentCorrection
 
 
 @transaction.atomic
@@ -60,3 +60,62 @@ def current_registration(workspace=None):
     workspace = workspace or get_current_workspace()
     today = local_date(workspace, timezone.now())
     return registration_in_force(workspace, today)
+
+
+#: The treatments a zero-rated-looking line may be moved between. Standard is
+#: absent on purpose: moving to or from it would change the tax on the line,
+#: which is a change to the price the customer agreed, not a classification.
+CORRECTABLE_TREATMENTS = ('zero_rated', 'exempt', 'out_of_scope', 'unclassified')
+
+
+@transaction.atomic
+def correct_tax_treatment(line, treatment, user, reason):
+    """Reclassify one confirmed order line's GST treatment, with an audit row.
+
+    The write uses a queryset update rather than `save`, deliberately: the
+    model refuses every save on a confirmed line, and that guard is protecting
+    the agreed price. Nothing here changes an amount — the line's rate is zero
+    on both sides of the change — so the guard is not being weakened, only
+    stepped around for the one field it was never about.
+
+    The already-posted fulfillment and refund lines are updated in the same
+    transaction. They are the record of record for a return, so leaving them
+    behind would make the correction invisible to every report that matters.
+    """
+    from sales.models import FulfillmentLine, RefundLine, SalesOrderLine  # pylint: disable=import-outside-toplevel
+
+    if treatment not in CORRECTABLE_TREATMENTS:
+        raise ValidationError({
+            'treatment': (
+                'Only zero-rated, exempt, out-of-scope and unclassified can be '
+                'corrected. Changing to or from standard-rated would change the '
+                'tax on an agreed price.'
+            ),
+        })
+    if line.tax_rate != 0:
+        raise ValidationError({
+            'sales_order_line': (
+                'That line carries a tax rate, so its treatment is part of the '
+                'price rather than a classification.'
+            ),
+        })
+    if line.tax_treatment == treatment:
+        raise ValidationError(
+            {'treatment': 'That line already carries that treatment.'},
+        )
+    correction = TaxTreatmentCorrection(
+        workspace=line.order.workspace,
+        sales_order_line=line,
+        previous_treatment=line.tax_treatment,
+        treatment=treatment,
+        created_by=user if user is not None and user.is_authenticated else None,
+        reason=reason,
+    )
+    correction.save()
+    SalesOrderLine.objects.filter(pk=line.pk).update(tax_treatment=treatment)
+    FulfillmentLine.objects.filter(allocation__line=line).update(tax_treatment=treatment)
+    RefundLine.objects.filter(
+        fulfillment_line__allocation__line=line,
+    ).update(tax_treatment=treatment)
+    line.tax_treatment = treatment
+    return correction
