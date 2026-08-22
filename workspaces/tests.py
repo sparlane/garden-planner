@@ -179,6 +179,35 @@ class WorkspaceEndpointTests(APITestCase):
         self.assertEqual(workspace.default_tax_rate, Decimal('15'))
         self.assertEqual(workspace.timezone, 'Pacific/Auckland')
 
+    def test_seller_identity_defaults_to_blank_and_round_trips(self):
+        """Taxable supply documents are issued under a name entered here.
+
+        Blank is the honest default: a workspace name is what a gardener calls
+        their patch, and substituting it for a registered legal name would put
+        a wrong name on a tax invoice. `billing` refuses to issue until this is
+        filled in rather than guessing.
+        """
+        response = self.client.get(self.url)
+        self.assertEqual(response.data['legal_name'], '')
+        self.assertEqual(response.data['trading_name'], '')
+        self.assertEqual(response.data['business_address'], '')
+
+        response = self.client.patch(
+            self.url,
+            {
+                'legal_name': 'Kowhai Growers Limited',
+                'trading_name': 'Kowhai Nursery',
+                'business_address': '12 Seedling Road\nRichmond 7020',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        workspace = Workspace.objects.get(pk=1)
+        self.assertEqual(workspace.legal_name, 'Kowhai Growers Limited')
+        self.assertEqual(workspace.trading_name, 'Kowhai Nursery')
+        self.assertEqual(workspace.business_address, '12 Seedling Road\nRichmond 7020')
+
     def test_patch_validates_profile_fields(self):
         """Invalid profile values receive field-specific errors."""
         response = self.client.patch(

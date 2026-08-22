@@ -33,6 +33,9 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
   const queryClient = useQueryClient()
   const [form, setForm] = React.useState<WorkspaceProfile>({
     name: workspace.name,
+    legal_name: workspace.legal_name,
+    trading_name: workspace.trading_name,
+    business_address: workspace.business_address,
     mode: workspace.mode,
     garden_experience: workspace.garden_experience,
     currency_code: workspace.currency_code,
@@ -52,6 +55,9 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
   React.useEffect(() => {
     setForm({
       name: workspace.name,
+      legal_name: workspace.legal_name,
+      trading_name: workspace.trading_name,
+      business_address: workspace.business_address,
       mode: workspace.mode,
       garden_experience: workspace.garden_experience,
       currency_code: workspace.currency_code,
@@ -83,6 +89,42 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
           <Form.Label>Workspace name</Form.Label>
           <Form.Control required maxLength={255} value={form.name} onChange={(event) => updateField('name', event.target.value)} />
         </Form.Group>
+        {form.mode === 'nursery' && (
+          <fieldset className="mb-3">
+            <legend className="h5">Seller identity</legend>
+            <p className="text-muted">
+              Printed on every taxable supply and correction document. The GST number is not entered here: it comes from the registration in force on the document&apos;s own date,
+              recorded further down this page.
+            </p>
+            <Form.Group className="mb-3" controlId="workspace-legal-name">
+              <Form.Label>Legal name</Form.Label>
+              <Form.Control
+                maxLength={255}
+                value={form.legal_name}
+                onChange={(event) => updateField('legal_name', event.target.value)}
+                aria-describedby="workspace-legal-name-help"
+              />
+              <Form.Text id="workspace-legal-name-help">
+                The registered name of the entity making supplies. A document cannot be issued without it, and the workspace name is not substituted for it — the two are often
+                different, and the wrong name on a tax invoice is a defective document.
+              </Form.Text>
+            </Form.Group>
+            <Form.Group className="mb-3" controlId="workspace-trading-name">
+              <Form.Label>Trading name</Form.Label>
+              <Form.Control
+                maxLength={255}
+                value={form.trading_name}
+                onChange={(event) => updateField('trading_name', event.target.value)}
+                aria-describedby="workspace-trading-name-help"
+              />
+              <Form.Text id="workspace-trading-name-help">Optional, and shown alongside the legal name rather than instead of it.</Form.Text>
+            </Form.Group>
+            <Form.Group className="mb-3" controlId="workspace-business-address">
+              <Form.Label>Business address</Form.Label>
+              <Form.Control as="textarea" rows={3} value={form.business_address} onChange={(event) => updateField('business_address', event.target.value)} />
+            </Form.Group>
+          </fieldset>
+        )}
         <Form.Group className="mb-3" controlId="workspace-mode">
           <Form.Label>Profile</Form.Label>
           <Form.Select value={form.mode} onChange={(event) => updateField('mode', event.target.value as WorkspaceMode)}>

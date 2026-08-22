@@ -13,6 +13,9 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         model = Workspace
         fields = [
             'name',
+            'legal_name',
+            'trading_name',
+            'business_address',
             'mode',
             'garden_experience',
             'currency_code',

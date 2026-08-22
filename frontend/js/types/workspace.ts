@@ -14,6 +14,9 @@ type GardenSetupState = 'pending' | 'skipped' | 'complete'
 
 interface Workspace {
   name: string
+  legal_name: string
+  trading_name: string
+  business_address: string
   mode: WorkspaceMode
   garden_experience: GardenExperience
   currency_code: string
@@ -32,6 +35,9 @@ interface Workspace {
 type WorkspaceUpdate = Pick<
   Workspace,
   | 'name'
+  | 'legal_name'
+  | 'trading_name'
+  | 'business_address'
   | 'mode'
   | 'garden_experience'
   | 'currency_code'
