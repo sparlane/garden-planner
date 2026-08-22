@@ -4,6 +4,10 @@ from django.urls import path
 
 from .rest import (
     DashboardView,
+    GstEntryExportView,
+    GstEntryView,
+    GstPeriodExportView,
+    GstPeriodView,
     InventoryBalanceExportView,
     InventoryBalanceView,
     MovementExportView,
@@ -41,6 +45,10 @@ urlpatterns = [
     path('orders/export/', OrderExportView.as_view()),
     path('profitability/', ProfitabilityView.as_view()),
     path('profitability/export/', ProfitabilityExportView.as_view()),
+    path('gst-periods/', GstPeriodView.as_view()),
+    path('gst-periods/export/', GstPeriodExportView.as_view()),
+    path('gst-entries/', GstEntryView.as_view()),
+    path('gst-entries/export/', GstEntryExportView.as_view()),
     path('traceability/plants/<int:identity>/', PlantTraceView.as_view()),
     path(
         'traceability/plants/<int:identity>/export/',

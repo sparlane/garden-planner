@@ -131,3 +131,43 @@ class DashboardFilters(BaseReportFilters):  # pylint: disable=abstract-method
 
     date_from = serializers.DateField(required=False)
     date_to = serializers.DateField(required=False)
+
+
+class GstPeriodFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Filters for GST period totals.
+
+    The range is optional: with none given the report answers the question the
+    operator actually has, which is what the open period looks like. The
+    date_to/date_from check is a fourth copy of the same block in this file —
+    extracting a shared mixin would touch every existing filter class and
+    belongs in its own change.
+    """
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+
+    def validate(self, attrs):
+        """Reject a range that ends before it starts."""
+        date_from, date_to = attrs.get('date_from'), attrs.get('date_to')
+        if date_from and date_to and date_to < date_from:
+            raise serializers.ValidationError({
+                'date_to': 'The range end must not be before its start.',
+            })
+        return attrs
+
+
+class GstEntryFilters(GstPeriodFilters):  # pylint: disable=abstract-method
+    """Filters for the entries behind a period total, as the drill-down links use."""
+
+    period = serializers.CharField(required=False)
+    kind = serializers.ChoiceField(
+        required=False, choices=('supply', 'supply_credit', 'purchase'),
+    )
+    tax_code = serializers.ChoiceField(
+        required=False,
+        choices=('standard', 'zero_rated', 'exempt', 'out_of_scope', 'unclassified'),
+    )
+    exclusion = serializers.ChoiceField(
+        required=False,
+        choices=('no_registration', 'deregistered_gap', 'input_tax_awaiting_payment'),
+    )

@@ -24,6 +24,8 @@ NURSERY_ONLY_URLS = (
     '/plantings/planning-assumptions/',
     '/plantings/cohorts/',
     '/plantings/register/',
+    '/tax/gst/registrations/',
+    '/tax/gst/status/',
 )
 
 
