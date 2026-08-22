@@ -62,13 +62,18 @@ class RequireWorkspaceModeMixin:  # pylint: disable=too-few-public-methods
 
     required_workspace_modes = ()
 
+    def get_required_workspace_modes(self):
+        """Return the profiles permitted for the current view action."""
+        return self.required_workspace_modes
+
     def initial(self, request, *args, **kwargs):
         """Check the profile before the view does any work for the request."""
         super().initial(request, *args, **kwargs)
         workspace = get_current_workspace()
-        if workspace.mode not in self.required_workspace_modes:
+        required_workspace_modes = self.get_required_workspace_modes()
+        if workspace.mode not in required_workspace_modes:
             profiles = ' or '.join(
-                Workspace.Mode(mode).label for mode in self.required_workspace_modes
+                Workspace.Mode(mode).label for mode in required_workspace_modes
             )
             raise PermissionDenied(
                 f'This feature is available in the {profiles} profile.',
