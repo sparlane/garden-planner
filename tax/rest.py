@@ -22,9 +22,10 @@ from workspaces.scoping import (
     RequireWorkspaceModeMixin,
 )
 
-from .models import GstRegistration
+from .models import GstPeriodClosure, GstRegistration
 from .periods import local_date, registration_history, taxable_period_for
 from .services import record_registration
+from .transition import basis_transitions
 from .turnover import REGISTRATION_THRESHOLD, registration_warnings, rolling_turnover
 
 
@@ -129,6 +130,92 @@ class GstRegistrationViewSet(  # pylint: disable=too-many-ancestors
     http_method_names = ['get', 'post', 'head', 'options']
 
 
+class GstPeriodClosureSerializer(serializers.ModelSerializer):
+    """One period recorded as filed, with the figures it was filed on."""
+
+    label = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = GstPeriodClosure
+        fields = [
+            'pk', 'label', 'period_start', 'period_end', 'registration',
+            'basis', 'filing_frequency', 'filed_totals', 'notes',
+            'closed_by', 'created',
+        ]
+        read_only_fields = ['pk', 'label', 'closed_by', 'created']
+
+
+class GstPeriodClosureViewSet(  # pylint: disable=too-many-ancestors
+    RequireWorkspaceModeMixin,
+    CurrentWorkspaceViewSetMixin,
+    mixins.CreateModelMixin,
+    viewsets.ReadOnlyModelViewSet,
+):
+    """The periods this workspace has reported, and what it reported.
+
+    Create and read only. A filed period whose figures could be edited would
+    be no reconciliation anchor at all.
+    """
+
+    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    queryset = GstPeriodClosure.objects.select_related('registration').order_by(
+        'period_start', 'pk',
+    )
+    serializer_class = GstPeriodClosureSerializer
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def perform_create(self, serializer):
+        """Bind the workspace and the actor the way the service would."""
+        user = getattr(self.request, 'user', None)
+        _run_domain_action(
+            serializer.save,
+            workspace=self.get_current_workspace(),
+            closed_by=user if user is not None and user.is_authenticated else None,
+        )
+
+
+class GstBasisTransitionView(RequireWorkspaceModeMixin, APIView):
+    """The one-off adjustment every recorded change of basis requires."""
+
+    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    http_method_names = ['get', 'head', 'options']
+
+    def get(self, request):
+        """Return one entry per basis change, oldest first."""
+        del request
+        workspace = get_current_workspace()
+        return Response([
+            _transition_payload(transition)
+            for transition in basis_transitions(workspace)
+        ])
+
+
+def _transition_payload(transition):
+    """Render a transition, keeping every amount inside its own currency."""
+    return {
+        'change_date': transition.change_date.isoformat(),
+        'previous_basis': transition.previous_basis,
+        'new_basis': transition.new_basis,
+        'direction': transition.direction,
+        'required': transition.required,
+        'complete': transition.complete,
+        'adjustment_tax': {
+            code: str(value) for code, value in transition.adjustment_tax.items()
+        },
+        'adjustment_gross': {
+            code: str(value) for code, value in transition.adjustment_gross.items()
+        },
+        'debtor_orders': [portion.order_id for portion in transition.debtors],
+        # Always null: input tax on the payments basis needs a supplier payment
+        # date, and nothing in this application records one. Task 80 owns it.
+        'creditors_tax': None,
+        'creditors_note': (
+            'Input tax on outstanding creditors cannot be computed: no supplier '
+            'payment date is recorded anywhere yet.'
+        ),
+    }
+
+
 class GstStatusView(RequireWorkspaceModeMixin, APIView):
     """What applies right now, for a screen that has to say so in one line."""
 
@@ -203,3 +290,4 @@ def _period_payload(period):
 
 router = routers.SimpleRouter()
 router.register(r'gst/registrations', GstRegistrationViewSet, basename='gstregistration')
+router.register(r'gst/period-closures', GstPeriodClosureViewSet, basename='gstperiodclosure')

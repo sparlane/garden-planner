@@ -359,3 +359,86 @@ class TaxTreatmentCorrection(WorkspaceOwnedModel):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Tax treatment corrections cannot be deleted.')
+
+
+class GstPeriodClosure(WorkspaceOwnedModel):
+    """A record that one taxable period has been reported, and what was filed.
+
+    Every figure in this app's GST reporting is derived, which is what makes a
+    change of basis harmless — but it also means re-reading a period after a
+    late correction quietly restates it, and a period already filed with Inland
+    Revenue is not something to restate quietly. Closing a period snapshots the
+    totals as filed, so re-deriving it and comparing is how a drift becomes
+    visible instead of invisible.
+
+    This is not filing. Nothing here is sent anywhere; it records that somebody
+    did.
+    """
+
+    period_start = models.DateField()
+    period_end = models.DateField()
+    registration = models.ForeignKey(
+        GstRegistration,
+        on_delete=models.PROTECT,
+        related_name='closures',
+        help_text='The arrangement this period was filed under.',
+    )
+    basis = models.CharField(max_length=16)
+    filing_frequency = models.CharField(max_length=16)
+    #: The period totals exactly as filed, keyed by currency code. Stored
+    #: rather than derived, which is the one deliberate exception to this
+    #: app's rule — a snapshot whose entire purpose is not to change when
+    #: later facts arrive, in the same spirit as `Stocktake.expected_snapshot`.
+    filed_totals = models.JSONField(default=dict)
+    notes = models.TextField(blank=True, default='')
+    closed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['period_start', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(period_end__gte=models.F('period_start')),
+                name='gst_closure_period_ordered',
+            ),
+            models.UniqueConstraint(
+                fields=['workspace', 'period_start', 'period_end'],
+                name='gst_closure_period_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.period_start.isoformat()}..{self.period_end.isoformat()} filed'
+
+    @property
+    def label(self):
+        """The identifier the period report and drill-down use."""
+        return f'{self.period_start.isoformat()}..{self.period_end.isoformat()}'
+
+    def clean(self):
+        super().clean()
+        if self.period_start and self.period_end and self.period_end < self.period_start:
+            raise ValidationError(
+                {'period_end': 'A period cannot end before it starts.'},
+            )
+        if self.registration_id and self.registration.workspace_id != self.workspace_id:
+            raise ValidationError(
+                {'registration': 'The arrangement belongs to a different workspace.'},
+            )
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError(
+                'A filed period is immutable; its figures are what was filed.',
+            )
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('A filed period cannot be deleted.')

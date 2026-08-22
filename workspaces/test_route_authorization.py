@@ -26,6 +26,8 @@ NURSERY_ONLY_URLS = (
     '/plantings/register/',
     '/tax/gst/registrations/',
     '/tax/gst/status/',
+    '/tax/gst/period-closures/',
+    '/tax/gst/basis-transitions/',
 )
 
 
