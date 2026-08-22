@@ -75,6 +75,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               <NavDropdown.Item as={NavLink} to="/reports/traceability">
                 Traceability
               </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/gst">
+                GST
+              </NavDropdown.Item>
             </NavDropdown>
           )}
           {workspace.mode === 'nursery' && (

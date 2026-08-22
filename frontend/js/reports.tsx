@@ -8,7 +8,15 @@ import { queryKeys } from './query'
 import { DashboardRow, ProfitabilityTotals, ReportEnvelope } from './types/reports'
 import { formatDateTime } from './utils'
 
-type ReportPage = 'dashboard' | 'inventory' | 'production' | 'orders' | 'profitability' | 'traceability'
+type ReportPage = 'dashboard' | 'inventory' | 'production' | 'orders' | 'profitability' | 'traceability' | 'gst'
+
+// The period totals and the rows every total is the sum of. They are two
+// reports rather than one because the second is the evidence for the first,
+// and every data-quality finding links straight into it.
+const GST_SECTIONS: Record<string, string> = {
+  periods: 'gst-periods',
+  entries: 'gst-entries'
+}
 
 const INVENTORY_SECTIONS: Record<string, string> = {
   balances: 'inventory-balances',
@@ -114,7 +122,8 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
     updated.delete('page')
     setParams(updated)
   }
-  const dated = ['dashboard', 'production', 'orders', 'profitability'].includes(page)
+  const dated = ['dashboard', 'production', 'orders', 'profitability', 'gst'].includes(page)
+  const gstEntries = page === 'gst' && params.get('section') === 'entries'
   return (
     <Card body className="mb-3">
       <Row className="g-2">
@@ -126,6 +135,10 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
         {page === 'profitability' && <FilterField label="Customer ID" name="customer" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Item ID" name="item" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Lot ID" name="lot" type="number" params={params} update={update} />}
+        {gstEntries && <FilterField label="Period" name="period" params={params} update={update} />}
+        {gstEntries && <FilterField label="Kind" name="kind" params={params} update={update} />}
+        {gstEntries && <FilterField label="Tax code" name="tax_code" params={params} update={update} />}
+        {gstEntries && <FilterField label="Excluded because" name="exclusion" params={params} update={update} />}
       </Row>
     </Card>
   )
@@ -213,6 +226,21 @@ function ProfitabilitySummary({ totals }: { totals: ProfitabilityTotals }) {
   )
 }
 
+// The two reports recognise on different dates on purpose, so the note the
+// server publishes is shown rather than left in the payload for somebody to
+// find after they have already queried why the figures differ.
+function GstRecognitionNote({ report }: { report: ReportEnvelope }) {
+  const note = report.reconciliation.recognition_note
+  if (typeof note !== 'string') {
+    return null
+  }
+  return (
+    <Alert variant="info">
+      <strong>Recognition:</strong> {note}
+    </Alert>
+  )
+}
+
 function ReportsView({ page }: { page: ReportPage }) {
   const [params, setParams] = useSearchParams()
   React.useEffect(() => {
@@ -221,20 +249,27 @@ function ReportsView({ page }: { page: ReportPage }) {
       updated.set('section', 'balances')
       setParams(updated, { replace: true })
     }
+    if (page === 'gst' && !params.get('section')) {
+      const updated = new URLSearchParams(params)
+      updated.set('section', 'periods')
+      setParams(updated, { replace: true })
+    }
   }, [page, params, setParams])
   const traceType = params.get('trace_type') ?? 'plant'
   const traceId = params.get('trace_id') ?? ''
   const section = params.get('section') ?? 'balances'
   const reportName =
-    page === 'inventory'
-      ? INVENTORY_SECTIONS[section]
-      : page === 'production'
-        ? 'production-batches'
-        : page === 'traceability'
-          ? traceId
-            ? `traceability/${traceType === 'lot' ? 'lots' : 'plants'}/${traceId}`
-            : ''
-          : page
+    page === 'gst'
+      ? GST_SECTIONS[params.get('section') ?? 'periods']
+      : page === 'inventory'
+        ? INVENTORY_SECTIONS[section]
+        : page === 'production'
+          ? 'production-batches'
+          : page === 'traceability'
+            ? traceId
+              ? `traceability/${traceType === 'lot' ? 'lots' : 'plants'}/${traceId}`
+              : ''
+            : page
   const apiParams = new URLSearchParams(params)
   ;['section', 'trace_type', 'trace_id'].forEach((key) => apiParams.delete(key))
   const query = useQuery({
@@ -252,7 +287,7 @@ function ReportsView({ page }: { page: ReportPage }) {
   return (
     <main className="container-fluid py-3">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <h1 className="mb-0">{page === 'dashboard' ? 'Nursery dashboard' : `Nursery ${page}`}</h1>
+        <h1 className="mb-0">{page === 'dashboard' ? 'Nursery dashboard' : page === 'gst' ? 'GST' : `Nursery ${page}`}</h1>
         {reportName && (
           <Button as="a" variant="outline-primary" href={reportExportUrl(reportName, apiParams)}>
             Export CSV
@@ -265,6 +300,12 @@ function ReportsView({ page }: { page: ReportPage }) {
           <option value="trays">Serialized trays</option>
           <option value="movements">Movement history</option>
           <option value="stocktakes">Stocktake variances</option>
+        </Form.Select>
+      )}
+      {page === 'gst' && (
+        <Form.Select className="mb-3" value={params.get('section') ?? 'periods'} onChange={(event) => setParams(new URLSearchParams({ section: event.target.value }))}>
+          <option value="periods">Period totals</option>
+          <option value="entries">Entries behind every total</option>
         </Form.Select>
       )}
       {page === 'traceability' && (
@@ -289,6 +330,7 @@ function ReportsView({ page }: { page: ReportPage }) {
       {!reportName && <Alert variant="info">Choose an exact plant or lot to trace.</Alert>}
       {query.data && (
         <>
+          {page === 'gst' && <GstRecognitionNote report={query.data} />}
           <QualityWarnings report={query.data} />
           {page === 'dashboard' ? <Dashboard report={query.data as unknown as ReportEnvelope<DashboardRow>} /> : null}
           {page === 'profitability' ? <ProfitabilitySummary totals={query.data.totals as unknown as ProfitabilityTotals} /> : null}

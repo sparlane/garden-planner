@@ -9,6 +9,8 @@ from .common import csv_response, normalized_filters, report_response
 from .filters import (
     CommerceFilters,
     DashboardFilters,
+    GstEntryFilters,
+    GstPeriodFilters,
     InventoryBalanceFilters,
     MovementFilters,
     OrderFilters,
@@ -18,6 +20,7 @@ from .filters import (
     TraceFilters,
 )
 from .commerce import dashboard_report, order_report, profitability_report
+from .gst import gst_entry_report, gst_period_report
 from .production import production_batches
 from .traceability import lot_trace, plant_trace
 from .inventory import (
@@ -137,4 +140,14 @@ ProfitabilityExportView = _view(
 )
 DashboardView = _view(
     'DashboardView', DashboardFilters, dashboard_report,
+)
+
+
+GstPeriodView = _view('GstPeriodView', GstPeriodFilters, gst_period_report)
+GstPeriodExportView = _view(
+    'GstPeriodExportView', GstPeriodFilters, gst_period_report, True,
+)
+GstEntryView = _view('GstEntryView', GstEntryFilters, gst_entry_report)
+GstEntryExportView = _view(
+    'GstEntryExportView', GstEntryFilters, gst_entry_report, True,
 )
