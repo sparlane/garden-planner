@@ -15,6 +15,7 @@ end, a leap-year February — be tested without a fixture.
 """
 
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -66,3 +67,138 @@ def local_date(workspace, value):
     if isinstance(value, datetime):
         return value.astimezone(ZoneInfo(workspace.timezone)).date()
     return value
+
+
+@dataclass(frozen=True)
+class TaxablePeriod:
+    """One filing period, clipped to the arrangement that produced it.
+
+    ``start`` and ``end`` are the days a return actually covers, which is not
+    always the whole cycle: registering on the 15th of a two-monthly cycle
+    produces a short first period, and changing frequency mid-cycle closes the
+    old one early. ``cycle_start`` and ``cycle_end`` keep the unclipped bounds
+    so a report can say which cycle a short period belongs to.
+    """
+
+    start: date
+    end: date
+    cycle_start: date
+    cycle_end: date
+    frequency: str
+    basis: str
+    registration_id: int
+
+    @property
+    def label(self):
+        """Return the stable identifier this period is drilled into by."""
+        return period_label(self.start, self.end)
+
+    @property
+    def clipped(self):
+        """Whether the period covers less than its whole cycle."""
+        return (self.start, self.end) != (self.cycle_start, self.cycle_end)
+
+    def contains(self, day):
+        """Whether a business date falls inside this period."""
+        return self.start <= day <= self.end
+
+
+def registration_history(workspace):
+    """Return this workspace's live arrangements, oldest first.
+
+    Superseded rows are excluded: they record what somebody entered, not what
+    applied. They stay readable through the row that replaced them.
+    """
+    from .models import GstRegistration  # pylint: disable=import-outside-toplevel
+    return list(
+        GstRegistration.objects
+        .filter(workspace=workspace, superseded_by__isnull=True)
+        .order_by('effective_from', 'pk')
+    )
+
+
+def registration_in_force(workspace, on_date, history=None):
+    """Return the arrangement applying on a date, or None if there is none.
+
+    None answers two different questions the same way on purpose — the date is
+    before anything was ever recorded, or it falls in a gap after a
+    deregistration. Both mean there was no GST obligation, and a caller that
+    treats either as a zero would report a period the workspace never had.
+    Callers distinguish them by checking whether the history is empty.
+    """
+    rows = registration_history(workspace) if history is None else history
+    applying = None
+    for row in rows:
+        if row.effective_from > on_date:
+            break
+        applying = row
+    if applying is None or not applying.registered:
+        return None
+    return applying
+
+
+def _next_change_after(rows, registration):
+    """Return the arrangement that replaced one, or None if it still applies."""
+    following = [
+        row for row in rows
+        if (row.effective_from, row.pk) > (registration.effective_from, registration.pk)
+    ]
+    return following[0] if following else None
+
+
+def taxable_period_for(workspace, on_date, history=None):
+    """Return the taxable period a business date falls in, or None.
+
+    None means the workspace was not registered on that date. Nothing invents a
+    period to hold the supply; the report says so instead.
+    """
+    rows = registration_history(workspace) if history is None else history
+    registration = registration_in_force(workspace, on_date, history=rows)
+    if registration is None:
+        return None
+    cycle_start, cycle_end = period_bounds(
+        registration.filing_frequency, registration.period_anchor_month, on_date,
+    )
+    start = max(cycle_start, registration.effective_from)
+    end = cycle_end
+    following = _next_change_after(rows, registration)
+    if following is not None and following.effective_from <= cycle_end:
+        end = date.fromordinal(following.effective_from.toordinal() - 1)
+    return TaxablePeriod(
+        start=start,
+        end=end,
+        cycle_start=cycle_start,
+        cycle_end=cycle_end,
+        frequency=registration.filing_frequency,
+        basis=registration.basis,
+        registration_id=registration.pk,
+    )
+
+
+def enumerate_periods(workspace, start, end, history=None):
+    """Return every taxable period overlapping a range, oldest first.
+
+    A range covering a deregistration produces periods on both sides of it and
+    nothing in the gap, which is the honest answer: no return was due.
+    """
+    rows = registration_history(workspace) if history is None else history
+    periods = []
+    day = start
+    while day <= end:
+        period = taxable_period_for(workspace, day, history=rows)
+        if period is None:
+            day = _next_boundary(rows, day, end)
+            continue
+        periods.append(period)
+        day = date.fromordinal(period.end.toordinal() + 1)
+    return periods
+
+
+def _next_boundary(rows, day, end):
+    """Return the next date worth testing after an unregistered day.
+
+    Stepping a day at a time through years of pre-registration history would be
+    correct and slow, so skip straight to the next recorded change.
+    """
+    upcoming = [row.effective_from for row in rows if row.effective_from > day]
+    return min(upcoming) if upcoming else date.fromordinal(end.toordinal() + 1)

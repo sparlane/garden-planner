@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Form } from 'react-bootstrap'
 
 import { updateWorkspace } from './api/workspace'
+import { GstRegistrationSettings } from './tax/registration.js'
 import { queryKeys } from './query'
 import { GardenExperience, Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
 
@@ -198,6 +199,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
         </Button>
         {mutation.isSuccess && <span className="ms-3 text-success">Settings saved.</span>}
       </Form>
+      {workspace.mode === 'nursery' && <GstRegistrationSettings />}
     </main>
   )
 }
