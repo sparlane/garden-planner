@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "work",
     "health",
     "reporting",
+    "tax",
     "rest_framework",
     "django.contrib.admin",
     "django.contrib.auth",

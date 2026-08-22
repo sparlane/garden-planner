@@ -9,6 +9,6 @@ pycodestyle --ignore=E501 */*.py
 # machine, so linting it would gate the build on an untracked file. When a new
 # app is added, add it here — applications/ was missed and went unlinted from
 # the day it landed until the seed-tray generation work noticed.
-pylint applications/ costing/ frontend/ garden/ health/ inventory/ labels/ locations/ plantings/ plants/ reporting/ sales/ seeds/ seedtrays/ supplies/ tests/ work/ workspaces/
+pylint applications/ costing/ frontend/ garden/ health/ inventory/ labels/ locations/ plantings/ plants/ reporting/ sales/ seeds/ seedtrays/ supplies/ tax/ tests/ work/ workspaces/
 
 deactivate
