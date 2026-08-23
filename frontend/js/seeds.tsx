@@ -666,10 +666,71 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
   )
 }
 
+type SeedPacketSortKey = 'seeds' | 'received' | 'sowBy' | 'receivedQuantity' | 'cost' | 'usage' | 'remaining'
+type SortDirection = 'ascending' | 'descending'
+
+interface SeedPacketTableRow {
+  packet: SeedPacket
+  label: string
+}
+
+function seedPacketSortValue(row: SeedPacketTableRow, key: SeedPacketSortKey): string | number | null {
+  const { inventory } = row.packet
+  switch (key) {
+    case 'seeds':
+      return row.label.toLocaleLowerCase()
+    case 'received':
+      return row.packet.purchase_date
+    case 'sowBy':
+      return row.packet.sow_by
+    case 'receivedQuantity':
+      return inventory?.received_quantity === null || inventory?.received_quantity === undefined ? null : Number(inventory.received_quantity)
+    case 'cost':
+      return inventory?.acquisition_total === null || inventory?.acquisition_total === undefined ? null : Number(inventory.acquisition_total)
+    case 'usage':
+      return inventory ? Number(inventory.sown_quantity) : null
+    case 'remaining':
+      return inventory?.remaining_quantity === null || inventory?.remaining_quantity === undefined ? null : Number(inventory.remaining_quantity)
+  }
+}
+
+function compareSeedPacketRows(left: SeedPacketTableRow, right: SeedPacketTableRow, key: SeedPacketSortKey, direction: SortDirection): number {
+  const leftValue = seedPacketSortValue(left, key)
+  const rightValue = seedPacketSortValue(right, key)
+  if (leftValue === null) return rightValue === null ? left.packet.pk - right.packet.pk : 1
+  if (rightValue === null) return -1
+  const comparison = typeof leftValue === 'number' && typeof rightValue === 'number' ? leftValue - rightValue : String(leftValue).localeCompare(String(rightValue))
+  return (direction === 'ascending' ? comparison : -comparison) || left.packet.pk - right.packet.pk
+}
+
+interface SeedStockHeaderProps {
+  label: string
+  sortKey: SeedPacketSortKey
+  activeSortKey: SeedPacketSortKey
+  direction: SortDirection
+  onSort: (key: SeedPacketSortKey) => void
+  children?: React.ReactNode
+}
+
+function SeedStockHeader({ label, sortKey, activeSortKey, direction, onSort, children }: SeedStockHeaderProps) {
+  const active = sortKey === activeSortKey
+  return (
+    <th aria-sort={active ? direction : 'none'}>
+      <Button variant="link" className="p-0 fw-bold text-body text-decoration-none" onClick={() => onSort(sortKey)}>
+        {label} {active ? (direction === 'ascending' ? '▲' : '▼') : '↕'}
+      </Button>
+      {children}
+    </th>
+  )
+}
+
 function SeedStockTable({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const [showReceipt, setShowReceipt] = React.useState(false)
   const [showEmptyPackets, setShowEmptyPackets] = React.useState(false)
+  const [seedSearch, setSeedSearch] = React.useState('')
+  const [sortKey, setSortKey] = React.useState<SeedPacketSortKey>('seeds')
+  const [sortDirection, setSortDirection] = React.useState<SortDirection>('ascending')
   const [editingDraft, setEditingDraft] = React.useState<SeedPacketReceiptDraft | null>(null)
   const { data: suppliers = [] } = useQuery({ queryKey: queryKeys.suppliers.all, queryFn: ({ signal }) => getSuppliers(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
@@ -687,12 +748,24 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
     mutationFn: ({ pk, data }: { pk: number; data: SeedPacketReconciliation }) => reconcileSeedPacket(pk, data),
     onSuccess: invalidateStock
   })
-  const visiblePackets = showEmptyPackets
-    ? packets
-    : packets.filter((packet) => {
-        const remainingQuantity = packet.inventory?.remaining_quantity
-        return packet.empty !== true && (remainingQuantity === null || remainingQuantity === undefined || Number(remainingQuantity) !== 0)
-      })
+  const normalizedSearch = seedSearch.trim().toLocaleLowerCase()
+  const packetRows = packets
+    .map((packet) => ({ packet, label: seedLabel(packet.seeds, seeds, suppliers, varieties) }))
+    .filter(({ packet, label }) => {
+      const remainingQuantity = packet.inventory?.remaining_quantity
+      const visibleByStock = showEmptyPackets || (packet.empty !== true && (remainingQuantity === null || remainingQuantity === undefined || Number(remainingQuantity) !== 0))
+      return visibleByStock && label.toLocaleLowerCase().includes(normalizedSearch)
+    })
+    .sort((left, right) => compareSeedPacketRows(left, right, sortKey, sortDirection))
+
+  function changeSort(nextSortKey: SeedPacketSortKey) {
+    if (nextSortKey === sortKey) {
+      setSortDirection(sortDirection === 'ascending' ? 'descending' : 'ascending')
+      return
+    }
+    setSortKey(nextSortKey)
+    setSortDirection('ascending')
+  }
 
   async function createReceipt(data: SeedPacketReceiptCreate) {
     await createMutation.mutateAsync(data)
@@ -709,13 +782,23 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
     <Table responsive>
       <thead>
         <tr>
-          <th>Seeds</th>
-          <th>Received</th>
-          <th>Sow by</th>
-          <th>Received quantity</th>
-          <th>Cost</th>
-          <th>Usage</th>
-          <th>Remaining / warnings</th>
+          <SeedStockHeader label="Seeds" sortKey="seeds" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort}>
+            <Form.Control
+              className="mt-2"
+              size="sm"
+              type="search"
+              aria-label="Search seeds"
+              placeholder="Search seeds"
+              value={seedSearch}
+              onChange={(event) => setSeedSearch(event.target.value)}
+            />
+          </SeedStockHeader>
+          <SeedStockHeader label="Received" sortKey="received" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+          <SeedStockHeader label="Sow by" sortKey="sowBy" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+          <SeedStockHeader label="Received quantity" sortKey="receivedQuantity" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+          <SeedStockHeader label="Cost" sortKey="cost" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+          <SeedStockHeader label="Usage" sortKey="usage" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+          <SeedStockHeader label="Remaining / warnings" sortKey="remaining" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
           <th>
             <Button size="sm" onClick={() => setShowReceipt(true)}>
               Receive packet
@@ -750,13 +833,8 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
             workspace={workspace}
           />
         )}
-        {visiblePackets.map((packet) => (
-          <SeedPacketRow
-            key={packet.pk}
-            packet={packet}
-            label={seedLabel(packet.seeds, seeds, suppliers, varieties)}
-            onReconcile={(pk, data) => reconcileMutation.mutateAsync({ pk, data }).then(() => undefined)}
-          />
+        {packetRows.map(({ packet, label }) => (
+          <SeedPacketRow key={packet.pk} packet={packet} label={label} onReconcile={(pk, data) => reconcileMutation.mutateAsync({ pk, data }).then(() => undefined)} />
         ))}
       </tbody>
     </Table>
