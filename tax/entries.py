@@ -35,7 +35,14 @@ from .periods import (
     registration_history,
     registration_in_force,
 )
-from .recognition import INVOICE, SUPPLY, SUPPLY_CREDIT, order_recognition
+from .recognition import (
+    HYBRID,
+    INVOICE,
+    PAYMENTS,
+    SUPPLY,
+    SUPPLY_CREDIT,
+    order_recognition,
+)
 
 
 ZERO = Decimal('0.0000')
@@ -43,6 +50,18 @@ PERCENT_DIVISOR = Decimal('100')
 
 SUPPLY_KINDS = (SUPPLY, SUPPLY_CREDIT)
 PURCHASE = 'purchase'
+
+#: The bases that claim input tax when the supplier is paid rather than when
+#: the goods were received. Hybrid follows the payments rule on the input side
+#: and the invoice rule on the output side, which is the whole of what makes it
+#: hybrid, so it belongs here and not in `OUTPUT_RULE`'s company.
+PAYMENT_BASED = (PAYMENTS, HYBRID)
+
+#: Where a purchase entry's date came from. A settled receipt is dated by the
+#: payment that discharged it; everything else falls back to the receipt date,
+#: which stands in for a supplier invoice date the application does not hold.
+SUPPLIER_PAYMENT = 'supplier_payment'
+RECEIPT_PROXY = 'receipt_date_proxy'
 
 #: Why an entry belongs to no taxable period. Each becomes a data-quality code
 #: on the report, with the rows behind it reachable through the drill-down.
@@ -90,12 +109,24 @@ def derive_entries(workspace, start, end):
     periods = enumerate_periods(workspace, start, end, history=history)
     order_facts = workspace_order_facts(workspace, start, end)
     entries = []
+    purchases = []
+    # Periods arrive in order, so a line claimed by an earlier one is a line a
+    # later one must not claim again. That is not hypothetical: a receipt
+    # received under the invoice basis is claimed on its receipt date, and if
+    # the workspace then moves to the payments basis the period holding its
+    # settlement date would claim the very same line a second time. First claim
+    # wins, which is also the right answer — the tax was already recovered.
+    claimed = set()
     for period in periods:
         entries.extend(_period_supply_entries(order_facts, period))
-        entries.extend(_period_purchase_entries(workspace, period))
+        purchases.extend(_period_purchase_entries(workspace, period, claimed))
+    entries.extend(purchases)
     context = _Uncovered(workspace, history, (start, end), _covered_days(periods))
     entries.extend(_unregistered_supply_entries(order_facts, context))
-    entries.extend(_unregistered_purchase_entries(context))
+    entries.extend(_unregistered_purchase_entries(
+        context,
+        {entry.line_id for entry in purchases},
+    ))
     entries.sort(key=lambda entry: (entry.supply_date, entry.kind, entry.source_id, entry.line_id or 0))
     return entries
 
@@ -158,42 +189,106 @@ def _unregistered_supply_entries(order_facts, context):
     return entries
 
 
-def _period_purchase_entries(workspace, period):
-    """Return the input tax a period may claim.
+def _period_purchase_entries(workspace, period, claimed):
+    """Return the input tax a period may claim, on the date its basis claims it.
 
-    Only the invoice basis can claim on the receipt date. Under the payments
-    and hybrid bases input tax is claimed when the supplier is paid, and this
-    application records no supplier payment anywhere — task 80 owns purchasing
-    and accounts payable. So those purchases are reported as awaiting payment
-    evidence rather than being claimed on a date that is not the right one.
+    Only the invoice basis claims on the receipt date. Under the payments and
+    hybrid bases input tax is claimed when the supplier is paid, which is
+    `StockReceipt.settled_on`, so a period claims what it settled rather than
+    what it received. A receipt with no settlement date recorded has no
+    claimable date yet and is held back rather than claimed on a date that is
+    not the right one.
+
+    The two queries cannot be one. A receipt is claimed by the period holding
+    its payment and held back by the period holding its receipt, and those are
+    routinely different periods — which is exactly the case a single date range
+    over one column would get wrong.
+
+    `claimed` carries the lines earlier periods already took, and is added to
+    here. See `derive_entries` for why a period has to be told.
     """
-    if period.basis != INVOICE:
-        return _awaiting_payment_entries(workspace, period.start, period.end, period.basis)
-    return [
+    if period.basis == INVOICE:
+        lines = _posted_receipt_lines(workspace, period.start, period.end)
+        return [
+            _purchase_entry(line, period, period.basis)
+            for line in _take(lines, claimed)
+        ]
+    settled = _settled_receipt_lines(workspace, period.start, period.end)
+    entries = [
         _purchase_entry(line, period, period.basis)
-        for line in _posted_receipt_lines(workspace, period.start, period.end)
+        for line in _take(settled, claimed)
     ]
-
-
-def _unregistered_purchase_entries(context):
-    """Report purchases made while unregistered, with the reason they claim nothing."""
-    start, end = context.window
-    entries = []
-    for line in _posted_receipt_lines(context.workspace, start, end):
-        received = line.receipt.received_date
-        if received in context.covered:
-            continue
-        entry = _purchase_entry(line, None, '')
-        entries.append(_with(entry, exclusion=context.exclusion_for(received)))
+    unsettled = _unsettled_receipt_lines(workspace, period.start, period.end)
+    entries.extend(
+        _with(
+            _purchase_entry(line, None, period.basis),
+            exclusion=AWAITING_PAYMENT,
+        )
+        for line in _take(unsettled, claimed)
+    )
     return entries
 
 
-def _awaiting_payment_entries(workspace, start, end, basis):
-    """Return purchases held back for want of a supplier payment date."""
-    return [
-        _with(_purchase_entry(line, None, basis), exclusion=AWAITING_PAYMENT)
-        for line in _posted_receipt_lines(workspace, start, end)
-    ]
+def _take(lines, claimed):
+    """Yield the lines no earlier period has taken, marking each as taken."""
+    for line in lines:
+        if line.pk in claimed:
+            continue
+        claimed.add(line.pk)
+        yield line
+
+
+def _unregistered_purchase_entries(context, accounted_line_ids):
+    """Report purchases no taxable period accounted for, with the reason.
+
+    Which lines are left over cannot be read off the receipt date alone, because
+    a period accounts for a line under whichever date its basis claims on: a
+    payments-basis receipt received before a registration and paid inside one is
+    claimed by the period, not stranded here. So the period pass says what it
+    took and this reports the remainder.
+
+    Which day a leftover is explained by is `_unaccounted_day`'s business, and
+    a leftover with no such day is not unaccounted for at all.
+    """
+    start, end = context.window
+    entries = []
+    for line in _posted_receipt_lines(context.workspace, start, end):
+        if line.pk in accounted_line_ids:
+            continue
+        day = _unaccounted_day(line, context)
+        if day is None:
+            continue
+        reason = context.exclusion_for(day)
+        if not reason:
+            continue
+        entries.append(_with(_purchase_entry(line, None, ''), exclusion=reason))
+    return entries
+
+
+def _unaccounted_day(line, context):
+    """Return the day a leftover purchase has to be explained by, or None.
+
+    Only a payment-based basis can leave a line whose receipt date a period
+    covers: it claimed on the settlement date instead. So where the receipt date
+    is covered, the settlement date is the one that fell outside a registration
+    and the one the reason has to be read on — a receipt bought while registered
+    and paid after a cessation claims nothing, and says which of the two dates
+    is why. The invoice basis takes every line received inside a period, so it
+    never reaches here with a covered receipt date, and its leftovers are always
+    explained by the receipt date they were going to be claimed on.
+
+    A settlement outside the reported range belongs to a period the range does
+    not cover. That line is accounted for elsewhere, and saying nothing about it
+    here is what makes a narrow range honest rather than lossy.
+    """
+    received = line.receipt.received_date
+    if received not in context.covered:
+        return received
+    start, end = context.window
+    settled = line.receipt.settled_on
+    if settled is not None and start <= settled <= end:
+        return settled
+    return None
 
 
 def _purchase_entry(line, period, basis):
@@ -212,9 +307,14 @@ def _purchase_entry(line, period, basis):
     taxable = quantize_money(line.line_cost_ex_tax)
     full_tax = quantize_money(taxable * Decimal(receipt.tax_rate) / PERCENT_DIVISOR)
     recoverable = receipt.tax_recoverable
+    # A settlement date is a date somebody paid a supplier on, so under a basis
+    # that claims on payment it is the real time of supply and not a stand-in.
+    # Every other purchase is still dated by the receipt standing in for the
+    # supplier invoice date this application does not hold, and stays a proxy.
+    paid = basis in PAYMENT_BASED and receipt.settled_on is not None
     return GstEntry(
         kind=PURCHASE,
-        supply_date=receipt.received_date,
+        supply_date=receipt.settled_on if paid else receipt.received_date,
         period=period,
         basis=basis,
         source_type='stock_receipt',
@@ -227,23 +327,48 @@ def _purchase_entry(line, period, basis):
         tax=full_tax if recoverable else ZERO,
         non_recoverable_tax=ZERO if recoverable else full_tax,
         currency_code=receipt.currency_code,
-        time_of_supply_source='receipt_date_proxy',
-        proxy=True,
+        time_of_supply_source=SUPPLIER_PAYMENT if paid else RECEIPT_PROXY,
+        proxy=not paid,
     )
 
 
-def _posted_receipt_lines(workspace, start, end):
-    """Return the lines of every posted receipt received in a range.
+def _receipt_lines(workspace):
+    """Return every posted receipt line in a workspace.
 
     A reversed receipt leaves POSTED, so filtering on status is what excludes
     it; there is no reversal pair to filter here as there is on the sales side.
+    A settlement date recorded before a reversal goes with it, because the
+    receipt it belongs to stops being claimable at all.
     """
     return StockReceiptLine.objects.filter(
         receipt__workspace=workspace,
         receipt__status=StockReceipt.Status.POSTED,
+    ).select_related('receipt')
+
+
+def _posted_receipt_lines(workspace, start, end):
+    """Return the lines of every posted receipt received in a range."""
+    return _receipt_lines(workspace).filter(
         receipt__received_date__gte=start,
         receipt__received_date__lte=end,
-    ).select_related('receipt').order_by('receipt__received_date', 'pk')
+    ).order_by('receipt__received_date', 'pk')
+
+
+def _settled_receipt_lines(workspace, start, end):
+    """Return the lines of every posted receipt paid for in a range."""
+    return _receipt_lines(workspace).filter(
+        receipt__settled_on__gte=start,
+        receipt__settled_on__lte=end,
+    ).order_by('receipt__settled_on', 'pk')
+
+
+def _unsettled_receipt_lines(workspace, start, end):
+    """Return the lines of posted receipts received in a range and not yet paid."""
+    return _receipt_lines(workspace).filter(
+        receipt__settled_on__isnull=True,
+        receipt__received_date__gte=start,
+        receipt__received_date__lte=end,
+    ).order_by('receipt__received_date', 'pk')
 
 
 class _Uncovered:  # pylint: disable=too-few-public-methods

@@ -459,6 +459,12 @@ class StockReceipt(WorkspaceOwnedModel):
         help_text='Whether entered receipt prices include the receipt tax rate.',
     )
     tax_recoverable = models.BooleanField(default=True)
+    #: The date the supplier was paid. Under the payments and hybrid bases this
+    #: is when input tax on the receipt falls due, so it has to be recordable
+    #: after posting — a supplier is paid after the goods arrive, not before
+    #: the document is closed. `settle_receipt` is the only writer, and it goes
+    #: through the queryset because `save` refuses every post-posting change.
+    settled_on = models.DateField(null=True, blank=True, editable=False)
     notes = models.TextField(blank=True, default='')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

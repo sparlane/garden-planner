@@ -31,6 +31,7 @@ from .ledger import (
     reverse_movement,
     reverse_receipt,
     reverse_stocktake,
+    settle_receipt,
 )
 from .models import (
     InventoryItem,
@@ -187,6 +188,7 @@ class StockReceiptSerializer(
             'tax_rate',
             'price_includes_tax',
             'tax_recoverable',
+            'settled_on',
             'notes',
             'created_by',
             'posted_at',
@@ -202,6 +204,7 @@ class StockReceiptSerializer(
             'created_by',
             'posted_at',
             'reversed_at',
+            'settled_on',
             'is_seed_packet_draft',
             'created',
             'updated',
@@ -502,6 +505,16 @@ class ReasonSerializer(ActionSerializer):  # pylint: disable=abstract-method
     reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
 
 
+class SettlementSerializer(ActionSerializer):  # pylint: disable=abstract-method
+    """Validate the date a receipt's supplier was paid, or its removal.
+
+    Null is a real value here rather than a missing one: clearing the date is
+    how a settlement recorded against the wrong receipt is taken back.
+    """
+
+    settled_on = serializers.DateField(allow_null=True)
+
+
 class MovementActionSerializer(
     CurrentWorkspaceSerializerMixin,
     ActionSerializer,
@@ -727,6 +740,18 @@ class StockReceiptViewSet(
             self.get_object(),
             request.user,
             reason.validated_data['reason'],
+        )
+        return Response(self.get_serializer(receipt).data)
+
+    @action(detail=True, methods=['post'])
+    def settle(self, request, pk=None):  # pylint: disable=unused-argument
+        """Record or clear the date this receipt's supplier was paid."""
+        settlement = SettlementSerializer(data=request.data)
+        settlement.is_valid(raise_exception=True)
+        receipt = _run_domain_action(
+            settle_receipt,
+            self.get_object(),
+            settlement.validated_data['settled_on'],
         )
         return Response(self.get_serializer(receipt).data)
 

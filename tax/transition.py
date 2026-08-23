@@ -13,11 +13,14 @@ implementing the rules a second time, which is why that function takes `basis`
 and `as_at` as parameters at all. The difference between what the two bases had
 recognised by the change date *is* the adjustment.
 
-The creditors side cannot be computed. Input tax under the payments basis
-depends on when a supplier was paid, and this application records no supplier
-payment anywhere — task 80 owns purchasing and accounts payable, task 120 the
-liabilities. That side is reported as unavailable rather than guessed, and the
-transition is marked incomplete so nobody reads a half-answer as a whole one.
+The creditors side is still not computed here. `StockReceipt.settled_on` now
+says when a receipt was paid, which is enough for a period to claim input tax,
+but not enough for this adjustment: it carries no partial payments and covers
+only stock received through the ledger, so an unpaid-creditors balance built
+from it would be a floor presented as a total. Task 80 owns purchasing and
+accounts payable, task 120 the liabilities. That side stays reported as
+unavailable rather than guessed, and the transition is marked incomplete so
+nobody reads a half-answer as a whole one.
 """
 
 from dataclasses import dataclass, field

@@ -102,9 +102,9 @@ EXCLUSION_MESSAGES = {
     ),
     AWAITING_PAYMENT: (
         'Under the payments and hybrid bases input tax is claimed when the '
-        'supplier is paid, and no supplier payment date is recorded anywhere '
-        'yet. These purchases are held back rather than claimed on their '
-        'receipt date.'
+        'supplier is paid. These receipts have no settlement date recorded, so '
+        'they are held back rather than claimed on their receipt date. Record '
+        'the date each supplier was paid on the receiving screen to claim them.'
     ),
 }
 

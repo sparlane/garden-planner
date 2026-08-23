@@ -185,6 +185,9 @@ interface StockReceipt {
   created_by: number | null
   posted_at: string | null
   reversed_at: string | null
+  // The date the supplier was paid. Recorded after posting through its own
+  // action, which is why it is absent from StockReceiptWrite.
+  settled_on: string | null
   is_seed_packet_draft: boolean
   created: string
   updated: string
