@@ -8,11 +8,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { Supplier, SupplierCreate } from './types/suppliers'
 import { Seed, SeedCreate, SeedPacket, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation, SeedQuantityCertainty } from './types/seeds'
-import { PlantVariety } from './types/plants'
+import { Plant, PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
 import { isAdvanced } from './workspace_mode'
-import { getPlantVarieties } from './api/plants'
+import { getPlants, getPlantVarieties } from './api/plants'
 import {
   addSeed,
   cancelSeedPacketReceipt,
@@ -396,16 +396,18 @@ function SeedTable() {
   )
 }
 
-function seedLabel(seedPk: number, seeds: Array<Seed>, suppliers: Array<Supplier>, varieties: Array<PlantVariety>): string {
+function seedLabel(seedPk: number, seeds: Array<Seed>, suppliers: Array<Supplier>, plants: Array<Plant>, varieties: Array<PlantVariety>): string {
   const seed = seeds.find((candidate) => candidate.pk === seedPk)
   const supplier = suppliers.find((candidate) => candidate.pk === seed?.supplier)
   const variety = varieties.find((candidate) => candidate.pk === seed?.plant_variety)
-  return `${variety?.name ?? 'Unknown variety'} from ${supplier?.name ?? 'unknown supplier'}`
+  const plant = plants.find((candidate) => candidate.pk === variety?.plant)
+  return `${plant?.name ?? 'Unknown plant'} — ${variety?.name ?? 'Unknown variety'} from ${supplier?.name ?? 'unknown supplier'}`
 }
 
 interface PacketReceiptFormProps {
   seeds: Array<Seed>
   suppliers: Array<Supplier>
+  plants: Array<Plant>
   varieties: Array<PlantVariety>
   draft?: SeedPacketReceiptDraft
   onSave: (data: SeedPacketReceiptCreate) => Promise<void>
@@ -413,7 +415,7 @@ interface PacketReceiptFormProps {
   workspace: Workspace
 }
 
-function PacketReceiptForm({ seeds, suppliers, varieties, draft, onSave, onCancel, workspace }: PacketReceiptFormProps) {
+function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave, onCancel, workspace }: PacketReceiptFormProps) {
   const priceRequired = isAdvanced(workspace)
   const [seedPk, setSeedPk] = React.useState<number | undefined>(draft?.seeds)
   const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>(draft?.quantity_certainty ?? 'unknown')
@@ -488,7 +490,7 @@ function PacketReceiptForm({ seeds, suppliers, varieties, draft, onSave, onCance
               <option value="">Select…</option>
               {seeds.map((seed) => (
                 <option key={seed.pk} value={seed.pk}>
-                  {seedLabel(seed.pk, seeds, suppliers, varieties)} ({seed.base_unit})
+                  {seedLabel(seed.pk, seeds, suppliers, plants, varieties)} ({seed.base_unit})
                 </option>
               ))}
             </Form.Select>
@@ -733,6 +735,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
   const [sortDirection, setSortDirection] = React.useState<SortDirection>('ascending')
   const [editingDraft, setEditingDraft] = React.useState<SeedPacketReceiptDraft | null>(null)
   const { data: suppliers = [] } = useQuery({ queryKey: queryKeys.suppliers.all, queryFn: ({ signal }) => getSuppliers(signal) })
+  const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
   const { data: seeds = [] } = useQuery({ queryKey: queryKeys.seeds.catalog, queryFn: ({ signal }) => getSeeds(signal) })
   const { data: packets = [] } = useQuery({ queryKey: queryKeys.seeds.packets.raw, queryFn: ({ signal }) => getAllSeedPackets(signal) })
@@ -750,7 +753,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
   })
   const normalizedSearch = seedSearch.trim().toLocaleLowerCase()
   const packetRows = packets
-    .map((packet) => ({ packet, label: seedLabel(packet.seeds, seeds, suppliers, varieties) }))
+    .map((packet) => ({ packet, label: seedLabel(packet.seeds, seeds, suppliers, plants, varieties) }))
     .filter(({ packet, label }) => {
       const remainingQuantity = packet.inventory?.remaining_quantity
       const visibleByStock = showEmptyPackets || (packet.empty !== true && (remainingQuantity === null || remainingQuantity === undefined || Number(remainingQuantity) !== 0))
@@ -809,13 +812,21 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
       </thead>
       <tbody>
         {showReceipt && (
-          <PacketReceiptForm seeds={seeds} suppliers={suppliers} varieties={varieties} onSave={createReceipt} onCancel={() => setShowReceipt(false)} workspace={workspace} />
+          <PacketReceiptForm
+            seeds={seeds}
+            suppliers={suppliers}
+            plants={plants}
+            varieties={varieties}
+            onSave={createReceipt}
+            onCancel={() => setShowReceipt(false)}
+            workspace={workspace}
+          />
         )}
         {drafts.map((draft) => (
           <ReceiptDraftRow
             key={`draft-${draft.pk}`}
             draft={draft}
-            label={seedLabel(draft.seeds, seeds, suppliers, varieties)}
+            label={seedLabel(draft.seeds, seeds, suppliers, plants, varieties)}
             onEdit={setEditingDraft}
             onPost={(pk) => postMutation.mutateAsync(pk).then(() => undefined)}
             onCancel={(pk) => cancelMutation.mutateAsync(pk).then(() => undefined)}
@@ -826,6 +837,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
             key={`edit-${editingDraft.pk}`}
             seeds={seeds}
             suppliers={suppliers}
+            plants={plants}
             varieties={varieties}
             draft={editingDraft}
             onSave={saveDraft}
