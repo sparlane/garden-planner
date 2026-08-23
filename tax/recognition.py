@@ -238,9 +238,12 @@ class Recognition:
     #: worth reporting rather than absorbing.
     over_credited: Decimal = ZERO
     uncredited_return_ids: Tuple[int, ...] = field(default_factory=tuple)
-    #: Supplies brought to account on a fulfillment because no document was
-    #: issued for them. Reported so a period can say how much of it rests on a
-    #: date nobody chose.
+    #: Supply brought to account on a fulfillment because no document was
+    #: issued for it. Reported so a period can say how much of it rests on a
+    #: date nobody chose. Credits are excluded deliberately: a refund with no
+    #: credit note is also a stand-in, but netting it off here would produce
+    #: one figure meaning two things, and the register reports that gap
+    #: separately as `refund_without_a_correction`.
     proxy_gross: Decimal = ZERO
 
     @property
@@ -309,7 +312,8 @@ def order_recognition(facts, basis, *, as_at=None):
         over_credited=quantize_money(over_credited),
         uncredited_return_ids=tuple(facts.uncredited_return_ids),
         proxy_gross=quantize_money(sum(
-            (event.gross for event in events if event.proxy), ZERO,
+            (event.gross for event in events if event.proxy and event.kind == SUPPLY),
+            ZERO,
         )),
     )
 

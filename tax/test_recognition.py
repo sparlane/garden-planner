@@ -562,6 +562,21 @@ class CorrectionDocumentTests(SimpleTestCase):
         self.assertEqual(credit.source_type, 'refund')
         self.assertTrue(credit.proxy)
 
+    def test_a_proxied_credit_does_not_net_off_the_proxied_supply_figure(self):
+        """One figure meaning two things would be worse than not reporting it.
+
+        The supply here rests on a real invoice date, so nothing about it is a
+        stand-in; the refund beside it is one. Summing both would report
+        negative proxied supply, which describes nothing.
+        """
+        facts = self.facts(corrections=(), refunds=(RefundFact(
+            refund_id=3,
+            refunded_on=MAY,
+            portions=(CreditPortion(1, Decimal('115.0000'), Decimal('15.0000')),),
+        ),))
+        recognition = order_recognition(facts, INVOICE)
+        self.assertEqual(recognition.proxy_gross, Decimal('0.0000'))
+
     def test_the_payments_basis_ignores_a_credit_note(self):
         """A note moves no cash, so it is not an event on the payments basis."""
         facts = self.facts(payments=(PaymentFact(7, MARCH, Decimal('115.0000')),))
