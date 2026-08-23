@@ -123,6 +123,14 @@ async function reverseStockReceipt(pk: number, reason: string): Promise<StockRec
   return response.json() as Promise<StockReceipt>
 }
 
+// Null clears a settlement recorded against the wrong receipt, so it is sent
+// rather than omitted: the server tells the two apart and a missing key is an
+// error there.
+async function settleStockReceipt(pk: number, settledOn: string | null): Promise<StockReceipt> {
+  const response = await csrfPost(`${RECEIPTS_URL}${pk}/settle/`, { settled_on: settledOn })
+  return response.json() as Promise<StockReceipt>
+}
+
 function deleteStockReceipt(pk: number): Promise<Response> {
   return csrfDelete(`${RECEIPTS_URL}${pk}/`)
 }
@@ -141,6 +149,7 @@ export {
   getStocktakes,
   postStockReceipt,
   reverseStockReceipt,
+  settleStockReceipt,
   createStocktake,
   countStocktakeTarget,
   resolveStocktakeVariance,

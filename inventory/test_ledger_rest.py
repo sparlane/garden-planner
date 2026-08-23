@@ -752,3 +752,98 @@ class StockReceiptDraftTests(LedgerRestFixture):
         invalid = self.client.get(self.receipt_url, {'seed_packet': 'maybe'})
         self.assertEqual(invalid.status_code, 400)
         self.assertIn('seed_packet', invalid.data)
+
+
+class StockReceiptSettlementTests(LedgerRestFixture):
+    """Recording when a supplier was paid, which is a fact about a posted receipt."""
+
+    def settle(self, pk, settled_on):
+        """Post one settlement request and return the raw response."""
+        return self.client.post(
+            f'{self.receipt_url}{pk}/settle/',
+            {'settled_on': settled_on},
+            format='json',
+        )
+
+    def test_a_posted_receipt_records_and_clears_a_settlement_date(self):
+        """The date is the whole feature: it is what a payments-basis period claims on."""
+        _created, posted, _lot = self.create_and_post_receipt()
+        self.assertIsNone(posted['settled_on'])
+        recorded = self.settle(posted['pk'], '2026-08-05')
+        self.assertEqual(recorded.status_code, 200, recorded.data)
+        self.assertEqual(recorded.data['settled_on'], '2026-08-05')
+        self.assertEqual(
+            StockReceipt.objects.get(pk=posted['pk']).settled_on,
+            date(2026, 8, 5),
+        )
+        cleared = self.settle(posted['pk'], None)
+        self.assertEqual(cleared.status_code, 200, cleared.data)
+        self.assertIsNone(cleared.data['settled_on'])
+
+    def test_settling_leaves_the_lot_cost_alone(self):
+        """Paying for stock does not change what it cost, only when the tax is claimed."""
+        _created, posted, lot = self.create_and_post_receipt()
+        before = lot.acquisition_total
+        self.assertEqual(self.settle(posted['pk'], '2026-08-05').status_code, 200)
+        lot.refresh_from_db()
+        self.assertEqual(lot.acquisition_total, before)
+
+    def test_a_draft_receipt_cannot_be_settled(self):
+        """Nothing has been received yet, so there is no acquisition to have paid for."""
+        created = self.client.post(
+            self.receipt_url,
+            self.receipt_payload(),
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        rejected = self.settle(created.data['pk'], '2026-08-05')
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('status', rejected.data)
+
+    def test_a_reversed_receipt_cannot_be_settled(self):
+        """A reversed receipt claims nothing, so a payment date on it would mislead."""
+        _created, posted, _lot = self.create_and_post_receipt()
+        reversed_response = self.client.post(
+            f"{self.receipt_url}{posted['pk']}/reverse/",
+            {'reason': 'Wrong supplier'},
+            format='json',
+        )
+        self.assertEqual(reversed_response.status_code, 200, reversed_response.data)
+        rejected = self.settle(posted['pk'], '2026-08-05')
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('status', rejected.data)
+
+    def test_a_future_settlement_date_is_refused(self):
+        """Input tax cannot be claimed on a payment that has not happened."""
+        _created, posted, _lot = self.create_and_post_receipt()
+        Workspace.objects.filter(pk=self.workspace.pk).update(timezone='Pacific/Auckland')
+        ahead = date.today() + timedelta(days=5)
+        rejected = self.settle(posted['pk'], ahead.isoformat())
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('settled_on', rejected.data)
+
+    def test_a_missing_date_is_not_the_same_as_clearing_one(self):
+        """Silently clearing a settlement on a malformed request would lose a claim."""
+        _created, posted, _lot = self.create_and_post_receipt()
+        self.assertEqual(self.settle(posted['pk'], '2026-08-05').status_code, 200)
+        rejected = self.client.post(
+            f"{self.receipt_url}{posted['pk']}/settle/",
+            {},
+            format='json',
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertEqual(
+            StockReceipt.objects.get(pk=posted['pk']).settled_on,
+            date(2026, 8, 5),
+        )
+
+    def test_the_settlement_date_is_not_writable_through_the_document(self):
+        """A posted receipt is immutable, and this date is the one exception to route around it."""
+        created = self.client.post(
+            self.receipt_url,
+            self.receipt_payload(settled_on='2026-08-05'),
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertIsNone(created.data['settled_on'])
+        self.assertIsNone(StockReceipt.objects.get(pk=created.data['pk']).settled_on)

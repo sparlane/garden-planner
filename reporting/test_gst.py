@@ -102,8 +102,14 @@ class GstReportTestCase(RESTContractTestCase):
         )
         return order
 
-    def buy(self, received_date, ex_tax='200', tax_rate='15', recoverable=True):
-        """Post a supplier receipt, which is where input tax comes from."""
+    def buy(self, received_date, ex_tax='200', tax_rate='15', recoverable=True, *, settled_on=None):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        """Post a supplier receipt, which is where input tax comes from.
+
+        `settled_on` is written straight to the posted row rather than through
+        `settle_receipt`, which refuses a future date. These tests are about
+        which period a claim lands in, and pinning them to a window that stays
+        in the past would date the file; the guard is tested where it lives.
+        """
         store = Location.objects.create(
             workspace=self.workspace, name=f'Store {received_date}',
             code=f'STORE-{received_date.isoformat()}',
@@ -121,7 +127,11 @@ class GstReportTestCase(RESTContractTestCase):
             unit_code=UnitCode.LITRE, base_quantity=Decimal('2'),
             line_cost_ex_tax=Decimal(ex_tax), destination=store,
         )
-        return post_receipt(receipt, self.user)[0]
+        receipt = post_receipt(receipt, self.user)[0]
+        if settled_on is not None:
+            StockReceipt.objects.filter(pk=receipt.pk).update(settled_on=settled_on)
+            receipt.refresh_from_db()
+        return receipt
 
     def periods(self, **params):
         """Fetch the period report over an explicit range."""
@@ -428,8 +438,8 @@ class InputTaxTests(GstReportTestCase):
         self.assertEqual(row['input_tax'], '30.0000')
         self.assertEqual(row['net_gst_direction'], 'refundable')
 
-    def test_the_payments_basis_holds_input_tax_back(self):
-        """It is claimed when the supplier is paid, and no payment date exists."""
+    def test_the_payments_basis_holds_an_unpaid_receipt_back(self):
+        """It is claimed when the supplier is paid, and this one has not been."""
         self.register(basis=GstRegistration.Basis.PAYMENTS)
         self.buy(date(2026, 3, 10), '200')
         row = self._period('2026-03-01..2026-04-30')
@@ -443,7 +453,7 @@ class InputTaxTests(GstReportTestCase):
         codes = {finding['code'] for finding in self.periods()['data_quality']}
         self.assertIn('input_tax_awaiting_payment', codes)
 
-    def test_the_hybrid_basis_holds_input_tax_back_too(self):
+    def test_the_hybrid_basis_holds_an_unpaid_receipt_back_too(self):
         """Hybrid is invoice for output tax and payments for input tax."""
         self.register(basis=GstRegistration.Basis.HYBRID)
         self.buy(date(2026, 3, 10), '200')
@@ -478,6 +488,111 @@ class InputTaxTests(GstReportTestCase):
         self.buy(date(2026, 3, 10), '200')
         codes = {finding['code'] for finding in self.periods()['data_quality']}
         self.assertIn('receipt_level_tax_treatment', codes)
+
+    def test_the_payments_basis_claims_a_paid_receipt_in_the_payment_period(self):
+        """The whole point of the settlement date: goods in March, paid in May."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        received = self._period('2026-03-01..2026-04-30')
+        self.assertEqual(received['input_tax'], '0.0000')
+        self.assertEqual(received['purchases_incl_tax'], '0.0000')
+        paid = self._period('2026-05-01..2026-06-30')
+        self.assertEqual(paid['input_tax'], '30.0000')
+        self.assertEqual(paid['purchases_incl_tax'], '230.0000')
+
+    def test_a_paid_receipt_stops_being_held_back(self):
+        """A held-back figure that survived its own payment would overstate the gap."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        for label in ('2026-03-01..2026-04-30', '2026-05-01..2026-06-30'):
+            with self.subTest(period=label):
+                self.assertEqual(self._period(label)['input_tax_awaiting_payment'], '0.0000')
+
+    def test_the_hybrid_basis_claims_a_paid_receipt_too(self):
+        """Hybrid follows the payments rule on the input side, settlement included."""
+        self.register(basis=GstRegistration.Basis.HYBRID)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        self.assertEqual(self._period('2026-05-01..2026-06-30')['input_tax'], '30.0000')
+
+    def test_the_invoice_basis_ignores_the_settlement_date(self):
+        """When the supplier was paid is none of the invoice basis's business."""
+        self.register(basis=GstRegistration.Basis.INVOICE)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        self.assertEqual(self._period('2026-03-01..2026-04-30')['input_tax'], '30.0000')
+        self.assertEqual(self._period('2026-05-01..2026-06-30')['input_tax'], '0.0000')
+
+    def test_a_paid_receipt_is_dated_by_its_payment_and_is_not_a_proxy(self):
+        """A date somebody paid a supplier on is evidence, not a stand-in."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        rows = [row for row in self.entries()['results'] if row['kind'] == 'purchase']
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]['supply_date'], '2026-05-04')
+        self.assertEqual(rows[0]['time_of_supply_source'], 'supplier_payment')
+        self.assertFalse(rows[0]['proxy'])
+
+    def test_paid_and_unpaid_receipts_are_each_reported_exactly_once(self):
+        """A line claimed in one period and held back in another is counted twice."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        self.buy(date(2026, 3, 11), '200')
+        rows = [row for row in self.entries()['results'] if row['kind'] == 'purchase']
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual(len({row['line_id'] for row in rows}), 2)
+        claimed = self._total(row['tax'] for row in rows if not row['exclusion'])
+        self.assertEqual(claimed, '30.0000')
+
+    def test_a_receipt_received_before_registration_is_claimed_when_it_is_paid(self):
+        """Under the payments basis it is the payment that has to fall inside one."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS, effective_from=date(2026, 3, 1))
+        self.buy(date(2026, 1, 15), '200', settled_on=date(2026, 3, 20))
+        rows = [row for row in self.entries()['results'] if row['kind'] == 'purchase']
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]['exclusion'], '')
+        self.assertEqual(self._period('2026-03-01..2026-04-30')['input_tax'], '30.0000')
+
+    def test_a_basis_change_never_claims_the_same_receipt_twice(self):
+        """The invoice basis claimed it on receipt; the payments basis must not re-claim it."""
+        self.register(basis=GstRegistration.Basis.INVOICE)
+        record_registration(
+            self.workspace, self.user, registered=True,
+            effective_from=date(2026, 3, 1), gst_number='123456785',
+            basis=GstRegistration.Basis.PAYMENTS,
+            filing_frequency=GstRegistration.Frequency.TWO_MONTHLY,
+            period_anchor_month=4, reason='Moved to the payments basis',
+        )
+        self.buy(date(2026, 2, 10), '200', settled_on=date(2026, 5, 4))
+        rows = [row for row in self.entries()['results'] if row['kind'] == 'purchase']
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]['supply_date'], '2026-02-10')
+        claimed = self._total(row['input_tax'] for row in self.periods()['results'])
+        self.assertEqual(claimed, '30.0000')
+
+    def test_a_receipt_paid_after_a_cessation_says_so_rather_than_disappearing(self):
+        """It claims nothing, and a row claiming nothing is not the same as no row."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS)
+        record_registration(
+            self.workspace, self.user, registered=False,
+            effective_from=date(2026, 5, 1), reason='Ceased trading',
+        )
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 6, 15))
+        rows = [row for row in self.entries()['results'] if row['kind'] == 'purchase']
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0]['exclusion'], 'deregistered_gap')
+        self.assertIsNone(rows[0]['period_label'])
+        claimed = self._total(row['input_tax'] for row in self.periods()['results'])
+        self.assertEqual(claimed, '0.0000')
+
+    def test_a_receipt_paid_outside_the_reported_range_is_not_reported_at_all(self):
+        """It belongs to a period this range does not cover, not to no period."""
+        self.register(basis=GstRegistration.Basis.PAYMENTS)
+        self.buy(date(2026, 3, 10), '200', settled_on=date(2026, 5, 4))
+        rows = self.entries(date_from='2026-01-01', date_to='2026-04-30')['results']
+        self.assertEqual([row for row in rows if row['kind'] == 'purchase'], [])
+
+    def _total(self, values):
+        """Sum drill-down strings the same way the report renders its own."""
+        return f'{sum((Decimal(value) for value in values), Decimal("0")):.4f}'
 
     def _period(self, label):
         """Return the one period row carrying a label."""

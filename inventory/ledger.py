@@ -4,6 +4,7 @@
 
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
@@ -1012,6 +1013,38 @@ def reverse_receipt(receipt, user, reason):
     )
     receipt.refresh_from_db()
     return receipt, reversals
+
+
+@transaction.atomic
+def settle_receipt(receipt, settled_on):
+    """Record the date a posted receipt's supplier was paid, or clear it.
+
+    Under the payments and hybrid bases this date is when the input tax on the
+    receipt falls due, so it cannot be part of the document: a supplier is paid
+    after the goods arrive, and `StockReceipt.save` refuses every change to a
+    posted receipt. Writing through the queryset is how `reverse_receipt`
+    already records a post-posting fact, and this follows it.
+
+    Nothing about the lots moves. Acquisition cost was fixed when the receipt
+    was posted, and paying for stock does not change what it cost.
+    """
+    receipt = StockReceipt.objects.select_for_update().select_related(
+        'workspace',
+    ).get(pk=receipt.pk)
+    if receipt.status != StockReceipt.Status.POSTED:
+        raise ValidationError({'status': 'Only posted receipts can be settled.'})
+    if settled_on is not None:
+        zone = ZoneInfo(receipt.workspace.timezone)
+        if settled_on > timezone.now().astimezone(zone).date():
+            raise ValidationError({
+                'settled_on': 'A settlement date cannot be in the future.',
+            })
+    StockReceipt.objects.filter(pk=receipt.pk).update(
+        settled_on=settled_on,
+        updated=timezone.now(),
+    )
+    receipt.refresh_from_db()
+    return receipt
 
 
 @transaction.atomic
