@@ -28,6 +28,7 @@ import {
   updateCustomer,
   updateSalesOrder
 } from './api/sales'
+import { SupplyDocumentPanel } from './billing/order_panel'
 import { getInventoryBalances, getInventoryItems } from './api/inventory'
 import { getLocations } from './api/locations'
 import { getHealthObservationTypes } from './api/health'
@@ -932,6 +933,7 @@ function SalesOrderDetailView({ orderPk, workspace }: { orderPk: number; workspa
       </Card>
       <OrderTotals order={order} />
       {['confirmed', 'partially_fulfilled', 'fulfilled'].includes(order.status) && <CommercePanel order={order} />}
+      {['confirmed', 'partially_fulfilled', 'fulfilled'].includes(order.status) && <SupplyDocumentPanel order={order} />}
       {editable && <LineForm order={order} workspace={workspace} />}
       {order.lines.map((line) => (
         <Card body className="mb-3" key={line.pk}>

@@ -258,6 +258,27 @@ function formatMoney(value: string | number | null | undefined, currencyCode: st
   return `${whole}.${trimmed.padEnd(2, '0')} ${currencyCode}`
 }
 
+// Money columns are DECIMAL(18, 4), so a total is summed as scaled integers
+// rather than as numbers: 0.1 + 0.2 is not 0.3 in binary floating point, and a
+// preview that disagreed with the figure the server then stores would be worse
+// than no preview at all. The result is a plain 4-decimal string, ready for
+// formatMoney. Anything that is not a decimal string is ignored rather than
+// coerced, because a silent zero is the failure this exists to avoid.
+function sumMoney(values: Array<string | null | undefined>): string {
+  let units = 0n
+  for (const value of values) {
+    const text = String(value ?? '')
+    if (!/^-?\d+(\.\d+)?$/.test(text)) continue
+    const negative = text.startsWith('-')
+    const [whole, fraction = ''] = (negative ? text.slice(1) : text).split('.')
+    const scaled = BigInt(whole + fraction.padEnd(4, '0').slice(0, 4))
+    units += negative ? -scaled : scaled
+  }
+  const negative = units < 0n
+  const digits = (negative ? -units : units).toString().padStart(5, '0')
+  return `${negative ? '-' : ''}${digits.slice(0, -4)}.${digits.slice(-4)}`
+}
+
 // DRF reports a rejected write as {field: [message]}. Forms want one message
 // per field, so this flattens it and drops anything that is not shaped that
 // way — a network failure has already been published to the global alert.
@@ -291,5 +312,6 @@ export {
   formatDateRange,
   formatQuantity,
   formatMeasure,
-  formatMoney
+  formatMoney,
+  sumMoney
 }

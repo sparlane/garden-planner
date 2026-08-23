@@ -35,6 +35,7 @@ import { LabelsView, ScannerView } from './labels.js'
 import { WorkQueueView } from './work.js'
 import { HealthView } from './health.js'
 import { CustomerListView, SalesOrderDetailView, SalesOrderListView } from './sales.js'
+import { SupplyDocumentListView, SupplyDocumentPrintView } from './billing/documents.js'
 import { ReportsView } from './reports.js'
 
 function SeedTrayDetailsRoute() {
@@ -205,6 +206,22 @@ function FrontEndPage() {
           element={
             <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
               <SalesOrderDetailRoute workspace={workspace} />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/sales/documents"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <SupplyDocumentListView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/sales/documents/:documentId"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <SupplyDocumentPrintView />
             </WorkspaceModeRoute>
           }
         />
