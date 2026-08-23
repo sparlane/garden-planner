@@ -17,9 +17,11 @@ from .filters import (
     ProductionFilters,
     SerializedTrayFilters,
     StocktakeVarianceFilters,
+    SupplyDocumentFilters,
     TraceFilters,
 )
 from .commerce import dashboard_report, order_report, profitability_report
+from .documents import supply_document_report
 from .gst import gst_entry_report, gst_period_report
 from .production import production_batches
 from .traceability import lot_trace, plant_trace
@@ -97,6 +99,12 @@ ProductionView = _view(
 )
 ProductionExportView = _view(
     'ProductionExportView', ProductionFilters, production_batches, True,
+)
+SupplyDocumentView = _view(
+    'SupplyDocumentView', SupplyDocumentFilters, supply_document_report,
+)
+SupplyDocumentExportView = _view(
+    'SupplyDocumentExportView', SupplyDocumentFilters, supply_document_report, True,
 )
 
 

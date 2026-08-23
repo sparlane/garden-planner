@@ -26,6 +26,8 @@ from .rest import (
     SerializedTrayView,
     StocktakeVarianceExportView,
     StocktakeVarianceView,
+    SupplyDocumentExportView,
+    SupplyDocumentView,
 )
 
 
@@ -45,6 +47,8 @@ urlpatterns = [
     path('orders/export/', OrderExportView.as_view()),
     path('profitability/', ProfitabilityView.as_view()),
     path('profitability/export/', ProfitabilityExportView.as_view()),
+    path('supply-documents/', SupplyDocumentView.as_view()),
+    path('supply-documents/export/', SupplyDocumentExportView.as_view()),
     path('gst-periods/', GstPeriodView.as_view()),
     path('gst-periods/export/', GstPeriodExportView.as_view()),
     path('gst-entries/', GstEntryView.as_view()),
