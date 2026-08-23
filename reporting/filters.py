@@ -156,6 +156,31 @@ class GstPeriodFilters(BaseReportFilters):  # pylint: disable=abstract-method
         return attrs
 
 
+class SupplyDocumentFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Filters for the register of issued documents and corrections.
+
+    The date range is matched against each row's own date — a document by when
+    it was issued, a correction by when it was made — because a credit note
+    belongs to the period it was issued in rather than to the period of the
+    supply it corrects.
+    """
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+    order = serializers.IntegerField(required=False, min_value=1)
+    customer = serializers.IntegerField(required=False, min_value=1)
+    kind = serializers.ChoiceField(required=False, choices=('supply', 'credit', 'debit'))
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('date_from') and attrs.get('date_to'):
+            if attrs['date_to'] < attrs['date_from']:
+                raise serializers.ValidationError({
+                    'date_to': 'The end must not be before the start.',
+                })
+        return attrs
+
+
 class GstEntryFilters(GstPeriodFilters):  # pylint: disable=abstract-method
     """Filters for the entries behind a period total, as the drill-down links use."""
 
