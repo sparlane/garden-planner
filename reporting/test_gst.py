@@ -12,10 +12,12 @@ assertions in one test is the contract rather than a coincidence.
 
 # pylint: disable=duplicate-code
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
+from billing.documents import issue_supply_document
+from billing.test_fixtures import DocumentScenarioMixin
 from inventory.ledger import post_receipt
 from inventory.models import InventoryItem, StockReceipt, StockReceiptLine
 from inventory.units import UnitCode
@@ -482,3 +484,64 @@ class InputTaxTests(GstReportTestCase):
         rows = [row for row in self.periods()['results'] if row['period_label'] == label]
         self.assertEqual(len(rows), 1, rows)
         return rows[0]
+
+
+class InvoiceDateReportingTests(DocumentScenarioMixin, RESTContractTestCase):
+    """A period reports supplies on the date a document says, where one exists.
+
+    Task 117 shipped with a fulfillment standing in for the invoice date, and
+    every entry relying on it marked. These are the two halves of superseding
+    it: the report says how much still rests on the stand-in, and stops saying
+    so once a document has been issued.
+    """
+
+    dispatched_at = datetime(2026, 6, 10, 9, 0, tzinfo=timezone.utc)
+
+    def setUp(self):
+        """A registered nursery on the invoice basis, with one dispatched order."""
+        super().setUp()
+        self.register_for_gst(period_anchor_month=4)
+        plants = self.ready_plants(2, ready_at=datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc))
+        self.order, self.line, allocations = self.confirmed_order(
+            plants, order_date=date(2026, 3, 15),
+        )
+        self.fulfill(self.order, allocations, fulfilled_at=self.dispatched_at)
+
+    def periods(self):
+        """Fetch the period report over the whole year."""
+        response = self.client.get(
+            PERIODS_URL, {'date_from': '2026-01-01', 'date_to': '2026-12-31'},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def row(self, label):
+        """Return the one period row carrying a label."""
+        rows = [item for item in self.periods()['results'] if item['period_label'] == label]
+        self.assertEqual(len(rows), 1, rows)
+        return rows[0]
+
+    def test_an_uninvoiced_supply_is_reported_as_resting_on_its_dispatch_date(self):
+        """A gap worth naming: the date a return needs is a date nobody chose."""
+        codes = {finding['code'] for finding in self.periods()['data_quality']}
+        self.assertIn('invoice_not_issued', codes)
+        self.assertEqual(self.row('2026-05-01..2026-06-30')['output_tax'], '3.0000')
+
+    def test_issuing_a_document_moves_the_supply_and_clears_the_finding(self):
+        """May's return carries it once May's invoice exists to say so."""
+        issue_supply_document(
+            self.order, self.user,
+            operation_key=uuid4(),
+            lines=[{'order_line': self.line, 'positions': [1, 2]}],
+            issued_on=date(2026, 4, 20),
+        )
+        codes = {finding['code'] for finding in self.periods()['data_quality']}
+
+        self.assertNotIn('invoice_not_issued', codes)
+        self.assertEqual(self.row('2026-03-01..2026-04-30')['output_tax'], '3.0000')
+        self.assertEqual(self.row('2026-05-01..2026-06-30')['output_tax'], '0.0000')
+
+    def test_the_reconciliation_note_describes_the_rule_now_in_force(self):
+        """The payload explains itself, so nobody infers the rule from a flag."""
+        note = self.periods()['reconciliation']['proxy_note']
+        self.assertIn('Where a taxable supply document was issued', note)

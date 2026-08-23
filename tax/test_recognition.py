@@ -23,12 +23,16 @@ from .recognition import (
     SUPPLY,
     SUPPLY_CREDIT,
     ZERO_RATED,
+    CREDIT_NOTE,
+    DEBIT_NOTE,
+    CorrectionFact,
+    CreditPortion,
     FulfillmentFact,
+    InvoiceFact,
     LineFact,
     OrderFacts,
     PaymentFact,
     RefundFact,
-    RefundPortion,
     line_tax,
     order_recognition,
 )
@@ -242,7 +246,7 @@ class ReturnedWithoutRefundTests(SimpleTestCase):
             [standard_line(1, '115.0000')],
             fulfillments=(FulfillmentFact(9, APRIL, {1: Decimal('115.0000')}),),
             payments=(PaymentFact(7, APRIL, Decimal('115.0000')),),
-            unrefunded_return_ids=(4,),
+            uncredited_return_ids=(4,),
         )
 
     def test_no_basis_credits_anything(self):
@@ -258,7 +262,7 @@ class ReturnedWithoutRefundTests(SimpleTestCase):
         for basis in BASES:
             with self.subTest(basis=basis):
                 recognition = order_recognition(self.facts(), basis)
-                self.assertEqual(recognition.unrefunded_return_ids, (4,))
+                self.assertEqual(recognition.uncredited_return_ids, (4,))
 
 
 class RefundedOrderTests(SimpleTestCase):
@@ -273,7 +277,7 @@ class RefundedOrderTests(SimpleTestCase):
             refunds=(RefundFact(
                 refund_id=3,
                 refunded_on=MAY,
-                portions=(RefundPortion(1, Decimal(refund_gross), Decimal(refund_tax)),),
+                portions=(CreditPortion(1, Decimal(refund_gross), Decimal(refund_tax)),),
             ),),
         )
 
@@ -429,10 +433,162 @@ class AsAtTests(SimpleTestCase):
         facts = order(
             [standard_line(1, '115.0000')],
             fulfillments=(FulfillmentFact(9, APRIL, {1: Decimal('115.0000')}),),
-            refunds=(RefundFact(3, MAY, (RefundPortion(1, Decimal('115.0000'), Decimal('15.0000')),)),),
+            refunds=(RefundFact(3, MAY, (CreditPortion(1, Decimal('115.0000'), Decimal('15.0000')),)),),
         )
         recognition = order_recognition(facts, INVOICE, as_at=date(2026, 4, 30))
         self.assertEqual(recognition.credit_events, ())
+
+
+class IssuedInvoiceTests(SimpleTestCase):
+    """An issued document is the time of supply the invoice basis actually wants."""
+
+    def facts(self, **overrides):
+        """Invoiced in March, delivered in April."""
+        values = {
+            'invoices': (InvoiceFact(11, MARCH, {1: Decimal('115.0000')}),),
+            'fulfillments': (FulfillmentFact(9, APRIL, {1: Decimal('115.0000')}),),
+        }
+        values.update(overrides)
+        return order([standard_line(1, '115.0000')], **values)
+
+    def test_the_invoice_date_supersedes_the_dispatch_date(self):
+        """March's return carries it, because March is when the document was issued."""
+        recognition = order_recognition(self.facts(), INVOICE)
+        self.assertEqual(dates_of(recognition, SUPPLY), {MARCH})
+        self.assertEqual(totals(recognition), (Decimal('115.0000'), Decimal('15.0000')))
+
+    def test_nothing_recognised_on_a_document_is_marked_proxy(self):
+        """The flag means "this module chose the date", and here it did not."""
+        recognition = order_recognition(self.facts(), INVOICE)
+        self.assertTrue(all(not event.proxy for event in recognition.supply_events))
+        self.assertEqual(recognition.proxy_gross, Decimal('0.0000'))
+        self.assertEqual(
+            {event.time_of_supply_source for event in recognition.supply_events},
+            {'supply_document'},
+        )
+
+    def test_the_dispatch_still_stands_in_where_no_document_was_issued(self):
+        """An order delivered and never invoiced has still been supplied."""
+        recognition = order_recognition(self.facts(invoices=()), INVOICE)
+        self.assertEqual(dates_of(recognition, SUPPLY), {APRIL})
+        self.assertTrue(all(event.proxy for event in recognition.supply_events))
+        self.assertEqual(recognition.proxy_gross, Decimal('115.0000'))
+
+    def test_a_delivery_after_its_invoice_adds_nothing(self):
+        """The invoice consumed the line, so the dispatch finds nothing left."""
+        recognition = order_recognition(self.facts(), INVOICE)
+        self.assertEqual(len(recognition.supply_events), 1)
+        self.assertEqual(recognition.unrecognised_gross, Decimal('0.0000'))
+
+    def test_a_deposit_before_an_invoice_is_not_counted_twice(self):
+        """Payment, invoice and delivery of one order total the order once."""
+        facts = self.facts(payments=(PaymentFact(7, date(2026, 3, 1), Decimal('50.0000')),))
+        recognition = order_recognition(facts, INVOICE)
+
+        self.assertEqual(totals(recognition), (Decimal('115.0000'), Decimal('15.0000')))
+        self.assertEqual(
+            {(event.source_type, event.gross) for event in recognition.supply_events},
+            {('payment', Decimal('50.0000')), ('supply_document', Decimal('65.0000'))},
+        )
+
+    def test_the_payments_basis_ignores_the_document_entirely(self):
+        """Nothing is due until cash arrives, whatever paperwork exists."""
+        recognition = order_recognition(self.facts(), PAYMENTS)
+        self.assertEqual(recognition.supply_events, ())
+        self.assertEqual(recognition.unrecognised_gross, Decimal('115.0000'))
+
+    def test_hybrid_recognises_output_tax_on_the_document_like_invoice(self):
+        """Hybrid is the invoice basis for output tax, and this is output tax."""
+        recognition = order_recognition(self.facts(), HYBRID)
+        self.assertEqual(dates_of(recognition, SUPPLY), {MARCH})
+
+
+class CorrectionDocumentTests(SimpleTestCase):
+    """A credit note is what alters the consideration on the invoice basis."""
+
+    def facts(self, **overrides):
+        """Invoiced in March, credited in May."""
+        values = {
+            'invoices': (InvoiceFact(11, MARCH, {1: Decimal('115.0000')}),),
+            'corrections': (CorrectionFact(
+                correction_id=21,
+                corrected_on=MAY,
+                kind=CREDIT_NOTE,
+                portions=(CreditPortion(1, Decimal('115.0000'), Decimal('15.0000')),),
+            ),),
+        }
+        values.update(overrides)
+        return order([standard_line(1, '115.0000')], **values)
+
+    def test_a_credit_note_credits_in_the_period_it_was_issued(self):
+        """March's return stands; May's carries the adjustment."""
+        recognition = order_recognition(self.facts(), INVOICE)
+
+        self.assertEqual(dates_of(recognition, SUPPLY), {MARCH})
+        self.assertEqual(dates_of(recognition, SUPPLY_CREDIT), {MAY})
+        self.assertEqual(totals(recognition), (Decimal('0.0000'), Decimal('0.0000')))
+
+    def test_a_credit_note_settles_a_return_that_moved_no_money(self):
+        """Task 117 could only report this as outstanding; now it is accounted for."""
+        recognition = order_recognition(self.facts(), INVOICE)
+        credit = recognition.credit_events[0]
+        self.assertEqual(credit.source_type, 'supply_correction')
+        self.assertFalse(credit.proxy)
+
+    def test_a_refund_beside_its_credit_note_is_not_credited_twice(self):
+        """One reduction in consideration, evidenced two ways."""
+        facts = self.facts(refunds=(RefundFact(
+            refund_id=3,
+            refunded_on=MAY,
+            portions=(CreditPortion(1, Decimal('115.0000'), Decimal('15.0000')),),
+            credited_by_document=True,
+        ),))
+        recognition = order_recognition(facts, INVOICE)
+
+        self.assertEqual(len(recognition.credit_events), 1)
+        self.assertEqual(totals(recognition), (Decimal('0.0000'), Decimal('0.0000')))
+        self.assertEqual(recognition.over_credited, Decimal('0.0000'))
+
+    def test_a_refund_with_no_credit_note_still_credits_as_a_stand_in(self):
+        """Money that went back is not nothing, and the entry says it is a proxy."""
+        facts = self.facts(corrections=(), refunds=(RefundFact(
+            refund_id=3,
+            refunded_on=MAY,
+            portions=(CreditPortion(1, Decimal('115.0000'), Decimal('15.0000')),),
+        ),))
+        recognition = order_recognition(facts, INVOICE)
+        credit = recognition.credit_events[0]
+
+        self.assertEqual(credit.source_type, 'refund')
+        self.assertTrue(credit.proxy)
+
+    def test_the_payments_basis_ignores_a_credit_note(self):
+        """A note moves no cash, so it is not an event on the payments basis."""
+        facts = self.facts(payments=(PaymentFact(7, MARCH, Decimal('115.0000')),))
+        recognition = order_recognition(facts, PAYMENTS)
+
+        self.assertEqual(recognition.credit_events, ())
+        self.assertEqual(totals(recognition), (Decimal('115.0000'), Decimal('15.0000')))
+
+    def test_a_debit_note_puts_supply_back_on_its_own_date(self):
+        """Reversing part of a credit is a debit adjustment in its own period."""
+        facts = self.facts(corrections=(
+            CorrectionFact(21, APRIL, CREDIT_NOTE, (CreditPortion(1, Decimal('115.0000'), Decimal('15.0000')),)),
+            CorrectionFact(22, MAY, DEBIT_NOTE, (CreditPortion(1, Decimal('46.0000'), Decimal('6.0000')),)),
+        ))
+        recognition = order_recognition(facts, INVOICE)
+
+        self.assertEqual(totals(recognition), (Decimal('46.0000'), Decimal('6.0000')))
+        debit = [event for event in recognition.supply_events if event.source_type == 'supply_correction']
+        self.assertEqual([event.supply_date for event in debit], [MAY])
+
+    def test_a_credit_beyond_the_supply_is_reported_rather_than_absorbed(self):
+        """A credit larger than its supply is a defect somewhere else."""
+        facts = self.facts(
+            invoices=(InvoiceFact(11, MARCH, {1: Decimal('50.0000')}),),
+        )
+        recognition = order_recognition(facts, INVOICE)
+        self.assertEqual(recognition.over_credited, Decimal('65.0000'))
 
 
 class RestatedConstantTests(SimpleTestCase):
@@ -447,3 +603,11 @@ class RestatedConstantTests(SimpleTestCase):
         """A basis the model offers and this module rejects would raise at report time."""
         from .models import GstRegistration  # pylint: disable=import-outside-toplevel
         self.assertEqual(set(BASES), set(GstRegistration.Basis.values))
+
+    def test_the_correction_kinds_match_the_document_model(self):
+        """A third kind added to `billing` and not here would adjust nothing."""
+        from billing.models import SupplyCorrection  # pylint: disable=import-outside-toplevel
+        self.assertEqual(
+            {CREDIT_NOTE, DEBIT_NOTE},
+            set(SupplyCorrection.CorrectionType.values),
+        )
