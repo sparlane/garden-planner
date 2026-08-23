@@ -669,6 +669,7 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
 function SeedStockTable({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const [showReceipt, setShowReceipt] = React.useState(false)
+  const [showEmptyPackets, setShowEmptyPackets] = React.useState(false)
   const [editingDraft, setEditingDraft] = React.useState<SeedPacketReceiptDraft | null>(null)
   const { data: suppliers = [] } = useQuery({ queryKey: queryKeys.suppliers.all, queryFn: ({ signal }) => getSuppliers(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
@@ -686,6 +687,12 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
     mutationFn: ({ pk, data }: { pk: number; data: SeedPacketReconciliation }) => reconcileSeedPacket(pk, data),
     onSuccess: invalidateStock
   })
+  const visiblePackets = showEmptyPackets
+    ? packets
+    : packets.filter((packet) => {
+        const remainingQuantity = packet.inventory?.remaining_quantity
+        return packet.empty !== true && (remainingQuantity === null || remainingQuantity === undefined || Number(remainingQuantity) !== 0)
+      })
 
   async function createReceipt(data: SeedPacketReceiptCreate) {
     await createMutation.mutateAsync(data)
@@ -713,6 +720,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
             <Button size="sm" onClick={() => setShowReceipt(true)}>
               Receive packet
             </Button>
+            <Form.Check className="mt-2" type="checkbox" label="Show empty packets" checked={showEmptyPackets} onChange={(event) => setShowEmptyPackets(event.target.checked)} />
           </th>
         </tr>
       </thead>
@@ -742,7 +750,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
             workspace={workspace}
           />
         )}
-        {packets.map((packet) => (
+        {visiblePackets.map((packet) => (
           <SeedPacketRow
             key={packet.pk}
             packet={packet}
