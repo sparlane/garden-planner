@@ -38,6 +38,12 @@ const queryKeys = {
     all: ['workspace'] as const,
     current: ['workspace', 'current'] as const
   },
+  billing: {
+    all: ['billing'] as const,
+    documents: (order: number | '') => ['billing', 'documents', order] as const,
+    printable: (pk: number) => ['billing', 'printable', pk] as const,
+    invoiceable: (order: number) => ['billing', 'invoiceable', order] as const
+  },
   tax: {
     all: ['tax'] as const,
     gstStatus: ['tax', 'gst', 'status'] as const,

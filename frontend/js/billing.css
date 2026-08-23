@@ -1,0 +1,33 @@
+.supply-document {
+  max-width: 52rem;
+}
+
+.supply-document__party {
+  white-space: pre-line;
+}
+
+.supply-document__requirement--missing {
+  color: #b02a37;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .supply-document,
+  .supply-document * {
+    visibility: visible;
+  }
+
+  .supply-document {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    max-width: none;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}
