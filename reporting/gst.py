@@ -83,8 +83,9 @@ RECONCILIATION = {
         'order belongs to.'
     ),
     'proxy_note': (
-        'A fulfillment stands in for the invoice date the invoice basis needs; '
-        'entries relying on it are marked proxy.'
+        'Where a taxable supply document was issued, the invoice basis '
+        'recognises on its date. Where none was, a fulfillment stands in for '
+        'the invoice date and the entry is marked proxy.'
     ),
 }
 
@@ -412,6 +413,19 @@ def _data_quality(workspace, entries, rows, as_at):
             'zero-rated, exempt, or outside GST, so they are reported in none '
             'of those boxes.',
             tax_code='unclassified',
+        ))
+
+    proxied = [
+        entry for entry in entries
+        if entry.proxy and not entry.exclusion and entry.source_type == 'fulfillment'
+    ]
+    if proxied:
+        findings.append(_finding(
+            'invoice_not_issued', len(proxied),
+            'Some supplies were brought to account on their dispatch date '
+            'because no taxable supply document was issued for them. The date '
+            'a return needs is the date a document was issued, so issuing one '
+            'is what settles which period they belong in.',
         ))
 
     non_recoverable = [entry for entry in entries if entry.non_recoverable_tax > 0]

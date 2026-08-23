@@ -86,23 +86,35 @@ class DocumentScenarioMixin:
         values.update(overrides)
         return Customer.objects.create(workspace=self.workspace, **values)
 
-    def ready_plant(self, batch=None, cell_planting=None):
-        """Grow one plant as far as saleable."""
+    def ready_plant(self, batch=None, cell_planting=None, ready_at=None):
+        """Grow one plant as far as saleable.
+
+        `ready_at` back-dates the germination and the readiness, which a test
+        needs whenever it also wants to name the dispatch date: lifecycle
+        events must be recorded in the order they happened, so a plant that
+        became ready today cannot have been dispatched in June.
+        """
         values = {'workspace': self.workspace}
         if batch is not None:
             values['batch'] = batch
         if cell_planting is not None:
             values['cell_planting'] = cell_planting
+        if ready_at is not None:
+            values['germinated'] = ready_at
         plant = make_specific_plant(**values)
         record_germination_event(plant, self.user)
-        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        record_lifecycle_event(
+            plant, self.user, OutcomeRequest(EventType.READY, occurred_at=ready_at),
+        )
         return plant
 
-    def ready_plants(self, count):
+    def ready_plants(self, count, ready_at=None):
         """Grow a sibling group, so one order line can cover all of them."""
-        first = self.ready_plant()
+        first = self.ready_plant(ready_at=ready_at)
         rest = [
-            self.ready_plant(batch=first.batch, cell_planting=first.cell_planting)
+            self.ready_plant(
+                batch=first.batch, cell_planting=first.cell_planting, ready_at=ready_at,
+            )
             for _ in range(count - 1)
         ]
         return [first, *rest]

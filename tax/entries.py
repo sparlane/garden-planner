@@ -2,11 +2,12 @@
 
 There is no GST ledger table. Every figure in a return is derived, at the
 moment it is read, from the commerce records that produced it — and those are
-already immutable: `Fulfillment`, `Payment`, `SalesReturn`, `Refund` and a
-posted `StockReceipt` all refuse to be edited or deleted. So "reconcile every
-period total to immutable source records" holds without a second copy of them,
-and a change of basis rewrites nothing because there is nothing to rewrite.
-Task 118 owns materialising this once it has real invoice documents to key on.
+already immutable: `Fulfillment`, `Payment`, `SalesReturn`, `Refund`, a posted
+`StockReceipt` and task 118's `SupplyDocument` all refuse to be edited or
+deleted. So "reconcile every period total to immutable source records" holds
+without a second copy of them, and a change of basis rewrites nothing because
+there is nothing to rewrite. Materialising the derivation would add a copy to
+keep in step with immutable rows that cannot drift, so it stays derived.
 
 The basis applied to a period is the basis in force during it. That is safe
 because a period is clipped whenever an arrangement changes, so no period ever

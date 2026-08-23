@@ -8,11 +8,17 @@ testable without fixtures and the query work reviewable on its own.
 Only effective records are read. A reversal and the record it reverses both
 drop out, using the same pair of filters the commerce services already use, so
 a reversed fulfillment can never contribute to a return.
+
+Documents from `billing` are read here too. They are already immutable and have
+no reversal pair — an issued document is corrected, never withdrawn — so the
+effective filter does not apply to them; what a correction did to a document is
+its own dated event rather than a reason to stop reading the original.
 """
 
 from collections import defaultdict
 from decimal import Decimal
 
+from billing.models import SupplyCorrection, SupplyCorrectionLine, SupplyDocument, SupplyDocumentLine
 from sales.models import (
     Fulfillment,
     FulfillmentLine,
@@ -25,12 +31,14 @@ from sales.models import (
 
 from .periods import local_date
 from .recognition import (
+    CorrectionFact,
+    CreditPortion,
     FulfillmentFact,
+    InvoiceFact,
     LineFact,
     OrderFacts,
     PaymentFact,
     RefundFact,
-    RefundPortion,
 )
 
 
@@ -76,7 +84,30 @@ def orders_with_activity(workspace, start=None, end=None):
             effective(model.objects.filter(workspace=workspace, **lookup))
             .values_list(path, flat=True)
         )
+    matched.update(_document_order_ids(workspace, bounds))
     return orders.filter(pk__in=matched).order_by('pk')
+
+
+def _document_order_ids(workspace, bounds):
+    """Return the orders whose documents fall in a range.
+
+    Documents carry no reversal pair, so `effective` has nothing to filter
+    here. A correction reaches this the same way, through its own date: an
+    invoice issued in March and credited in May makes both periods worth
+    reading, and leaving the second out would hide the adjustment.
+    """
+    matched = set()
+    document_lookup = {f'issued_on__{suffix}': value for suffix, value in bounds.items()}
+    matched.update(
+        SupplyDocument.objects.filter(workspace=workspace, **document_lookup)
+        .values_list('order_id', flat=True)
+    )
+    correction_lookup = {f'corrected_on__{suffix}': value for suffix, value in bounds.items()}
+    matched.update(
+        SupplyCorrection.objects.filter(workspace=workspace, **correction_lookup)
+        .values_list('document__order_id', flat=True)
+    )
+    return matched
 
 
 def order_facts(order):
@@ -91,14 +122,17 @@ def order_facts(order):
         )
         for line in order.lines.all().order_by('pk')
     )
+    corrections = _correction_facts(order)
     return OrderFacts(
         order_id=order.pk,
         currency_code=order.currency_code,
         lines=lines,
         fulfillments=_fulfillment_facts(workspace, order),
+        invoices=_invoice_facts(order),
         payments=_payment_facts(order),
         refunds=_refund_facts(workspace, order),
-        unrefunded_return_ids=_unrefunded_return_ids(order),
+        corrections=corrections,
+        uncredited_return_ids=_uncredited_return_ids(order),
     )
 
 
@@ -158,34 +192,105 @@ def _refund_facts(workspace, order):
     for line in lines:
         refund = line.refund
         dates[refund.pk] = local_date(workspace, refund.refunded_at)
-        grouped[refund.pk].append(RefundPortion(
+        grouped[refund.pk].append(CreditPortion(
             line_id=line.fulfillment_line.allocation.line_id,
             gross=line.total_incl_tax,
             tax=line.tax_total,
         ))
+    credited = _refunds_carrying_a_credit_note(order)
     return tuple(
         RefundFact(
             refund_id=refund_id,
             refunded_on=dates[refund_id],
             portions=tuple(portions),
+            credited_by_document=refund_id in credited,
         )
         for refund_id, portions in sorted(grouped.items())
     )
 
 
-def _unrefunded_return_ids(order):
-    """Return effective returns carrying no effective refund.
+def _refunds_carrying_a_credit_note(order):
+    """Return the refunds a credit note already accounts for.
 
-    A return moves plants, not money, so it changes no consideration and owes
-    no GST adjustment. It does owe a credit note, and reporting that as
-    outstanding work is more useful than reporting nothing.
+    Under the invoice and hybrid bases the note is what alters the agreed
+    consideration, so the refund beside it is the same money reaching the
+    customer rather than a second adjustment.
+    """
+    return set(
+        SupplyCorrection.objects
+        .filter(document__order=order, refund__isnull=False)
+        .values_list('refund_id', flat=True)
+    )
+
+
+def _invoice_facts(order):
+    """Group each issued document's value by the order line it invoiced."""
+    grouped = defaultdict(dict)
+    dates = {}
+    lines = SupplyDocumentLine.objects.filter(
+        document__order=order,
+    ).select_related('document').order_by('pk')
+    for line in lines:
+        document = line.document
+        dates[document.pk] = document.issued_on
+        totals = grouped[document.pk]
+        totals[line.order_line_id] = totals.get(line.order_line_id, ZERO) + line.total_incl_tax
+    return tuple(
+        InvoiceFact(
+            document_id=document_id,
+            issued_on=dates[document_id],
+            line_grosses=dict(totals),
+        )
+        for document_id, totals in sorted(grouped.items())
+    )
+
+
+def _correction_facts(order):
+    """Group each correction's value by the order line it moves."""
+    grouped = defaultdict(list)
+    headers = {}
+    lines = SupplyCorrectionLine.objects.filter(
+        correction__document__order=order,
+    ).select_related('correction', 'document_line').order_by('pk')
+    for line in lines:
+        correction = line.correction
+        headers[correction.pk] = correction
+        grouped[correction.pk].append(CreditPortion(
+            line_id=line.document_line.order_line_id,
+            gross=line.total_incl_tax,
+            tax=line.tax_total,
+        ))
+    return tuple(
+        CorrectionFact(
+            correction_id=correction_id,
+            corrected_on=headers[correction_id].corrected_on,
+            kind=headers[correction_id].correction_type,
+            portions=tuple(portions),
+        )
+        for correction_id, portions in sorted(grouped.items())
+    )
+
+
+def _uncredited_return_ids(order):
+    """Return effective returns carrying neither a refund nor a credit note.
+
+    A return moves plants, not money, so on its own it changes no consideration
+    and owes no GST adjustment. What it owes is a correction document, and now
+    that one can be issued this reports only the returns where nobody has —
+    reaching zero when the paperwork is done, rather than nagging forever.
     """
     refunded = set(
         effective(Refund.objects.filter(order=order))
         .exclude(sales_return__isnull=True)
         .values_list('sales_return_id', flat=True)
     )
+    credited = set(
+        SupplyCorrection.objects
+        .filter(document__order=order, sales_return__isnull=False)
+        .values_list('sales_return_id', flat=True)
+    )
     returns = effective(SalesReturn.objects.filter(order=order)).order_by('pk')
+    settled = refunded | credited
     return tuple(
-        sales_return.pk for sales_return in returns if sales_return.pk not in refunded
+        sales_return.pk for sales_return in returns if sales_return.pk not in settled
     )
