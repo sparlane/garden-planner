@@ -8,7 +8,13 @@ from rest_framework.test import APITestCase
 
 from inventory.models import QuantityCertainty, StockMovement, StockReceipt
 from seeds.models import SeedPacketQuantityReconciliation, Seeds
-from seeds.services import packet_inventory_snapshot, reverse_packet_reconciliation
+from seeds.rest import SeedPacketAllViewSet
+from seeds.services import (
+    ensure_packet_inventory_identity,
+    packet_inventory_snapshot,
+    packet_provenance,
+    reverse_packet_reconciliation,
+)
 from supplies.models import Supplier
 from plantings.models import (
     GardenSquareDirectSowPlanting,
@@ -558,3 +564,111 @@ class SeedVendorSeparationTests(APITestCase):
         )
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn('supplier', response.data)
+
+
+class SeedPacketProvenanceTests(APITestCase):
+    """A packet says which purchase it came in on, or that nothing records one."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.user = get_user_model().objects.create_user(username='provenance')
+        self.client.force_authenticate(self.user)
+        self.brand = make_supplier(workspace=self.workspace, name='Kings Seeds')
+        self.shop = make_supplier(workspace=self.workspace, name='Mitre 10')
+        variety = make_plant_variety()
+        created = self.client.post(
+            '/seeds/seeds/',
+            {
+                'supplier': self.brand.pk,
+                'plant_variety': variety.pk,
+                'supplier_code': 'BEET-2',
+                'base_unit': 'seed',
+            },
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.seeds_pk = created.data['pk']
+
+    def receive(self, **overrides):
+        """Create and post one packet receipt, returning the packet payload."""
+        payload = {
+            'seeds': self.seeds_pk,
+            'quantity_certainty': QuantityCertainty.EXACT,
+            'quantity': '50',
+            'line_price': '6.0000',
+            'received_date': '2026-03-10',
+            'tax_rate': '15',
+        }
+        payload.update(overrides)
+        draft = self.client.post('/seeds/packet-receipts/', payload, format='json')
+        self.assertEqual(draft.status_code, 201, draft.data)
+        posted = self.client.post(
+            f"/seeds/packet-receipts/{draft.data['pk']}/post/", {}, format='json',
+        )
+        self.assertEqual(posted.status_code, 201, posted.data)
+        return posted.data, StockReceipt.objects.get(
+            seed_packet_draft__pk=draft.data['pk'],
+        )
+
+    def provenance_for(self, packet_pk):
+        """Read one packet's provenance off the list the seeds screen uses."""
+        listed = self.client.get('/seeds/packets/all/')
+        self.assertEqual(listed.status_code, 200, listed.data)
+        rows = [row for row in listed.data if row['pk'] == packet_pk]
+        self.assertEqual(len(rows), 1, listed.data)
+        return rows[0]['provenance']
+
+    def test_a_packet_names_its_brand_its_vendor_and_its_receipt(self):
+        """Tying a packet back to one purchase is the whole point of the chain."""
+        packet, receipt = self.receive(supplier=self.shop.pk)
+        provenance = self.provenance_for(packet['pk'])
+        self.assertEqual(provenance['origin'], 'receipt')
+        self.assertEqual(provenance['brand'], self.brand.pk)
+        self.assertEqual(provenance['brand_name'], 'Kings Seeds')
+        self.assertEqual(provenance['supplier'], self.shop.pk)
+        self.assertEqual(provenance['supplier_name'], 'Mitre 10')
+        self.assertEqual(provenance['receipt'], receipt.pk)
+        self.assertEqual(provenance['received_date'], '2026-03-10')
+        self.assertEqual(provenance['line_cost_ex_tax'], '6.0000')
+        self.assertEqual(provenance['tax_rate'], '15.0000')
+
+    def test_provenance_reports_whether_the_supplier_has_been_paid(self):
+        """The settlement date is what a payments-basis claim depends on."""
+        packet, receipt = self.receive()
+        self.assertIsNone(self.provenance_for(packet['pk'])['settled_on'])
+        settled = self.client.post(
+            f'/inventory/receipts/{receipt.pk}/settle/',
+            {'settled_on': '2026-05-04'},
+            format='json',
+        )
+        self.assertEqual(settled.status_code, 200, settled.data)
+        self.assertEqual(
+            self.provenance_for(packet['pk'])['settled_on'], '2026-05-04',
+        )
+
+    def test_a_packet_with_no_purchase_says_so_rather_than_going_blank(self):
+        """An opening balance has no receipt, and that is a fact, not missing data."""
+        packet = make_seed_packet(workspace=self.workspace)
+        ensure_packet_inventory_identity(packet)
+        provenance = self.provenance_for(packet.pk)
+        self.assertEqual(provenance['origin'], 'opening')
+        self.assertIsNone(provenance['receipt'])
+        self.assertIsNone(provenance['supplier'])
+        self.assertIsNone(provenance['line_cost_ex_tax'])
+        self.assertIsNotNone(provenance['brand'])
+
+    def test_provenance_costs_no_query_of_its_own(self):
+        """It walks lot to receipt to supplier, which is three joins to forget.
+
+        Asserted against the viewset's own queryset rather than the endpoint,
+        because `packet_inventory_snapshot` issues its own per-packet queries
+        for the balance it reports and would drown the thing under test.
+        """
+        for index in range(4):
+            self.receive(supplier=self.shop.pk, supplier_lot_reference=f'LOT-{index}')
+        packets = list(SeedPacketAllViewSet.queryset.filter(workspace=self.workspace))
+        self.assertEqual(len(packets), 4)
+        with self.assertNumQueries(0):
+            for packet in packets:
+                self.assertEqual(packet_provenance(packet)['supplier_name'], 'Mitre 10')

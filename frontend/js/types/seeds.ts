@@ -42,6 +42,25 @@ interface SeedPacketInventory {
   warnings: Array<string>
 }
 
+// Where a packet came from. `brand` is whose catalog the seed is in; `supplier`
+// is who sold this packet. They differ whenever a branded packet was bought
+// retail. A null receipt with origin 'opening' is a packet nothing recorded a
+// purchase for, which is a fact rather than missing data.
+interface SeedPacketProvenance {
+  origin: 'receipt' | 'opening' | null
+  brand: number
+  brand_name: string
+  receipt: number | null
+  supplier: number | null
+  supplier_name: string | null
+  received_date: string | null
+  line_cost_ex_tax: string | null
+  currency_code: string | null
+  tax_rate: string | null
+  tax_recoverable: boolean | null
+  settled_on: string | null
+}
+
 interface SeedPacket {
   pk: number
   seeds: number
@@ -50,6 +69,7 @@ interface SeedPacket {
   empty: boolean | null
   notes: string
   inventory: SeedPacketInventory | null
+  provenance: SeedPacketProvenance
 }
 
 interface SeedPacketReceiptCreate {
@@ -96,4 +116,15 @@ interface SeedPacketDetails {
   inventory: SeedPacketInventory | null
 }
 
-export { Seed, SeedCreate, SeedPacket, SeedPacketDetails, SeedPacketInventory, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation, SeedQuantityCertainty }
+export {
+  Seed,
+  SeedCreate,
+  SeedPacket,
+  SeedPacketDetails,
+  SeedPacketProvenance,
+  SeedPacketInventory,
+  SeedPacketReceiptCreate,
+  SeedPacketReceiptDraft,
+  SeedPacketReconciliation,
+  SeedQuantityCertainty
+}
