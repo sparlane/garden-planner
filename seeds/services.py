@@ -295,6 +295,65 @@ def _movement_totals(packet):
     )
 
 
+def _isoformat(value):
+    """Render one optional date the way JSON will, or keep the absence."""
+    return value.isoformat() if value is not None else None
+
+
+def packet_provenance(packet):
+    """Return where one packet came from, or say that nothing records it.
+
+    Two parties, deliberately kept apart. The brand is whose catalog the seed
+    is in and lives on `Seeds`; the vendor is who sold this packet and lives on
+    the receipt, which is also what carries the price, the tax treatment and
+    the date the supplier was paid.
+
+    `origin` is the honest part. A lot created as an opening balance — a packet
+    that predates the receipt workflow, or one that was never bought — has no
+    receipt to point at, and saying so is better than a row of blanks that
+    reads like missing data.
+
+    Dates and money leave as strings, the way `packet_inventory_snapshot`'s
+    figures do, so the payload reads the same whether it was rendered to JSON
+    or read straight off the serializer.
+    """
+    brand = packet.seeds.supplier
+    lot = packet.stock_lot if packet.stock_lot_id else None
+    line = lot.receipt_line if lot and lot.receipt_line_id else None
+    if line is None:
+        return {
+            'origin': lot.origin if lot else None,
+            'brand': brand.pk,
+            'brand_name': brand.name,
+            'receipt': None,
+            'supplier': None,
+            'supplier_name': None,
+            'received_date': _isoformat(
+                lot.received_on if lot else packet.purchase_date,
+            ),
+            'line_cost_ex_tax': None,
+            'currency_code': lot.currency_code if lot else None,
+            'tax_rate': None,
+            'tax_recoverable': None,
+            'settled_on': None,
+        }
+    receipt = line.receipt
+    return {
+        'origin': lot.origin,
+        'brand': brand.pk,
+        'brand_name': brand.name,
+        'receipt': receipt.pk,
+        'supplier': receipt.supplier_id,
+        'supplier_name': receipt.supplier.name,
+        'received_date': _isoformat(receipt.received_date),
+        'line_cost_ex_tax': f'{line.line_cost_ex_tax:.4f}',
+        'currency_code': receipt.currency_code,
+        'tax_rate': f'{receipt.tax_rate:.4f}',
+        'tax_recoverable': receipt.tax_recoverable,
+        'settled_on': _isoformat(receipt.settled_on),
+    }
+
+
 def packet_inventory_snapshot(packet):
     """Return truthful packet balance, valuation, and warning metadata."""
     certainty = packet_quantity_certainty(packet)

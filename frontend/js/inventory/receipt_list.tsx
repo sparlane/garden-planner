@@ -2,8 +2,9 @@ import React from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Form, Table } from 'react-bootstrap'
 
-import { deleteStockReceipt, postStockReceipt, reverseStockReceipt, settleStockReceipt } from '../api/inventory'
-import { errorsByField, formatMeasure } from '../utils'
+import { deleteStockReceipt, postStockReceipt, reverseStockReceipt } from '../api/inventory'
+import { ReceiptSettlement } from './settlement'
+import { formatMeasure } from '../utils'
 import { InventoryItem, StockReceipt, StockReceiptLine } from '../types/inventory'
 import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
@@ -77,78 +78,6 @@ function lineFieldErrors(body: unknown): Array<Record<string, string>> {
 
 function localErrorMessage(caught: unknown) {
   return caught instanceof Error ? caught.message : String(caught)
-}
-
-// Settling moves no stock, so the applications digest cannot have gone stale
-// and only the receipt itself changes. The reports prefix goes because this is
-// the date the payments and hybrid bases claim input tax on: a GST period the
-// user is about to open reads differently the moment a payment is recorded.
-function invalidateSettlement(queryClient: ReturnType<typeof useQueryClient>) {
-  return Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all }), queryClient.invalidateQueries({ queryKey: queryKeys.reports.all })])
-}
-
-function ReceiptSettlement({ receipt }: { receipt: StockReceipt }) {
-  const queryClient = useQueryClient()
-  const [open, setOpen] = React.useState(false)
-  const [settledOn, setSettledOn] = React.useState('')
-  const [error, setError] = React.useState<string>()
-  const mutation = useMutation({
-    mutationFn: (value: string | null) => settleStockReceipt(receipt.pk, value),
-    onSuccess: () => {
-      setOpen(false)
-      setError(undefined)
-      return invalidateSettlement(queryClient)
-    },
-    // The two rejections worth reading are a future date and a receipt that is
-    // not posted, and both name their field. Falling back on the bare status
-    // would tell somebody who mistyped a year only that the request failed.
-    onError: (caught: unknown) => {
-      const fields = errorsByField(caught)
-      setError(fields.settled_on ?? fields.status ?? localErrorMessage(caught))
-    }
-  })
-
-  if (!open) {
-    return (
-      <div className="d-flex flex-column align-items-start">
-        {receipt.settled_on ?? <span className="text-muted">Not recorded</span>}
-        <Button
-          size="sm"
-          variant="link"
-          className="p-0"
-          onClick={() => {
-            setSettledOn(receipt.settled_on ?? '')
-            setOpen(true)
-          }}
-        >
-          {receipt.settled_on ? 'Change' : 'Record payment'}
-        </Button>
-      </div>
-    )
-  }
-  return (
-    <div className="d-flex flex-column gap-1">
-      <Form.Control size="sm" type="date" value={settledOn} onChange={(event) => setSettledOn(event.target.value)} />
-      <div className="d-flex gap-1">
-        <Button size="sm" disabled={!settledOn || mutation.isPending} onClick={() => mutation.mutate(settledOn)}>
-          {mutation.isPending ? 'Saving…' : 'Save'}
-        </Button>
-        {receipt.settled_on && (
-          <Button size="sm" variant="outline-danger" disabled={mutation.isPending} onClick={() => mutation.mutate(null)}>
-            Clear
-          </Button>
-        )}
-        <Button size="sm" variant="outline-secondary" onClick={() => setOpen(false)}>
-          Cancel
-        </Button>
-      </div>
-      {error && (
-        <Alert className="mb-0 py-1 px-2" variant="danger">
-          {error}
-        </Alert>
-      )}
-    </div>
-  )
 }
 
 function ReverseReceiptButton({ receipt }: { receipt: StockReceipt }) {
@@ -349,7 +278,7 @@ function ReceiptTable({ receipts, items, locations, suppliers, onEdit, onCancell
             <td>
               <Badge bg={STATUS_VARIANTS[receipt.status]}>{STATUS_LABELS[receipt.status]}</Badge>
             </td>
-            <td>{receipt.status === 'posted' ? <ReceiptSettlement receipt={receipt} /> : <span className="text-muted">—</span>}</td>
+            <td>{receipt.status === 'posted' ? <ReceiptSettlement receipt={receipt.pk} settledOn={receipt.settled_on} /> : <span className="text-muted">—</span>}</td>
             <td>
               <ReceiptLinesTable receipt={receipt} items={items} locations={locations} />
             </td>

@@ -26,6 +26,7 @@ from .services import (
     create_seed_inventory_item,
     delete_packet_receipt_draft,
     packet_inventory_snapshot,
+    packet_provenance,
     post_packet_receipt,
     reconcile_packet_quantity,
     set_seed_inventory_unit,
@@ -113,6 +114,7 @@ class SeedPacketSerializer(serializers.ModelSerializer):
     sow_by = serializers.SerializerMethodField()
     empty = serializers.SerializerMethodField()
     inventory = serializers.SerializerMethodField()
+    provenance = serializers.SerializerMethodField()
 
     class Meta:
         model = SeedPacket
@@ -124,6 +126,7 @@ class SeedPacketSerializer(serializers.ModelSerializer):
             'empty',
             'notes',
             'inventory',
+            'provenance',
         ]
         read_only_fields = [
             'pk',
@@ -132,6 +135,7 @@ class SeedPacketSerializer(serializers.ModelSerializer):
             'sow_by',
             'empty',
             'inventory',
+            'provenance',
         ]
 
     @staticmethod
@@ -156,6 +160,10 @@ class SeedPacketSerializer(serializers.ModelSerializer):
         """Return a boolean only when an exact balance establishes it."""
         snapshot = self._snapshot(packet)
         return snapshot['empty'] if snapshot else None
+
+    def get_provenance(self, packet):
+        """Return the brand, the vendor, and the receipt this packet came in on."""
+        return packet_provenance(packet)
 
     def get_inventory(self, packet):
         """Return nested truthful quantity and valuation metadata."""
@@ -339,6 +347,8 @@ class SeedPacketCurrentViewSet(
 
     queryset = SeedPacket.objects.select_related(
         'stock_lot__item',
+        'stock_lot__receipt_line__receipt__supplier',
+        'seeds__supplier',
         'storage_location',
     )
     serializer_class = SeedPacketSerializer
@@ -396,6 +406,8 @@ class SeedPacketAllViewSet(
 
     queryset = SeedPacket.objects.select_related(
         'stock_lot__item',
+        'stock_lot__receipt_line__receipt__supplier',
+        'seeds__supplier',
         'storage_location',
     )
     serializer_class = SeedPacketSerializer

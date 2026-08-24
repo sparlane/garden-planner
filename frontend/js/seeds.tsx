@@ -7,7 +7,7 @@ import Select from 'react-select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { Supplier, SupplierCreate } from './types/suppliers'
-import { Seed, SeedCreate, SeedPacket, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation, SeedQuantityCertainty } from './types/seeds'
+import { Seed, SeedCreate, SeedPacket, SeedPacketProvenance, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation, SeedQuantityCertainty } from './types/seeds'
 import { Plant, PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
@@ -25,6 +25,7 @@ import {
   updateSeedPacketReceipt
 } from './api/seeds'
 import { addSupplier, getSuppliers } from './api/supplies'
+import { ReceiptSettlement } from './inventory/settlement'
 import { queryKeys } from './query'
 import { ApiError, formatQuantity } from './utils'
 
@@ -486,7 +487,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
 
   return (
     <tr>
-      <td colSpan={8}>
+      <td colSpan={9}>
         <Form onSubmit={submit} className="row g-2 align-items-end">
           {Object.keys(errors).length > 0 && (
             <Alert variant="danger" className="mb-0">
@@ -616,7 +617,7 @@ function ReceiptDraftRow({ draft, label, onEdit, onPost, onCancel }: ReceiptDraf
         {draft.quantity_certainty === 'unknown' ? 'Unknown' : `${formatQuantity(draft.quantity)} ${draft.base_unit}`} ({draft.quantity_certainty})
       </td>
       <td>{draft.line_price}</td>
-      <td colSpan={2}>Draft — confirm these normalized receipt details before posting.</td>
+      <td colSpan={3}>Draft — confirm these normalized receipt details before posting.</td>
       <td>
         <Button size="sm" variant="outline-secondary" onClick={() => onEdit(draft)}>
           Edit
@@ -629,6 +630,34 @@ function ReceiptDraftRow({ draft, label, onEdit, onPost, onCancel }: ReceiptDraf
         </Button>
       </td>
     </tr>
+  )
+}
+
+// The seeds column already names the brand, so this says the two things it
+// cannot: who actually sold the packet, and which purchase record it belongs
+// to. A packet with no receipt says so outright — it predates the receipt
+// workflow or was never bought, and a blank would read as missing data.
+function PacketProvenance({ provenance }: { provenance: SeedPacketProvenance }) {
+  if (!provenance.receipt) {
+    return (
+      <span className="text-muted">
+        No receipt
+        {provenance.origin === 'opening' && (
+          <>
+            <br />
+            <small>Opening balance</small>
+          </>
+        )}
+      </span>
+    )
+  }
+  return (
+    <>
+      {provenance.supplier_name}
+      <br />
+      <small className="text-muted">Receipt #{provenance.receipt}</small>
+      <ReceiptSettlement receipt={provenance.receipt} settledOn={provenance.settled_on} />
+    </>
   )
 }
 
@@ -655,6 +684,9 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
     <tr>
       <td>{label}</td>
       <td>{packet.purchase_date || '—'}</td>
+      <td>
+        <PacketProvenance provenance={packet.provenance} />
+      </td>
       <td>{packet.sow_by || '—'}</td>
       <td>
         {formatQuantity(inventory?.received_quantity, 'Unknown')} {inventory?.base_unit} ({inventory?.quantity_certainty ?? 'unlinked'})
@@ -690,7 +722,7 @@ function SeedPacketRow({ packet, label, onReconcile }: SeedPacketRowProps) {
   )
 }
 
-type SeedPacketSortKey = 'seeds' | 'received' | 'sowBy' | 'receivedQuantity' | 'cost' | 'usage' | 'remaining'
+type SeedPacketSortKey = 'seeds' | 'received' | 'boughtFrom' | 'sowBy' | 'receivedQuantity' | 'cost' | 'usage' | 'remaining'
 type SortDirection = 'ascending' | 'descending'
 
 interface SeedPacketTableRow {
@@ -705,6 +737,8 @@ function seedPacketSortValue(row: SeedPacketTableRow, key: SeedPacketSortKey): s
       return row.label.toLocaleLowerCase()
     case 'received':
       return row.packet.purchase_date
+    case 'boughtFrom':
+      return row.packet.provenance.supplier_name?.toLocaleLowerCase() ?? null
     case 'sowBy':
       return row.packet.sow_by
     case 'receivedQuantity':
@@ -819,6 +853,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
             />
           </SeedStockHeader>
           <SeedStockHeader label="Received" sortKey="received" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
+          <SeedStockHeader label="Bought from" sortKey="boughtFrom" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
           <SeedStockHeader label="Sow by" sortKey="sowBy" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
           <SeedStockHeader label="Received quantity" sortKey="receivedQuantity" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
           <SeedStockHeader label="Cost" sortKey="cost" activeSortKey={sortKey} direction={sortDirection} onSort={changeSort} />
