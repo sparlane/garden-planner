@@ -113,9 +113,14 @@ def create_packet_receipt_draft(workspace, user, values):
     if not seeds.inventory_item_id:
         raise ValidationError({'seeds': 'The seed catalog has no inventory item.'})
     location = _packet_location(workspace)
+    # `Seeds.supplier` is the brand whose catalog the packet came out of, which
+    # is only the vendor when it was bought direct. A packet off a retail shelf
+    # was sold by the shop, and the receipt has to say so — it is the purchase
+    # record a GST return and a supplier payment are read from. Defaulting to
+    # the brand keeps buying direct a single choice rather than two.
     receipt = StockReceipt.objects.create(
         workspace=workspace,
-        supplier=seeds.supplier,
+        supplier=values.get('supplier') or seeds.supplier,
         received_date=values['received_date'],
         supplier_reference=values.get('supplier_reference', ''),
         currency_code=workspace.currency_code,
@@ -162,6 +167,7 @@ def update_packet_receipt_draft(draft, values):
     receipt = draft.receipt
     for field in (
         'received_date',
+        'supplier',
         'supplier_reference',
         'tax_rate',
         'tax_recoverable',

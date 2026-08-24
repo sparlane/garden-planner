@@ -60,6 +60,9 @@ interface SeedPacketReceiptCreate {
   supplier_lot_reference?: string
   received_date: string
   sow_by?: string | null
+  // Who sold the packet, as opposed to the brand on Seed.supplier. Omit and
+  // the server records the brand, which is right when it was bought direct.
+  supplier?: number
   supplier_reference?: string
   tax_rate?: string
   tax_recoverable?: boolean
