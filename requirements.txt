@@ -11,7 +11,7 @@ uwsgi==2.0.31
 # Testing. Without tblib, a test that fails inside a --parallel worker cannot be
 # pickled back to the parent, and the run dies with "cannot pickle 'traceback'
 # object" instead of naming the failure.
-tblib==3.2.0
+tblib==3.2.2
 
 # Checker
 pycodestyle
