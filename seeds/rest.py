@@ -18,6 +18,7 @@ from workspaces.scoping import (
 )
 
 from supplies.defaults import ensure_default_supplier
+from supplies.models import Supplier
 
 from .models import SeedPacket, SeedPacketReceiptDraft, Seeds
 from .services import (
@@ -208,6 +209,13 @@ class PacketReceiptDraftSerializer(
     )
     received_date = serializers.DateField()
     sow_by = serializers.DateField(allow_null=True, required=False)
+    #: Who sold the packet, which is not who put their name on it. Omitted, the
+    #: seed catalog's brand stands in, because buying direct is the common case
+    #: and should not need saying twice.
+    supplier = serializers.PrimaryKeyRelatedField(
+        queryset=Supplier.objects.all(),
+        required=False,
+    )
     supplier_reference = serializers.CharField(
         allow_blank=True,
         required=False,
@@ -222,7 +230,7 @@ class PacketReceiptDraftSerializer(
     notes = serializers.CharField(allow_blank=True, required=False)
     packet = serializers.PrimaryKeyRelatedField(read_only=True)
 
-    workspace_field_lookups = {'seeds': 'workspace'}
+    workspace_field_lookups = {'seeds': 'workspace', 'supplier': 'workspace'}
 
     def validate(self, attrs):
         existing_line = self.instance.receipt.lines.get() if self.instance else None
@@ -284,6 +292,7 @@ class PacketReceiptDraftSerializer(
             'supplier_lot_reference': line.supplier_lot_reference,
             'received_date': draft.receipt.received_date,
             'sow_by': line.expires_on,
+            'supplier': draft.receipt.supplier_id,
             'supplier_reference': draft.receipt.supplier_reference,
             'tax_rate': f'{draft.receipt.tax_rate:.4f}',
             'tax_recoverable': draft.receipt.tax_recoverable,

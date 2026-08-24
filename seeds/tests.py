@@ -7,7 +7,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from inventory.models import QuantityCertainty, StockMovement, StockReceipt
-from seeds.models import SeedPacketQuantityReconciliation
+from seeds.models import SeedPacketQuantityReconciliation, Seeds
 from seeds.services import packet_inventory_snapshot, reverse_packet_reconciliation
 from supplies.models import Supplier
 from plantings.models import (
@@ -28,6 +28,7 @@ from tests.factories import (
     make_seed_tray_cell,
     make_supplier,
 )
+from workspaces.models import Workspace, get_current_workspace
 
 
 class SeedRESTContractTests(RESTContractTestCase):
@@ -469,3 +470,91 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
             self.client.post(f'{detail}post/', {}, format='json').status_code,
             400,
         )
+
+
+class SeedVendorSeparationTests(APITestCase):
+    """The brand on a seed catalog is not the shop the packet was bought from."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.user = get_user_model().objects.create_user(username='vendor-split')
+        self.client.force_authenticate(self.user)
+        self.brand = make_supplier(workspace=self.workspace, name='Kings Seeds')
+        self.shop = make_supplier(workspace=self.workspace, name='Mitre 10')
+        variety = make_plant_variety()
+        created = self.client.post(
+            '/seeds/seeds/',
+            {
+                'supplier': self.brand.pk,
+                'plant_variety': variety.pk,
+                'supplier_code': 'BEET-1',
+                'base_unit': 'seed',
+            },
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.seeds_pk = created.data['pk']
+
+    def create_draft(self, **overrides):
+        """Create one packet receipt draft through the seed workflow."""
+        payload = {
+            'seeds': self.seeds_pk,
+            'quantity_certainty': QuantityCertainty.EXACT,
+            'quantity': '50',
+            'line_price': '6.0000',
+            'received_date': '2026-03-10',
+        }
+        payload.update(overrides)
+        response = self.client.post('/seeds/packet-receipts/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data
+
+    def receipt_for(self, draft_pk):
+        """Return the stock receipt behind one draft."""
+        return StockReceipt.objects.get(seed_packet_draft__pk=draft_pk)
+
+    def test_a_packet_bought_retail_records_the_shop_not_the_brand(self):
+        """This is the whole point: Kings Seeds off a Mitre 10 shelf was sold by Mitre 10."""
+        draft = self.create_draft(supplier=self.shop.pk)
+        self.assertEqual(draft['supplier'], self.shop.pk)
+        self.assertEqual(self.receipt_for(draft['pk']).supplier_id, self.shop.pk)
+        seeds = Seeds.objects.get(pk=self.seeds_pk)
+        self.assertEqual(seeds.supplier_id, self.brand.pk)
+
+    def test_an_omitted_vendor_falls_back_to_the_brand(self):
+        """Buying direct is the common case and should not need saying twice."""
+        draft = self.create_draft()
+        self.assertEqual(draft['supplier'], self.brand.pk)
+        self.assertEqual(self.receipt_for(draft['pk']).supplier_id, self.brand.pk)
+
+    def test_the_vendor_can_be_corrected_on_a_draft(self):
+        """Realising at the till that it came from the shop must not mean starting again."""
+        draft = self.create_draft()
+        updated = self.client.patch(
+            f"/seeds/packet-receipts/{draft['pk']}/",
+            {'supplier': self.shop.pk},
+            format='json',
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data['supplier'], self.shop.pk)
+        self.assertEqual(self.receipt_for(draft['pk']).supplier_id, self.shop.pk)
+
+    def test_a_vendor_from_another_workspace_is_refused(self):
+        """A supplier picker is not a way to reach across the isolation boundary."""
+        other = Workspace.objects.create(name='Other vendor workspace')
+        outsider = make_supplier(workspace=other, name='Elsewhere')
+        response = self.client.post(
+            '/seeds/packet-receipts/',
+            {
+                'seeds': self.seeds_pk,
+                'quantity_certainty': QuantityCertainty.EXACT,
+                'quantity': '50',
+                'line_price': '6.0000',
+                'received_date': '2026-03-10',
+                'supplier': outsider.pk,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('supplier', response.data)

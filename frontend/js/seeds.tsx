@@ -424,6 +424,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
   const [receivedDate, setReceivedDate] = React.useState(draft?.received_date ?? new Date().toISOString().slice(0, 10))
   const [sowBy, setSowBy] = React.useState(draft?.sow_by ?? '')
   const [supplierLot, setSupplierLot] = React.useState(draft?.supplier_lot_reference ?? '')
+  const [vendorPk, setVendorPk] = React.useState<number | undefined>(draft?.supplier)
   const [supplierReference, setSupplierReference] = React.useState(draft?.supplier_reference ?? '')
   const [taxRate, setTaxRate] = React.useState(draft?.tax_rate ?? '')
   const [taxRecoverable, setTaxRecoverable] = React.useState(draft?.tax_recoverable ?? false)
@@ -433,6 +434,10 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
 
   function fieldError(field: string) {
     return errors[field] && <Form.Text className="text-danger">{errors[field]}</Form.Text>
+  }
+
+  function brandOf(pk: number | undefined) {
+    return seeds.find((seed) => seed.pk === pk)?.supplier
   }
 
   function showServerErrors(caught: unknown) {
@@ -454,6 +459,9 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
     event.preventDefault()
     const selectedSeed = seedPk ?? seeds[0]?.pk
     if (!selectedSeed) return
+    // An untouched vendor follows the brand rather than staying blank, so the
+    // receipt records what the form was showing when it was submitted.
+    const vendor = vendorPk ?? brandOf(selectedSeed)
     setErrors({})
     const data: SeedPacketReceiptCreate = {
       seeds: selectedSeed,
@@ -464,6 +472,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
     data.quantity = certainty === 'unknown' ? null : quantity
     data.sow_by = sowBy || null
     data.supplier_lot_reference = supplierLot
+    if (vendor) data.supplier = vendor
     data.supplier_reference = supplierReference
     if (taxRate) data.tax_rate = taxRate
     data.tax_recoverable = taxRecoverable
@@ -494,6 +503,19 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
                 </option>
               ))}
             </Form.Select>
+          </Form.Group>
+          <Form.Group className="col-md-3">
+            <Form.Label>Bought from</Form.Label>
+            <Form.Select value={vendorPk ?? brandOf(seedPk ?? seeds[0]?.pk) ?? ''} onChange={(event) => setVendorPk(event.target.value ? Number(event.target.value) : undefined)}>
+              <option value="">Select…</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.pk} value={supplier.pk}>
+                  {supplier.name}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Text className="text-muted">The shop or site that sold it. Defaults to the seed&apos;s brand.</Form.Text>
+            {fieldError('supplier')}
           </Form.Group>
           <Form.Group className="col-md-2">
             <Form.Label>Quantity certainty</Form.Label>
