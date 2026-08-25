@@ -161,6 +161,15 @@ ATTACHMENT_ROOT = Path(globals().get(
 ))
 ATTACHMENT_MAX_BYTES = globals().get("ATTACHMENT_MAX_BYTES", 15 * 1024 * 1024)
 ATTACHMENT_MAX_PIXELS = globals().get("ATTACHMENT_MAX_PIXELS", 40_000_000)
+ATTACHMENT_ARCHIVE_MAX_BYTES = globals().get(
+    "ATTACHMENT_ARCHIVE_MAX_BYTES", 1024 * 1024 * 1024,
+)
+ATTACHMENT_ARCHIVE_MAX_EXPANDED_BYTES = globals().get(
+    "ATTACHMENT_ARCHIVE_MAX_EXPANDED_BYTES", 2 * 1024 * 1024 * 1024,
+)
+ATTACHMENT_ARCHIVE_MAX_ENTRIES = globals().get(
+    "ATTACHMENT_ARCHIVE_MAX_ENTRIES", 10_000,
+)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

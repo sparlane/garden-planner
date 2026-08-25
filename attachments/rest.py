@@ -9,12 +9,14 @@ from django.utils.http import content_disposition_header
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.views import APIView
 from rest_framework.response import Response
 
 from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
 
 from .models import ImageAttachment
+from .archive import export_archive, restore_archive
 from .processing import create_attachment
 
 
@@ -131,3 +133,38 @@ class ImageAttachmentViewSet(
 
 router = routers.DefaultRouter()
 router.register('', ImageAttachmentViewSet)
+
+
+class AttachmentArchiveExportView(APIView):
+    """Download the current workspace's versioned photo archive."""
+
+    def get(self, request):  # pylint: disable=unused-argument
+        response = FileResponse(
+            export_archive(get_current_workspace()),
+            content_type='application/zip',
+        )
+        response['Content-Disposition'] = 'attachment; filename="garden-photos-v1.zip"'
+        response['Cache-Control'] = 'private, no-store'
+        return response
+
+
+class AttachmentArchiveRestoreView(APIView):
+    """Dry-run or apply a validated photo-only archive restore."""
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        upload = request.FILES.get('archive')
+        if upload is None:
+            raise serializers.ValidationError({'archive': 'Choose a photo archive ZIP.'})
+        dry_run_value = str(request.data.get('dry_run', 'true')).lower()
+        if dry_run_value not in {'true', 'false'}:
+            raise serializers.ValidationError({'dry_run': 'Use true or false.'})
+        dry_run = dry_run_value == 'true'
+        report = restore_archive(
+            get_current_workspace(), request.user, upload, dry_run=dry_run,
+        )
+        response_status = status.HTTP_200_OK
+        if not report['valid'] and not dry_run:
+            response_status = status.HTTP_400_BAD_REQUEST
+        return Response(report, status=response_status)

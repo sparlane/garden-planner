@@ -133,6 +133,7 @@ Before setup:
 - Set `CSRF_TRUSTED_ORIGINS` to every public origin, including its scheme.
 - Fill in all four database values directly, or provide `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS` in the deployment environment.
 - Leave `CURRENT_WORKSPACE_ID = 1` for an existing single-workspace installation. Selecting another ID does not move records between workspaces.
+- Set `ATTACHMENT_ROOT` to a private, persistent, backed-up directory writable by the application. Never expose that directory through the reverse proxy; authenticated Django views serve its files.
 - For HTTPS behind a trusted reverse proxy, review and enable the commented proxy and secure-cookie settings.
 
 Run `./setup-venv.sh`; it substitutes any provided database variables and applies migrations to the configured PostgreSQL database.
@@ -148,6 +149,8 @@ Development notes
   The `setup-venv.sh` already runs the build unless `NODE_DONE=yes` is set in the environment.
 
 - Do not commit secrets: `gp/local_settings.py` is produced from a selected template; keep secrets out of source control.
+
+- Uploaded photographs live under `ATTACHMENT_ROOT` (by default `var/attachments/` in development), outside static files. Back up this directory with the database. The Workspace settings screen can export a portable photo-only ZIP, but restoring that ZIP requires the referenced records to exist with matching IDs.
 
 - Secret-key management:
   - `setup-venv.sh` creates `gp/local_settings.py` and `gp/secretkey.txt` with mode `0600`. Rerunning setup preserves both files while repairing their permissions.
