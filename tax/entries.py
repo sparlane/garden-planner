@@ -25,8 +25,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
+from django.db import models
+
 from inventory.ledger import quantize_money
-from inventory.models import StockReceipt, StockReceiptLine
+from inventory.models import InputTaxAdjustment, StockReceipt, StockReceiptLine
 
 from .facts import workspace_order_facts
 from .periods import (
@@ -46,10 +48,9 @@ from .recognition import (
 
 
 ZERO = Decimal('0.0000')
-PERCENT_DIVISOR = Decimal('100')
-
 SUPPLY_KINDS = (SUPPLY, SUPPLY_CREDIT)
 PURCHASE = 'purchase'
+INPUT_TAX_ADJUSTMENT = 'input_tax_adjustment'
 
 #: The bases that claim input tax when the supplier is paid rather than when
 #: the goods were received. Hybrid follows the payments rule on the input side
@@ -62,6 +63,8 @@ PAYMENT_BASED = (PAYMENTS, HYBRID)
 #: which stands in for a supplier invoice date the application does not hold.
 SUPPLIER_PAYMENT = 'supplier_payment'
 RECEIPT_PROXY = 'receipt_date_proxy'
+SUPPLIER_INVOICE = 'supplier_invoice'
+CHANGE_OF_USE = 'change_of_use_adjustment'
 
 #: Why an entry belongs to no taxable period. Each becomes a data-quality code
 #: on the report, with the rows behind it reachable through the drill-down.
@@ -89,12 +92,18 @@ class GstEntry:  # pylint: disable=too-many-instance-attributes
     non_recoverable_tax: Decimal
     currency_code: str
     time_of_supply_source: str
+    input_tax_source: str = ''
+    adjustment_direction: str = ''
     proxy: bool = False
     exclusion: str = ''
 
     @property
     def gross(self):
         """Value including every kind of tax, claimable or not."""
+        if self.kind == INPUT_TAX_ADJUSTMENT:
+            return ZERO
+        if self.input_tax_source == StockReceiptLine.InputTaxSource.CUSTOMS:
+            return quantize_money(self.taxable + self.non_recoverable_tax)
         return quantize_money(self.taxable + self.tax + self.non_recoverable_tax)
 
     @property
@@ -120,6 +129,7 @@ def derive_entries(workspace, start, end):
     for period in periods:
         entries.extend(_period_supply_entries(order_facts, period))
         purchases.extend(_period_purchase_entries(workspace, period, claimed))
+        entries.extend(_period_adjustment_entries(workspace, period))
     entries.extend(purchases)
     context = _Uncovered(workspace, history, (start, end), _covered_days(periods))
     entries.extend(_unregistered_supply_entries(order_facts, context))
@@ -127,6 +137,7 @@ def derive_entries(workspace, start, end):
         context,
         {entry.line_id for entry in purchases},
     ))
+    entries.extend(_unregistered_adjustment_entries(context))
     entries.sort(key=lambda entry: (entry.supply_date, entry.kind, entry.source_id, entry.line_id or 0))
     return entries
 
@@ -208,7 +219,7 @@ def _period_purchase_entries(workspace, period, claimed):
     here. See `derive_entries` for why a period has to be told.
     """
     if period.basis == INVOICE:
-        lines = _posted_receipt_lines(workspace, period.start, period.end)
+        lines = _invoiced_receipt_lines(workspace, period.start, period.end)
         return [
             _purchase_entry(line, period, period.basis)
             for line in _take(lines, claimed)
@@ -252,7 +263,7 @@ def _unregistered_purchase_entries(context, accounted_line_ids):
     """
     start, end = context.window
     entries = []
-    for line in _posted_receipt_lines(context.workspace, start, end):
+    for line in _invoiced_receipt_lines(context.workspace, start, end):
         if line.pk in accounted_line_ids:
             continue
         day = _unaccounted_day(line, context)
@@ -281,9 +292,9 @@ def _unaccounted_day(line, context):
     not cover. That line is accounted for elsewhere, and saying nothing about it
     here is what makes a narrow range honest rather than lossy.
     """
-    received = line.receipt.received_date
-    if received not in context.covered:
-        return received
+    invoice_day = line.receipt.invoice_date or line.receipt.received_date
+    if invoice_day not in context.covered:
+        return invoice_day
     start, end = context.window
     settled = line.receipt.settled_on
     if settled is not None and start <= settled <= end:
@@ -305,30 +316,89 @@ def _purchase_entry(line, period, basis):
     """
     receipt = line.receipt
     taxable = quantize_money(line.line_cost_ex_tax)
-    full_tax = quantize_money(taxable * Decimal(receipt.tax_rate) / PERCENT_DIVISOR)
-    recoverable = receipt.tax_recoverable
+    recoverable = quantize_money(line.recoverable_input_tax)
+    non_recoverable = quantize_money(line.non_recoverable_tax)
     # A settlement date is a date somebody paid a supplier on, so under a basis
     # that claims on payment it is the real time of supply and not a stand-in.
     # Every other purchase is still dated by the receipt standing in for the
     # supplier invoice date this application does not hold, and stays a proxy.
     paid = basis in PAYMENT_BASED and receipt.settled_on is not None
+    invoice_day = receipt.invoice_date or receipt.received_date
     return GstEntry(
         kind=PURCHASE,
-        supply_date=receipt.settled_on if paid else receipt.received_date,
+        supply_date=receipt.settled_on if paid else invoice_day,
         period=period,
         basis=basis,
         source_type='stock_receipt',
         source_id=receipt.pk,
         document_id=receipt.pk,
         line_id=line.pk,
-        tax_code='standard' if full_tax > 0 else 'unclassified',
-        tax_rate=Decimal(receipt.tax_rate),
+        tax_code=line.tax_treatment,
+        tax_rate=Decimal(line.tax_rate),
         taxable=taxable,
-        tax=full_tax if recoverable else ZERO,
-        non_recoverable_tax=ZERO if recoverable else full_tax,
+        tax=recoverable,
+        non_recoverable_tax=non_recoverable,
         currency_code=receipt.currency_code,
-        time_of_supply_source=SUPPLIER_PAYMENT if paid else RECEIPT_PROXY,
-        proxy=not paid,
+        time_of_supply_source=(
+            SUPPLIER_PAYMENT if paid
+            else SUPPLIER_INVOICE if receipt.invoice_date
+            else RECEIPT_PROXY
+        ),
+        input_tax_source=line.input_tax_source,
+        proxy=not paid and receipt.invoice_date is None,
+    )
+
+
+def _period_adjustment_entries(workspace, period):
+    """Return change-of-use adjustments made inside one taxable period."""
+    adjustments = InputTaxAdjustment.objects.filter(
+        workspace=workspace,
+        adjustment_date__gte=period.start,
+        adjustment_date__lte=period.end,
+    ).select_related('receipt_line__receipt').order_by('adjustment_date', 'pk')
+    return [_adjustment_entry(adjustment, period) for adjustment in adjustments]
+
+
+def _unregistered_adjustment_entries(context):
+    """Keep adjustments outside registration visible and unclaimed."""
+    start, end = context.window
+    adjustments = InputTaxAdjustment.objects.filter(
+        workspace=context.workspace,
+        adjustment_date__gte=start,
+        adjustment_date__lte=end,
+    ).select_related('receipt_line__receipt').order_by('adjustment_date', 'pk')
+    entries = []
+    for adjustment in adjustments:
+        if adjustment.adjustment_date in context.covered:
+            continue
+        entry = _adjustment_entry(adjustment, None)
+        entries.append(_with(
+            entry,
+            exclusion=context.exclusion_for(adjustment.adjustment_date),
+        ))
+    return entries
+
+
+def _adjustment_entry(adjustment, period):
+    amount = quantize_money(abs(adjustment.tax_adjustment))
+    return GstEntry(
+        kind=INPUT_TAX_ADJUSTMENT,
+        supply_date=adjustment.adjustment_date,
+        period=period,
+        basis=period.basis if period else '',
+        source_type='input_tax_adjustment',
+        source_id=adjustment.pk,
+        document_id=adjustment.receipt_line.receipt_id,
+        line_id=adjustment.receipt_line_id,
+        tax_code=adjustment.receipt_line.tax_treatment,
+        tax_rate=adjustment.receipt_line.tax_rate,
+        taxable=ZERO,
+        tax=amount,
+        non_recoverable_tax=ZERO,
+        currency_code=adjustment.receipt_line.receipt.currency_code,
+        time_of_supply_source=CHANGE_OF_USE,
+        input_tax_source=CHANGE_OF_USE,
+        adjustment_direction='credit' if adjustment.tax_adjustment > 0 else 'debit',
     )
 
 
@@ -346,11 +416,17 @@ def _receipt_lines(workspace):
     ).select_related('receipt')
 
 
-def _posted_receipt_lines(workspace, start, end):
-    """Return the lines of every posted receipt received in a range."""
+def _invoiced_receipt_lines(workspace, start, end):
+    """Return lines whose invoice date, or receipt proxy, is in a range."""
     return _receipt_lines(workspace).filter(
-        receipt__received_date__gte=start,
-        receipt__received_date__lte=end,
+        models.Q(
+            receipt__invoice_date__gte=start,
+            receipt__invoice_date__lte=end,
+        ) | models.Q(
+            receipt__invoice_date__isnull=True,
+            receipt__received_date__gte=start,
+            receipt__received_date__lte=end,
+        ),
     ).order_by('receipt__received_date', 'pk')
 
 
@@ -364,11 +440,9 @@ def _settled_receipt_lines(workspace, start, end):
 
 def _unsettled_receipt_lines(workspace, start, end):
     """Return the lines of posted receipts received in a range and not yet paid."""
-    return _receipt_lines(workspace).filter(
+    return _invoiced_receipt_lines(workspace, start, end).filter(
         receipt__settled_on__isnull=True,
-        receipt__received_date__gte=start,
-        receipt__received_date__lte=end,
-    ).order_by('receipt__received_date', 'pk')
+    )
 
 
 class _Uncovered:  # pylint: disable=too-few-public-methods

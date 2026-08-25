@@ -19,7 +19,12 @@ from uuid import uuid4
 from billing.documents import issue_supply_document
 from billing.test_fixtures import DocumentScenarioMixin
 from inventory.ledger import post_receipt
-from inventory.models import InventoryItem, StockReceipt, StockReceiptLine
+from inventory.models import (
+    InputTaxAdjustment,
+    InventoryItem,
+    StockReceipt,
+    StockReceiptLine,
+)
 from inventory.units import UnitCode
 from locations.models import Location
 from sales.models import Payment, SalesOrder, SalesOrderLine
@@ -426,8 +431,50 @@ class ExportTests(GstReportTestCase):
         self.assertIn('gst-entries', response.content.decode())
 
 
-class InputTaxTests(GstReportTestCase):
+class InputTaxTests(GstReportTestCase):  # pylint: disable=too-many-public-methods
     """Where input tax lands depends on the basis, and sometimes on nothing."""
+
+    def explicit_purchase(self, *, source='supplier', treatment='standard'):
+        """Post one fully line-classified purchase for task 119 scenarios."""
+        store = Location.objects.create(
+            workspace=self.workspace,
+            name=f'Explicit {source}',
+            code=f'EXPLICIT-{source}',
+            location_type=Location.LocationType.STORAGE,
+        )
+        receipt = StockReceipt.objects.create(
+            workspace=self.workspace,
+            supplier=make_supplier(workspace=self.workspace),
+            received_date=date(2026, 3, 10),
+            invoice_date=date(2026, 3, 5),
+            source_document_type=(
+                StockReceipt.SourceDocumentType.CUSTOMS_ENTRY
+                if source == 'customs' else StockReceipt.SourceDocumentType.INVOICE
+            ),
+            source_document_number='EVIDENCE-1',
+            currency_code='NZD',
+            tax_rate=Decimal('0'),
+            tax_recoverable=False,
+            created_by=self.user,
+        )
+        line = StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=make_inventory_item(workspace=self.workspace),
+            quantity=Decimal('2'),
+            unit_code=UnitCode.LITRE,
+            base_quantity=Decimal('2'),
+            line_cost_ex_tax=Decimal('0'),
+            supplier_cost_incl_tax=Decimal('100' if source == 'customs' else '115'),
+            tax_treatment=treatment,
+            tax_rate=Decimal('15' if treatment == 'standard' else '0'),
+            input_tax_source=source,
+            input_tax_amount=Decimal('15'),
+            claim_input_tax=True,
+            claimable_percentage=Decimal('100'),
+            destination=store,
+        )
+        receipt = post_receipt(receipt, self.user)[0]
+        return receipt, line
 
     def test_the_invoice_basis_claims_input_tax_on_the_receipt_date(self):
         """The receipt date stands in for the supplier invoice task 119 will add."""
@@ -482,12 +529,57 @@ class InputTaxTests(GstReportTestCase):
         self.assertEqual(row['input_tax'], '30.0000')
         self.assertEqual(row['net_gst'], '30.0000')
 
-    def test_the_receipt_level_limitation_is_reported(self):
-        """Task 119 owns per-line treatment; until then the gap is stated."""
+    def test_purchase_evidence_gaps_replace_the_receipt_level_limitation(self):
+        """The report now identifies the actual missing evidence on each claim."""
         self.register(basis=GstRegistration.Basis.INVOICE)
         self.buy(date(2026, 3, 10), '200')
         codes = {finding['code'] for finding in self.periods()['data_quality']}
-        self.assertIn('receipt_level_tax_treatment', codes)
+        self.assertNotIn('receipt_level_tax_treatment', codes)
+        self.assertIn('purchase_evidence_missing', codes)
+
+    def test_invoice_date_replaces_the_receipt_date_proxy(self):
+        """Invoice-basis input tax lands on the recorded supplier invoice date."""
+        self.register(basis=GstRegistration.Basis.INVOICE)
+        self.explicit_purchase()
+        row = next(
+            row for row in self.entries()['results'] if row['kind'] == 'purchase'
+        )
+        self.assertEqual(row['supply_date'], '2026-03-05')
+        self.assertEqual(row['time_of_supply_source'], 'supplier_invoice')
+        self.assertFalse(row['proxy'])
+
+    def test_customs_gst_is_a_credit_adjustment_not_ordinary_input_tax(self):
+        """Customs GST stays outside the supplier purchases tax box."""
+        self.register(basis=GstRegistration.Basis.INVOICE)
+        self.explicit_purchase(source='customs', treatment='out_of_scope')
+        row = self._period('2026-03-01..2026-04-30')
+        self.assertEqual(row['purchases_incl_tax'], '100.0000')
+        self.assertEqual(row['input_tax'], '0.0000')
+        self.assertEqual(row['credit_adjustments'], '15.0000')
+        self.assertEqual(row['total_input_tax'], '15.0000')
+
+    def test_change_of_use_reduction_is_a_debit_adjustment(self):
+        """A later fall in taxable use increases net GST without revaluing stock."""
+        self.register(basis=GstRegistration.Basis.INVOICE)
+        receipt, line = self.explicit_purchase()
+        lot_cost = line.stock_lot.acquisition_total
+        InputTaxAdjustment.objects.create(
+            workspace=self.workspace,
+            receipt_line=line,
+            adjustment_date=date(2026, 4, 1),
+            previous_claimable_percentage=Decimal('100'),
+            revised_claimable_percentage=Decimal('60'),
+            tax_adjustment=Decimal('-6'),
+            apportionment_basis='Observed taxable use',
+            reason='Private use increased',
+            created_by=self.user,
+        )
+        row = self._period('2026-03-01..2026-04-30')
+        self.assertEqual(row['debit_adjustments'], '6.0000')
+        self.assertEqual(row['net_gst'], '-9.0000')
+        line.refresh_from_db()
+        self.assertEqual(line.stock_lot.acquisition_total, lot_cost)
+        self.assertEqual(receipt.status, StockReceipt.Status.POSTED)
 
     def test_the_payments_basis_claims_a_paid_receipt_in_the_payment_period(self):
         """The whole point of the settlement date: goods in March, paid in May."""

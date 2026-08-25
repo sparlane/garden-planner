@@ -26,7 +26,14 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
 
-from tax.entries import AWAITING_PAYMENT, PURCHASE, derive_entries
+from inventory.input_tax import receipt_tax_warnings
+from inventory.models import StockReceipt, StockReceiptLine
+from tax.entries import (
+    AWAITING_PAYMENT,
+    INPUT_TAX_ADJUSTMENT,
+    PURCHASE,
+    derive_entries,
+)
 from tax.periods import (
     enumerate_periods,
     local_date,
@@ -60,7 +67,8 @@ ENTRY_COLUMNS = (
     'period_label', 'kind', 'supply_date', 'basis', 'source_type', 'source_id',
     'document_id', 'line_id', 'tax_code', 'tax_rate',
     'taxable', 'tax', 'non_recoverable_tax', 'gross',
-    'currency_code', 'time_of_supply_source', 'proxy', 'exclusion',
+    'currency_code', 'time_of_supply_source', 'input_tax_source',
+    'adjustment_direction', 'proxy', 'exclusion',
 )
 
 RECONCILIATION = {
@@ -223,6 +231,9 @@ def _period_row(period, currency_code, entries, awaiting):  # pylint: disable=to
     supplies = [entry for entry in entries if entry.kind == SUPPLY]
     credits_ = [entry for entry in entries if entry.kind == SUPPLY_CREDIT]
     purchases = [entry for entry in entries if entry.kind == PURCHASE]
+    adjustments = [
+        entry for entry in entries if entry.kind == INPUT_TAX_ADJUSTMENT
+    ]
 
     taxable_supplies = _sum(entry.gross for entry in supplies if entry.tax_code == 'standard')
     zero_rated = _sum(entry.gross for entry in supplies if entry.tax_code == 'zero_rated')
@@ -232,14 +243,24 @@ def _period_row(period, currency_code, entries, awaiting):  # pylint: disable=to
 
     output_tax = _sum(entry.tax for entry in supplies) - _sum(entry.tax for entry in credits_)
     purchases_gross = _sum(entry.gross for entry in purchases)
-    input_tax = _sum(entry.tax for entry in purchases)
+    customs = [
+        entry for entry in purchases
+        if entry.input_tax_source == StockReceiptLine.InputTaxSource.CUSTOMS
+    ]
+    ordinary_purchases = [entry for entry in purchases if entry not in customs]
+    input_tax = _sum(entry.tax for entry in ordinary_purchases)
     non_recoverable = _sum(entry.non_recoverable_tax for entry in purchases)
 
-    # Debit and credit adjustments are the transition-adjustment slots task 117
-    # change 5 asks for. They stay zero until a basis change produces one, and
-    # they are named here so the return's arithmetic is complete either way.
-    debit_adjustments = ZERO
-    credit_adjustments = ZERO
+    # Customs GST and later changes in taxable use are return adjustments, not
+    # supplier tax folded into the ordinary purchases box.
+    debit_adjustments = _sum(
+        entry.tax for entry in adjustments
+        if entry.adjustment_direction == 'debit'
+    )
+    credit_adjustments = _sum(entry.tax for entry in customs) + _sum(
+        entry.tax for entry in adjustments
+        if entry.adjustment_direction == 'credit'
+    )
     total_output = output_tax + debit_adjustments
     total_input = input_tax + credit_adjustments
     net = total_output - total_input
@@ -376,6 +397,8 @@ def _entry_row(entry):
         'gross': decimal_string(entry.gross, MONEY_PLACES),
         'currency_code': entry.currency_code,
         'time_of_supply_source': entry.time_of_supply_source,
+        'input_tax_source': entry.input_tax_source,
+        'adjustment_direction': entry.adjustment_direction,
         'proxy': entry.proxy,
         'exclusion': entry.exclusion,
     }
@@ -394,7 +417,7 @@ def _entry_totals(entries):
     }
 
 
-def _data_quality(workspace, entries, rows, as_at):
+def _data_quality(workspace, entries, rows, as_at):  # pylint: disable=too-many-locals
     """Report every reason a figure is incomplete, with the rows behind it."""
     findings = []
     for exclusion, message in EXCLUSION_MESSAGES.items():
@@ -437,13 +460,22 @@ def _data_quality(workspace, entries, rows, as_at):
             kind=PURCHASE,
         ))
 
-    purchases = [entry for entry in entries if entry.kind == PURCHASE]
-    if purchases:
+    receipt_ids = {
+        entry.document_id for entry in entries
+        if entry.kind in {PURCHASE, INPUT_TAX_ADJUSTMENT} and entry.document_id
+    }
+    warning_groups = defaultdict(list)
+    receipts = StockReceipt.objects.filter(pk__in=receipt_ids).select_related(
+        'workspace',
+    ).prefetch_related('lines')
+    for receipt in receipts:
+        for warning in receipt_tax_warnings(receipt):
+            warning_groups[warning['code']].append(warning)
+    for code, warnings in sorted(warning_groups.items()):
         findings.append(_finding(
-            'receipt_level_tax_treatment', len(purchases),
-            'Tax treatment is recorded for a whole receipt rather than per '
-            'line, so a receipt mixing standard-rated and zero-rated purchases '
-            'cannot be represented.',
+            code,
+            len(warnings),
+            warnings[0]['message'],
             kind=PURCHASE,
         ))
 

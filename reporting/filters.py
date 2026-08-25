@@ -186,11 +186,15 @@ class GstEntryFilters(GstPeriodFilters):  # pylint: disable=abstract-method
 
     period = serializers.CharField(required=False)
     kind = serializers.ChoiceField(
-        required=False, choices=('supply', 'supply_credit', 'purchase'),
+        required=False,
+        choices=('supply', 'supply_credit', 'purchase', 'input_tax_adjustment'),
     )
     tax_code = serializers.ChoiceField(
         required=False,
-        choices=('standard', 'zero_rated', 'exempt', 'out_of_scope', 'unclassified'),
+        choices=(
+            'standard', 'zero_rated', 'exempt', 'out_of_scope',
+            'unclassified', 'unknown',
+        ),
     )
     exclusion = serializers.ChoiceField(
         required=False,
