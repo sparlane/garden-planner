@@ -20,6 +20,7 @@ CURRENT_WORKSPACE_ID = 1
 # https://docs.djangoproject.com/en/stable/ref/settings/#databases
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+ATTACHMENT_ROOT = BASE_DIR / "var" / "attachments"
 
 DATABASES = {
     "default": {

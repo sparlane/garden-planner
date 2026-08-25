@@ -57,6 +57,7 @@ if not SECRET_KEY:
 # Application definition
 
 INSTALLED_APPS = [
+    "attachments",
     "workspaces",
     "locations",
     "inventory",
@@ -152,6 +153,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "static"
+
+# Uploaded photographs are deliberately outside the public static tree. They
+# are opened only by the authenticated attachment views, never by a MEDIA_URL.
+ATTACHMENT_ROOT = Path(globals().get(
+    "ATTACHMENT_ROOT", BASE_DIR / "var" / "attachments",
+))
+ATTACHMENT_MAX_BYTES = globals().get("ATTACHMENT_MAX_BYTES", 15 * 1024 * 1024)
+ATTACHMENT_MAX_PIXELS = globals().get("ATTACHMENT_MAX_PIXELS", 40_000_000)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
