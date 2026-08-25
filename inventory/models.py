@@ -479,20 +479,6 @@ class StockReceipt(WorkspaceOwnedModel):
             ),
         ],
     )
-    tax_rate = models.DecimalField(
-        max_digits=7,
-        decimal_places=4,
-        default=Decimal('0'),
-        validators=(
-            MinValueValidator(Decimal('0')),
-            MaxValueValidator(Decimal('100')),
-        ),
-    )
-    price_includes_tax = models.BooleanField(
-        default=False,
-        help_text='Whether entered receipt prices include the receipt tax rate.',
-    )
-    tax_recoverable = models.BooleanField(default=True)
     #: The date the supplier was paid. Under the payments and hybrid bases this
     #: is when input tax on the receipt falls due, so it has to be recordable
     #: after posting — a supplier is paid after the goods arrive, not before
@@ -755,34 +741,6 @@ class StockReceiptLine(models.Model):  # pylint: disable=too-many-instance-attri
         """Freeze the claim split and acquisition amount from explicit inputs."""
         quantum = Decimal('0.0001')
         tax = Decimal(self.input_tax_amount or 0).quantize(quantum)
-        legacy_receipt_tax = all((
-            self.input_tax_source == self.InputTaxSource.NONE,
-            self.tax_treatment == self.TaxTreatment.UNKNOWN,
-            tax == 0,
-            self.receipt_id,
-            Decimal(self.receipt.tax_rate or 0) > 0,
-        ))
-        if legacy_receipt_tax:
-            rate = Decimal(self.receipt.tax_rate)
-            entered = Decimal(self.line_cost_ex_tax or 0)
-            if self.receipt.price_includes_tax:
-                gross = entered
-                tax = (gross * rate / (Decimal('100') + rate)).quantize(quantum)
-            else:
-                tax = (entered * rate / Decimal('100')).quantize(quantum)
-                gross = entered + tax
-            if tax == 0:
-                self.supplier_cost_incl_tax = gross
-                return
-            self.supplier_cost_incl_tax = gross
-            self.tax_treatment = self.TaxTreatment.STANDARD
-            self.tax_rate = rate
-            self.input_tax_source = self.InputTaxSource.SUPPLIER
-            self.input_tax_amount = tax
-            self.claim_input_tax = self.receipt.tax_recoverable
-            self.claimable_percentage = (
-                Decimal('100') if self.claim_input_tax else Decimal('0')
-            )
         percentage = Decimal(self.claimable_percentage or 0)
         recoverable = Decimal('0')
         if self.claim_input_tax:

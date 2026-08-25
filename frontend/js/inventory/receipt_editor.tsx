@@ -4,7 +4,18 @@ import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { createStockReceipt, getItemUnitConversions, updateStockReceipt } from '../api/inventory'
 import { ApiError, formatMeasure, formatQuantity } from '../utils'
-import { InventoryItem, InventoryUnit, QuantityCertainty, StockReceipt, StockReceiptLine, StockReceiptLineWrite, UnitCode } from '../types/inventory'
+import {
+  InputTaxSource,
+  InventoryItem,
+  InventoryUnit,
+  PurchaseTaxTreatment,
+  QuantityCertainty,
+  ReceiptDocumentType,
+  StockReceipt,
+  StockReceiptLine,
+  StockReceiptLineWrite,
+  UnitCode
+} from '../types/inventory'
 import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
 import { queryKeys } from '../query'
@@ -24,7 +35,14 @@ interface ReceiptLineDraft {
   unitChoice: UnitChoice
   supplierLotReference: string
   expiresOn: string
-  lineCostExTax: string
+  supplierCostInclTax: string
+  taxTreatment: PurchaseTaxTreatment
+  taxRate: string
+  inputTaxSource: InputTaxSource
+  inputTaxAmount: string
+  claimInputTax: boolean
+  claimablePercentage: string
+  apportionmentBasis: string
   destination: number | ''
   // The last quantity the server normalized. Null means nobody has checked
   // this line's arithmetic since it was last touched.
@@ -41,29 +59,21 @@ function blankLine(key: string): ReceiptLineDraft {
     unitChoice: '',
     supplierLotReference: '',
     expiresOn: '',
-    lineCostExTax: '',
+    supplierCostInclTax: '',
+    taxTreatment: 'unknown',
+    taxRate: '0',
+    inputTaxSource: 'none',
+    inputTaxAmount: '0',
+    claimInputTax: false,
+    claimablePercentage: '0',
+    apportionmentBasis: '',
     destination: '',
     baseQuantity: null,
     baseUnit: null
   }
 }
 
-function displayPrice(lineCostExTax: string, includesTax: boolean, taxRate: string): string {
-  if (!includesTax || taxRate.trim() === '') return lineCostExTax
-  const rate = Number(taxRate)
-  return Number.isFinite(rate) ? (Number(lineCostExTax) * (1 + rate / 100)).toFixed(4) : lineCostExTax
-}
-
-function convertEntryPrice(value: string, fromIncludesTax: boolean, toIncludesTax: boolean, taxRate: string): string {
-  if (value.trim() === '' || fromIncludesTax === toIncludesTax || taxRate.trim() === '') return value
-  const rate = Number(taxRate)
-  if (!Number.isFinite(rate)) return value
-  const factor = 1 + rate / 100
-  const converted = fromIncludesTax ? Number(value) / factor : Number(value) * factor
-  return Number.isFinite(converted) ? converted.toFixed(4) : value
-}
-
-function hydrateLine(line: StockReceiptLine, key: string, includesTax: boolean, taxRate: string): ReceiptLineDraft {
+function hydrateLine(line: StockReceiptLine, key: string): ReceiptLineDraft {
   return {
     key,
     item: line.item,
@@ -72,7 +82,14 @@ function hydrateLine(line: StockReceiptLine, key: string, includesTax: boolean, 
     unitChoice: line.unit_conversion !== null ? `conversion:${line.unit_conversion}` : line.unit_code !== null ? `unit:${line.unit_code}` : '',
     supplierLotReference: line.supplier_lot_reference,
     expiresOn: line.expires_on ?? '',
-    lineCostExTax: displayPrice(line.line_cost_ex_tax, includesTax, taxRate),
+    supplierCostInclTax: line.supplier_cost_incl_tax,
+    taxTreatment: line.tax_treatment,
+    taxRate: line.tax_rate,
+    inputTaxSource: line.input_tax_source,
+    inputTaxAmount: line.input_tax_amount,
+    claimInputTax: line.claim_input_tax,
+    claimablePercentage: line.claimable_percentage,
+    apportionmentBasis: line.apportionment_basis,
     destination: line.destination,
     baseQuantity: line.base_quantity,
     baseUnit: line.base_unit
@@ -92,7 +109,14 @@ function linePayload(line: ReceiptLineDraft): StockReceiptLineWrite {
     // omitting the unused one would leave a stale value behind on a PATCH.
     unit_code: kind === 'unit' ? (value as UnitCode) : null,
     unit_conversion: kind === 'conversion' ? Number(value) : null,
-    line_cost_ex_tax: line.lineCostExTax,
+    supplier_cost_incl_tax: line.supplierCostInclTax,
+    tax_treatment: line.taxTreatment,
+    tax_rate: line.taxRate,
+    input_tax_source: line.inputTaxSource,
+    input_tax_amount: line.inputTaxAmount,
+    claim_input_tax: line.claimInputTax,
+    claimable_percentage: line.claimablePercentage,
+    apportionment_basis: line.apportionmentBasis,
     destination: Number(line.destination)
   }
 }
@@ -218,16 +242,111 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
         {errors.destination && <Form.Text className="text-danger">{errors.destination}</Form.Text>}
       </td>
       <td>
+        <Form.Label className="small mb-0">Supplier cost incl tax</Form.Label>
         <Form.Control
           size="sm"
           type="number"
           min="0"
           step="0.0001"
-          value={line.lineCostExTax}
-          isInvalid={errors.line_cost_ex_tax !== undefined}
-          onChange={(event) => onChange(line.key, { lineCostExTax: event.target.value })}
+          value={line.supplierCostInclTax}
+          isInvalid={errors.supplier_cost_incl_tax !== undefined}
+          onChange={(event) => onChange(line.key, { supplierCostInclTax: event.target.value })}
         />
-        {errors.line_cost_ex_tax && <Form.Text className="text-danger">{errors.line_cost_ex_tax}</Form.Text>}
+        <Form.Select
+          size="sm"
+          className="mt-1"
+          value={line.taxTreatment}
+          onChange={(event) => onChange(line.key, { taxTreatment: event.target.value as PurchaseTaxTreatment, taxRate: event.target.value === 'standard' ? line.taxRate : '0' })}
+        >
+          <option value="unknown">Tax treatment unknown</option>
+          <option value="standard">Standard-rated</option>
+          <option value="zero_rated">Zero-rated</option>
+          <option value="exempt">Exempt</option>
+          <option value="out_of_scope">Out of scope</option>
+        </Form.Select>
+        {line.taxTreatment === 'standard' && (
+          <Form.Control
+            size="sm"
+            className="mt-1"
+            type="number"
+            min="0"
+            step="0.0001"
+            value={line.taxRate}
+            placeholder="Tax rate %"
+            onChange={(event) => onChange(line.key, { taxRate: event.target.value })}
+          />
+        )}
+        <Form.Select
+          size="sm"
+          className="mt-1"
+          value={line.inputTaxSource}
+          onChange={(event) =>
+            onChange(line.key, { inputTaxSource: event.target.value as InputTaxSource, inputTaxAmount: event.target.value === 'none' ? '0' : line.inputTaxAmount })
+          }
+        >
+          <option value="none">No input tax</option>
+          <option value="supplier">Supplier GST</option>
+          <option value="customs">Customs GST</option>
+          <option value="second_hand">Second-hand deduction</option>
+        </Form.Select>
+        {line.inputTaxSource !== 'none' && (
+          <Form.Control
+            size="sm"
+            className="mt-1"
+            type="number"
+            min="0"
+            step="0.0001"
+            value={line.inputTaxAmount}
+            placeholder="Input tax amount"
+            onChange={(event) => onChange(line.key, { inputTaxAmount: event.target.value })}
+          />
+        )}
+        {line.inputTaxSource !== 'none' && (
+          <>
+            <Form.Check
+              className="mt-1"
+              type="checkbox"
+              label="Claim input tax"
+              checked={line.claimInputTax}
+              onChange={(event) =>
+                onChange(line.key, {
+                  claimInputTax: event.target.checked,
+                  claimablePercentage: event.target.checked ? (line.claimablePercentage === '0' ? '100' : line.claimablePercentage) : '0'
+                })
+              }
+            />
+            {line.claimInputTax && (
+              <Form.Control
+                size="sm"
+                type="number"
+                min="0"
+                max="100"
+                step="0.0001"
+                value={line.claimablePercentage}
+                placeholder="Claimable %"
+                onChange={(event) => onChange(line.key, { claimablePercentage: event.target.value })}
+              />
+            )}
+            {line.claimInputTax && line.claimablePercentage !== '100' && (
+              <Form.Control
+                size="sm"
+                className="mt-1"
+                value={line.apportionmentBasis}
+                placeholder="Apportionment basis"
+                onChange={(event) => onChange(line.key, { apportionmentBasis: event.target.value })}
+              />
+            )}
+          </>
+        )}
+        {Object.entries(errors)
+          .filter(([field]) =>
+            ['supplier_cost_incl_tax', 'tax_treatment', 'tax_rate', 'input_tax_source', 'input_tax_amount', 'claimable_percentage', 'apportionment_basis'].includes(field)
+          )
+          .map(([field, message]) => (
+            <Form.Text key={field} className="text-danger d-block">
+              {message}
+            </Form.Text>
+          ))}
       </td>
       <td>
         <Form.Control
@@ -272,17 +391,20 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
   const [supplier, setSupplier] = React.useState<number | ''>(receipt?.supplier ?? '')
   const [receivedDate, setReceivedDate] = React.useState(receipt?.received_date ?? new Date().toISOString().slice(0, 10))
   const [supplierReference, setSupplierReference] = React.useState(receipt?.supplier_reference ?? '')
+  const [invoiceDate, setInvoiceDate] = React.useState(receipt?.invoice_date ?? '')
+  const [sourceDocumentType, setSourceDocumentType] = React.useState<ReceiptDocumentType>(receipt?.source_document_type ?? 'none')
+  const [sourceDocumentNumber, setSourceDocumentNumber] = React.useState(receipt?.source_document_number ?? '')
+  const [evidenceReference, setEvidenceReference] = React.useState(receipt?.evidence_reference ?? '')
+  const [evidenceUrl, setEvidenceUrl] = React.useState(receipt?.evidence_url ?? '')
   const [currencyCode, setCurrencyCode] = React.useState(receipt?.currency_code ?? '')
-  const [taxRate, setTaxRate] = React.useState(receipt?.tax_rate ?? '')
-  const [priceIncludesTax, setPriceIncludesTax] = React.useState(receipt?.price_includes_tax ?? false)
-  const [taxRecoverable, setTaxRecoverable] = React.useState(receipt?.tax_recoverable ?? true)
   const [notes, setNotes] = React.useState(receipt?.notes ?? '')
   const [lines, setLines] = React.useState<Array<ReceiptLineDraft>>(() =>
-    receipt && receipt.lines.length > 0 ? receipt.lines.map((line) => hydrateLine(line, `saved-${line.pk}`, receipt.price_includes_tax, receipt.tax_rate)) : [blankLine(freshKey())]
+    receipt && receipt.lines.length > 0 ? receipt.lines.map((line) => hydrateLine(line, `saved-${line.pk}`)) : [blankLine(freshKey())]
   )
   const [error, setError] = React.useState<string>()
   const [lineErrors, setLineErrors] = React.useState<Array<Record<string, string>>>([])
   const [saved, setSaved] = React.useState(false)
+  const [taxWarnings, setTaxWarnings] = React.useState(receipt?.tax_warnings ?? [])
 
   const selectableItems = receivableItems(items)
   const selectableLocations = receivableLocations(locations)
@@ -322,13 +444,15 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
         supplier: Number(supplier),
         received_date: receivedDate,
         supplier_reference: supplierReference,
-        tax_recoverable: taxRecoverable,
-        price_includes_tax: priceIncludesTax,
+        invoice_date: invoiceDate || null,
+        source_document_type: sourceDocumentType,
+        source_document_number: sourceDocumentNumber,
+        evidence_reference: evidenceReference,
+        evidence_url: evidenceUrl,
         notes,
         // Blank means "whatever the workspace says", which the server fills in
         // and returns, so these inputs populate themselves after the first save.
         ...(currencyCode.trim() === '' ? {} : { currency_code: currencyCode }),
-        ...(taxRate.trim() === '' ? {} : { tax_rate: taxRate }),
         lines: lines.map(linePayload)
       }
       return receiptPk === null ? createStockReceipt(payload) : updateStockReceipt(receiptPk, payload)
@@ -336,12 +460,11 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
     onSuccess: async (response) => {
       setReceiptPk(response.pk)
       setCurrencyCode(response.currency_code)
-      setTaxRate(response.tax_rate)
-      setPriceIncludesTax(response.price_includes_tax)
       // A PATCH deletes and recreates every line, so the returned pks are all
       // new. Identity is carried positionally instead, which the server
       // guarantees by creating lines in the order they were submitted.
-      setLines((current) => response.lines.map((line, index) => hydrateLine(line, current[index]?.key ?? `saved-${line.pk}`, response.price_includes_tax, response.tax_rate)))
+      setLines((current) => response.lines.map((line, index) => hydrateLine(line, current[index]?.key ?? `saved-${line.pk}`)))
+      setTaxWarnings(response.tax_warnings)
       setError(undefined)
       setLineErrors([])
       setSaved(true)
@@ -350,7 +473,7 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
     onError: recordFailure
   })
 
-  const complete = lines.every((line) => line.item !== '' && line.destination !== '' && line.unitChoice !== '' && line.lineCostExTax.trim() !== '')
+  const complete = lines.every((line) => line.item !== '' && line.destination !== '' && line.unitChoice !== '' && line.supplierCostInclTax.trim() !== '')
   const quantified = lines.every((line) => line.quantityCertainty === 'unknown' || line.quantity.trim() !== '')
   const readyToSave = supplier !== '' && receivedDate !== '' && lines.length > 0 && complete && quantified
 
@@ -391,48 +514,52 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
             </Form.Group>
           </Col>
           <Col md={2}>
-            <Form.Group className="mb-3" controlId="receipt-tax-rate">
-              <Form.Label>Tax rate %</Form.Label>
-              <Form.Control value={taxRate} inputMode="decimal" placeholder="Workspace default" onChange={(event) => setTaxRate(event.target.value)} />
-            </Form.Group>
-          </Col>
-          <Col md={2}>
-            <Form.Group className="mb-3" controlId="receipt-price-basis">
-              <Form.Label>Prices</Form.Label>
-              <Form.Select
-                value={priceIncludesTax ? 'inclusive' : 'exclusive'}
-                onChange={(event) => {
-                  const nextIncludesTax = event.target.value === 'inclusive'
-                  setLines((current) =>
-                    current.map((line) => ({
-                      ...line,
-                      lineCostExTax: convertEntryPrice(line.lineCostExTax, priceIncludesTax, nextIncludesTax, taxRate)
-                    }))
-                  )
-                  setPriceIncludesTax(nextIncludesTax)
-                }}
-              >
-                <option value="exclusive">Ex GST</option>
-                <option value="inclusive">Inc GST</option>
-              </Form.Select>
+            <Form.Group className="mb-3" controlId="receipt-invoice-date">
+              <Form.Label>Invoice date</Form.Label>
+              <Form.Control type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} />
             </Form.Group>
           </Col>
         </Row>
         <Row className="g-2">
-          <Col md={9}>
+          <Col md={3}>
+            <Form.Group className="mb-3" controlId="receipt-source-document-type">
+              <Form.Label>Source record</Form.Label>
+              <Form.Select value={sourceDocumentType} onChange={(event) => setSourceDocumentType(event.target.value as ReceiptDocumentType)}>
+                <option value="none">None recorded</option>
+                <option value="taxable_supply">Taxable supply information</option>
+                <option value="invoice">Invoice</option>
+                <option value="receipt">Receipt</option>
+                <option value="buyer_created">Buyer-created information</option>
+                <option value="customs_entry">Customs entry or statement</option>
+                <option value="contract">Contract or agreement</option>
+                <option value="bank_record">Bank record</option>
+                <option value="other">Other</option>
+              </Form.Select>
+            </Form.Group>
+          </Col>
+          <Col md={3}>
+            <Form.Group className="mb-3" controlId="receipt-source-document-number">
+              <Form.Label>Document number</Form.Label>
+              <Form.Control value={sourceDocumentNumber} onChange={(event) => setSourceDocumentNumber(event.target.value)} />
+            </Form.Group>
+          </Col>
+          <Col md={3}>
+            <Form.Group className="mb-3" controlId="receipt-evidence-reference">
+              <Form.Label>Evidence reference</Form.Label>
+              <Form.Control value={evidenceReference} onChange={(event) => setEvidenceReference(event.target.value)} />
+            </Form.Group>
+          </Col>
+          <Col md={3}>
+            <Form.Group className="mb-3" controlId="receipt-evidence-url">
+              <Form.Label>Evidence URL</Form.Label>
+              <Form.Control type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} />
+            </Form.Group>
+          </Col>
+          <Col md={12}>
             <Form.Group className="mb-3" controlId="receipt-notes">
               <Form.Label>Notes</Form.Label>
               <Form.Control value={notes} onChange={(event) => setNotes(event.target.value)} />
             </Form.Group>
-          </Col>
-          <Col md={3} className="d-flex align-items-center">
-            <Form.Check
-              id="receipt-tax-recoverable"
-              type="checkbox"
-              label="Tax is recoverable"
-              checked={taxRecoverable}
-              onChange={(event) => setTaxRecoverable(event.target.checked)}
-            />
           </Col>
         </Row>
 
@@ -444,7 +571,7 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
               <th>Unit</th>
               <th>Normalizes to</th>
               <th>Destination</th>
-              <th>{priceIncludesTax ? 'Price inc GST' : 'Price ex GST'}</th>
+              <th>Cost and input tax</th>
               <th>Lot reference and expiry</th>
               <th />
             </tr>
@@ -471,6 +598,11 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
         </Button>
 
         {error && <Alert variant="danger">{error}</Alert>}
+        {taxWarnings.map((warning) => (
+          <Alert key={`${warning.code}-${warning.line_id ?? 'receipt'}`} variant="warning" className="py-2">
+            {warning.message}
+          </Alert>
+        ))}
         {saved && <Alert variant="info">Saved as a draft. Nothing has moved yet — check the normalized quantities, then post it from the list below.</Alert>}
 
         <div className="d-flex gap-2">

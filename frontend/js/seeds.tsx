@@ -7,6 +7,7 @@ import Select from 'react-select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { Supplier, SupplierCreate } from './types/suppliers'
+import { InputTaxSource, PurchaseTaxTreatment, ReceiptDocumentType } from './types/inventory'
 import { Seed, SeedCreate, SeedPacket, SeedPacketProvenance, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation, SeedQuantityCertainty } from './types/seeds'
 import { Plant, PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
@@ -36,6 +37,9 @@ interface NewSeedSupplierRowProps {
 
 interface NewSeedSupplierRowState {
   name: string
+  address: string
+  gstStatus: 'registered' | 'unregistered' | 'unknown'
+  gstNumber: string
   website?: string
   notes?: string
 }
@@ -46,6 +50,9 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
 
     this.state = {
       name: '',
+      address: '',
+      gstStatus: 'unknown',
+      gstNumber: '',
       website: undefined,
       notes: undefined
     }
@@ -78,6 +85,9 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
   async add() {
     const data: SupplierCreate = {
       name: this.state.name,
+      address: this.state.address,
+      gst_status: this.state.gstStatus,
+      gst_number: this.state.gstStatus === 'registered' ? this.state.gstNumber : '',
       notes: this.state.notes
     }
     if (this.state.website && this.state.website !== '') {
@@ -95,6 +105,15 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
         </td>
         <td>
           <input type="text" onChange={this.updateWebsite} />
+        </td>
+        <td>
+          <textarea placeholder="Address" onChange={(event) => this.setState({ address: event.target.value })} />
+          <select value={this.state.gstStatus} onChange={(event) => this.setState({ gstStatus: event.target.value as NewSeedSupplierRowState['gstStatus'] })}>
+            <option value="unknown">GST status unknown</option>
+            <option value="registered">GST registered</option>
+            <option value="unregistered">Not GST registered</option>
+          </select>
+          {this.state.gstStatus === 'registered' && <input type="text" placeholder="GST number" onChange={(event) => this.setState({ gstNumber: event.target.value })} />}
         </td>
         <td>
           <textarea onChange={this.updateNotes} />
@@ -126,6 +145,10 @@ class SeedSupplierRow extends React.Component<SeedSupplierRowProps> {
         </td>
         <td>
           <a href={this.props.supplier.website}>{this.props.supplier.website}</a>
+        </td>
+        <td>
+          <div>{this.props.supplier.address || '—'}</div>
+          <div>{this.props.supplier.gst_status === 'registered' ? `GST ${this.props.supplier.gst_number}` : this.props.supplier.gst_status}</div>
         </td>
         <td>{this.props.supplier.notes}</td>
       </tr>
@@ -167,6 +190,7 @@ function SeedSuppliersTable() {
             </Button>
           </td>
           <td>Website</td>
+          <td>Tax identity</td>
           <td>Notes</td>
         </tr>
       </thead>
@@ -421,14 +445,24 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
   const [seedPk, setSeedPk] = React.useState<number | undefined>(draft?.seeds)
   const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>(draft?.quantity_certainty ?? 'unknown')
   const [quantity, setQuantity] = React.useState(draft?.quantity ? formatQuantity(draft.quantity) : '')
-  const [price, setPrice] = React.useState(draft?.line_price ?? (priceRequired ? '' : '0'))
+  const [price, setPrice] = React.useState(draft?.supplier_cost_incl_tax ?? draft?.line_price ?? (priceRequired ? '' : '0'))
   const [receivedDate, setReceivedDate] = React.useState(draft?.received_date ?? new Date().toISOString().slice(0, 10))
   const [sowBy, setSowBy] = React.useState(draft?.sow_by ?? '')
   const [supplierLot, setSupplierLot] = React.useState(draft?.supplier_lot_reference ?? '')
   const [vendorPk, setVendorPk] = React.useState<number | undefined>(draft?.supplier)
   const [supplierReference, setSupplierReference] = React.useState(draft?.supplier_reference ?? '')
+  const [invoiceDate, setInvoiceDate] = React.useState(draft?.invoice_date ?? '')
+  const [sourceDocumentType, setSourceDocumentType] = React.useState<ReceiptDocumentType>(draft?.source_document_type ?? 'none')
+  const [sourceDocumentNumber, setSourceDocumentNumber] = React.useState(draft?.source_document_number ?? '')
+  const [evidenceReference, setEvidenceReference] = React.useState(draft?.evidence_reference ?? '')
+  const [evidenceUrl, setEvidenceUrl] = React.useState(draft?.evidence_url ?? '')
   const [taxRate, setTaxRate] = React.useState(draft?.tax_rate ?? '')
-  const [taxRecoverable, setTaxRecoverable] = React.useState(draft?.tax_recoverable ?? false)
+  const [taxTreatment, setTaxTreatment] = React.useState<PurchaseTaxTreatment>(draft?.tax_treatment ?? 'unknown')
+  const [inputTaxSource, setInputTaxSource] = React.useState<InputTaxSource>(draft?.input_tax_source ?? 'none')
+  const [inputTaxAmount, setInputTaxAmount] = React.useState(draft?.input_tax_amount ?? '0')
+  const [claimInputTax, setClaimInputTax] = React.useState(draft?.claim_input_tax ?? false)
+  const [claimablePercentage, setClaimablePercentage] = React.useState(draft?.claimable_percentage ?? '0')
+  const [apportionmentBasis, setApportionmentBasis] = React.useState(draft?.apportionment_basis ?? '')
   const [notes, setNotes] = React.useState(draft?.notes ?? '')
   const [errors, setErrors] = React.useState<Record<string, string>>({})
   const editing = draft !== undefined
@@ -475,8 +509,19 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
     data.supplier_lot_reference = supplierLot
     if (vendor) data.supplier = vendor
     data.supplier_reference = supplierReference
-    if (taxRate) data.tax_rate = taxRate
-    data.tax_recoverable = taxRecoverable
+    data.invoice_date = invoiceDate || null
+    data.source_document_type = sourceDocumentType
+    data.source_document_number = sourceDocumentNumber
+    data.evidence_reference = evidenceReference
+    data.evidence_url = evidenceUrl
+    data.supplier_cost_incl_tax = price
+    data.tax_treatment = taxTreatment
+    data.tax_rate = taxTreatment === 'standard' ? taxRate : '0'
+    data.input_tax_source = inputTaxSource
+    data.input_tax_amount = inputTaxSource === 'none' ? '0' : inputTaxAmount
+    data.claim_input_tax = claimInputTax
+    data.claimable_percentage = claimInputTax ? claimablePercentage : '0'
+    data.apportionment_basis = apportionmentBasis
     data.notes = notes
     try {
       await onSave(data)
@@ -547,7 +592,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
             {fieldError('quantity')}
           </Form.Group>
           <Form.Group className="col-md-2">
-            <Form.Label>Line price</Form.Label>
+            <Form.Label>Supplier cost incl tax</Form.Label>
             <Form.Control required={priceRequired} type="number" min="0" step="0.0001" value={price} onChange={(event) => setPrice(event.target.value)} />
             {fieldError('line_price')}
           </Form.Group>
@@ -572,14 +617,84 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
             {fieldError('supplier_reference')}
           </Form.Group>
           <Form.Group className="col-md-2">
-            <Form.Label>Tax rate</Form.Label>
-            <Form.Control type="number" min="0" step="0.0001" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} />
-            {fieldError('tax_rate')}
+            <Form.Label>Invoice date</Form.Label>
+            <Form.Control type="date" value={invoiceDate} onChange={(event) => setInvoiceDate(event.target.value)} />
           </Form.Group>
           <Form.Group className="col-md-2">
-            <Form.Label>Tax</Form.Label>
-            <Form.Check type="checkbox" label="Recoverable" checked={taxRecoverable} onChange={(event) => setTaxRecoverable(event.target.checked)} />
-            {fieldError('tax_recoverable')}
+            <Form.Label>Tax treatment</Form.Label>
+            <Form.Select value={taxTreatment} onChange={(event) => setTaxTreatment(event.target.value as PurchaseTaxTreatment)}>
+              <option value="unknown">Unknown</option>
+              <option value="standard">Standard-rated</option>
+              <option value="zero_rated">Zero-rated</option>
+              <option value="exempt">Exempt</option>
+              <option value="out_of_scope">Out of scope</option>
+            </Form.Select>
+          </Form.Group>
+          {taxTreatment === 'standard' && (
+            <Form.Group className="col-md-2">
+              <Form.Label>Tax rate %</Form.Label>
+              <Form.Control type="number" min="0" step="0.0001" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} />
+            </Form.Group>
+          )}
+          <Form.Group className="col-md-2">
+            <Form.Label>Input-tax source</Form.Label>
+            <Form.Select value={inputTaxSource} onChange={(event) => setInputTaxSource(event.target.value as InputTaxSource)}>
+              <option value="none">None</option>
+              <option value="supplier">Supplier</option>
+              <option value="customs">Customs</option>
+              <option value="second_hand">Second-hand</option>
+            </Form.Select>
+          </Form.Group>
+          {inputTaxSource !== 'none' && (
+            <Form.Group className="col-md-2">
+              <Form.Label>Input tax</Form.Label>
+              <Form.Control type="number" min="0" step="0.0001" value={inputTaxAmount} onChange={(event) => setInputTaxAmount(event.target.value)} />
+            </Form.Group>
+          )}
+          {inputTaxSource !== 'none' && (
+            <Form.Group className="col-md-2">
+              <Form.Check
+                type="checkbox"
+                label="Claim input tax"
+                checked={claimInputTax}
+                onChange={(event) => {
+                  setClaimInputTax(event.target.checked)
+                  setClaimablePercentage(event.target.checked ? '100' : '0')
+                }}
+              />
+              {claimInputTax && (
+                <Form.Control type="number" min="0" max="100" step="0.0001" value={claimablePercentage} onChange={(event) => setClaimablePercentage(event.target.value)} />
+              )}
+            </Form.Group>
+          )}
+          {claimInputTax && claimablePercentage !== '100' && (
+            <Form.Group className="col-md-3">
+              <Form.Label>Apportionment basis</Form.Label>
+              <Form.Control value={apportionmentBasis} onChange={(event) => setApportionmentBasis(event.target.value)} />
+            </Form.Group>
+          )}
+          <Form.Group className="col-md-3">
+            <Form.Label>Source record</Form.Label>
+            <Form.Select value={sourceDocumentType} onChange={(event) => setSourceDocumentType(event.target.value as ReceiptDocumentType)}>
+              <option value="none">None recorded</option>
+              <option value="taxable_supply">Taxable supply information</option>
+              <option value="invoice">Invoice</option>
+              <option value="receipt">Receipt</option>
+              <option value="customs_entry">Customs entry</option>
+              <option value="other">Other</option>
+            </Form.Select>
+          </Form.Group>
+          <Form.Group className="col-md-3">
+            <Form.Label>Document number</Form.Label>
+            <Form.Control value={sourceDocumentNumber} onChange={(event) => setSourceDocumentNumber(event.target.value)} />
+          </Form.Group>
+          <Form.Group className="col-md-3">
+            <Form.Label>Evidence reference</Form.Label>
+            <Form.Control value={evidenceReference} onChange={(event) => setEvidenceReference(event.target.value)} />
+          </Form.Group>
+          <Form.Group className="col-md-3">
+            <Form.Label>Evidence URL</Form.Label>
+            <Form.Control type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} />
           </Form.Group>
           <Form.Group className="col-md-4">
             <Form.Label>Notes</Form.Label>

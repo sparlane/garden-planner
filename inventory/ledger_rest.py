@@ -2,7 +2,7 @@
 
 # pylint: disable=too-many-lines
 
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -217,9 +217,6 @@ class StockReceiptSerializer(
             'supplier_gst_status',
             'supplier_gst_number',
             'currency_code',
-            'tax_rate',
-            'price_includes_tax',
-            'tax_recoverable',
             'settled_on',
             'notes',
             'created_by',
@@ -247,7 +244,6 @@ class StockReceiptSerializer(
         extra_kwargs = {
             'supplier': {'required': False},
             'currency_code': {'required': False},
-            'tax_rate': {'required': False},
         }
 
     workspace_field_lookups = {'supplier': 'workspace'}
@@ -279,7 +275,6 @@ class StockReceiptSerializer(
         if self.instance is None:
             workspace = get_current_workspace()
             attrs.setdefault('currency_code', workspace.currency_code)
-            attrs.setdefault('tax_rate', workspace.default_tax_rate)
             attrs.setdefault('supplier', ensure_default_supplier(workspace))
         supplier = attrs.get('supplier') or getattr(self.instance, 'supplier', None)
         if supplier is not None:
@@ -293,7 +288,7 @@ class StockReceiptSerializer(
     def create(self, validated_data):
         """Create a draft and its normalized nested lines atomically."""
         lines = validated_data.pop('lines', [])
-        lines = self._canonical_lines(validated_data, lines)
+        lines = self._canonical_lines(lines)
         receipt = StockReceipt.objects.create(**validated_data)
         for line in lines:
             StockReceiptLine.objects.create(receipt=receipt, **line)
@@ -304,17 +299,7 @@ class StockReceiptSerializer(
         """Update a draft, replacing nested lines only when supplied."""
         lines = validated_data.pop('lines', None)
         if lines is not None:
-            lines = self._canonical_lines(
-                {
-                    **validated_data,
-                    'price_includes_tax': validated_data.get(
-                        'price_includes_tax',
-                        instance.price_includes_tax,
-                    ),
-                    'tax_rate': validated_data.get('tax_rate', instance.tax_rate),
-                },
-                lines,
-            )
+            lines = self._canonical_lines(lines)
         instance = super().update(instance, validated_data)
         if lines is not None:
             instance.lines.all().delete()
@@ -323,43 +308,10 @@ class StockReceiptSerializer(
         return instance
 
     @staticmethod
-    def _canonical_lines(receipt_data, lines):
-        """Translate only the deprecated receipt-wide tax inputs."""
-        rate = receipt_data.get('tax_rate', Decimal('0'))
-        recoverable = receipt_data.get('tax_recoverable', False)
+    def _canonical_lines(lines):
+        """Discard the temporary marker accepted from legacy ex-tax clients."""
         for line in lines:
-            legacy_receipt_tax = line.pop('_legacy_receipt_tax', False)
-            if not legacy_receipt_tax:
-                continue
-            if line.get(
-                'input_tax_source', StockReceiptLine.InputTaxSource.NONE,
-            ) != StockReceiptLine.InputTaxSource.NONE:
-                continue
-            entered = line['supplier_cost_incl_tax']
-            if rate <= 0:
-                continue
-            if receipt_data.get('price_includes_tax', False):
-                gross = entered
-                tax = (gross * rate / (Decimal('100') + rate)).quantize(
-                    Decimal('0.0001'), rounding=ROUND_HALF_UP,
-                )
-            else:
-                tax = (entered * rate / Decimal('100')).quantize(
-                    Decimal('0.0001'), rounding=ROUND_HALF_UP,
-                )
-                gross = entered + tax
-            if tax == 0:
-                line['supplier_cost_incl_tax'] = gross
-                continue
-            line.update({
-                'supplier_cost_incl_tax': gross,
-                'tax_treatment': StockReceiptLine.TaxTreatment.STANDARD,
-                'tax_rate': rate,
-                'input_tax_source': StockReceiptLine.InputTaxSource.SUPPLIER,
-                'input_tax_amount': tax,
-                'claim_input_tax': recoverable,
-                'claimable_percentage': Decimal('100') if recoverable else Decimal('0'),
-            })
+            line.pop('_legacy_receipt_tax', None)
         return lines
 
 

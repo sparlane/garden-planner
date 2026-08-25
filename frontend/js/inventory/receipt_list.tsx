@@ -1,8 +1,8 @@
 import React from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Form, Table } from 'react-bootstrap'
 
-import { deleteStockReceipt, postStockReceipt, reverseStockReceipt } from '../api/inventory'
+import { createInputTaxAdjustment, deleteStockReceipt, getInputTaxAdjustments, postStockReceipt, reverseStockReceipt } from '../api/inventory'
 import { ReceiptSettlement } from './settlement'
 import { formatMeasure } from '../utils'
 import { InventoryItem, StockReceipt, StockReceiptLine } from '../types/inventory'
@@ -214,32 +214,132 @@ function ReceiptLinesTable({ receipt, items, locations }: ReceiptLinesTableProps
     return <span className="text-muted">No lines yet.</span>
   }
   return (
-    <Table size="sm" className="mb-0">
-      <thead>
-        <tr>
-          <th>Item</th>
-          <th>Quantity</th>
-          <th>Destination</th>
-          <th>Cost</th>
-          <th>Lot</th>
-        </tr>
-      </thead>
-      <tbody>
-        {receipt.lines.map((line) => (
-          <tr key={line.pk}>
-            <td>{items.find((item) => item.pk === line.item)?.name ?? `#${line.item}`}</td>
-            <td>
-              <LineQuantity line={line} />
-            </td>
-            <td>{locations.find((location) => location.pk === line.destination)?.name ?? `#${line.destination}`}</td>
-            <td>
-              {line.line_cost_ex_tax} {receipt.currency_code}
-            </td>
-            <td className="small">{line.lot !== null ? `#${line.lot}` : '—'}</td>
+    <>
+      {receipt.tax_warnings.map((warning) => (
+        <Alert key={`${warning.code}-${warning.line_id ?? 'receipt'}`} variant="warning" className="py-1 mb-1 small">
+          {warning.message}
+        </Alert>
+      ))}
+      <Table size="sm" className="mb-0">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Quantity</th>
+            <th>Destination</th>
+            <th>Cost</th>
+            <th>Lot</th>
           </tr>
-        ))}
-      </tbody>
-    </Table>
+        </thead>
+        <tbody>
+          {receipt.lines.map((line) => (
+            <tr key={line.pk}>
+              <td>{items.find((item) => item.pk === line.item)?.name ?? `#${line.item}`}</td>
+              <td>
+                <LineQuantity line={line} />
+              </td>
+              <td>{locations.find((location) => location.pk === line.destination)?.name ?? `#${line.destination}`}</td>
+              <td>
+                <div>
+                  {line.supplier_cost_incl_tax} {receipt.currency_code} supplier cost
+                </div>
+                <div className="small">
+                  Input tax {line.input_tax_amount}; recoverable {line.recoverable_input_tax}; non-recoverable {line.non_recoverable_tax}
+                </div>
+                <div className="small">Inventory acquisition {line.acquisition_amount}</div>
+              </td>
+              <td className="small">{line.lot !== null ? `#${line.lot}` : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </>
+  )
+}
+
+function InputTaxAdjustments({ receipt }: { receipt: StockReceipt }) {
+  const queryClient = useQueryClient()
+  const queryKey = ['input-tax-adjustments', receipt.pk]
+  const [show, setShow] = React.useState(false)
+  const [line, setLine] = React.useState(receipt.lines[0]?.pk ?? 0)
+  const [adjustmentDate, setAdjustmentDate] = React.useState(new Date().toISOString().slice(0, 10))
+  const [revisedPercentage, setRevisedPercentage] = React.useState('')
+  const [basis, setBasis] = React.useState('')
+  const [reason, setReason] = React.useState('')
+  const [evidenceReference, setEvidenceReference] = React.useState('')
+  const [error, setError] = React.useState<string>()
+  const { data: adjustments = [] } = useQuery({
+    queryKey,
+    queryFn: ({ signal }) => getInputTaxAdjustments(receipt.pk, signal),
+    enabled: show
+  })
+  const mutation = useMutation({
+    mutationFn: () =>
+      createInputTaxAdjustment({
+        receipt_line: line,
+        adjustment_date: adjustmentDate,
+        revised_claimable_percentage: revisedPercentage,
+        apportionment_basis: basis,
+        reason,
+        evidence_reference: evidenceReference
+      }),
+    onSuccess: async () => {
+      setError(undefined)
+      setRevisedPercentage('')
+      setBasis('')
+      setReason('')
+      setEvidenceReference('')
+      await queryClient.invalidateQueries({ queryKey })
+      await invalidateReceipts(queryClient)
+    },
+    onError: (caught) => setError(localErrorMessage(caught))
+  })
+
+  return (
+    <div className="mt-2">
+      <Button size="sm" variant="outline-secondary" onClick={() => setShow((current) => !current)}>
+        {show ? 'Hide tax adjustments' : 'Tax use changed'}
+      </Button>
+      {show && (
+        <div className="mt-2 small">
+          {adjustments.map((adjustment) => (
+            <div key={adjustment.pk}>
+              {adjustment.adjustment_date}: {adjustment.tax_adjustment} GST ({adjustment.previous_claimable_percentage}% → {adjustment.revised_claimable_percentage}%) —{' '}
+              {adjustment.reason}
+            </div>
+          ))}
+          <Form.Select size="sm" className="mt-1" value={line} onChange={(event) => setLine(Number(event.target.value))}>
+            {receipt.lines.map((entry) => (
+              <option key={entry.pk} value={entry.pk}>
+                Line #{entry.pk}
+              </option>
+            ))}
+          </Form.Select>
+          <Form.Control size="sm" className="mt-1" type="date" value={adjustmentDate} onChange={(event) => setAdjustmentDate(event.target.value)} />
+          <Form.Control
+            size="sm"
+            className="mt-1"
+            type="number"
+            min="0"
+            max="100"
+            step="0.0001"
+            value={revisedPercentage}
+            placeholder="Revised claimable %"
+            onChange={(event) => setRevisedPercentage(event.target.value)}
+          />
+          <Form.Control size="sm" className="mt-1" value={basis} placeholder="Revised apportionment basis" onChange={(event) => setBasis(event.target.value)} />
+          <Form.Control size="sm" className="mt-1" value={reason} placeholder="Reason use changed" onChange={(event) => setReason(event.target.value)} />
+          <Form.Control size="sm" className="mt-1" value={evidenceReference} placeholder="Evidence reference" onChange={(event) => setEvidenceReference(event.target.value)} />
+          {error && (
+            <Alert variant="danger" className="py-1 mt-1">
+              {error}
+            </Alert>
+          )}
+          <Button size="sm" className="mt-1" disabled={!line || !revisedPercentage || !basis || !reason || mutation.isPending} onClick={() => mutation.mutate()}>
+            Record adjustment
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -284,7 +384,12 @@ function ReceiptTable({ receipts, items, locations, suppliers, onEdit, onCancell
             </td>
             <td>
               {receipt.status === 'draft' && <DraftActions receipt={receipt} onEdit={onEdit} onCancelled={onCancelled} />}
-              {receipt.status === 'posted' && <ReverseReceiptButton receipt={receipt} />}
+              {receipt.status === 'posted' && (
+                <>
+                  <ReverseReceiptButton receipt={receipt} />
+                  <InputTaxAdjustments receipt={receipt} />
+                </>
+              )}
               {receipt.status === 'reversed' && <span className="text-muted">—</span>}
             </td>
           </tr>

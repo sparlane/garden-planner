@@ -23,8 +23,6 @@ interface SeedTrayReceiptCreate {
   quantity: number
   line_cost_ex_tax?: string
   destination: number
-  tax_rate?: string
-  tax_recoverable?: boolean
   notes?: string
 }
 

@@ -77,7 +77,6 @@ class LedgerServiceTests(TestCase):
             'supplier': self.supplier,
             'received_date': date(2026, 8, 1),
             'currency_code': self.workspace.currency_code,
-            'tax_rate': self.workspace.default_tax_rate,
             'created_by': self.user,
         }
         values.update(overrides)
@@ -92,6 +91,11 @@ class LedgerServiceTests(TestCase):
             'unit_code': UnitCode.LITRE,
             'base_quantity': Decimal('2000'),
             'line_cost_ex_tax': Decimal('10'),
+            'supplier_cost_incl_tax': Decimal('11.5'),
+            'tax_treatment': StockReceiptLine.TaxTreatment.STANDARD,
+            'tax_rate': Decimal('15'),
+            'input_tax_source': StockReceiptLine.InputTaxSource.SUPPLIER,
+            'input_tax_amount': Decimal('1.5'),
             'destination': self.store,
         }
         values.update(overrides)
@@ -114,10 +118,7 @@ class LedgerServiceTests(TestCase):
 
     def test_post_receipt_creates_exact_lots_costs_and_balances(self):
         """Every line becomes one immutable valued lot and receipt movement."""
-        receipt = self.make_receipt(
-            supplier_reference='INV-100',
-            tax_recoverable=False,
-        )
+        receipt = self.make_receipt(supplier_reference='INV-100')
         first_line = self.add_receipt_line(receipt)
         second_item = InventoryItem.objects.create(
             workspace=self.workspace,
@@ -132,6 +133,8 @@ class LedgerServiceTests(TestCase):
             unit_code=UnitCode.EACH,
             base_quantity=Decimal('100'),
             line_cost_ex_tax=Decimal('20'),
+            supplier_cost_incl_tax=Decimal('23'),
+            input_tax_amount=Decimal('3'),
         )
 
         posted, lots = post_receipt(receipt, self.user)

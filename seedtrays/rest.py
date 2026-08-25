@@ -135,14 +135,6 @@ class SeedTrayReceiptSerializer(
     destination = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(),
     )
-    tax_rate = serializers.DecimalField(
-        max_digits=7,
-        decimal_places=4,
-        min_value=Decimal('0'),
-        max_value=Decimal('100'),
-        required=False,
-    )
-    tax_recoverable = serializers.BooleanField(required=False, default=True)
     notes = serializers.CharField(allow_blank=True, required=False, default='')
     workspace_field_lookups = {
         'supplier': 'workspace',
@@ -220,8 +212,6 @@ class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet)
             received_date=values['received_date'],
             supplier_reference=values['supplier_reference'],
             currency_code=workspace.currency_code,
-            tax_rate=values.get('tax_rate', workspace.default_tax_rate),
-            tax_recoverable=values['tax_recoverable'],
             notes=values['notes'],
             created_by=request.user,
         )
@@ -232,6 +222,7 @@ class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet)
             unit_code=UnitCode.EACH,
             base_quantity=Decimal(values['quantity']),
             line_cost_ex_tax=values['line_cost_ex_tax'],
+            supplier_cost_incl_tax=values['line_cost_ex_tax'],
             destination=values['destination'],
         )
         try:

@@ -598,7 +598,13 @@ class SeedPacketProvenanceTests(APITestCase):
             'quantity': '50',
             'line_price': '6.0000',
             'received_date': '2026-03-10',
+            'supplier_cost_incl_tax': '6.9000',
+            'tax_treatment': 'standard',
             'tax_rate': '15',
+            'input_tax_source': 'supplier',
+            'input_tax_amount': '0.9000',
+            'claim_input_tax': False,
+            'claimable_percentage': '0',
         }
         payload.update(overrides)
         draft = self.client.post('/seeds/packet-receipts/', payload, format='json')
