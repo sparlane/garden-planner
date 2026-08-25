@@ -15,6 +15,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from attachments.rest import AttachmentSerializer
+
 from garden.models import GardenRow, GardenSquare
 from inventory.models import (
     POSITIVE_DECIMAL,
@@ -84,6 +86,7 @@ class HarvestSerializer(serializers.ModelSerializer):
     location_label = serializers.SerializerMethodField()
     plants = serializers.SerializerMethodField()
     finished_plants = serializers.SerializerMethodField()
+    attachments = AttachmentSerializer(source='image_attachments', many=True, read_only=True)
 
     class Meta:
         model = Harvest
@@ -112,6 +115,7 @@ class HarvestSerializer(serializers.ModelSerializer):
             'created',
             'plants',
             'finished_plants',
+            'attachments',
         ]
         read_only_fields = fields
 
@@ -271,7 +275,7 @@ class HarvestViewSet(
         'batch__variety__plant',
         'garden_square',
         'garden_row',
-    ).prefetch_related('plant_allocations')
+    ).prefetch_related('plant_allocations', 'image_attachments')
     serializer_class = HarvestSerializer
     http_method_names = ['get', 'post', 'head', 'options']
     bind_workspace_on_create = False

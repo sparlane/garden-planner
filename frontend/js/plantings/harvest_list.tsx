@@ -2,7 +2,9 @@ import React from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Form, Table } from 'react-bootstrap'
 
+import { AttachmentGallery, AttachmentUploader } from '../attachments'
 import { reverseHarvest } from '../api/plantings'
+import { queryKeys } from '../query'
 import { formatDateTime, formatMeasure } from '../utils'
 import { HARVEST_UNIT_LABELS, Harvest, HarvestFamilyTotal, HarvestGrade } from '../types/plantings'
 import { invalidateHarvests } from './harvest_form'
@@ -86,6 +88,7 @@ interface HarvestTableProps {
 }
 
 function HarvestTable({ harvests, showCrop = true, showLocation = true }: HarvestTableProps) {
+  const queryClient = useQueryClient()
   if (harvests.length === 0) {
     return <p className="text-muted mb-0">No harvests recorded yet.</p>
   }
@@ -129,6 +132,16 @@ function HarvestTable({ harvests, showCrop = true, showLocation = true }: Harves
               <td>
                 {harvest.notes || '—'}
                 {reversed && harvest.reverse_reason && <div>Reversed: {harvest.reverse_reason}</div>}
+                <AttachmentGallery attachments={harvest.attachments} />
+                <details className="mt-2">
+                  <summary>Add photos</summary>
+                  <AttachmentUploader
+                    id={`harvest-photos-${harvest.pk}`}
+                    targetType="harvest"
+                    targetId={harvest.pk}
+                    onUploaded={() => void queryClient.invalidateQueries({ queryKey: queryKeys.plantings.harvestsAll })}
+                  />
+                </details>
               </td>
               <td className="text-nowrap">
                 <ReverseHarvestButton harvest={harvest} />

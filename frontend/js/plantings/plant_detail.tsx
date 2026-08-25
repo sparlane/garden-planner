@@ -1,8 +1,9 @@
 import React from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card, Col, Row, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
 
+import { AttachmentGallery, AttachmentUploader } from '../attachments'
 import { getPlantCostBreakdown } from '../api/costing'
 import { getSpecificPlant, getSpecificPlantLifecycleEvents } from '../api/plantings'
 import { queryKeys } from '../query'
@@ -92,6 +93,7 @@ interface PlantDetailViewProps {
 }
 
 function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
+  const queryClient = useQueryClient()
   const { data: plant, isPending } = useQuery({
     queryKey: queryKeys.plantings.specificPlantDetail(plantPk),
     queryFn: ({ signal }) => getSpecificPlant(plantPk, signal)
@@ -114,6 +116,8 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
   if (plant === undefined) {
     return <main className="container py-3">Plant not found.</main>
   }
+
+  const refreshPlant = () => queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantDetail(plantPk) })
 
   return (
     <main className="container py-3">
@@ -171,6 +175,16 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
                                 </a>
                               </div>
                             )}
+                            <AttachmentGallery attachments={entry.attachments} />
+                            <details className="mt-2">
+                              <summary>Add observation photos</summary>
+                              <AttachmentUploader
+                                id={`nursery-observation-photos-${entry.pk}`}
+                                targetType="nursery_observation"
+                                targetId={entry.pk}
+                                onUploaded={() => void refreshPlant()}
+                              />
+                            </details>
                           </td>
                         </tr>
                       ))}
@@ -181,6 +195,16 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
             </Card>
           </Col>
         )}
+        <Col md={6}>
+          <Card>
+            <Card.Header>Photos</Card.Header>
+            <Card.Body>
+              <AttachmentGallery attachments={plant.attachments} />
+              {plant.attachments.length === 0 && <p className="text-muted">No photos attached yet.</p>}
+              <AttachmentUploader id="plant-photos" targetType="plant" targetId={plant.pk} onUploaded={() => void refreshPlant()} />
+            </Card.Body>
+          </Card>
+        </Col>
         <Col md={6}>
           <Card>
             <Card.Header>Lineage</Card.Header>

@@ -1,4 +1,5 @@
 import { GardenSquare } from './garden'
+import { ImageAttachment } from './attachments'
 
 type ProductionBatchStatus = 'planned' | 'active' | 'output_finalized' | 'completed' | 'cancelled'
 
@@ -387,6 +388,7 @@ interface SpecificPlantDetail extends SpecificPlant {
   availability_intervals: Array<AvailabilityInterval>
   growth: NurseryGrowth
   nursery_observations: Array<NurseryObservation>
+  attachments: Array<ImageAttachment>
 }
 
 interface GrowthCatalogValue {
@@ -422,6 +424,7 @@ interface NurseryObservation extends NurseryGrowth {
   notes: string
   corrects: number | null
   input_application: number | null
+  attachments: Array<ImageAttachment>
 }
 
 interface SpecificPlantCreate {
@@ -668,6 +671,7 @@ interface Harvest {
   created: string
   plants: Array<number>
   finished_plants: Array<number>
+  attachments: Array<ImageAttachment>
 }
 
 interface HarvestCreate {
