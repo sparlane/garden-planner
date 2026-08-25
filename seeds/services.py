@@ -1,5 +1,8 @@
 """Transactional seed catalog, packet receiving, and counting services."""
 
+# Receipt evidence is intentionally mirrored by the one-line seed workflow.
+# pylint: disable=duplicate-code
+
 from decimal import Decimal
 from uuid import uuid4
 
@@ -118,11 +121,23 @@ def create_packet_receipt_draft(workspace, user, values):
     # was sold by the shop, and the receipt has to say so — it is the purchase
     # record a GST return and a supplier payment are read from. Defaulting to
     # the brand keeps buying direct a single choice rather than two.
+    supplier = values.get('supplier') or seeds.supplier
     receipt = StockReceipt.objects.create(
         workspace=workspace,
-        supplier=values.get('supplier') or seeds.supplier,
+        supplier=supplier,
         received_date=values['received_date'],
         supplier_reference=values.get('supplier_reference', ''),
+        invoice_date=values.get('invoice_date'),
+        source_document_type=values.get(
+            'source_document_type', StockReceipt.SourceDocumentType.NONE,
+        ),
+        source_document_number=values.get('source_document_number', ''),
+        evidence_reference=values.get('evidence_reference', ''),
+        evidence_url=values.get('evidence_url', ''),
+        supplier_name_snapshot=supplier.name,
+        supplier_address_snapshot=supplier.address,
+        supplier_gst_status=supplier.gst_status,
+        supplier_gst_number=supplier.gst_number,
         currency_code=workspace.currency_code,
         tax_rate=values.get('tax_rate', workspace.default_tax_rate),
         tax_recoverable=values.get('tax_recoverable', False),
@@ -134,18 +149,29 @@ def create_packet_receipt_draft(workspace, user, values):
     base_quantity = None
     if certainty != QuantityCertainty.UNKNOWN:
         base_quantity = quantize_quantity(quantity)
-    StockReceiptLine.objects.create(
-        receipt=receipt,
-        item=seeds.inventory_item,
-        supplier_lot_reference=values.get('supplier_lot_reference', ''),
-        expires_on=values.get('sow_by'),
-        quantity=quantity,
-        quantity_certainty=certainty,
-        unit_code=seeds.inventory_item.base_unit,
-        base_quantity=base_quantity,
-        line_cost_ex_tax=values['line_price'],
-        destination=location,
-    )
+    line_values = {
+        'receipt': receipt,
+        'item': seeds.inventory_item,
+        'supplier_lot_reference': values.get('supplier_lot_reference', ''),
+        'expires_on': values.get('sow_by'),
+        'quantity': quantity,
+        'quantity_certainty': certainty,
+        'unit_code': seeds.inventory_item.base_unit,
+        'base_quantity': base_quantity,
+        'line_cost_ex_tax': values['line_price'],
+        'destination': location,
+    }
+    for field in (
+        'supplier_cost_incl_tax', 'tax_treatment', 'input_tax_source',
+        'input_tax_amount', 'claim_input_tax', 'claimable_percentage',
+        'apportionment_basis',
+    ):
+        if field in values:
+            line_values[field] = values[field]
+    if 'supplier_cost_incl_tax' in values:
+        line_values['line_cost_ex_tax'] = Decimal('0')
+        line_values['tax_rate'] = values.get('tax_rate', Decimal('0'))
+    StockReceiptLine.objects.create(**line_values)
     return SeedPacketReceiptDraft.objects.create(
         workspace=workspace,
         seeds=seeds,
@@ -169,18 +195,36 @@ def update_packet_receipt_draft(draft, values):
         'received_date',
         'supplier',
         'supplier_reference',
+        'invoice_date',
+        'source_document_type',
+        'source_document_number',
+        'evidence_reference',
+        'evidence_url',
         'tax_rate',
         'tax_recoverable',
         'notes',
     ):
         if field in values:
             setattr(receipt, field, values[field])
+    if 'supplier' in values:
+        supplier = values['supplier']
+        receipt.supplier_name_snapshot = supplier.name
+        receipt.supplier_address_snapshot = supplier.address
+        receipt.supplier_gst_status = supplier.gst_status
+        receipt.supplier_gst_number = supplier.gst_number
     receipt.save()
     line = receipt.lines.select_for_update().get()
     for field in ('supplier_lot_reference', 'expires_on', 'line_cost_ex_tax'):
         source = 'sow_by' if field == 'expires_on' else 'line_price' if field == 'line_cost_ex_tax' else field
         if source in values:
             setattr(line, field, values[source])
+    for field in (
+        'supplier_cost_incl_tax', 'tax_treatment', 'input_tax_source',
+        'input_tax_amount', 'claim_input_tax', 'claimable_percentage',
+        'apportionment_basis', 'tax_rate',
+    ):
+        if field in values:
+            setattr(line, field, values[field])
     if 'quantity_certainty' in values or 'quantity' in values:
         certainty = values.get('quantity_certainty', line.quantity_certainty)
         quantity = values.get('quantity', line.quantity)
@@ -335,6 +379,11 @@ def packet_provenance(packet):
             'currency_code': lot.currency_code if lot else None,
             'tax_rate': None,
             'tax_recoverable': None,
+            'supplier_cost_incl_tax': None,
+            'input_tax_amount': None,
+            'recoverable_input_tax': None,
+            'non_recoverable_tax': None,
+            'acquisition_amount': None,
             'settled_on': None,
         }
     receipt = line.receipt
@@ -350,6 +399,11 @@ def packet_provenance(packet):
         'currency_code': receipt.currency_code,
         'tax_rate': f'{receipt.tax_rate:.4f}',
         'tax_recoverable': receipt.tax_recoverable,
+        'supplier_cost_incl_tax': f'{line.supplier_cost_incl_tax:.4f}',
+        'input_tax_amount': f'{line.input_tax_amount:.4f}',
+        'recoverable_input_tax': f'{line.recoverable_input_tax:.4f}',
+        'non_recoverable_tax': f'{line.non_recoverable_tax:.4f}',
+        'acquisition_amount': f'{line.acquisition_amount:.4f}',
         'settled_on': _isoformat(receipt.settled_on),
     }
 

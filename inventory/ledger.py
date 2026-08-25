@@ -459,19 +459,12 @@ def post_opening_balance(workspace, user, request):
     return lot, movement
 
 
-def _receipt_acquisition_cost(receipt, line):
-    """Return acquisition total excluding only recoverable tax."""
-    line_cost = line.line_cost_ex_tax.quantize(
+def _receipt_acquisition_cost(line):
+    """Return the explicit frozen acquisition amount on a receipt line."""
+    return line.acquisition_amount.quantize(
         MONEY_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
-    if receipt.tax_recoverable:
-        return line_cost
-    tax = (line_cost * receipt.tax_rate / Decimal('100')).quantize(
-        MONEY_QUANTUM,
-        rounding=ROUND_HALF_UP,
-    )
-    return line_cost + tax
 
 
 def _serialized_unit_costs(total, quantity):
@@ -543,7 +536,7 @@ def post_receipt(receipt, user):  # pylint: disable=too-many-branches
     posted_at = timezone.now()
     lots = []
     for line in lines:
-        acquisition_total = _receipt_acquisition_cost(receipt, line)
+        acquisition_total = _receipt_acquisition_cost(line)
         unit_cost = None
         if line.base_quantity is not None:
             unit_cost = (acquisition_total / line.base_quantity).quantize(

@@ -34,6 +34,7 @@ from .ledger import (
     settle_receipt,
 )
 from .models import (
+    InputTaxAdjustment,
     InventoryItem,
     ItemUnitConversion,
     QuantityCertainty,
@@ -44,6 +45,7 @@ from .models import (
     Stocktake,
     StocktakeLine,
 )
+from .input_tax import receipt_tax_warnings
 from .rest_query import (
     parse_boolean as _parse_boolean,
     parse_date as _parse_date,
@@ -96,16 +98,32 @@ class StockReceiptLineSerializer(
             'base_quantity',
             'base_unit',
             'line_cost_ex_tax',
+            'supplier_cost_incl_tax',
+            'tax_treatment',
+            'tax_rate',
+            'input_tax_source',
+            'input_tax_amount',
+            'claim_input_tax',
+            'claimable_percentage',
+            'apportionment_basis',
+            'recoverable_input_tax',
+            'non_recoverable_tax',
+            'acquisition_amount',
+            'legacy_tax_classification',
             'destination',
             'lot',
             'created',
             'updated',
         ]
-        read_only_fields = ['lot', 'created', 'updated']
+        read_only_fields = [
+            'recoverable_input_tax', 'non_recoverable_tax', 'acquisition_amount',
+            'legacy_tax_classification', 'lot', 'created', 'updated',
+        ]
         extra_kwargs = {
             # A Basic Garden gift or swap has no price; zero is a legitimate
             # cost, not a placeholder for one that was never entered.
             'line_cost_ex_tax': {'required': False},
+            'supplier_cost_incl_tax': {'required': False},
         }
 
     workspace_field_lookups = {
@@ -142,6 +160,10 @@ class StockReceiptLineSerializer(
             )
         if destination and not destination.active:
             raise ValidationError({'destination': 'The location is inactive.'})
+        if 'supplier_cost_incl_tax' not in attrs and 'line_cost_ex_tax' in attrs:
+            attrs['supplier_cost_incl_tax'] = attrs['line_cost_ex_tax']
+            attrs['_legacy_receipt_tax'] = True
+        attrs.setdefault('supplier_cost_incl_tax', Decimal('0'))
         attrs.setdefault('line_cost_ex_tax', Decimal('0'))
         certainty = attrs.get(
             'quantity_certainty',
@@ -175,6 +197,7 @@ class StockReceiptSerializer(
     lines = StockReceiptLineSerializer(many=True, required=False)
     movement_ids = serializers.SerializerMethodField()
     is_seed_packet_draft = serializers.SerializerMethodField()
+    tax_warnings = serializers.SerializerMethodField()
 
     class Meta:
         model = StockReceipt
@@ -184,6 +207,15 @@ class StockReceiptSerializer(
             'status',
             'received_date',
             'supplier_reference',
+            'invoice_date',
+            'source_document_type',
+            'source_document_number',
+            'evidence_reference',
+            'evidence_url',
+            'supplier_name_snapshot',
+            'supplier_address_snapshot',
+            'supplier_gst_status',
+            'supplier_gst_number',
             'currency_code',
             'tax_rate',
             'price_includes_tax',
@@ -198,6 +230,7 @@ class StockReceiptSerializer(
             'updated',
             'lines',
             'movement_ids',
+            'tax_warnings',
         ]
         read_only_fields = [
             'status',
@@ -209,6 +242,7 @@ class StockReceiptSerializer(
             'created',
             'updated',
             'movement_ids',
+            'tax_warnings',
         ]
         extra_kwargs = {
             'supplier': {'required': False},
@@ -230,6 +264,10 @@ class StockReceiptSerializer(
         """Name the drafts the seed workflow owns its own editor for."""
         return hasattr(receipt, 'seed_packet_draft')
 
+    def get_tax_warnings(self, receipt):
+        """Expose unsupported claims without silently changing them."""
+        return receipt_tax_warnings(receipt)
+
     def validate(self, attrs):
         """Apply workspace financial defaults to new draft documents."""
         if self.instance and hasattr(self.instance, 'seed_packet_draft'):
@@ -243,6 +281,12 @@ class StockReceiptSerializer(
             attrs.setdefault('currency_code', workspace.currency_code)
             attrs.setdefault('tax_rate', workspace.default_tax_rate)
             attrs.setdefault('supplier', ensure_default_supplier(workspace))
+        supplier = attrs.get('supplier') or getattr(self.instance, 'supplier', None)
+        if supplier is not None:
+            attrs.setdefault('supplier_name_snapshot', supplier.name)
+            attrs.setdefault('supplier_address_snapshot', supplier.address)
+            attrs.setdefault('supplier_gst_status', supplier.gst_status)
+            attrs.setdefault('supplier_gst_number', supplier.gst_number)
         return attrs
 
     @transaction.atomic
@@ -280,16 +324,116 @@ class StockReceiptSerializer(
 
     @staticmethod
     def _canonical_lines(receipt_data, lines):
-        """Store line costs ex tax regardless of how the supplier quoted them."""
-        if not receipt_data.get('price_includes_tax', False):
-            return lines
+        """Translate only the deprecated receipt-wide tax inputs."""
         rate = receipt_data.get('tax_rate', Decimal('0'))
-        divisor = Decimal('1') + rate / Decimal('100')
+        recoverable = receipt_data.get('tax_recoverable', False)
         for line in lines:
-            line['line_cost_ex_tax'] = (
-                line['line_cost_ex_tax'] / divisor
-            ).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+            legacy_receipt_tax = line.pop('_legacy_receipt_tax', False)
+            if not legacy_receipt_tax:
+                continue
+            if line.get(
+                'input_tax_source', StockReceiptLine.InputTaxSource.NONE,
+            ) != StockReceiptLine.InputTaxSource.NONE:
+                continue
+            entered = line['supplier_cost_incl_tax']
+            if rate <= 0:
+                continue
+            if receipt_data.get('price_includes_tax', False):
+                gross = entered
+                tax = (gross * rate / (Decimal('100') + rate)).quantize(
+                    Decimal('0.0001'), rounding=ROUND_HALF_UP,
+                )
+            else:
+                tax = (entered * rate / Decimal('100')).quantize(
+                    Decimal('0.0001'), rounding=ROUND_HALF_UP,
+                )
+                gross = entered + tax
+            if tax == 0:
+                line['supplier_cost_incl_tax'] = gross
+                continue
+            line.update({
+                'supplier_cost_incl_tax': gross,
+                'tax_treatment': StockReceiptLine.TaxTreatment.STANDARD,
+                'tax_rate': rate,
+                'input_tax_source': StockReceiptLine.InputTaxSource.SUPPLIER,
+                'input_tax_amount': tax,
+                'claim_input_tax': recoverable,
+                'claimable_percentage': Decimal('100') if recoverable else Decimal('0'),
+            })
         return lines
+
+
+class InputTaxAdjustmentSerializer(
+    CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
+    """Create and read append-only changes in taxable use."""
+
+    class Meta:
+        model = InputTaxAdjustment
+        fields = [
+            'pk', 'receipt_line', 'adjustment_date',
+            'previous_claimable_percentage', 'revised_claimable_percentage',
+            'tax_adjustment', 'apportionment_basis', 'reason',
+            'evidence_reference', 'evidence_url', 'created_by', 'created',
+        ]
+        read_only_fields = [
+            'previous_claimable_percentage', 'tax_adjustment',
+            'created_by', 'created',
+        ]
+
+    workspace_field_lookups = {'receipt_line': 'receipt__workspace'}
+
+    def create(self, validated_data):
+        """Calculate the delta from the latest recorded claim percentage."""
+        line = validated_data['receipt_line']
+        latest = line.input_tax_adjustments.order_by(
+            '-adjustment_date', '-pk',
+        ).first()
+        previous = (
+            latest.revised_claimable_percentage
+            if latest else line.claimable_percentage
+        )
+        revised = validated_data['revised_claimable_percentage']
+        tax_delta = Decimal(line.input_tax_amount) * (revised - previous)
+        return InputTaxAdjustment.objects.create(
+            previous_claimable_percentage=previous,
+            tax_adjustment=(tax_delta / Decimal('100')).quantize(Decimal('0.0001')),
+            **validated_data,
+        )
+
+
+class InputTaxAdjustmentViewSet(
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
+    """List and append input-tax adjustments; never edit or delete them."""
+
+    queryset = InputTaxAdjustment.objects.select_related('receipt_line__receipt')
+    serializer_class = InputTaxAdjustmentSerializer
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def perform_create(self, serializer):
+        serializer.save(
+            workspace=self.get_current_workspace(),
+            created_by=self.request.user,
+        )
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        receipt_line = _parse_integer(
+            self.request.query_params.get('receipt_line'),
+            'receipt_line',
+        )
+        if receipt_line is not None:
+            queryset = queryset.filter(receipt_line_id=receipt_line)
+        receipt = _parse_integer(
+            self.request.query_params.get('receipt'),
+            'receipt',
+        )
+        if receipt is not None:
+            queryset = queryset.filter(receipt_line__receipt_id=receipt)
+        return queryset
 
 
 class StockLotSerializer(serializers.ModelSerializer):
@@ -1024,6 +1168,7 @@ def register_ledger_routes(router):
     from .stocktake_rest import NurseryStocktakeViewSet  # pylint: disable=import-outside-toplevel
 
     router.register(r'receipts', StockReceiptViewSet)
+    router.register(r'input-tax-adjustments', InputTaxAdjustmentViewSet)
     router.register(r'lots', StockLotViewSet)
     router.register(r'serialized-units', InventoryUnitViewSet)
     router.register(r'movements', StockMovementViewSet)

@@ -10,7 +10,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
-from inventory.models import QuantityCertainty
+from inventory.models import QuantityCertainty, StockReceipt, StockReceiptLine
 from inventory.units import UnitCode
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -228,6 +228,14 @@ class PacketReceiptDraftSerializer(
         allow_blank=True,
         required=False,
     )
+    invoice_date = serializers.DateField(allow_null=True, required=False)
+    source_document_type = serializers.ChoiceField(
+        choices=StockReceipt.SourceDocumentType.choices,
+        required=False,
+    )
+    source_document_number = serializers.CharField(allow_blank=True, required=False)
+    evidence_reference = serializers.CharField(allow_blank=True, required=False)
+    evidence_url = serializers.URLField(allow_blank=True, required=False)
     tax_rate = serializers.DecimalField(
         max_digits=7,
         decimal_places=4,
@@ -235,6 +243,24 @@ class PacketReceiptDraftSerializer(
         required=False,
     )
     tax_recoverable = serializers.BooleanField(required=False)
+    supplier_cost_incl_tax = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal('0'), required=False,
+    )
+    tax_treatment = serializers.ChoiceField(
+        choices=StockReceiptLine.TaxTreatment.choices, required=False,
+    )
+    input_tax_source = serializers.ChoiceField(
+        choices=StockReceiptLine.InputTaxSource.choices, required=False,
+    )
+    input_tax_amount = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal('0'), required=False,
+    )
+    claim_input_tax = serializers.BooleanField(required=False)
+    claimable_percentage = serializers.DecimalField(
+        max_digits=7, decimal_places=4, min_value=Decimal('0'),
+        max_value=Decimal('100'), required=False,
+    )
+    apportionment_basis = serializers.CharField(allow_blank=True, required=False)
     notes = serializers.CharField(allow_blank=True, required=False)
     packet = serializers.PrimaryKeyRelatedField(read_only=True)
 
@@ -302,8 +328,20 @@ class PacketReceiptDraftSerializer(
             'sow_by': line.expires_on,
             'supplier': draft.receipt.supplier_id,
             'supplier_reference': draft.receipt.supplier_reference,
+            'invoice_date': draft.receipt.invoice_date,
+            'source_document_type': draft.receipt.source_document_type,
+            'source_document_number': draft.receipt.source_document_number,
+            'evidence_reference': draft.receipt.evidence_reference,
+            'evidence_url': draft.receipt.evidence_url,
             'tax_rate': f'{draft.receipt.tax_rate:.4f}',
             'tax_recoverable': draft.receipt.tax_recoverable,
+            'supplier_cost_incl_tax': f'{line.supplier_cost_incl_tax:.4f}',
+            'tax_treatment': line.tax_treatment,
+            'input_tax_source': line.input_tax_source,
+            'input_tax_amount': f'{line.input_tax_amount:.4f}',
+            'claim_input_tax': line.claim_input_tax,
+            'claimable_percentage': f'{line.claimable_percentage:.4f}',
+            'apportionment_basis': line.apportionment_basis,
             'notes': draft.notes,
             'packet': draft.packet_id,
         }
