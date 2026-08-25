@@ -2,6 +2,7 @@
 /node_modules/
 /dist/
 /static/
+/var/attachments/
 __pycache__/
 /db.sqlite3
 # Clones left behind when a --parallel run on SQLite dies in teardown.

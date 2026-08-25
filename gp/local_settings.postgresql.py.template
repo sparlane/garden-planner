@@ -1,5 +1,7 @@
 """Deployment settings template using PostgreSQL."""
 
+from pathlib import Path
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
@@ -18,6 +20,10 @@ TIME_ZONE = "UTC"
 # The initial release serves one shared workspace to every authenticated user.
 # Changing this ID selects another workspace; it does not move existing records.
 CURRENT_WORKSPACE_ID = 1
+
+# Keep this private directory on persistent, backed-up storage. The web server
+# must not map it to a public URL; Django authorizes every attachment response.
+ATTACHMENT_ROOT = Path("/var/lib/garden-planner/attachments")
 
 # Database
 # https://docs.djangoproject.com/en/stable/ref/settings/#databases
