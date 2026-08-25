@@ -242,7 +242,6 @@ class PacketReceiptDraftSerializer(
         min_value=Decimal('0'),
         required=False,
     )
-    tax_recoverable = serializers.BooleanField(required=False)
     supplier_cost_incl_tax = serializers.DecimalField(
         max_digits=18, decimal_places=4, min_value=Decimal('0'), required=False,
     )
@@ -333,8 +332,7 @@ class PacketReceiptDraftSerializer(
             'source_document_number': draft.receipt.source_document_number,
             'evidence_reference': draft.receipt.evidence_reference,
             'evidence_url': draft.receipt.evidence_url,
-            'tax_rate': f'{draft.receipt.tax_rate:.4f}',
-            'tax_recoverable': draft.receipt.tax_recoverable,
+            'tax_rate': f'{line.tax_rate:.4f}',
             'supplier_cost_incl_tax': f'{line.supplier_cost_incl_tax:.4f}',
             'tax_treatment': line.tax_treatment,
             'input_tax_source': line.input_tax_source,

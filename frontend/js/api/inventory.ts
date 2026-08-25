@@ -4,6 +4,8 @@ import {
   InventoryItemCreate,
   InventoryItemFilters,
   InventoryUnit,
+  InputTaxAdjustment,
+  InputTaxAdjustmentWrite,
   ItemUnitConversion,
   ItemUnitConversionCreate,
   StockReceipt,
@@ -17,6 +19,7 @@ import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 const ITEMS_URL = '/inventory/items/'
 const CONVERSIONS_URL = '/inventory/conversions/'
 const RECEIPTS_URL = '/inventory/receipts/'
+const INPUT_TAX_ADJUSTMENTS_URL = '/inventory/input-tax-adjustments/'
 const STOCKTAKES_URL = '/inventory/stocktakes/'
 
 function getStocktakes(signal?: AbortSignal): Promise<Array<Stocktake>> {
@@ -100,6 +103,15 @@ function getStockReceipts(filters: StockReceiptFilters, signal?: AbortSignal): P
   return fetchAsJson<Array<StockReceipt>>(`${RECEIPTS_URL}${query}`, signal)
 }
 
+function getInputTaxAdjustments(receipt: number, signal?: AbortSignal): Promise<Array<InputTaxAdjustment>> {
+  return fetchAsJson<Array<InputTaxAdjustment>>(`${INPUT_TAX_ADJUSTMENTS_URL}?receipt=${receipt}`, signal)
+}
+
+async function createInputTaxAdjustment(adjustment: InputTaxAdjustmentWrite): Promise<InputTaxAdjustment> {
+  const response = await csrfPost(INPUT_TAX_ADJUSTMENTS_URL, adjustment)
+  return response.json() as Promise<InputTaxAdjustment>
+}
+
 async function createStockReceipt(receipt: StockReceiptWrite): Promise<StockReceipt> {
   const response = await csrfPost(RECEIPTS_URL, receipt)
   return response.json() as Promise<StockReceipt>
@@ -137,12 +149,14 @@ function deleteStockReceipt(pk: number): Promise<Response> {
 
 export {
   createInventoryItem,
+  createInputTaxAdjustment,
   createItemUnitConversion,
   createStockReceipt,
   deleteStockReceipt,
   getInventoryBalances,
   getInventoryItems,
   getInventoryUnits,
+  getInputTaxAdjustments,
   getItemUnitConversions,
   getStockReceipts,
   getStocktake,

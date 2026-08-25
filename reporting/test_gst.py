@@ -124,13 +124,29 @@ class GstReportTestCase(RESTContractTestCase):
         receipt = StockReceipt.objects.create(
             workspace=self.workspace, supplier=make_supplier(workspace=self.workspace),
             received_date=received_date, currency_code='NZD',
-            tax_rate=Decimal(tax_rate), tax_recoverable=recoverable,
             created_by=self.user,
         )
+        tax = (
+            Decimal(ex_tax) * Decimal(tax_rate) / Decimal('100')
+        ).quantize(Decimal('0.0001'))
         StockReceiptLine.objects.create(
             receipt=receipt, item=media, quantity=Decimal('2'),
             unit_code=UnitCode.LITRE, base_quantity=Decimal('2'),
-            line_cost_ex_tax=Decimal(ex_tax), destination=store,
+            line_cost_ex_tax=Decimal(ex_tax),
+            supplier_cost_incl_tax=Decimal(ex_tax) + tax,
+            tax_treatment=(
+                StockReceiptLine.TaxTreatment.STANDARD
+                if tax else StockReceiptLine.TaxTreatment.ZERO_RATED
+            ),
+            tax_rate=Decimal(tax_rate),
+            input_tax_source=(
+                StockReceiptLine.InputTaxSource.SUPPLIER
+                if tax else StockReceiptLine.InputTaxSource.NONE
+            ),
+            input_tax_amount=tax,
+            claim_input_tax=recoverable and tax > 0,
+            claimable_percentage=Decimal('100' if recoverable and tax > 0 else '0'),
+            destination=store,
         )
         receipt = post_receipt(receipt, self.user)[0]
         if settled_on is not None:
@@ -453,8 +469,6 @@ class InputTaxTests(GstReportTestCase):  # pylint: disable=too-many-public-metho
             ),
             source_document_number='EVIDENCE-1',
             currency_code='NZD',
-            tax_rate=Decimal('0'),
-            tax_recoverable=False,
             created_by=self.user,
         )
         line = StockReceiptLine.objects.create(

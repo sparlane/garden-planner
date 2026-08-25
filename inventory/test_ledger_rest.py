@@ -72,7 +72,6 @@ class LedgerRestFixture(APITestCase):
             'supplier': self.supplier.pk,
             'received_date': '2026-08-01',
             'supplier_reference': 'INV-API-1',
-            'tax_recoverable': False,
             'lines': [
                 {
                     'item': self.item.pk,
@@ -81,6 +80,13 @@ class LedgerRestFixture(APITestCase):
                     'quantity': '2.000000000',
                     'unit_code': UnitCode.LITRE,
                     'line_cost_ex_tax': '10.0000',
+                    'supplier_cost_incl_tax': '11.5000',
+                    'tax_treatment': 'standard',
+                    'tax_rate': '15.0000',
+                    'input_tax_source': 'supplier',
+                    'input_tax_amount': '1.5000',
+                    'claim_input_tax': False,
+                    'claimable_percentage': '0.0000',
                     'destination': self.store.pk,
                 },
             ],
@@ -151,7 +157,7 @@ class LedgerRestTests(LedgerRestFixture):
         created, posted, lot = self.create_and_post_receipt()
         self.assertEqual(created['status'], StockReceipt.Status.DRAFT)
         self.assertEqual(created['currency_code'], 'NZD')
-        self.assertEqual(created['tax_rate'], '15.0000')
+        self.assertEqual(created['lines'][0]['tax_rate'], '15.0000')
         self.assertEqual(created['lines'][0]['base_quantity'], '2000.000000000')
         self.assertIsNone(created['lines'][0]['lot'])
 
@@ -186,22 +192,23 @@ class LedgerRestTests(LedgerRestFixture):
             2,
         )
 
-    def test_inclusive_prices_are_stored_exclusive_and_keep_gross_cost(self):
-        """Inclusive supplier prices convert before canonical ledger storage."""
+    def test_explicit_supplier_tax_derives_exclusive_and_acquisition_costs(self):
+        """Line evidence derives the accounting values without receipt defaults."""
         response = self.client.post(
             self.receipt_url,
             self.receipt_payload(
-                price_includes_tax=True,
                 lines=[{
                     **self.receipt_payload()['lines'][0],
-                    'line_cost_ex_tax': '11.5000',
+                    'line_cost_ex_tax': '0.0000',
                 }],
             ),
             format='json',
         )
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertTrue(response.data['price_includes_tax'])
         self.assertEqual(response.data['lines'][0]['line_cost_ex_tax'], '10.0000')
+        self.assertEqual(
+            response.data['lines'][0]['acquisition_amount'], '11.5000',
+        )
 
         posted = self.client.post(
             f"{self.receipt_url}{response.data['pk']}/post/",
@@ -496,7 +503,12 @@ class StockReceiptDraftTests(LedgerRestFixture):
     def test_a_line_with_no_price_defaults_to_zero(self):
         """A price is a real fact and zero is a legitimate one, not a stub."""
         payload = self.receipt_payload()
-        del payload['lines'][0]['line_cost_ex_tax']
+        for field in (
+            'line_cost_ex_tax', 'supplier_cost_incl_tax', 'tax_treatment',
+            'tax_rate', 'input_tax_source', 'input_tax_amount',
+            'claim_input_tax', 'claimable_percentage',
+        ):
+            del payload['lines'][0][field]
 
         created = self.create_draft(**payload)
 
@@ -857,7 +869,6 @@ class InputTaxEvidenceRestTests(LedgerRestFixture):
     def evidenced_payload(self):
         """Return one explicit supplier-GST claim without supporting evidence."""
         payload = self.receipt_payload()
-        payload.pop('tax_recoverable')
         payload['invoice_date'] = '2026-08-01'
         payload['lines'][0].pop('line_cost_ex_tax')
         payload['lines'][0].update({

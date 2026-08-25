@@ -1,4 +1,4 @@
-import { UnitCode } from './inventory'
+import { InputTaxSource, PurchaseTaxTreatment, ReceiptDocumentType, UnitCode } from './inventory'
 
 type SeedQuantityCertainty = 'exact' | 'estimated' | 'unknown'
 
@@ -57,7 +57,12 @@ interface SeedPacketProvenance {
   line_cost_ex_tax: string | null
   currency_code: string | null
   tax_rate: string | null
-  tax_recoverable: boolean | null
+  claim_input_tax: boolean | null
+  supplier_cost_incl_tax: string | null
+  input_tax_amount: string | null
+  recoverable_input_tax: string | null
+  non_recoverable_tax: string | null
+  acquisition_amount: string | null
   settled_on: string | null
 }
 
@@ -84,8 +89,19 @@ interface SeedPacketReceiptCreate {
   // the server records the brand, which is right when it was bought direct.
   supplier?: number
   supplier_reference?: string
+  invoice_date?: string | null
+  source_document_type?: ReceiptDocumentType
+  source_document_number?: string
+  evidence_reference?: string
+  evidence_url?: string
   tax_rate?: string
-  tax_recoverable?: boolean
+  supplier_cost_incl_tax?: string
+  tax_treatment?: PurchaseTaxTreatment
+  input_tax_source?: InputTaxSource
+  input_tax_amount?: string
+  claim_input_tax?: boolean
+  claimable_percentage?: string
+  apportionment_basis?: string
   notes?: string
 }
 

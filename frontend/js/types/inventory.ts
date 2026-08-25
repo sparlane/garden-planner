@@ -134,6 +134,15 @@ interface InventoryBalance {
 
 type QuantityCertainty = 'exact' | 'estimated' | 'unknown'
 type StockReceiptStatus = 'draft' | 'posted' | 'reversed'
+type PurchaseTaxTreatment = 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope' | 'unknown'
+type InputTaxSource = 'none' | 'supplier' | 'customs' | 'second_hand'
+type ReceiptDocumentType = 'none' | 'taxable_supply' | 'invoice' | 'receipt' | 'buyer_created' | 'customs_entry' | 'contract' | 'bank_record' | 'other'
+
+interface InputTaxWarning {
+  code: string
+  message: string
+  line_id: number | null
+}
 
 interface StockReceiptLine {
   pk: number
@@ -151,6 +160,18 @@ interface StockReceiptLine {
   base_quantity: string | null
   base_unit: UnitCode
   line_cost_ex_tax: string
+  supplier_cost_incl_tax: string
+  tax_treatment: PurchaseTaxTreatment
+  tax_rate: string
+  input_tax_source: InputTaxSource
+  input_tax_amount: string
+  claim_input_tax: boolean
+  claimable_percentage: string
+  apportionment_basis: string
+  recoverable_input_tax: string
+  non_recoverable_tax: string
+  acquisition_amount: string
+  legacy_tax_classification: boolean
   destination: number
   lot: number | null
   created: string
@@ -167,7 +188,14 @@ interface StockReceiptLineWrite {
   quantity_certainty: QuantityCertainty
   unit_code: UnitCode | null
   unit_conversion: number | null
-  line_cost_ex_tax: string
+  supplier_cost_incl_tax: string
+  tax_treatment: PurchaseTaxTreatment
+  tax_rate: string
+  input_tax_source: InputTaxSource
+  input_tax_amount: string
+  claim_input_tax: boolean
+  claimable_percentage: string
+  apportionment_basis: string
   destination: number
 }
 
@@ -177,10 +205,16 @@ interface StockReceipt {
   status: StockReceiptStatus
   received_date: string
   supplier_reference: string
+  invoice_date: string | null
+  source_document_type: ReceiptDocumentType
+  source_document_number: string
+  evidence_reference: string
+  evidence_url: string
+  supplier_name_snapshot: string
+  supplier_address_snapshot: string
+  supplier_gst_status: 'registered' | 'unregistered' | 'unknown'
+  supplier_gst_number: string
   currency_code: string
-  tax_rate: string
-  price_includes_tax: boolean
-  tax_recoverable: boolean
   notes: string
   created_by: number | null
   posted_at: string | null
@@ -193,19 +227,47 @@ interface StockReceipt {
   updated: string
   lines: Array<StockReceiptLine>
   movement_ids: Array<number>
+  tax_warnings: Array<InputTaxWarning>
 }
 
 interface StockReceiptWrite {
   supplier: number
   received_date: string
   supplier_reference?: string
-  // Omit these two and the server applies the workspace defaults.
+  invoice_date?: string | null
+  source_document_type?: ReceiptDocumentType
+  source_document_number?: string
+  evidence_reference?: string
+  evidence_url?: string
+  // Omit this and the server applies the workspace currency.
   currency_code?: string
-  tax_rate?: string
-  price_includes_tax?: boolean
-  tax_recoverable?: boolean
   notes?: string
   lines: Array<StockReceiptLineWrite>
+}
+
+interface InputTaxAdjustment {
+  pk: number
+  receipt_line: number
+  adjustment_date: string
+  previous_claimable_percentage: string
+  revised_claimable_percentage: string
+  tax_adjustment: string
+  apportionment_basis: string
+  reason: string
+  evidence_reference: string
+  evidence_url: string
+  created_by: number | null
+  created: string
+}
+
+interface InputTaxAdjustmentWrite {
+  receipt_line: number
+  adjustment_date: string
+  revised_claimable_percentage: string
+  apportionment_basis: string
+  reason: string
+  evidence_reference?: string
+  evidence_url?: string
 }
 
 interface StockReceiptFilters {
@@ -288,9 +350,15 @@ export {
   InventoryTrackingMode,
   InventoryUnit,
   InventoryUsageBasis,
+  InputTaxAdjustment,
+  InputTaxAdjustmentWrite,
+  InputTaxSource,
+  InputTaxWarning,
   ItemUnitConversion,
   ItemUnitConversionCreate,
   QuantityCertainty,
+  PurchaseTaxTreatment,
+  ReceiptDocumentType,
   SerializedInventoryUnit,
   SerializedPhysicalState,
   SerializedStockMovement,

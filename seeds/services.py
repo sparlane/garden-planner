@@ -139,8 +139,6 @@ def create_packet_receipt_draft(workspace, user, values):
         supplier_gst_status=supplier.gst_status,
         supplier_gst_number=supplier.gst_number,
         currency_code=workspace.currency_code,
-        tax_rate=values.get('tax_rate', workspace.default_tax_rate),
-        tax_recoverable=values.get('tax_recoverable', False),
         notes=values.get('notes', ''),
         created_by=user,
     )
@@ -164,13 +162,12 @@ def create_packet_receipt_draft(workspace, user, values):
     for field in (
         'supplier_cost_incl_tax', 'tax_treatment', 'input_tax_source',
         'input_tax_amount', 'claim_input_tax', 'claimable_percentage',
-        'apportionment_basis',
+        'apportionment_basis', 'tax_rate',
     ):
         if field in values:
             line_values[field] = values[field]
     if 'supplier_cost_incl_tax' in values:
         line_values['line_cost_ex_tax'] = Decimal('0')
-        line_values['tax_rate'] = values.get('tax_rate', Decimal('0'))
     StockReceiptLine.objects.create(**line_values)
     return SeedPacketReceiptDraft.objects.create(
         workspace=workspace,
@@ -200,8 +197,6 @@ def update_packet_receipt_draft(draft, values):
         'source_document_number',
         'evidence_reference',
         'evidence_url',
-        'tax_rate',
-        'tax_recoverable',
         'notes',
     ):
         if field in values:
@@ -378,7 +373,7 @@ def packet_provenance(packet):
             'line_cost_ex_tax': None,
             'currency_code': lot.currency_code if lot else None,
             'tax_rate': None,
-            'tax_recoverable': None,
+            'claim_input_tax': None,
             'supplier_cost_incl_tax': None,
             'input_tax_amount': None,
             'recoverable_input_tax': None,
@@ -397,8 +392,8 @@ def packet_provenance(packet):
         'received_date': _isoformat(receipt.received_date),
         'line_cost_ex_tax': f'{line.line_cost_ex_tax:.4f}',
         'currency_code': receipt.currency_code,
-        'tax_rate': f'{receipt.tax_rate:.4f}',
-        'tax_recoverable': receipt.tax_recoverable,
+        'tax_rate': f'{line.tax_rate:.4f}',
+        'claim_input_tax': line.claim_input_tax,
         'supplier_cost_incl_tax': f'{line.supplier_cost_incl_tax:.4f}',
         'input_tax_amount': f'{line.input_tax_amount:.4f}',
         'recoverable_input_tax': f'{line.recoverable_input_tax:.4f}',
