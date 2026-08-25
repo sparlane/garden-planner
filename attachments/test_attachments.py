@@ -4,9 +4,11 @@
 # closed by each test's temporary-directory lifecycle.
 # pylint: disable=missing-function-docstring,consider-using-with
 
+import json
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -21,6 +23,7 @@ from workspaces.models import Workspace, get_current_workspace
 
 from .models import ImageAttachment
 from .processing import create_attachment
+from .storage import private_attachment_storage
 
 
 def image_upload(
@@ -229,3 +232,123 @@ class AttachmentContractTests(AttachmentTestCase):
                 payload = next(row for row in payload if row['pk'] == target.pk)
             with self.subTest(target_type=target_type):
                 self.assertEqual(payload['attachments'][0]['target_type'], target_type)
+
+
+class AttachmentArchiveTests(AttachmentTestCase):
+    """Photo archives are scoped, self-validating, and idempotent."""
+
+    def archive_bytes(self):
+        response = self.client.get('/attachments/archive/')
+        self.assertEqual(response.status_code, 200)
+        return b''.join(response.streaming_content)
+
+    def restore(self, data, *, dry_run):
+        return self.client.post('/attachments/archive/restore/', {
+            'archive': SimpleUploadedFile(
+                'photos.zip', data, content_type='application/zip',
+            ),
+            'dry_run': str(dry_run).lower(),
+        }, format='multipart')
+
+    def rewrite_manifest(self, data, change):
+        source = ZipFile(BytesIO(data))
+        output = BytesIO()
+        with source, ZipFile(output, 'w', compression=ZIP_DEFLATED) as target:
+            manifest = json.loads(source.read('manifest.json'))
+            change(manifest)
+            for info in source.infolist():
+                content = (
+                    json.dumps(manifest).encode() if info.filename == 'manifest.json'
+                    else source.read(info.filename)
+                )
+                target.writestr(info.filename, content)
+        return output.getvalue()
+
+    def test_export_contains_only_current_workspace_originals(self):
+        attachment = create_attachment(
+            self.workspace, self.user, 'plant', self.plant, image_upload(),
+        )
+        other_workspace = Workspace.objects.create(name='Other garden')
+        other_plant = make_specific_plant(workspace=other_workspace)
+        create_attachment(
+            other_workspace, self.user, 'plant', other_plant, image_upload(),
+        )
+
+        with ZipFile(BytesIO(self.archive_bytes())) as archive:
+            manifest = json.loads(archive.read('manifest.json'))
+            self.assertEqual(manifest['format'], 'garden-tracker-photo-archive')
+            self.assertEqual(manifest['version'], 1)
+            self.assertEqual(
+                [row['id'] for row in manifest['attachments']],
+                [str(attachment.public_id)],
+            )
+            self.assertEqual(
+                set(archive.namelist()),
+                {'manifest.json', manifest['attachments'][0]['path']},
+            )
+            self.assertFalse(any('thumbnail' in name for name in archive.namelist()))
+
+    def test_dry_run_then_apply_round_trips_and_is_idempotent(self):
+        attachment = create_attachment(
+            self.workspace, self.user, 'plant', self.plant, image_upload(),
+        )
+        attachment_id = attachment.public_id
+        original_names = [attachment.original.name, attachment.thumbnail.name]
+        archive = self.archive_bytes()
+        ImageAttachment.objects.filter(pk=attachment.pk)._raw_delete(  # pylint: disable=protected-access
+            ImageAttachment.objects.db,
+        )
+        for name in original_names:
+            private_attachment_storage.delete(name)
+
+        preview = self.restore(archive, dry_run=True)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['would_create'], 1)
+        self.assertFalse(ImageAttachment.objects.exists())
+
+        applied = self.restore(archive, dry_run=False)
+        self.assertEqual(applied.status_code, 200, applied.data)
+        self.assertEqual(applied.data['created'], 1)
+        restored = ImageAttachment.objects.get(public_id=attachment_id)
+        self.assertEqual(restored.plant, self.plant)
+        self.assertTrue(restored.original.storage.exists(restored.original.name))
+
+        repeated = self.restore(archive, dry_run=False)
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertEqual(repeated.data['already_present'], 1)
+        self.assertEqual(repeated.data['created'], 0)
+
+    def test_restore_rejects_missing_targets_and_checksum_changes(self):
+        create_attachment(
+            self.workspace, self.user, 'plant', self.plant, image_upload(),
+        )
+        archive = self.archive_bytes()
+        missing = self.rewrite_manifest(
+            archive,
+            lambda manifest: manifest['attachments'][0].update(target_id=999999),
+        )
+        preview = self.restore(missing, dry_run=True)
+        self.assertFalse(preview.data['valid'])
+        self.assertTrue(any('target' in error for error in preview.data['errors']))
+
+        checksum = self.rewrite_manifest(
+            archive,
+            lambda manifest: manifest['attachments'][0].update(sha256='0' * 64),
+        )
+        rejected = self.restore(checksum, dry_run=False)
+        self.assertEqual(rejected.status_code, 400)
+        self.assertTrue(any('checksum' in error for error in rejected.data['errors']))
+
+    def test_archive_routes_require_authentication_and_enforce_size_limit(self):
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self.client.get('/attachments/archive/').status_code, 403)
+        self.assertEqual(
+            self.restore(b'not a zip', dry_run=True).status_code,
+            403,
+        )
+        self.client.force_authenticate(self.user)
+        with override_settings(ATTACHMENT_ARCHIVE_MAX_BYTES=1):
+            response = self.restore(b'larger than one byte', dry_run=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data['valid'])
+        self.assertIn('too large', response.data['errors'][0])

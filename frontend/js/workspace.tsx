@@ -2,10 +2,12 @@ import React from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Form } from 'react-bootstrap'
 
+import { restoreAttachmentArchive } from './api/attachments'
 import { updateWorkspace } from './api/workspace'
 import { GstRegistrationSettings } from './tax/registration.js'
 import { queryKeys } from './query'
 import { GardenExperience, Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
+import { AttachmentArchiveReport } from './types/attachments'
 
 // The guided setup owns garden_setup_state; this screen edits everything else,
 // and must not send that field back and undo a gardener's answer.
@@ -50,6 +52,12 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
   const mutation = useMutation({
     mutationFn: updateWorkspace,
     onSuccess: (updated) => queryClient.setQueryData(queryKeys.workspace.current, updated)
+  })
+  const [archive, setArchive] = React.useState<File | null>(null)
+  const [archiveReport, setArchiveReport] = React.useState<AttachmentArchiveReport | null>(null)
+  const restoreMutation = useMutation({
+    mutationFn: ({ file, dryRun }: { file: File; dryRun: boolean }) => restoreAttachmentArchive(file, dryRun),
+    onSuccess: setArchiveReport
   })
 
   React.useEffect(() => {
@@ -241,6 +249,69 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
         </Button>
         {mutation.isSuccess && <span className="ms-3 text-success">Settings saved.</span>}
       </Form>
+      <section className="mt-5" aria-labelledby="photo-archive-heading">
+        <h2 className="h4" id="photo-archive-heading">
+          Photo archive
+        </h2>
+        <p>Download sanitized full-size photos and their attachment metadata. Restore reconnects photos only when the matching record IDs already exist in this workspace.</p>
+        <Button as="a" href="/attachments/archive/" variant="outline-primary">
+          Download photo archive
+        </Button>
+        <Form.Group className="mt-3" controlId="photo-archive-file">
+          <Form.Label>Restore a photo archive</Form.Label>
+          <Form.Control
+            type="file"
+            accept="application/zip,.zip"
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+              setArchive(event.target.files?.[0] ?? null)
+              setArchiveReport(null)
+            }}
+          />
+          <Form.Text>Run the dry check first. It makes no changes.</Form.Text>
+        </Form.Group>
+        <Button
+          className="mt-2"
+          variant="outline-secondary"
+          disabled={archive === null || restoreMutation.isPending}
+          onClick={() => {
+            if (archive !== null) restoreMutation.mutate({ file: archive, dryRun: true })
+          }}
+        >
+          {restoreMutation.isPending ? 'Checking…' : 'Check archive'}
+        </Button>
+        {archiveReport !== null && (
+          <Alert className="mt-3" variant={archiveReport.valid ? 'info' : 'danger'}>
+            {archiveReport.valid ? (
+              <>
+                Ready to restore {archiveReport.would_create} photos; {archiveReport.already_present} are already present.
+                {archive !== null && archiveReport.would_create > 0 && (
+                  <div>
+                    <Button
+                      className="mt-2"
+                      variant="warning"
+                      disabled={restoreMutation.isPending}
+                      onClick={() => {
+                        if (window.confirm('Restore the checked photos into this workspace?')) {
+                          restoreMutation.mutate({ file: archive, dryRun: false })
+                        }
+                      }}
+                    >
+                      Restore checked photos
+                    </Button>
+                  </div>
+                )}
+                {archiveReport.created !== undefined && <div className="mt-2 text-success">Restored {archiveReport.created} photos.</div>}
+              </>
+            ) : (
+              <ul className="mb-0">
+                {archiveReport.errors.map((error) => (
+                  <li key={error}>{error}</li>
+                ))}
+              </ul>
+            )}
+          </Alert>
+        )}
+      </section>
       {workspace.mode === 'nursery' && <GstRegistrationSettings />}
     </main>
   )

@@ -1,4 +1,4 @@
-import { AttachmentTargetType, AttachmentUploadResult, ImageAttachment } from '../types/attachments'
+import { AttachmentArchiveReport, AttachmentTargetType, AttachmentUploadResult, ImageAttachment } from '../types/attachments'
 import { csrfPostForm, fetchAsJson } from '../utils'
 
 function getAttachments(targetType: AttachmentTargetType, targetId: number, signal?: AbortSignal): Promise<Array<ImageAttachment>> {
@@ -24,4 +24,12 @@ async function uploadAttachments(targetType: AttachmentTargetType, targetId: num
   return { uploaded, failures }
 }
 
-export { getAttachments, uploadAttachments }
+async function restoreAttachmentArchive(archive: File, dryRun: boolean): Promise<AttachmentArchiveReport> {
+  const form = new FormData()
+  form.set('archive', archive)
+  form.set('dry_run', String(dryRun))
+  const response = await csrfPostForm('/attachments/archive/restore/', form)
+  return response.json() as Promise<AttachmentArchiveReport>
+}
+
+export { getAttachments, restoreAttachmentArchive, uploadAttachments }

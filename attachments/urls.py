@@ -2,7 +2,18 @@
 
 from django.urls import include, path
 
-from .rest import router
+from .rest import (
+    AttachmentArchiveExportView,
+    AttachmentArchiveRestoreView,
+    router,
+)
 
 
-urlpatterns = [path('', include(router.urls))]
+urlpatterns = [
+    path('archive/', AttachmentArchiveExportView.as_view(), name='attachment-archive'),
+    path(
+        'archive/restore/', AttachmentArchiveRestoreView.as_view(),
+        name='attachment-archive-restore',
+    ),
+    path('', include(router.urls)),
+]

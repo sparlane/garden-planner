@@ -26,4 +26,12 @@ interface AttachmentUploadResult {
   failures: Array<AttachmentUploadFailure>
 }
 
-export type { AttachmentTargetType, AttachmentUploadFailure, AttachmentUploadResult, ImageAttachment }
+interface AttachmentArchiveReport {
+  valid: boolean
+  would_create: number
+  already_present: number
+  created?: number
+  errors: Array<string>
+}
+
+export type { AttachmentArchiveReport, AttachmentTargetType, AttachmentUploadFailure, AttachmentUploadResult, ImageAttachment }
