@@ -141,6 +141,19 @@ function csrfPost(url: string, data: object): Promise<Response> {
   return csrfRequest('POST', url, data)
 }
 
+async function csrfPostForm(url: string, data: FormData): Promise<Response> {
+  const method = 'POST'
+  const response = await fetchResponse(method, url, {
+    method,
+    headers: {
+      'X-CSRFToken': Cookies.get('csrftoken') || ''
+    },
+    body: data
+  })
+  await checkResponse(method, url, response)
+  return response
+}
+
 function csrfDelete(url: string): Promise<Response> {
   return csrfRequest('DELETE', url)
 }
@@ -303,6 +316,7 @@ export {
   errorsByField,
   csrfDelete,
   csrfPost,
+  csrfPostForm,
   csrfPatch,
   fetchAsJson,
   localDatetimeInputValue,

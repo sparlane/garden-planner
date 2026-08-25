@@ -15,6 +15,7 @@ from django.utils import timezone
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from attachments.rest import AttachmentSerializer
 from locations.occupancy import check_capacity, plant_contribution
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
@@ -554,10 +555,12 @@ class SpecificPlantDetailSerializer(SpecificPlantSerializer):
     availability_intervals = serializers.SerializerMethodField()
     growth = serializers.SerializerMethodField()
     nursery_observations = serializers.SerializerMethodField()
+    attachments = AttachmentSerializer(source='image_attachments', many=True, read_only=True)
 
     class Meta(SpecificPlantSerializer.Meta):
         fields = SpecificPlantSerializer.Meta.fields + [
-            'lifecycle_events', 'availability_intervals', 'growth', 'nursery_observations',
+            'lifecycle_events', 'availability_intervals', 'growth',
+            'nursery_observations', 'attachments',
         ]
 
     def get_growth(self, plant):
@@ -583,9 +586,11 @@ class SpecificPlantDetailSerializer(SpecificPlantSerializer):
         observations = (
             NurseryObservation.objects.filter(targets__plant=plant)
             .select_related('stage', 'grade', 'container_item', 'created_by')
-            .prefetch_related('targets')
+            .prefetch_related('targets', 'image_attachments')
         )
-        return NurseryObservationSerializer(observations, many=True).data
+        return NurseryObservationSerializer(
+            observations, many=True, context=self.context,
+        ).data
 
 
 class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -967,7 +972,10 @@ class SpecificPlantViewSet(PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixi
     """
     ViewSet of SpecificPlant
     """
-    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'lifecycle_events')
+    queryset = SpecificPlant.objects.prefetch_related(
+        'locations', 'locations__seed_tray_cell', 'locations__garden_square',
+        'lifecycle_events', 'image_attachments',
+    )
     serializer_class = SpecificPlantSerializer
 
     def get_serializer_class(self):

@@ -2,6 +2,8 @@ import React from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Col, Form, Row } from 'react-bootstrap'
 
+import { PhotoInput } from '../attachments'
+import { uploadAttachments } from '../api/attachments'
 import { addHarvest } from '../api/plantings'
 import { queryKeys } from '../query'
 import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
@@ -72,6 +74,9 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
   const [selected, setSelected] = React.useState<Array<number>>([])
   const [finishPlants, setFinishPlants] = React.useState(false)
   const [error, setError] = React.useState<string>()
+  const [photos, setPhotos] = React.useState<Array<File>>([])
+  const [photoWarning, setPhotoWarning] = React.useState('')
+  const [photoTarget, setPhotoTarget] = React.useState<number | null>(null)
 
   React.useEffect(() => {
     if (batches.length === 1) {
@@ -87,13 +92,19 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
   const predatesAPlant = chosen.some((plant) => plant.since !== null && harvestedDate !== null && harvestedDate < new Date(plant.since))
 
   const mutation = useMutation({
-    mutationFn: addHarvest,
-    onSuccess: (harvest) => {
+    mutationFn: async (data: Parameters<typeof addHarvest>[0]) => {
+      const harvest = await addHarvest(data)
+      return { harvest, photoResult: await uploadAttachments('harvest', harvest.pk, photos) }
+    },
+    onSuccess: ({ harvest, photoResult }) => {
       setQuantity('')
       setNotes('')
       setSelected([])
       setFinishPlants(false)
       setError(undefined)
+      setPhotos(photoResult.failures.map((failure) => failure.file))
+      setPhotoWarning(photoResult.failures.length === 0 ? '' : 'The harvest was recorded, but some photos failed. The failed selection is ready to retry.')
+      setPhotoTarget(photoResult.failures.length === 0 ? null : harvest.pk)
       return invalidateHarvests(queryClient, harvest.batch, harvest.finished_plants.length > 0).then(() => onRecorded?.())
     },
     onError: (caught: unknown) => setError(caught instanceof Error ? caught.message : String(caught))
@@ -203,6 +214,9 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
             <Form.Control value={notes} onChange={(event) => setNotes(event.target.value)} />
           </Form.Group>
         </Col>
+        <Col md={12}>
+          <PhotoInput id="harvest-photos" files={photos} onChange={setPhotos} />
+        </Col>
       </Row>
       {batchPlants.length > 0 && (
         <fieldset className="mt-3">
@@ -238,6 +252,30 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
       {error && (
         <Alert className="mt-3" variant="danger">
           {error}
+        </Alert>
+      )}
+      {photoWarning && (
+        <Alert className="mt-3" variant="warning">
+          {photoWarning}
+          {photoTarget !== null && (
+            <div>
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline-dark"
+                onClick={() => {
+                  void uploadAttachments('harvest', photoTarget, photos).then((result) => {
+                    setPhotos(result.failures.map((failure) => failure.file))
+                    setPhotoWarning(result.failures.length === 0 ? '' : photoWarning)
+                    if (result.failures.length === 0) setPhotoTarget(null)
+                    void queryClient.invalidateQueries({ queryKey: queryKeys.plantings.harvestsAll })
+                  })
+                }}
+              >
+                Retry failed photos
+              </Button>
+            </div>
+          )}
         </Alert>
       )}
     </Form>

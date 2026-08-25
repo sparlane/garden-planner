@@ -10,6 +10,7 @@ from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from attachments.rest import AttachmentSerializer
 from workspaces.models import Workspace, get_current_workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin, RequireWorkspaceModeMixin
 
@@ -163,6 +164,7 @@ class HealthObservationSerializer(serializers.ModelSerializer):
     quarantine_cases = serializers.SerializerMethodField()
     treatments = serializers.SerializerMethodField()
     follow_ups = serializers.SerializerMethodField()
+    attachments = AttachmentSerializer(source='image_attachments', many=True, read_only=True)
 
     class Meta:
         model = HealthObservation
@@ -172,6 +174,7 @@ class HealthObservationSerializer(serializers.ModelSerializer):
             'affected_count', 'diagnoses', 'evidence', 'corrects',
             'correction_reason', 'created_by', 'created',
             'quarantine_cases', 'treatments', 'follow_ups',
+            'attachments',
         ]
 
     def get_scopes(self, observation):
@@ -329,6 +332,7 @@ class HealthObservationViewSet(
         'diagnoses__diagnosis', 'evidence_links',
         'quarantine_cases__actions', 'quarantine_cases__members',
         'treatments__application', 'follow_ups',
+        'image_attachments',
     )
     serializer_class = HealthObservationSerializer
 

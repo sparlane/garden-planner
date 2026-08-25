@@ -9,6 +9,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from attachments.rest import AttachmentSerializer
 from workspaces.models import Workspace
 from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin, RequireWorkspaceModeMixin
@@ -71,6 +72,7 @@ class NurseryObservationSerializer(serializers.ModelSerializer):
     cohort = serializers.SerializerMethodField()
     stage_name = serializers.CharField(source='stage.name', read_only=True, allow_null=True)
     grade_name = serializers.CharField(source='grade.name', read_only=True, allow_null=True)
+    attachments = AttachmentSerializer(source='image_attachments', many=True, read_only=True)
 
     class Meta:
         model = NurseryObservation
@@ -81,6 +83,7 @@ class NurseryObservationSerializer(serializers.ModelSerializer):
             'height_cm', 'spread_cm', 'root_condition', 'expected_ready',
             'photo_url', 'occurred_at', 'notes', 'corrects', 'created_by', 'created',
             'input_application',
+            'attachments',
         ]
 
     def get_plants(self, observation):
@@ -123,7 +126,7 @@ class NurseryObservationViewSet(
     RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet,
 ):
     required_workspace_modes = (Workspace.Mode.NURSERY,)
-    queryset = NurseryObservation.objects.select_related('stage', 'grade', 'container_item', 'created_by').prefetch_related('targets')
+    queryset = NurseryObservation.objects.select_related('stage', 'grade', 'container_item', 'created_by').prefetch_related('targets', 'image_attachments')
     serializer_class = NurseryObservationSerializer
 
     def get_queryset(self):

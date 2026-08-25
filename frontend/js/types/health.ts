@@ -1,3 +1,5 @@
+import { ImageAttachment } from './attachments'
+
 type HealthSeverity = 'low' | 'moderate' | 'high' | 'critical'
 type HealthScopeType = 'plant' | 'cohort' | 'tray' | 'generation' | 'batch' | 'location'
 
@@ -44,6 +46,7 @@ interface HealthObservation {
   affected_count: number
   diagnoses: Array<HealthDiagnosisAssessment>
   evidence: Array<{ url: string; label: string }>
+  attachments: Array<ImageAttachment>
   corrects: number | null
   correction_reason: string
   quarantine_cases: Array<{ pk: number; active: boolean; reason: string }>

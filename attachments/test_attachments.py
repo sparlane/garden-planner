@@ -13,8 +13,10 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from PIL import Image
 
+from health.models import HealthObservation, HealthObservationType
+from plantings.models import NurseryObservation
 from tests.api import RESTContractTestCase
-from tests.factories import make_specific_plant
+from tests.factories import make_harvest, make_specific_plant
 from workspaces.models import Workspace, get_current_workspace
 
 from .models import ImageAttachment
@@ -195,3 +197,35 @@ class AttachmentContractTests(AttachmentTestCase):
             attachment.save()
         with self.assertRaisesMessage(ValidationError, 'cannot be deleted'):
             attachment.delete()
+
+    def test_record_serializers_embed_protected_attachment_metadata(self):
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        nursery = NurseryObservation.objects.create(
+            workspace=self.workspace, notes='Healthy new growth.',
+        )
+        health = HealthObservation.objects.create(
+            workspace=self.workspace,
+            observation_type=HealthObservationType.objects.get(
+                workspace=self.workspace, code='pest-signs',
+            ),
+            severity=HealthObservation.Severity.LOW,
+        )
+        harvest = make_harvest(workspace=self.workspace)
+        targets = (
+            ('plant', self.plant, f'/plantings/specificplants/{self.plant.pk}/'),
+            ('nursery_observation', nursery, '/plantings/nursery-observations/'),
+            ('health_observation', health, '/health/observations/'),
+            ('harvest', harvest, f'/plantings/harvests/{harvest.pk}/'),
+        )
+        for target_type, target, url in targets:
+            create_attachment(
+                self.workspace, self.user, target_type, target, image_upload(),
+            )
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200, response.data)
+            payload = response.data
+            if isinstance(payload, list):
+                payload = next(row for row in payload if row['pk'] == target.pk)
+            with self.subTest(target_type=target_type):
+                self.assertEqual(payload['attachments'][0]['target_type'], target_type)

@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { useSearchParams } from 'react-router'
 
+import { AttachmentGallery, PhotoInput } from './attachments'
+import { uploadAttachments } from './api/attachments'
 import {
   actOnQuarantine,
   correctHealthObservation,
@@ -57,6 +59,9 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
   const [notes, setNotes] = React.useState('')
   const [evidenceUrl, setEvidenceUrl] = React.useState('')
   const [followUp, setFollowUp] = React.useState('')
+  const [photos, setPhotos] = React.useState<Array<File>>([])
+  const [photoWarning, setPhotoWarning] = React.useState('')
+  const [photoTarget, setPhotoTarget] = React.useState<number | null>(null)
 
   React.useEffect(() => {
     if (observationType === '' && types.length > 0) setObservationType(types[0].pk)
@@ -67,8 +72,8 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
     onSuccess: setPreview
   })
   const createMutation = useMutation({
-    mutationFn: () =>
-      createHealthObservation({
+    mutationFn: async () => {
+      const observation = await createHealthObservation({
         scopes,
         reviewed_digest: preview?.digest ?? '',
         observation_type: observationType as number,
@@ -77,13 +82,18 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
         evidence: evidenceUrl ? [{ url: evidenceUrl, label: 'Observation evidence' }] : [],
         follow_up_due_at: followUp ? new Date(followUp).toISOString() : null,
         notes
-      }),
-    onSuccess: () => {
+      })
+      return { observation, photoResult: await uploadAttachments('health_observation', observation.pk, photos) }
+    },
+    onSuccess: ({ observation, photoResult }) => {
       setScopes([])
       setPreview(undefined)
       setNotes('')
       setEvidenceUrl('')
       setFollowUp('')
+      setPhotos(photoResult.failures.map((failure) => failure.file))
+      setPhotoWarning(photoResult.failures.length === 0 ? '' : 'The observation was recorded, but some photos failed. The failed selection is ready to retry.')
+      setPhotoTarget(photoResult.failures.length === 0 ? null : observation.pk)
       void invalidateHealth(cache)
     }
   })
@@ -203,10 +213,37 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
           <Form.Label>Notes</Form.Label>
           <Form.Control as="textarea" value={notes} onChange={(event) => setNotes(event.target.value)} />
         </Col>
+        <Col xs={12}>
+          <PhotoInput id="health-observation-photos" files={photos} onChange={setPhotos} />
+        </Col>
       </Row>
       <Button className="mt-3" disabled={!preview || observationType === '' || createMutation.isPending} onClick={() => createMutation.mutate()}>
         Record reviewed observation
       </Button>
+      {photoWarning && (
+        <Alert className="mt-3" variant="warning">
+          {photoWarning}
+          {photoTarget !== null && (
+            <div>
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline-dark"
+                onClick={() => {
+                  void uploadAttachments('health_observation', photoTarget, photos).then((result) => {
+                    setPhotos(result.failures.map((failure) => failure.file))
+                    setPhotoWarning(result.failures.length === 0 ? '' : photoWarning)
+                    if (result.failures.length === 0) setPhotoTarget(null)
+                    void invalidateHealth(cache)
+                  })
+                }}
+              >
+                Retry failed photos
+              </Button>
+            </div>
+          )}
+        </Alert>
+      )}
     </Card>
   )
 }
@@ -222,6 +259,9 @@ function ObservationActions({ observation }: { observation: HealthObservation })
   const [correctionReason, setCorrectionReason] = React.useState('')
   const [correctedSeverity, setCorrectedSeverity] = React.useState<HealthSeverity>(observation.severity)
   const [correctedNotes, setCorrectedNotes] = React.useState(observation.notes)
+  const [correctionPhotos, setCorrectionPhotos] = React.useState<Array<File>>([])
+  const [photoWarning, setPhotoWarning] = React.useState('')
+  const [photoTarget, setPhotoTarget] = React.useState<number | null>(null)
   const quarantineMutation = useMutation({
     mutationFn: () =>
       quarantineHealthObservation(observation.pk, {
@@ -250,8 +290,8 @@ function ObservationActions({ observation }: { observation: HealthObservation })
     }
   })
   const correctionMutation = useMutation({
-    mutationFn: () =>
-      correctHealthObservation(observation.pk, {
+    mutationFn: async () => {
+      const replacement = await correctHealthObservation(observation.pk, {
         observation_type: observation.observation_type,
         severity: correctedSeverity,
         diagnoses: observation.diagnoses.map((row) => ({ diagnosis: row.diagnosis, certainty: row.certainty })),
@@ -260,9 +300,14 @@ function ObservationActions({ observation }: { observation: HealthObservation })
         follow_up_due_at: observation.follow_up_due_at,
         notes: correctedNotes,
         correction_reason: correctionReason
-      }),
-    onSuccess: () => {
+      })
+      return { replacement, photoResult: await uploadAttachments('health_observation', replacement.pk, correctionPhotos) }
+    },
+    onSuccess: ({ replacement, photoResult }) => {
       setCorrectionReason('')
+      setCorrectionPhotos(photoResult.failures.map((failure) => failure.file))
+      setPhotoWarning(photoResult.failures.length === 0 ? '' : 'The correction was recorded, but some photos failed. Retry them on the replacement observation.')
+      setPhotoTarget(photoResult.failures.length === 0 ? null : replacement.pk)
       void invalidateHealth(cache)
     }
   })
@@ -340,11 +385,38 @@ function ObservationActions({ observation }: { observation: HealthObservation })
           <Form.Label>Correction reason</Form.Label>
           <Form.Control value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} />
         </Col>
+        <Col md={8}>
+          <PhotoInput id={`health-correction-photos-${observation.pk}`} files={correctionPhotos} onChange={setCorrectionPhotos} label="Correction photos (optional)" />
+        </Col>
         <Col md={4}>
           <Button variant="outline-secondary" disabled={!correctionReason || correctionMutation.isPending} onClick={() => correctionMutation.mutate()}>
             Append correction
           </Button>
         </Col>
+        {photoWarning && (
+          <Col xs={12}>
+            <Alert className="mb-0" variant="warning">
+              {photoWarning}
+              {photoTarget !== null && (
+                <Button
+                  className="ms-2"
+                  size="sm"
+                  variant="outline-dark"
+                  onClick={() => {
+                    void uploadAttachments('health_observation', photoTarget, correctionPhotos).then((result) => {
+                      setCorrectionPhotos(result.failures.map((failure) => failure.file))
+                      setPhotoWarning(result.failures.length === 0 ? '' : photoWarning)
+                      if (result.failures.length === 0) setPhotoTarget(null)
+                      void invalidateHealth(cache)
+                    })
+                  }}
+                >
+                  Retry failed photos
+                </Button>
+              )}
+            </Alert>
+          </Col>
+        )}
       </Row>
     </details>
   )
@@ -481,6 +553,7 @@ function HealthView() {
                 </a>
               </div>
             ))}
+            <AttachmentGallery attachments={observation.attachments} />
             <ObservationActions observation={observation} />
           </Card>
         ))
