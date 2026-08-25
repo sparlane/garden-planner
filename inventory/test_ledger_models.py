@@ -14,6 +14,7 @@ from supplies.models import Supplier
 from workspaces.models import Workspace, get_current_workspace
 
 from .models import (
+    InputTaxAdjustment,
     InventoryItem,
     InventoryUnit,
     QuantityCertainty,
@@ -140,6 +141,108 @@ class LedgerModelTests(TestCase):
         with self.assertRaises(ValidationError) as context:
             line.save()
         self.assertIn('destination', context.exception.message_dict)
+
+    def test_receipt_line_freezes_apportioned_tax_and_acquisition_amounts(self):
+        """Explicit claim inputs produce all four auditable cost amounts."""
+        receipt = StockReceipt.objects.create(
+            workspace=self.workspace,
+            supplier=self.supplier,
+            received_date=date(2026, 8, 1),
+            currency_code='NZD',
+            created_by=self.user,
+        )
+        line = StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            quantity=Decimal('2'),
+            unit_code=UnitCode.LITRE,
+            base_quantity=Decimal('2000'),
+            line_cost_ex_tax=Decimal('100'),
+            supplier_cost_incl_tax=Decimal('115'),
+            tax_treatment=StockReceiptLine.TaxTreatment.STANDARD,
+            tax_rate=Decimal('15'),
+            input_tax_source=StockReceiptLine.InputTaxSource.SUPPLIER,
+            input_tax_amount=Decimal('15'),
+            claim_input_tax=True,
+            claimable_percentage=Decimal('60'),
+            apportionment_basis='Estimated taxable nursery use',
+            destination=self.location,
+        )
+
+        self.assertEqual(line.recoverable_input_tax, Decimal('9.0000'))
+        self.assertEqual(line.non_recoverable_tax, Decimal('6.0000'))
+        self.assertEqual(line.acquisition_amount, Decimal('106.0000'))
+
+    def test_customs_tax_not_recovered_is_added_to_supplier_cost(self):
+        """Border GST is outside the overseas supplier consideration."""
+        receipt = StockReceipt.objects.create(
+            workspace=self.workspace,
+            supplier=self.supplier,
+            received_date=date(2026, 8, 1),
+            currency_code='NZD',
+            created_by=self.user,
+        )
+        line = StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            quantity=Decimal('1'),
+            unit_code=UnitCode.LITRE,
+            base_quantity=Decimal('1000'),
+            line_cost_ex_tax=Decimal('100'),
+            supplier_cost_incl_tax=Decimal('100'),
+            tax_treatment=StockReceiptLine.TaxTreatment.OUT_OF_SCOPE,
+            input_tax_source=StockReceiptLine.InputTaxSource.CUSTOMS,
+            input_tax_amount=Decimal('18'),
+            destination=self.location,
+        )
+
+        self.assertEqual(line.recoverable_input_tax, Decimal('0.0000'))
+        self.assertEqual(line.non_recoverable_tax, Decimal('18.0000'))
+        self.assertEqual(line.acquisition_amount, Decimal('118.0000'))
+
+    def test_change_of_use_adjustment_is_exact_and_immutable(self):
+        """Later use changes append a tax fact without rewriting line cost."""
+        receipt = StockReceipt.objects.create(
+            workspace=self.workspace,
+            supplier=self.supplier,
+            received_date=date(2026, 8, 1),
+            currency_code='NZD',
+            created_by=self.user,
+        )
+        line = StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            quantity=Decimal('1'),
+            unit_code=UnitCode.LITRE,
+            base_quantity=Decimal('1000'),
+            line_cost_ex_tax=Decimal('100'),
+            supplier_cost_incl_tax=Decimal('115'),
+            tax_treatment=StockReceiptLine.TaxTreatment.STANDARD,
+            tax_rate=Decimal('15'),
+            input_tax_source=StockReceiptLine.InputTaxSource.SUPPLIER,
+            input_tax_amount=Decimal('15'),
+            claim_input_tax=True,
+            claimable_percentage=Decimal('100'),
+            destination=self.location,
+        )
+        StockReceipt.objects.filter(pk=receipt.pk).update(
+            status=StockReceipt.Status.POSTED,
+        )
+        adjustment = InputTaxAdjustment.objects.create(
+            workspace=self.workspace,
+            receipt_line=line,
+            adjustment_date=date(2026, 8, 20),
+            previous_claimable_percentage=Decimal('100'),
+            revised_claimable_percentage=Decimal('60'),
+            tax_adjustment=Decimal('-6'),
+            apportionment_basis='Observed business use',
+            reason='Use changed',
+            created_by=self.user,
+        )
+
+        self.assertEqual(line.acquisition_amount, Decimal('100.0000'))
+        with self.assertRaises(ValidationError):
+            adjustment.save()
 
     def test_unknown_seed_receipt_omits_quantity_without_claiming_zero(self):
         """An uncounted packet keeps its quantity genuinely nullable."""

@@ -423,6 +423,19 @@ class StockReceipt(WorkspaceOwnedModel):
         POSTED = 'posted', 'Posted'
         REVERSED = 'reversed', 'Reversed'
 
+    class SourceDocumentType(models.TextChoices):
+        """The principal record supporting the supplier purchase."""
+
+        NONE = 'none', 'No source document recorded'
+        TAXABLE_SUPPLY = 'taxable_supply', 'Taxable supply information'
+        INVOICE = 'invoice', 'Invoice'
+        RECEIPT = 'receipt', 'Receipt'
+        BUYER_CREATED = 'buyer_created', 'Buyer-created taxable supply information'
+        CUSTOMS_ENTRY = 'customs_entry', 'Customs entry or statement'
+        CONTRACT = 'contract', 'Contract or supplier agreement'
+        BANK_RECORD = 'bank_record', 'Bank or payment record'
+        OTHER = 'other', 'Other record'
+
     supplier = models.ForeignKey(
         'supplies.Supplier',
         on_delete=models.PROTECT,
@@ -436,6 +449,27 @@ class StockReceipt(WorkspaceOwnedModel):
     )
     received_date = models.DateField()
     supplier_reference = models.CharField(max_length=255, blank=True, default='')
+    invoice_date = models.DateField(null=True, blank=True)
+    source_document_type = models.CharField(
+        max_length=24,
+        choices=SourceDocumentType.choices,
+        default=SourceDocumentType.NONE,
+    )
+    source_document_number = models.CharField(max_length=255, blank=True, default='')
+    evidence_reference = models.CharField(max_length=255, blank=True, default='')
+    evidence_url = models.URLField(max_length=2048, blank=True, default='')
+    supplier_name_snapshot = models.CharField(max_length=1024, blank=True, default='')
+    supplier_address_snapshot = models.TextField(blank=True, default='')
+    supplier_gst_status = models.CharField(
+        max_length=16,
+        choices=(
+            ('registered', 'GST registered'),
+            ('unregistered', 'Not GST registered'),
+            ('unknown', 'Unknown'),
+        ),
+        default='unknown',
+    )
+    supplier_gst_number = models.CharField(max_length=16, blank=True, default='')
     currency_code = models.CharField(
         max_length=3,
         validators=[
@@ -510,6 +544,23 @@ class StockReceipt(WorkspaceOwnedModel):
 class StockReceiptLine(models.Model):
     """A draft purchase line normalized into its item's base unit."""
 
+    class TaxTreatment(models.TextChoices):
+        """How the purchased supply is treated for GST."""
+
+        STANDARD = 'standard', 'Standard-rated'
+        ZERO_RATED = 'zero_rated', 'Zero-rated'
+        EXEMPT = 'exempt', 'Exempt'
+        OUT_OF_SCOPE = 'out_of_scope', 'Outside the scope of GST'
+        UNKNOWN = 'unknown', 'Unknown'
+
+    class InputTaxSource(models.TextChoices):
+        """Where an input-tax amount comes from."""
+
+        NONE = 'none', 'No input tax'
+        SUPPLIER = 'supplier', 'GST charged by supplier'
+        CUSTOMS = 'customs', 'GST levied by Customs'
+        SECOND_HAND = 'second_hand', 'Second-hand-goods deduction'
+
     receipt = models.ForeignKey(
         StockReceipt,
         on_delete=models.CASCADE,
@@ -563,6 +614,70 @@ class StockReceiptLine(models.Model):
         decimal_places=MONEY_DECIMAL_PLACES,
         validators=[MinValueValidator(Decimal('0'))],
     )
+    supplier_cost_incl_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    tax_treatment = models.CharField(
+        max_length=16,
+        choices=TaxTreatment.choices,
+        default=TaxTreatment.UNKNOWN,
+    )
+    tax_rate = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        default=Decimal('0'),
+        validators=(
+            MinValueValidator(Decimal('0')),
+            MaxValueValidator(Decimal('100')),
+        ),
+    )
+    input_tax_source = models.CharField(
+        max_length=16,
+        choices=InputTaxSource.choices,
+        default=InputTaxSource.NONE,
+    )
+    input_tax_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    claim_input_tax = models.BooleanField(default=False)
+    claimable_percentage = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        default=Decimal('0'),
+        validators=(
+            MinValueValidator(Decimal('0')),
+            MaxValueValidator(Decimal('100')),
+        ),
+    )
+    apportionment_basis = models.TextField(blank=True, default='')
+    recoverable_input_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'),
+        editable=False,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    non_recoverable_tax = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'),
+        editable=False,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    acquisition_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'),
+        editable=False,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    legacy_tax_classification = models.BooleanField(default=False, editable=False)
     destination = models.ForeignKey(
         Location,
         on_delete=models.PROTECT,
@@ -610,8 +725,47 @@ class StockReceiptLine(models.Model):
             errors['quantity'] = 'Exact and estimated quantities require a number.'
         if not errors and self.quantity is not None and self.base_quantity != self.normalized_quantity():
             errors['base_quantity'] = 'The normalized quantity is incorrect.'
+        errors.update(self._tax_errors())
         if errors:
             raise ValidationError(errors)
+
+    def _tax_errors(self):
+        """Return structural tax errors without deciding legal eligibility."""
+        errors = {}
+        rate = Decimal(self.tax_rate or 0)
+        tax = Decimal(self.input_tax_amount or 0)
+        percentage = Decimal(self.claimable_percentage or 0)
+        if self.tax_treatment == self.TaxTreatment.STANDARD and rate <= 0:
+            errors['tax_rate'] = 'A standard-rated line needs a positive tax rate.'
+        if self.tax_treatment != self.TaxTreatment.STANDARD and rate > 0:
+            errors['tax_rate'] = 'Only a standard-rated line carries a tax rate.'
+        if self.input_tax_source == self.InputTaxSource.NONE and tax != 0:
+            errors['input_tax_amount'] = 'Select where this input tax came from.'
+        if self.input_tax_source != self.InputTaxSource.NONE and tax <= 0:
+            errors['input_tax_amount'] = 'This input-tax source needs a positive amount.'
+        if self.claim_input_tax and percentage <= 0:
+            errors['claimable_percentage'] = 'A claim needs a positive percentage.'
+        if not self.claim_input_tax and percentage != 0:
+            errors['claimable_percentage'] = 'An unclaimed line must use zero percent.'
+        if 0 < percentage < 100 and not self.apportionment_basis.strip():
+            errors['apportionment_basis'] = 'Explain how a partial claim was apportioned.'
+        return errors
+
+    def _set_tax_amounts(self):
+        """Freeze the claim split and acquisition amount from explicit inputs."""
+        quantum = Decimal('0.0001')
+        tax = Decimal(self.input_tax_amount or 0).quantize(quantum)
+        percentage = Decimal(self.claimable_percentage or 0)
+        recoverable = Decimal('0')
+        if self.claim_input_tax:
+            recoverable = (tax * percentage / Decimal('100')).quantize(quantum)
+        self.recoverable_input_tax = recoverable
+        self.non_recoverable_tax = tax - recoverable
+        gross = Decimal(self.supplier_cost_incl_tax or 0).quantize(quantum)
+        if self.input_tax_source == self.InputTaxSource.CUSTOMS:
+            self.acquisition_amount = gross + self.non_recoverable_tax
+        else:
+            self.acquisition_amount = gross - recoverable
 
     def normalized_quantity(self):
         """Calculate the display quantity in the item's canonical unit."""
@@ -626,6 +780,7 @@ class StockReceiptLine(models.Model):
     def save(self, *args, **kwargs):
         if self.receipt_id and self.receipt.status != StockReceipt.Status.DRAFT:
             raise ValidationError('Posted receipt lines are immutable.')
+        self._set_tax_amounts()
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -633,6 +788,83 @@ class StockReceiptLine(models.Model):
         if self.receipt.status != StockReceipt.Status.DRAFT:
             raise ValidationError('Posted receipt lines are immutable.')
         return super().delete(*args, **kwargs)
+
+
+class InputTaxAdjustment(WorkspaceOwnedModel):
+    """An immutable later change to the input tax claimed for a receipt line."""
+
+    receipt_line = models.ForeignKey(
+        StockReceiptLine,
+        on_delete=models.PROTECT,
+        related_name='input_tax_adjustments',
+    )
+    adjustment_date = models.DateField()
+    previous_claimable_percentage = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        validators=(MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))),
+    )
+    revised_claimable_percentage = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        validators=(MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))),
+    )
+    tax_adjustment = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS,
+        decimal_places=MONEY_DECIMAL_PLACES,
+        help_text='Positive increases the deduction; negative reduces it.',
+    )
+    apportionment_basis = models.TextField()
+    reason = models.TextField()
+    evidence_reference = models.CharField(max_length=255, blank=True, default='')
+    evidence_url = models.URLField(max_length=2048, blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['adjustment_date', 'pk']
+
+    def clean(self):
+        """Require a posted same-workspace line and exact percentage delta."""
+        super().clean()
+        errors = {}
+        if self.receipt_line_id:
+            receipt = StockReceipt.objects.only('workspace_id', 'status').get(
+                pk=self.receipt_line.receipt_id,
+            )
+            if receipt.workspace_id != self.workspace_id:
+                errors['receipt_line'] = 'The receipt line belongs to another workspace.'
+            if receipt.status != StockReceipt.Status.POSTED:
+                errors['receipt_line'] = 'Adjust input tax only on a posted receipt.'
+            revised = Decimal(self.revised_claimable_percentage)
+            previous = Decimal(self.previous_claimable_percentage)
+            percentage_delta = revised - previous
+            tax_delta = Decimal(self.receipt_line.input_tax_amount) * percentage_delta
+            expected = (tax_delta / Decimal('100')).quantize(Decimal('0.0001'))
+            if Decimal(self.tax_adjustment) != expected:
+                errors['tax_adjustment'] = f'The percentage change produces {expected:.4f}.'
+        if not self.reason.strip():
+            errors['reason'] = 'Explain why the taxable use changed.'
+        if not self.apportionment_basis.strip():
+            errors['apportionment_basis'] = 'Record the revised apportionment basis.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        """Create once; later corrections append another adjustment."""
+        if self.pk:
+            raise ValidationError('Input-tax adjustments are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Input-tax adjustments are immutable.')
 
 
 class StockLot(WorkspaceOwnedModel):
