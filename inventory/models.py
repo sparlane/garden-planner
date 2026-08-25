@@ -541,7 +541,7 @@ class StockReceipt(WorkspaceOwnedModel):
         return super().delete(*args, **kwargs)
 
 
-class StockReceiptLine(models.Model):
+class StockReceiptLine(models.Model):  # pylint: disable=too-many-instance-attributes
     """A draft purchase line normalized into its item's base unit."""
 
     class TaxTreatment(models.TextChoices):
@@ -755,6 +755,34 @@ class StockReceiptLine(models.Model):
         """Freeze the claim split and acquisition amount from explicit inputs."""
         quantum = Decimal('0.0001')
         tax = Decimal(self.input_tax_amount or 0).quantize(quantum)
+        legacy_receipt_tax = all((
+            self.input_tax_source == self.InputTaxSource.NONE,
+            self.tax_treatment == self.TaxTreatment.UNKNOWN,
+            tax == 0,
+            self.receipt_id,
+            Decimal(self.receipt.tax_rate or 0) > 0,
+        ))
+        if legacy_receipt_tax:
+            rate = Decimal(self.receipt.tax_rate)
+            entered = Decimal(self.line_cost_ex_tax or 0)
+            if self.receipt.price_includes_tax:
+                gross = entered
+                tax = (gross * rate / (Decimal('100') + rate)).quantize(quantum)
+            else:
+                tax = (entered * rate / Decimal('100')).quantize(quantum)
+                gross = entered + tax
+            if tax == 0:
+                self.supplier_cost_incl_tax = gross
+                return
+            self.supplier_cost_incl_tax = gross
+            self.tax_treatment = self.TaxTreatment.STANDARD
+            self.tax_rate = rate
+            self.input_tax_source = self.InputTaxSource.SUPPLIER
+            self.input_tax_amount = tax
+            self.claim_input_tax = self.receipt.tax_recoverable
+            self.claimable_percentage = (
+                Decimal('100') if self.claim_input_tax else Decimal('0')
+            )
         percentage = Decimal(self.claimable_percentage or 0)
         recoverable = Decimal('0')
         if self.claim_input_tax:
@@ -762,10 +790,19 @@ class StockReceiptLine(models.Model):
         self.recoverable_input_tax = recoverable
         self.non_recoverable_tax = tax - recoverable
         gross = Decimal(self.supplier_cost_incl_tax or 0).quantize(quantum)
+        if gross == 0 and tax == 0 and Decimal(self.line_cost_ex_tax or 0) > 0:
+            gross = Decimal(self.line_cost_ex_tax).quantize(quantum)
+            self.supplier_cost_incl_tax = gross
         if self.input_tax_source == self.InputTaxSource.CUSTOMS:
             self.acquisition_amount = gross + self.non_recoverable_tax
+            self.line_cost_ex_tax = gross
         else:
             self.acquisition_amount = gross - recoverable
+            supplier_tax = tax if self.input_tax_source in {
+                self.InputTaxSource.SUPPLIER,
+                self.InputTaxSource.SECOND_HAND,
+            } else Decimal('0')
+            self.line_cost_ex_tax = gross - supplier_tax
 
     def normalized_quantity(self):
         """Calculate the display quantity in the item's canonical unit."""

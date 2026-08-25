@@ -847,3 +847,75 @@ class StockReceiptSettlementTests(LedgerRestFixture):
         self.assertEqual(created.status_code, 201, created.data)
         self.assertIsNone(created.data['settled_on'])
         self.assertIsNone(StockReceipt.objects.get(pk=created.data['pk']).settled_on)
+
+
+class InputTaxEvidenceRestTests(LedgerRestFixture):
+    """Line claims stay explicit and unsupported claims remain visible."""
+
+    adjustment_url = '/inventory/input-tax-adjustments/'
+
+    def evidenced_payload(self):
+        """Return one explicit supplier-GST claim without supporting evidence."""
+        payload = self.receipt_payload()
+        payload.pop('tax_recoverable')
+        payload['invoice_date'] = '2026-08-01'
+        payload['lines'][0].pop('line_cost_ex_tax')
+        payload['lines'][0].update({
+            'supplier_cost_incl_tax': '115.0000',
+            'tax_treatment': 'standard',
+            'tax_rate': '15.0000',
+            'input_tax_source': 'supplier',
+            'input_tax_amount': '15.0000',
+            'claim_input_tax': True,
+            'claimable_percentage': '100.0000',
+            'apportionment_basis': '',
+        })
+        return payload
+
+    def test_unsupported_claim_warns_but_posts(self):
+        """The selected warn-only policy never rewrites or blocks a claim."""
+        created = self.client.post(
+            self.receipt_url, self.evidenced_payload(), format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        codes = {warning['code'] for warning in created.data['tax_warnings']}
+        self.assertIn('workspace_not_registered', codes)
+        self.assertIn('purchase_evidence_missing', codes)
+        self.assertIn('supplier_registration_unsupported', codes)
+
+        posted = self.client.post(
+            f"{self.receipt_url}{created.data['pk']}/post/", {}, format='json',
+        )
+        self.assertEqual(posted.status_code, 200, posted.data)
+        line = posted.data['lines'][0]
+        self.assertEqual(line['recoverable_input_tax'], '15.0000')
+        self.assertEqual(line['non_recoverable_tax'], '0.0000')
+        self.assertEqual(line['acquisition_amount'], '100.0000')
+
+    def test_change_of_use_adjustment_is_derived_and_append_only(self):
+        """The API derives the signed adjustment from the latest percentage."""
+        created = self.client.post(
+            self.receipt_url, self.evidenced_payload(), format='json',
+        )
+        posted = self.client.post(
+            f"{self.receipt_url}{created.data['pk']}/post/", {}, format='json',
+        )
+        line_id = posted.data['lines'][0]['pk']
+        response = self.client.post(self.adjustment_url, {
+            'receipt_line': line_id,
+            'adjustment_date': '2026-08-20',
+            'revised_claimable_percentage': '60.0000',
+            'apportionment_basis': 'Observed taxable use',
+            'reason': 'Private use increased',
+            'evidence_reference': 'USE-LOG-1',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['previous_claimable_percentage'], '100.0000')
+        self.assertEqual(response.data['tax_adjustment'], '-6.0000')
+        self.assertEqual(
+            self.client.patch(
+                f"{self.adjustment_url}{response.data['pk']}/",
+                {'reason': 'rewrite'}, format='json',
+            ).status_code,
+            405,
+        )
