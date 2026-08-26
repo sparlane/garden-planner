@@ -290,6 +290,7 @@ class PurchasingRestTests(APITestCase):
             'category': category.data['pk'],
             'payee': 'Saturday market',
             'incurred_on': '2026-08-22',
+            'paid_on': '2026-08-23',
             'currency_code': 'NZD',
             'subtotal_ex_tax': '20.0000',
             'tax_total': '3.0000',
@@ -303,8 +304,10 @@ class PurchasingRestTests(APITestCase):
         )
         self.assertEqual(confirmed.status_code, 200, confirmed.data)
         self.assertEqual(confirmed.data['status'], 'confirmed')
+        self.assertEqual(confirmed.data['payment_state'], 'paid')
         summary = self.client.get('/purchasing/summary/', {'as_of': '2026-08-26'})
         self.assertEqual(summary.data['expenses']['total_incl_tax'], Decimal('23.0000'))
+        self.assertEqual(summary.data['cash_paid'], Decimal('23.0000'))
 
     def test_collections_require_authentication(self):
         """Purchasing data is not exposed anonymously."""
