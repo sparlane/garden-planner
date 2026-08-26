@@ -1026,6 +1026,11 @@ def settle_receipt(receipt, settled_on):
     ).get(pk=receipt.pk)
     if receipt.status != StockReceipt.Status.POSTED:
         raise ValidationError({'status': 'Only posted receipts can be settled.'})
+    from purchasing.models import SupplierInvoiceLine  # pylint: disable=import-outside-toplevel
+    if SupplierInvoiceLine.objects.filter(receipt_line__receipt=receipt).exists():
+        raise ValidationError({
+            'settled_on': 'Record payments against the linked supplier invoice.',
+        })
     if settled_on is not None:
         zone = ZoneInfo(receipt.workspace.timezone)
         if settled_on > timezone.now().astimezone(zone).date():

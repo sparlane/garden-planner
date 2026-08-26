@@ -356,6 +356,8 @@ def packet_provenance(packet):
     figures do, so the payload reads the same whether it was rendered to JSON
     or read straight off the serializer.
     """
+    from purchasing.services import receipt_paid_on  # pylint: disable=import-outside-toplevel
+
     brand = packet.seeds.supplier
     lot = packet.stock_lot if packet.stock_lot_id else None
     line = lot.receipt_line if lot and lot.receipt_line_id else None
@@ -399,7 +401,9 @@ def packet_provenance(packet):
         'recoverable_input_tax': f'{line.recoverable_input_tax:.4f}',
         'non_recoverable_tax': f'{line.non_recoverable_tax:.4f}',
         'acquisition_amount': f'{line.acquisition_amount:.4f}',
-        'settled_on': _isoformat(receipt.settled_on),
+        'settled_on': _isoformat(receipt_paid_on(
+            receipt, getattr(line, 'confirmed_supplier_invoice_lines', None),
+        )),
     }
 
 

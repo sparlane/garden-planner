@@ -311,6 +311,32 @@ def invoice_state(invoice):
     }
 
 
+def receipt_paid_on(receipt, prefetched_invoice_lines=None):
+    """Derive full settlement from live invoice allocations, with legacy fallback."""
+    if prefetched_invoice_lines is None:
+        invoices = list(SupplierInvoice.objects.filter(
+            lines__receipt_line__receipt=receipt,
+            status=SupplierInvoice.Status.CONFIRMED,
+        ).distinct().prefetch_related(
+            'corrections', 'payment_allocations__payment__reversal',
+        ))
+    else:
+        invoices = list({
+            line.invoice_id: line.invoice for line in prefetched_invoice_lines
+        }.values())
+    if not invoices:
+        return receipt.settled_on
+    if any(invoice_state(invoice)['balance_due'] > 0 for invoice in invoices):
+        return None
+    dates = [
+        allocation.payment.paid_on
+        for invoice in invoices
+        for allocation in invoice.payment_allocations.all()
+        if allocation.payment.reversal_of_id is None and not hasattr(allocation.payment, 'reversal')
+    ]
+    return max(dates) if dates else None
+
+
 def _refresh_invoice_totals(invoice):
     totals = invoice.lines.aggregate(
         subtotal=Sum('subtotal_ex_tax'), tax=Sum('tax_total'), total=Sum('total_incl_tax'),
@@ -359,6 +385,13 @@ def confirm_invoice(invoice, user):
         raise ValidationError({'status': 'Only a draft supplier invoice can be confirmed.'})
     if not invoice.lines.exists():
         raise ValidationError({'lines': 'Add at least one line before confirming.'})
+    receipt_ids = invoice.lines.exclude(receipt_line=None).values_list('receipt_line_id', flat=True)
+    already_invoiced = SupplierInvoiceLine.objects.filter(
+        receipt_line_id__in=receipt_ids,
+        invoice__status=SupplierInvoice.Status.CONFIRMED,
+    ).exclude(invoice=invoice)
+    if already_invoiced.exists():
+        raise ValidationError({'lines': 'A posted receipt line is already on a confirmed invoice.'})
     _refresh_invoice_totals(invoice)
     SupplierInvoice.objects.filter(pk=invoice.pk).update(
         status=SupplierInvoice.Status.CONFIRMED,

@@ -20,6 +20,8 @@ Anything falling outside a registration produces an entry with no period and an
 exclusion reason. Nothing is silently dropped and nothing becomes a zero.
 """
 
+# pylint: disable=too-many-arguments,too-many-locals
+
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -29,6 +31,8 @@ from django.db import models
 
 from inventory.ledger import quantize_money
 from inventory.models import InputTaxAdjustment, StockReceipt, StockReceiptLine
+from purchasing.models import SupplierInvoice, SupplierInvoiceLine, SupplierPaymentAllocation
+from purchasing.services import invoice_net_total, invoice_paid_total
 
 from .facts import workspace_order_facts
 from .periods import (
@@ -218,25 +222,128 @@ def _period_purchase_entries(workspace, period, claimed):
     `claimed` carries the lines earlier periods already took, and is added to
     here. See `derive_entries` for why a period has to be told.
     """
+    entries = _supplier_invoice_purchase_entries(workspace, period)
+    linked_line_ids = SupplierInvoiceLine.objects.filter(
+        invoice__workspace=workspace,
+        receipt_line__isnull=False,
+    ).values_list('receipt_line_id', flat=True)
     if period.basis == INVOICE:
         lines = _invoiced_receipt_lines(workspace, period.start, period.end)
-        return [
+        entries.extend([
             _purchase_entry(line, period, period.basis)
-            for line in _take(lines, claimed)
-        ]
+            for line in _take(lines.exclude(pk__in=linked_line_ids), claimed)
+        ])
+        return entries
     settled = _settled_receipt_lines(workspace, period.start, period.end)
-    entries = [
+    entries.extend([
         _purchase_entry(line, period, period.basis)
-        for line in _take(settled, claimed)
-    ]
+        for line in _take(settled.exclude(pk__in=linked_line_ids), claimed)
+    ])
     unsettled = _unsettled_receipt_lines(workspace, period.start, period.end)
     entries.extend(
         _with(
             _purchase_entry(line, None, period.basis),
             exclusion=AWAITING_PAYMENT,
         )
-        for line in _take(unsettled, claimed)
+        for line in _take(unsettled.exclude(pk__in=linked_line_ids), claimed)
     )
+    return entries
+
+
+def _supplier_invoice_purchase_entries(workspace, period):
+    """Claim receipt evidence through confirmed invoices and allocated payments."""
+    if period.basis == INVOICE:
+        lines = SupplierInvoiceLine.objects.filter(
+            invoice__workspace=workspace,
+            invoice__status=SupplierInvoice.Status.CONFIRMED,
+            invoice__invoice_date__gte=period.start,
+            invoice__invoice_date__lte=period.end,
+            receipt_line__isnull=False,
+            receipt_line__receipt__status=StockReceipt.Status.POSTED,
+        ).select_related('invoice', 'receipt_line__receipt').prefetch_related(
+            'invoice__corrections',
+        )
+        return [
+            _purchase_entry(
+                line.receipt_line, period, period.basis,
+                claim_date=line.invoice.invoice_date,
+                source_type='supplier_invoice',
+                source_id=line.invoice_id,
+                document_id=line.invoice_id,
+                factor=_invoice_claim_factor(line.invoice),
+            )
+            for line in lines
+        ]
+    allocations = SupplierPaymentAllocation.objects.filter(
+        invoice__workspace=workspace,
+        invoice__status=SupplierInvoice.Status.CONFIRMED,
+        payment__paid_on__gte=period.start,
+        payment__paid_on__lte=period.end,
+        payment__reversal_of__isnull=True,
+        payment__reversal__isnull=True,
+    ).select_related('payment', 'invoice').prefetch_related(
+        'invoice__corrections', 'invoice__lines__receipt_line__receipt',
+    )
+    entries = []
+    for allocation in allocations:
+        factor = _payment_claim_factor(allocation)
+        for line in allocation.invoice.lines.all():
+            if line.receipt_line_id is None or line.receipt_line.receipt.status != StockReceipt.Status.POSTED:
+                continue
+            entries.append(_purchase_entry(
+                line.receipt_line, period, period.basis,
+                claim_date=allocation.payment.paid_on,
+                source_type='supplier_payment',
+                source_id=allocation.payment_id,
+                document_id=allocation.invoice_id,
+                factor=factor,
+            ))
+    entries.extend(_awaiting_invoice_payment_entries(workspace, period))
+    return entries
+
+
+def _invoice_claim_factor(invoice):
+    """Reduce a claim proportionally when credits reduce an invoice."""
+    if invoice.total_incl_tax <= 0:
+        return ZERO
+    return min(invoice_net_total(invoice) / invoice.total_incl_tax, Decimal('1'))
+
+
+def _payment_claim_factor(allocation):
+    """Return the fraction of an invoice discharged by one allocation."""
+    net = invoice_net_total(allocation.invoice)
+    if net <= 0:
+        return ZERO
+    return min(allocation.amount / net, Decimal('1')) * _invoice_claim_factor(allocation.invoice)
+
+
+def _awaiting_invoice_payment_entries(workspace, period):
+    """Expose the unclaimed share of invoices first seen in this period."""
+    lines = SupplierInvoiceLine.objects.filter(
+        invoice__workspace=workspace,
+        invoice__status=SupplierInvoice.Status.CONFIRMED,
+        invoice__invoice_date__gte=period.start,
+        invoice__invoice_date__lte=period.end,
+        receipt_line__isnull=False,
+        receipt_line__receipt__status=StockReceipt.Status.POSTED,
+    ).select_related('invoice', 'receipt_line__receipt').prefetch_related(
+        'invoice__corrections', 'invoice__payment_allocations__payment',
+    )
+    entries = []
+    for line in lines:
+        net = invoice_net_total(line.invoice)
+        paid = invoice_paid_total(line.invoice, through=period.end)
+        if net <= 0 or paid >= net:
+            continue
+        factor = _invoice_claim_factor(line.invoice) * (net - paid) / net
+        entries.append(_with(_purchase_entry(
+            line.receipt_line, None, period.basis,
+            claim_date=line.invoice.invoice_date,
+            source_type='supplier_invoice',
+            source_id=line.invoice_id,
+            document_id=line.invoice_id,
+            factor=factor,
+        ), exclusion=AWAITING_PAYMENT))
     return entries
 
 
@@ -264,6 +371,8 @@ def _unregistered_purchase_entries(context, accounted_line_ids):
     start, end = context.window
     entries = []
     for line in _invoiced_receipt_lines(context.workspace, start, end):
+        if line.supplier_invoice_lines.exists():
+            continue
         if line.pk in accounted_line_ids:
             continue
         day = _unaccounted_day(line, context)
@@ -302,7 +411,9 @@ def _unaccounted_day(line, context):
     return None
 
 
-def _purchase_entry(line, period, basis):
+def _purchase_entry(
+        line, period, basis, *, claim_date=None, source_type='stock_receipt',
+        source_id=None, document_id=None, factor=Decimal('1')):
     """Split one receipt line into its recoverable and non-recoverable tax.
 
     The claimable amount is recomputed rather than read: `_receipt_acquisition_cost`
@@ -315,23 +426,25 @@ def _purchase_entry(line, period, basis):
     owns moving it down to the line, and the report says so.
     """
     receipt = line.receipt
-    taxable = quantize_money(line.line_cost_ex_tax)
-    recoverable = quantize_money(line.recoverable_input_tax)
-    non_recoverable = quantize_money(line.non_recoverable_tax)
+    taxable = quantize_money(line.line_cost_ex_tax * factor)
+    recoverable = quantize_money(line.recoverable_input_tax * factor)
+    non_recoverable = quantize_money(line.non_recoverable_tax * factor)
     # A settlement date is a date somebody paid a supplier on, so under a basis
     # that claims on payment it is the real time of supply and not a stand-in.
     # Every other purchase is still dated by the receipt standing in for the
     # supplier invoice date this application does not hold, and stays a proxy.
-    paid = basis in PAYMENT_BASED and receipt.settled_on is not None
+    legacy_paid = source_type == 'stock_receipt' and basis in PAYMENT_BASED and receipt.settled_on is not None
+    paid = source_type == 'supplier_payment' or legacy_paid
     invoice_day = receipt.invoice_date or receipt.received_date
+    supply_date = claim_date or (receipt.settled_on if paid else invoice_day)
     return GstEntry(
         kind=PURCHASE,
-        supply_date=receipt.settled_on if paid else invoice_day,
+        supply_date=supply_date,
         period=period,
         basis=basis,
-        source_type='stock_receipt',
-        source_id=receipt.pk,
-        document_id=receipt.pk,
+        source_type=source_type,
+        source_id=source_id or receipt.pk,
+        document_id=document_id or receipt.pk,
         line_id=line.pk,
         tax_code=line.tax_treatment,
         tax_rate=Decimal(line.tax_rate),
@@ -341,11 +454,11 @@ def _purchase_entry(line, period, basis):
         currency_code=receipt.currency_code,
         time_of_supply_source=(
             SUPPLIER_PAYMENT if paid
-            else SUPPLIER_INVOICE if receipt.invoice_date
+            else SUPPLIER_INVOICE if source_type == 'supplier_invoice' or receipt.invoice_date
             else RECEIPT_PROXY
         ),
         input_tax_source=line.input_tax_source,
-        proxy=not paid and receipt.invoice_date is None,
+        proxy=source_type == 'stock_receipt' and not paid and receipt.invoice_date is None,
     )
 
 

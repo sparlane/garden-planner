@@ -198,6 +198,7 @@ class StockReceiptSerializer(
     movement_ids = serializers.SerializerMethodField()
     is_seed_packet_draft = serializers.SerializerMethodField()
     tax_warnings = serializers.SerializerMethodField()
+    settled_on = serializers.SerializerMethodField()
 
     class Meta:
         model = StockReceipt
@@ -263,6 +264,13 @@ class StockReceiptSerializer(
     def get_tax_warnings(self, receipt):
         """Expose unsupported claims without silently changing them."""
         return receipt_tax_warnings(receipt)
+
+    def get_settled_on(self, receipt):
+        """Expose invoice-allocation settlement, falling back for legacy receipts."""
+        from purchasing.services import receipt_paid_on  # pylint: disable=import-outside-toplevel
+
+        paid_on = receipt_paid_on(receipt)
+        return paid_on.isoformat() if paid_on else None
 
     def validate(self, attrs):
         """Apply workspace financial defaults to new draft documents."""
