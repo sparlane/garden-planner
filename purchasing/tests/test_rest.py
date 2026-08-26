@@ -1,5 +1,8 @@
 """End-to-end API contracts for purchasing and supplier payables."""
 
+# pylint: disable=duplicate-code
+
+from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -8,6 +11,9 @@ from rest_framework.test import APITestCase
 from inventory.models import StockReceipt
 from inventory.units import UnitCode
 from tests.factories import make_plant_variety, make_supplier
+from tax.entries import AWAITING_PAYMENT, PURCHASE, derive_entries
+from tax.models import GstRegistration
+from tax.services import record_registration
 from workspaces.models import get_current_workspace
 
 
@@ -32,7 +38,7 @@ class PurchasingRestTests(APITestCase):
         self.assertEqual(catalog.status_code, 201, catalog.data)
         self.seed_catalog = catalog.data
 
-    def receive_seed(self, quantity='40', reference='DEL-1'):
+    def receive_seed(self, quantity='40', reference='DEL-1', received_date='2026-08-20'):
         """Receive one exact packet and return its posted receipt line."""
         draft = self.client.post('/seeds/packet-receipts/', {
             'seeds': self.seed_catalog['pk'],
@@ -40,7 +46,14 @@ class PurchasingRestTests(APITestCase):
             'quantity_certainty': 'exact',
             'quantity': quantity,
             'line_price': '11.5000',
-            'received_date': '2026-08-20',
+            'supplier_cost_incl_tax': '11.5000',
+            'tax_treatment': 'standard',
+            'tax_rate': '15.0000',
+            'input_tax_source': 'supplier',
+            'input_tax_amount': '1.5000',
+            'claim_input_tax': True,
+            'claimable_percentage': '100.0000',
+            'received_date': received_date,
             'supplier_reference': reference,
         }, format='json')
         self.assertEqual(draft.status_code, 201, draft.data)
@@ -118,6 +131,52 @@ class PurchasingRestTests(APITestCase):
 
         lot.refresh_from_db()
         self.assertEqual(lot.acquisition_total, original_cost)
+
+    def test_payments_basis_claims_partial_invoice_payments_proportionally(self):
+        """A part-paid seed invoice claims only the discharged share of input tax."""
+        record_registration(
+            self.workspace, self.user,
+            registered=True,
+            gst_number='123456785',
+            basis=GstRegistration.Basis.PAYMENTS,
+            filing_frequency=GstRegistration.Frequency.MONTHLY,
+            period_anchor_month=1,
+            effective_from=date(2026, 1, 1),
+        )
+        invoice = self.create_invoice(self.receive_seed())
+        self.pay(invoice['pk'], '5.0000', 'PAY-PART')
+
+        entries = derive_entries(
+            self.workspace,
+            date(2026, 8, 1),
+            date(2026, 8, 31),
+        )
+        purchases = [entry for entry in entries if entry.kind == PURCHASE]
+        claimed = [entry for entry in purchases if not entry.exclusion]
+        awaiting = [entry for entry in purchases if entry.exclusion == AWAITING_PAYMENT]
+        self.assertEqual(sum(entry.tax for entry in claimed), Decimal('0.6522'))
+        self.assertEqual(sum(entry.tax for entry in awaiting), Decimal('0.8478'))
+        self.assertEqual({entry.source_type for entry in claimed}, {'supplier_payment'})
+
+    def test_invoice_basis_uses_confirmed_supplier_invoice_date(self):
+        """A later supplier invoice supersedes the receipt-date proxy."""
+        record_registration(
+            self.workspace, self.user,
+            registered=True,
+            gst_number='123456785',
+            basis=GstRegistration.Basis.INVOICE,
+            filing_frequency=GstRegistration.Frequency.MONTHLY,
+            period_anchor_month=1,
+            effective_from=date(2026, 1, 1),
+        )
+        self.create_invoice(self.receive_seed(received_date='2026-07-31'))
+
+        entries = derive_entries(self.workspace, date(2026, 7, 1), date(2026, 8, 31))
+        purchases = [entry for entry in entries if entry.kind == PURCHASE]
+        self.assertEqual(len(purchases), 1)
+        self.assertEqual(purchases[0].supply_date, date(2026, 8, 21))
+        self.assertEqual(purchases[0].source_type, 'supplier_invoice')
+        self.assertFalse(purchases[0].proxy)
 
     def test_partial_deliveries_and_over_delivery_remain_visible(self):
         """Receipt matching reports each commercial quantity independently."""

@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
+from django.db.models import Prefetch
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -20,6 +21,8 @@ from workspaces.scoping import (
 from supplies.defaults import ensure_default_supplier
 from supplies.models import Supplier
 
+from purchasing.models import SupplierInvoice, SupplierInvoiceLine
+
 from .models import SeedPacket, SeedPacketReceiptDraft, Seeds
 from .services import (
     create_packet_receipt_draft,
@@ -31,6 +34,18 @@ from .services import (
     reconcile_packet_quantity,
     set_seed_inventory_unit,
     update_packet_receipt_draft,
+)
+
+
+PACKET_INVOICE_PREFETCH = Prefetch(
+    'stock_lot__receipt_line__supplier_invoice_lines',
+    queryset=SupplierInvoiceLine.objects.filter(
+        invoice__status=SupplierInvoice.Status.CONFIRMED,
+    ).select_related('invoice').prefetch_related(
+        'invoice__corrections',
+        'invoice__payment_allocations__payment__reversal',
+    ),
+    to_attr='confirmed_supplier_invoice_lines',
 )
 
 
@@ -386,7 +401,7 @@ class SeedPacketCurrentViewSet(
         'stock_lot__receipt_line__receipt__supplier',
         'seeds__supplier',
         'storage_location',
-    )
+    ).prefetch_related(PACKET_INVOICE_PREFETCH)
     serializer_class = SeedPacketSerializer
     http_method_names = ['get', 'patch', 'head', 'options', 'post']
 
@@ -445,7 +460,7 @@ class SeedPacketAllViewSet(
         'stock_lot__receipt_line__receipt__supplier',
         'seeds__supplier',
         'storage_location',
-    )
+    ).prefetch_related(PACKET_INVOICE_PREFETCH)
     serializer_class = SeedPacketSerializer
     http_method_names = ['get', 'patch', 'head', 'options']
 
