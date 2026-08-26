@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     "costing",
     "sales",
     "billing",
+    "purchasing",
     "labels",
     "work",
     "health",
