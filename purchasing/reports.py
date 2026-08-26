@@ -88,6 +88,9 @@ def purchasing_summary(workspace, as_of):
     expense_totals = expenses.aggregate(
         subtotal=Sum('subtotal_ex_tax'), tax=Sum('tax_total'), total=Sum('total_incl_tax'),
     )
+    standalone_paid = expenses.filter(
+        paid_on__isnull=False, paid_on__lte=as_of, supplier_invoice=None,
+    ).aggregate(total=Sum('total_incl_tax'))['total'] or ZERO
     return {
         'as_of': as_of,
         'requisitions': {
@@ -97,7 +100,7 @@ def purchasing_summary(workspace, as_of):
         'committed_spend': money(committed),
         'invoices': invoice_rows,
         'overdue_invoices': overdue,
-        'cash_paid': money(live_payments.aggregate(total=Sum('amount'))['total'] or ZERO),
+        'cash_paid': money((live_payments.aggregate(total=Sum('amount'))['total'] or ZERO) + standalone_paid),
         'expenses': {
             'subtotal_ex_tax': money(expense_totals['subtotal'] or ZERO),
             'tax_total': money(expense_totals['tax'] or ZERO),

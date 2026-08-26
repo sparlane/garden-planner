@@ -20,6 +20,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
   const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health'
   const inventoryActive = pathname === '/inventory' || pathname.startsWith('/applications') || pathname.startsWith('/locations')
   const salesActive = pathname === '/sales' || pathname.startsWith('/sales/')
+  const purchasingActive = pathname === '/purchasing' || pathname.startsWith('/purchasing/')
   const reportsActive = pathname === '/reports' || pathname.startsWith('/reports/')
   const advancedActive = pathname === '/seedtrays/models' || pathname.startsWith('/inventory/receipts') || pathname.startsWith('/inventory/stocktakes')
 
@@ -79,6 +80,11 @@ function GPTopBar({ workspace }: GPTopBarProps) {
                 GST
               </NavDropdown.Item>
             </NavDropdown>
+          )}
+          {advanced && (
+            <Nav.Link as={NavLink} to="/purchasing" active={purchasingActive}>
+              Purchasing
+            </Nav.Link>
           )}
           {workspace.mode === 'nursery' && (
             <NavDropdown title="Sales" active={salesActive}>

@@ -678,6 +678,7 @@ class BusinessExpense(WorkspaceOwnedModel, ValidatedModel):
     tax_total = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO, validators=[MinValueValidator(ZERO)])
     total_incl_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO)])
     supplier_invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
+    paid_on = models.DateField(null=True, blank=True)
     garden_area = models.ForeignKey('garden.GardenArea', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     crop_plan = models.ForeignKey('plantings.NurseryProductionPlan', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     production_batch = models.ForeignKey('plantings.ProductionBatch', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
@@ -706,6 +707,8 @@ class BusinessExpense(WorkspaceOwnedModel, ValidatedModel):
             errors['payee'] = 'Name a supplier or payee.'
         if self.total_incl_tax != self.subtotal_ex_tax + self.tax_total:
             errors['total_incl_tax'] = 'The expense total must equal subtotal plus tax.'
+        if self.supplier_invoice_id and self.paid_on:
+            errors['paid_on'] = 'Payment is derived from the linked supplier invoice.'
         if bool(self.allocation_type) != bool(self.allocation_reference):
             errors['allocation_reference'] = 'Provide both a future allocation type and reference.'
         if errors:

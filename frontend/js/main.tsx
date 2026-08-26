@@ -37,6 +37,7 @@ import { HealthView } from './health.js'
 import { CustomerListView, SalesOrderDetailView, SalesOrderListView } from './sales.js'
 import { SupplyDocumentListView, SupplyDocumentPrintView } from './billing/documents.js'
 import { ReportsView } from './reports.js'
+import { PurchasingView } from './purchasing.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -173,6 +174,7 @@ function FrontEndPage() {
         <Route path="/inventory/receipts" element={<InventoryReceiptsView />} />
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
+        <Route path="/purchasing" element={<PurchasingView workspace={workspace} />} />
         <Route path="/applications" element={<InputApplicationsView />} />
         <Route
           path="/reports"

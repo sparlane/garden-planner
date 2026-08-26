@@ -44,6 +44,15 @@ const queryKeys = {
     printable: (pk: number) => ['billing', 'printable', pk] as const,
     invoiceable: (order: number) => ['billing', 'invoiceable', order] as const
   },
+  purchasing: {
+    all: ['purchasing'] as const,
+    requisitions: ['purchasing', 'requisitions'] as const,
+    orders: ['purchasing', 'orders'] as const,
+    invoices: ['purchasing', 'invoices'] as const,
+    expenses: ['purchasing', 'expenses'] as const,
+    categories: ['purchasing', 'expense-categories'] as const,
+    summary: ['purchasing', 'summary'] as const
+  },
   tax: {
     all: ['tax'] as const,
     gstStatus: ['tax', 'gst', 'status'] as const,

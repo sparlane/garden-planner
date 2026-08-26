@@ -420,20 +420,26 @@ class BusinessExpenseSerializer(CurrentWorkspaceSerializerMixin, serializers.Mod
         'crop_plan': 'workspace',
         'production_batch': 'workspace',
     }
+    payment_state = serializers.SerializerMethodField()
 
     class Meta:
         model = BusinessExpense
         fields = [
             'pk', 'category', 'supplier', 'payee', 'incurred_on',
             'currency_code', 'subtotal_ex_tax', 'tax_total', 'total_incl_tax',
-            'supplier_invoice', 'garden_area', 'crop_plan', 'production_batch',
+            'supplier_invoice', 'paid_on', 'payment_state', 'garden_area', 'crop_plan', 'production_batch',
             'allocation_type', 'allocation_reference', 'status',
             'attachment_url', 'notes', 'created_by', 'confirmed_at',
             'cancelled_at', 'created', 'updated',
         ]
         read_only_fields = [
-            'status', 'created_by', 'confirmed_at', 'cancelled_at', 'created', 'updated',
+            'status', 'payment_state', 'created_by', 'confirmed_at', 'cancelled_at', 'created', 'updated',
         ]
+
+    def get_payment_state(self, expense):
+        if expense.supplier_invoice_id:
+            return invoice_state(expense.supplier_invoice)['payment_state']
+        return 'paid' if expense.paid_on else 'unpaid'
 
 
 class PurchaseRequisitionViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
@@ -600,7 +606,7 @@ class SupplierPaymentViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet
 class BusinessExpenseViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
     """Manage and confirm non-stock business expenses."""
 
-    queryset = BusinessExpense.objects.select_related('category', 'supplier')
+    queryset = BusinessExpense.objects.select_related('category', 'supplier', 'supplier_invoice')
     serializer_class = BusinessExpenseSerializer
 
     def perform_create(self, serializer):
