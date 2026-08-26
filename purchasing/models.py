@@ -132,6 +132,13 @@ class PurchaseRequisition(WorkspaceOwnedModel, ValidatedModel):
         if errors:
             raise ValidationError(errors)
 
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).only('status').first()
+            if previous and previous.status != self.Status.DRAFT:
+                raise ValidationError('Reviewed requisitions are immutable.')
+        super().save(*args, **kwargs)
+
 
 class PurchaseOrder(WorkspaceOwnedModel, ValidatedModel):
     """A supplier commitment editable as a draft and frozen on confirmation."""
@@ -280,10 +287,15 @@ class PurchaseOrderLine(ValidatedModel):
                 errors['requisition'] = 'The requisition belongs to another workspace.'
             elif self.requisition.item_id != self.item_id:
                 errors['requisition'] = 'The requisition is for another item.'
+            elif self.requisition.status != PurchaseRequisition.Status.REVIEWED:
+                errors['requisition'] = 'Only a reviewed requisition can be ordered.'
         if self.cancelled_quantity > self.base_quantity:
             errors['cancelled_quantity'] = 'Cancelled quantity cannot exceed ordered quantity.'
         if errors:
             raise ValidationError(errors)
+
+        if self.order_id and self.order.status != PurchaseOrder.Status.DRAFT:
+            raise ValidationError({'order': 'Lines can only be added to a draft order.'})
 
     def save(self, *args, **kwargs):
         if self.pk:
@@ -496,12 +508,20 @@ class SupplierInvoiceLine(ValidatedModel):
         workspace_id = self.invoice.workspace_id if self.invoice_id else None
         if self.purchase_order_line_id and self.purchase_order_line.order.workspace_id != workspace_id:
             errors['purchase_order_line'] = 'The order line belongs to another workspace.'
+        elif self.purchase_order_line_id and self.purchase_order_line.order.supplier_id != self.invoice.supplier_id:
+            errors['purchase_order_line'] = 'The order line belongs to another supplier.'
         if self.receipt_line_id and self.receipt_line.receipt.workspace_id != workspace_id:
             errors['receipt_line'] = 'The receipt line belongs to another workspace.'
+        elif self.receipt_line_id and self.receipt_line.receipt.supplier_id != self.invoice.supplier_id:
+            errors['receipt_line'] = 'The receipt line belongs to another supplier.'
+        elif self.receipt_line_id and self.receipt_line.receipt.status != 'posted':
+            errors['receipt_line'] = 'Only a posted receipt can be invoiced.'
         if self.expense_category_id and self.expense_category.workspace_id != workspace_id:
             errors['expense_category'] = 'The category belongs to another workspace.'
         if self.total_incl_tax != self.subtotal_ex_tax + self.tax_total:
             errors['total_incl_tax'] = 'The line total must equal subtotal plus tax.'
+        if self.invoice_id and self.invoice.status != SupplierInvoice.Status.DRAFT:
+            errors['invoice'] = 'Lines can only be added to a draft invoice.'
         if errors:
             raise ValidationError(errors)
 
