@@ -38,6 +38,7 @@ import { CustomerListView, SalesOrderDetailView, SalesOrderListView } from './sa
 import { SupplyDocumentListView, SupplyDocumentPrintView } from './billing/documents.js'
 import { ReportsView } from './reports.js'
 import { PurchasingView } from './purchasing.js'
+import { BookkeepingView } from './bookkeeping.js'
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -175,6 +176,14 @@ function FrontEndPage() {
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
         <Route path="/purchasing" element={<PurchasingView workspace={workspace} />} />
+        <Route
+          path="/bookkeeping"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+              <BookkeepingView workspace={workspace} />
+            </WorkspaceModeRoute>
+          }
+        />
         <Route path="/applications" element={<InputApplicationsView />} />
         <Route
           path="/reports"

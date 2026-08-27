@@ -14,7 +14,10 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from billing.models import SupplyCorrection, SupplyDocument
+from costing.models import CostAllocation
 from inventory.models import InventoryItem, StockLot, StockMovement, StockReceiptLine
+from plantings.lifecycle import LifecycleState, derive_state
+from plantings.models import PlantCohort, PlantLifecycleEvent, SpecificPlant
 from purchasing.models import BusinessExpense, SupplierInvoice
 from sales.models import Payment, Refund
 
@@ -101,7 +104,7 @@ def capture_inventory(income_year, user):
             balances[row['lot_id']] += row['quantity']
     lots = StockLot.objects.filter(
         workspace=income_year.workspace, pk__in=[key for key, value in balances.items() if value > 0],
-    ).select_related('item')
+    ).exclude(item__category=InventoryItem.Category.TRAY).select_related('item')
     created = []
     for lot in lots:
         quantity = balances[lot.pk]
@@ -123,7 +126,82 @@ def capture_inventory(income_year, user):
             provisional=value is None or lot.quantity_certainty != 'exact',
             created_by=user,
         ))
+    created.extend(_capture_plants(income_year, user, end))
+    created.extend(_capture_cohorts(income_year, user, end))
     return created
+
+
+def _capture_plants(income_year, user, end):
+    """Freeze individual plants physically present at the balance instant."""
+    plants = list(SpecificPlant.objects.filter(
+        workspace=income_year.workspace, germinated__lt=end,
+    ).select_related('batch__variety'))
+    events = defaultdict(list)
+    for event in PlantLifecycleEvent.objects.filter(
+            workspace=income_year.workspace, plant__in=plants,
+            occurred_at__lt=end).order_by('occurred_at', 'pk'):
+        events[event.plant_id].append(event)
+    values = defaultdict(Decimal)
+    unknown = set()
+    for row in CostAllocation.objects.filter(
+            specific_plant__in=plants, reversal_of=None,
+            reversal__isnull=True).values('specific_plant_id', 'amount'):
+        if row['amount'] is None:
+            unknown.add(row['specific_plant_id'])
+        else:
+            values[row['specific_plant_id']] += row['amount']
+    rows = []
+    held_states = {
+        LifecycleState.GROWING, LifecycleState.AVAILABLE,
+        LifecycleState.RETAINED, LifecycleState.QUARANTINED,
+    }
+    for plant in plants:
+        summary = derive_state(events[plant.pk])
+        if summary.state not in held_states:
+            continue
+        value = money(values[plant.pk])
+        rows.append(StockValuationLine.objects.create(
+            income_year=income_year,
+            category=(StockValuationLine.Category.SALEABLE_PLANTS if summary.sellable else StockValuationLine.Category.WORK_IN_PROGRESS),
+            description=f'{plant.batch.variety} — plant {plant.pk}',
+            source_type='specific_plant', source_id=str(plant.pk),
+            quantity=1, unit_code='unit', original_cost=value,
+            method=StockValuationLine.Method.COST, value=value,
+            currency_code=income_year.workspace.currency_code,
+            assumptions=f'Lifecycle replay through year end: {summary.state}.',
+            derived=True, provisional=plant.pk in unknown,
+            created_by=user,
+        ))
+    return rows
+
+
+def _capture_cohorts(income_year, user, end):
+    """Freeze current cohort quantity, marking it provisional if observed later."""
+    cohorts = PlantCohort.objects.filter(
+        workspace=income_year.workspace, quantity__gt=0,
+        created__lt=end,
+    ).select_related('batch__variety')
+    rows = []
+    for cohort in cohorts:
+        allocations = CostAllocation.objects.filter(
+            plant_cohort=cohort, reversal_of=None, reversal__isnull=True,
+        )
+        known = list(allocations.exclude(amount=None).values_list('amount', flat=True))
+        value = money(sum(known, ZERO))
+        rows.append(StockValuationLine.objects.create(
+            income_year=income_year,
+            category=(StockValuationLine.Category.SALEABLE_PLANTS if cohort.lifecycle_state == PlantCohort.LifecycleState.AVAILABLE else StockValuationLine.Category.WORK_IN_PROGRESS),
+            description=f'{cohort.batch.variety} — cohort {cohort.pk}',
+            source_type='plant_cohort', source_id=str(cohort.pk),
+            quantity=cohort.quantity, unit_code='unit', original_cost=value,
+            method=StockValuationLine.Method.COST, value=value,
+            currency_code=income_year.workspace.currency_code,
+            assumptions='Cohort quantity frozen from the latest observation available at capture time.',
+            derived=True,
+            provisional=cohort.observed_at >= end or len(known) != allocations.count(),
+            created_by=user,
+        ))
+    return rows
 
 
 def _signed_correction(correction):

@@ -53,6 +53,13 @@ const queryKeys = {
     categories: ['purchasing', 'expense-categories'] as const,
     summary: ['purchasing', 'summary'] as const
   },
+  bookkeeping: {
+    all: ['bookkeeping'] as const,
+    entries: ['bookkeeping', 'entries'] as const,
+    assets: ['bookkeeping', 'assets'] as const,
+    liabilities: ['bookkeeping', 'liabilities'] as const,
+    years: ['bookkeeping', 'income-years'] as const
+  },
   tax: {
     all: ['tax'] as const,
     gstStatus: ['tax', 'gst', 'status'] as const,
