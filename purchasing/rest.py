@@ -257,9 +257,11 @@ class SupplierInvoiceLineSerializer(CurrentWorkspaceSerializerMixin, serializers
         fields = [
             'pk', 'description', 'purchase_order_line', 'receipt_line',
             'expense_category', 'is_freight', 'subtotal_ex_tax', 'tax_rate',
-            'tax_total', 'total_incl_tax',
+            'tax_total', 'total_incl_tax', 'tax_treatment', 'claim_input_tax',
+            'claimable_percentage', 'apportionment_basis', 'recoverable_tax',
+            'deductible_amount',
         ]
-        read_only_fields = ['pk']
+        read_only_fields = ['pk', 'recoverable_tax', 'deductible_amount']
 
 
 class SupplierInvoiceCorrectionSerializer(serializers.ModelSerializer):
@@ -368,7 +370,7 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         model = SupplierPayment
         fields = [
             'pk', 'supplier', 'paid_on', 'amount', 'currency_code', 'method',
-            'external_reference', 'notes', 'reversal_of', 'operation_key',
+            'external_reference', 'account_reference', 'notes', 'reversal_of', 'operation_key',
             'created_by', 'created', 'allocations',
         ]
         read_only_fields = fields
@@ -384,7 +386,7 @@ class SupplierPaymentWriteSerializer(CurrentWorkspaceSerializerMixin, serializer
         model = SupplierPayment
         fields = [
             'pk', 'supplier', 'paid_on', 'amount', 'currency_code', 'method',
-            'external_reference', 'notes', 'allocations',
+            'external_reference', 'account_reference', 'notes', 'allocations',
         ]
         read_only_fields = ['pk']
 
@@ -427,13 +429,17 @@ class BusinessExpenseSerializer(CurrentWorkspaceSerializerMixin, serializers.Mod
         fields = [
             'pk', 'category', 'supplier', 'payee', 'incurred_on',
             'currency_code', 'subtotal_ex_tax', 'tax_total', 'total_incl_tax',
+            'tax_treatment', 'claim_input_tax', 'claimable_percentage',
+            'apportionment_basis', 'recoverable_tax', 'deductible_amount',
             'supplier_invoice', 'paid_on', 'payment_state', 'garden_area', 'crop_plan', 'production_batch',
+            'account_reference',
             'allocation_type', 'allocation_reference', 'status',
             'attachment_url', 'notes', 'created_by', 'confirmed_at',
             'cancelled_at', 'created', 'updated',
         ]
         read_only_fields = [
-            'status', 'payment_state', 'created_by', 'confirmed_at', 'cancelled_at', 'created', 'updated',
+            'status', 'payment_state', 'recoverable_tax', 'deductible_amount',
+            'created_by', 'confirmed_at', 'cancelled_at', 'created', 'updated',
         ]
 
     def get_payment_state(self, expense):

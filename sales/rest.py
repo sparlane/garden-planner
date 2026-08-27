@@ -306,7 +306,7 @@ class PaymentSerializer(CommerceRecordSerializer):
         model = Payment
         fields = [
             'pk', 'paid_on', 'amount', 'currency_code', 'method',
-            'external_reference', 'notes', 'status', 'operation_key',
+            'external_reference', 'account_reference', 'notes', 'status', 'operation_key',
             'created_by', 'created', 'reversal_of',
         ]
 
@@ -349,6 +349,7 @@ class RefundSerializer(CommerceRecordSerializer):
         fields = [
             'pk', 'payment', 'sales_return', 'refunded_at', 'amount',
             'currency_code', 'reason', 'notes', 'status', 'operation_key',
+            'account_reference',
             'created_by', 'created', 'reversal_of', 'lines',
         ]
 
@@ -375,6 +376,7 @@ class PaymentWriteSerializer(ActionSerializer):
     amount = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0)
     method = serializers.ChoiceField(choices=Payment.Method.choices)
     external_reference = serializers.CharField(required=False, allow_blank=True, default='')
+    account_reference = serializers.CharField(required=False, allow_blank=True, default='')
     notes = serializers.CharField(required=False, allow_blank=True, default='')
 
 
@@ -416,6 +418,7 @@ class RefundWriteSerializer(ActionSerializer):
     amount = serializers.DecimalField(max_digits=14, decimal_places=4, min_value=0)
     refunded_at = serializers.DateTimeField(required=False)
     reason = serializers.CharField(allow_blank=False)
+    account_reference = serializers.CharField(required=False, allow_blank=True, default='')
     notes = serializers.CharField(required=False, allow_blank=True, default='')
 
 

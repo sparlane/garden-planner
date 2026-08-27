@@ -34,6 +34,12 @@ def money(value):
     return Decimal(value).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
 
 
+def _deductible_tax_values(total, tax, claim, percentage):
+    """Separate recoverable GST from the amount carried into income-tax costs."""
+    recoverable = money(tax * percentage / Decimal('100')) if claim else ZERO
+    return recoverable, money(total - recoverable)
+
+
 def order_line_amounts(quantity, unit_price_ex_tax, tax_rate, freight_ex_tax=ZERO):
     """Return stable exclusive, freight, tax, and inclusive line amounts."""
     merchandise = money(Decimal(quantity) * Decimal(unit_price_ex_tax))
@@ -385,6 +391,14 @@ def confirm_invoice(invoice, user):
         raise ValidationError({'status': 'Only a draft supplier invoice can be confirmed.'})
     if not invoice.lines.exists():
         raise ValidationError({'lines': 'Add at least one line before confirming.'})
+    for line in invoice.lines.all():
+        recoverable, deductible = _deductible_tax_values(
+            line.total_incl_tax, line.tax_total,
+            line.claim_input_tax, line.claimable_percentage,
+        )
+        SupplierInvoiceLine.objects.filter(pk=line.pk).update(
+            recoverable_tax=recoverable, deductible_amount=deductible,
+        )
     receipt_ids = invoice.lines.exclude(receipt_line=None).values_list('receipt_line_id', flat=True)
     already_invoiced = SupplierInvoiceLine.objects.filter(
         receipt_line_id__in=receipt_ids,
@@ -455,6 +469,7 @@ def reverse_supplier_payment(payment, user, reason):
         currency_code=payment.currency_code,
         method=payment.method,
         external_reference=payment.external_reference,
+        account_reference=payment.account_reference,
         notes=reason,
         reversal_of=payment,
         created_by=user,
@@ -468,8 +483,13 @@ def confirm_expense(expense, user):
     expense = BusinessExpense.objects.select_for_update().get(pk=expense.pk)
     if expense.status != BusinessExpense.Status.DRAFT:
         raise ValidationError({'status': 'Only a draft expense can be confirmed.'})
+    recoverable, deductible = _deductible_tax_values(
+        expense.total_incl_tax, expense.tax_total,
+        expense.claim_input_tax, expense.claimable_percentage,
+    )
     BusinessExpense.objects.filter(pk=expense.pk).update(
         status=BusinessExpense.Status.CONFIRMED, confirmed_at=timezone.now(),
+        recoverable_tax=recoverable, deductible_amount=deductible,
     )
     expense.refresh_from_db()
     return expense

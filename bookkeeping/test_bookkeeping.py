@@ -11,7 +11,7 @@ from rest_framework.test import APITestCase
 
 from workspaces.models import get_current_workspace
 
-from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, TaxAsset
+from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, TaxAsset, TaxRetentionRecord
 
 
 class BookkeepingTests(APITestCase):
@@ -86,6 +86,17 @@ class BookkeepingTests(APITestCase):
         self.assertEqual(year.frozen_report['totals']['other_income'], '100.0000')
         self.assertEqual(year.frozen_report['rows'][0]['source_id'], entry.pk)
         self.assertEqual(year.retain_until, date(2034, 3, 31))
+        retained = TaxRetentionRecord.objects.get(
+            source_type='bookkeeping_entry', source_id=str(entry.pk),
+        )
+        self.assertEqual(retained.retain_until, date(2034, 3, 31))
+        held = self.client.post(
+            f'/bookkeeping/retention/{retained.pk}/hold/',
+            {'active': True, 'reason': 'Audit in progress'}, format='json',
+        )
+        self.assertEqual(held.status_code, 200, held.data)
+        self.assertTrue(held.data['legal_hold'])
+        self.assertEqual(len(held.data['hold_events']), 1)
 
     def test_manual_stock_requires_evidence_and_market_value_below_cost(self):
         year = IncomeTaxYear.objects.create(

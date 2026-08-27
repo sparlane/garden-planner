@@ -287,12 +287,13 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
 
 @transaction.atomic
 def record_payment(order, user, *, operation_key, paid_on, amount, method,
-                   external_reference='', notes=''):
+                   external_reference='', account_reference='', notes=''):
     """Record operational cash independently from fulfillment timing."""
     amount = money(amount)
     payload = {
         'order': order.pk, 'paid_on': paid_on, 'amount': amount,
-        'method': method, 'external_reference': external_reference, 'notes': notes,
+        'method': method, 'external_reference': external_reference,
+        'account_reference': account_reference, 'notes': notes,
     }
     fingerprint = request_fingerprint(payload)
     existing = _existing(Payment, order.workspace, operation_key, fingerprint)
@@ -304,7 +305,8 @@ def record_payment(order, user, *, operation_key, paid_on, amount, method,
     return Payment.objects.create(
         workspace=order.workspace, order=order, paid_on=paid_on, amount=amount,
         currency_code=order.currency_code, method=method,
-        external_reference=external_reference.strip(), notes=notes.strip(),
+        external_reference=external_reference.strip(),
+        account_reference=account_reference.strip(), notes=notes.strip(),
         operation_key=operation_key, request_fingerprint=fingerprint,
         created_by=_actor(user),
     )
@@ -443,7 +445,8 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
 
 @transaction.atomic
 def post_refund(order, user, *, operation_key, payment, fulfillment_lines,
-                amount, reason, refunded_at=None, sales_return=None, notes=''):
+                amount, reason, refunded_at=None, sales_return=None,
+                account_reference='', notes=''):
     """Refund paid value and classify it against original recognized lines."""
     requested_at = refunded_at
     refunded_at = refunded_at or timezone.now()
@@ -452,7 +455,8 @@ def post_refund(order, user, *, operation_key, payment, fulfillment_lines,
     payload = {
         'order': order.pk, 'payment': payment.pk, 'lines': line_ids,
         'amount': amount, 'reason': reason, 'refunded_at': requested_at,
-        'sales_return': getattr(sales_return, 'pk', None), 'notes': notes,
+        'sales_return': getattr(sales_return, 'pk', None),
+        'account_reference': account_reference, 'notes': notes,
     }
     fingerprint = request_fingerprint(payload)
     existing = _existing(Refund, order.workspace, operation_key, fingerprint)
@@ -496,6 +500,7 @@ def post_refund(order, user, *, operation_key, payment, fulfillment_lines,
         workspace=order.workspace, order=order, payment=payment,
         sales_return=sales_return, refunded_at=refunded_at, amount=amount,
         currency_code=order.currency_code, reason=reason.strip(), notes=notes.strip(),
+        account_reference=account_reference.strip(),
         operation_key=operation_key, request_fingerprint=fingerprint,
         created_by=_actor(user),
     )
@@ -618,6 +623,7 @@ def reverse_payment(original, user, *, operation_key, reason, occurred_at=None):
         paid_on=occurred_at.date(), amount=original.amount,
         currency_code=original.currency_code, method=original.method,
         external_reference=original.external_reference, notes=reason.strip(),
+        account_reference=original.account_reference,
         reversal_of=original, operation_key=operation_key,
         request_fingerprint=fingerprint, created_by=_actor(user),
     )
@@ -643,6 +649,7 @@ def reverse_refund(original, user, *, operation_key, reason, occurred_at=None):
         payment=original.payment, sales_return=original.sales_return,
         refunded_at=occurred_at, amount=original.amount,
         currency_code=original.currency_code, reason=reason.strip(),
+        account_reference=original.account_reference,
         reversal_of=original, operation_key=operation_key,
         request_fingerprint=fingerprint, created_by=_actor(user),
     )

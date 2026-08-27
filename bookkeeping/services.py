@@ -23,6 +23,8 @@ from .models import (
     DepreciationSchedule,
     IncomeTaxYear,
     StockValuationLine,
+    TaxRetentionRecord,
+    LegalHoldEvent,
     ZERO,
 )
 
@@ -190,7 +192,7 @@ def _expense_rows(income_year, start, end):
         rows.append({
             'kind': 'expense', 'date': expense.incurred_on.isoformat(),
             'source_type': 'business_expense', 'source_id': expense.pk,
-            'reference': '', 'amount': str(expense.subtotal_ex_tax),
+            'reference': expense.account_reference, 'amount': str(expense.deductible_amount),
             'currency_code': expense.currency_code,
         })
     if income_year.basis == IncomeTaxYear.Basis.ACCRUAL:
@@ -204,7 +206,7 @@ def _expense_rows(income_year, start, end):
                     'kind': 'expense', 'date': invoice.invoice_date.isoformat(),
                     'source_type': 'supplier_invoice_line', 'source_id': line.pk,
                     'reference': invoice.external_reference,
-                    'amount': str(line.subtotal_ex_tax), 'currency_code': invoice.currency_code,
+                    'amount': str(line.deductible_amount), 'currency_code': invoice.currency_code,
                 })
     return rows
 
@@ -312,5 +314,35 @@ def finalize_income_year(income_year, user, confirm_zero_opening=False):
         finalized_at=timezone.now(),
         finalized_by=user,
     )
+    source_rows = report['rows'] + report['cash_reconciliation']
+    source_rows.extend({
+        'source_type': row['source_type'], 'source_id': row['source_id']
+    } for row in report['stock_lines'])
+    source_rows.append({'source_type': 'income_tax_year', 'source_id': income_year.pk})
+    for row in source_rows:
+        TaxRetentionRecord.objects.get_or_create(
+            workspace=income_year.workspace,
+            source_type=row['source_type'], source_id=str(row['source_id']),
+            defaults={
+                'income_year_end': income_year.year_end,
+                'retain_until': income_year.retain_until,
+                'reason': f'Included in income-tax year revision {income_year.revision}.',
+                'created_by': user,
+            },
+        )
     income_year.refresh_from_db()
     return income_year
+
+
+@transaction.atomic
+def set_legal_hold(retention, active, reason, user):
+    """Record and apply a legal-hold state change without erasing its history."""
+    retention = TaxRetentionRecord.objects.select_for_update().get(pk=retention.pk)
+    if retention.legal_hold == active:
+        raise ValidationError({'active': 'The retained record already has that hold state.'})
+    event = LegalHoldEvent.objects.create(
+        workspace=retention.workspace, retention=retention,
+        active=active, reason=reason, created_by=user,
+    )
+    TaxRetentionRecord.objects.filter(pk=retention.pk).update(legal_hold=active)
+    return event

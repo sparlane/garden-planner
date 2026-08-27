@@ -571,6 +571,7 @@ class Payment(ImmutableCommerceModel):
     currency_code = models.CharField(max_length=3)
     method = models.CharField(max_length=16, choices=Method.choices)
     external_reference = models.CharField(max_length=255, blank=True, default='')
+    account_reference = models.CharField(max_length=255, blank=True, default='')
     notes = models.TextField(blank=True, default='')
     reversal_of = models.OneToOneField(
         'self', on_delete=models.PROTECT, null=True, blank=True,
@@ -689,6 +690,7 @@ class Refund(ImmutableCommerceModel):
     )
     currency_code = models.CharField(max_length=3)
     reason = models.TextField()
+    account_reference = models.CharField(max_length=255, blank=True, default='')
     notes = models.TextField(blank=True, default='')
     reversal_of = models.OneToOneField(
         'self', on_delete=models.PROTECT, null=True, blank=True,
