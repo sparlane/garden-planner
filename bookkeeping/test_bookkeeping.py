@@ -60,6 +60,19 @@ class BookkeepingTests(APITestCase):
             closing_tax_value='800.0000', created_by=self.user,
         )
         self.assertEqual(str(schedule.closing_tax_value), '800.0000')
+        retained_asset = TaxAsset.objects.create(
+            workspace=self.workspace, code='SPADE-1', name='Spade',
+            category='Tools', acquired_on=date(2026, 4, 1),
+            cost_incl_tax='100.0000', recoverable_tax='0.0000',
+            tax_cost='100.0000', currency_code='NZD', created_by=self.user,
+        )
+        TaxRetentionRecord.objects.create(
+            workspace=self.workspace, source_type='tax_asset',
+            source_id=str(retained_asset.pk), income_year_end=date(2027, 3, 31),
+            retain_until=date(2034, 3, 31), created_by=self.user,
+        )
+        with self.assertRaises(ValidationError):
+            retained_asset.delete()
 
     def test_income_year_can_capture_and_finalize_confirmed_zero_opening(self):
         entry = BookkeepingEntry.objects.create(

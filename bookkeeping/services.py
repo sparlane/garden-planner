@@ -15,10 +15,10 @@ from django.utils import timezone
 
 from billing.models import SupplyCorrection, SupplyDocument
 from costing.models import CostAllocation
-from inventory.models import InventoryItem, StockLot, StockMovement, StockReceiptLine
+from inventory.models import InputTaxAdjustment, InventoryItem, StockLot, StockMovement, StockReceiptLine
 from plantings.lifecycle import LifecycleState, derive_state
 from plantings.models import PlantCohort, PlantLifecycleEvent, SpecificPlant
-from purchasing.models import BusinessExpense, SupplierInvoice
+from purchasing.models import BusinessExpense, SupplierInvoice, SupplierPayment
 from sales.models import Payment, Refund
 
 from .models import (
@@ -286,6 +286,25 @@ def _expense_rows(income_year, start, end):
                     'reference': invoice.external_reference,
                     'amount': str(line.deductible_amount), 'currency_code': invoice.currency_code,
                 })
+    else:
+        payments = SupplierPayment.objects.filter(
+            workspace=workspace, paid_on__gte=start, paid_on__lte=end,
+            reversal_of=None, reversal__isnull=True,
+        ).prefetch_related('allocations__invoice__lines')
+        for payment in payments:
+            for allocation in payment.allocations.all():
+                invoice = allocation.invoice
+                if invoice.total_incl_tax <= ZERO:
+                    continue
+                paid_ratio = allocation.amount / invoice.total_incl_tax
+                for line in invoice.lines.exclude(expense_category=None):
+                    rows.append({
+                        'kind': 'paid_expense', 'date': payment.paid_on.isoformat(),
+                        'source_type': 'supplier_payment', 'source_id': payment.pk,
+                        'reference': payment.account_reference or payment.external_reference,
+                        'amount': str(money(line.deductible_amount * paid_ratio)),
+                        'currency_code': payment.currency_code,
+                    })
     return rows
 
 
@@ -327,9 +346,20 @@ def build_report(income_year):
     ).order_by('-revision').first()
     opening = Decimal(prior.frozen_report.get('totals', {}).get('closing_stock', '0')) if prior else ZERO
     purchases = money(_purchase_total(income_year.workspace, start, end))
-    depreciation = DepreciationSchedule.objects.filter(
+    schedules = list(DepreciationSchedule.objects.filter(
         workspace=income_year.workspace, income_year_end=end,
-    ).aggregate(total=Sum('depreciation_claimed'))['total'] or ZERO
+    ).select_related('asset'))
+    depreciation = sum((row.depreciation_claimed for row in schedules), ZERO)
+    depreciation_rows = [{
+        'kind': 'depreciation', 'date': end.isoformat(),
+        'source_type': 'depreciation_schedule', 'source_id': row.pk,
+        'reference': row.asset.code, 'amount': str(row.depreciation_claimed),
+        'currency_code': row.asset.currency_code, 'asset_id': row.asset_id,
+    } for row in schedules]
+    gst_adjustments = InputTaxAdjustment.objects.filter(
+        workspace=income_year.workspace,
+        adjustment_date__gte=start, adjustment_date__lte=end,
+    ).aggregate(total=Sum('tax_adjustment'))['total'] or ZERO
     sales_total = sum((Decimal(row['amount']) for row in sales), ZERO)
     income_total = sum((Decimal(row['amount']) for row in other_income), ZERO)
     expense_total = sum((Decimal(row['amount']) for row in expenses), ZERO)
@@ -356,9 +386,10 @@ def build_report(income_year):
             'opening_stock': str(money(opening)), 'stock_purchases': str(purchases),
             'closing_stock': str(money(closing)), 'cost_of_sales': str(money(cost_of_sales)),
             'deductible_expenses': str(money(expense_total)), 'depreciation': str(money(depreciation)),
-            'working_result': str(money(sales_total + income_total - cost_of_sales - expense_total - depreciation)),
+            'gst_adjustments': str(money(gst_adjustments)),
+            'working_result': str(money(sales_total + income_total - cost_of_sales - expense_total - depreciation + gst_adjustments)),
         },
-        'rows': sales + other_income + expenses,
+        'rows': sales + other_income + expenses + depreciation_rows,
         'cash_reconciliation': cash_reconciliation,
         'stock_lines': [{
             'id': line.pk, 'category': line.category, 'description': line.description,
@@ -396,6 +427,9 @@ def finalize_income_year(income_year, user, confirm_zero_opening=False):
     source_rows.extend({
         'source_type': row['source_type'], 'source_id': row['source_id']
     } for row in report['stock_lines'])
+    for row in report['rows']:
+        if row.get('asset_id'):
+            source_rows.append({'source_type': 'tax_asset', 'source_id': row['asset_id']})
     source_rows.append({'source_type': 'income_tax_year', 'source_id': income_year.pk})
     for row in source_rows:
         TaxRetentionRecord.objects.get_or_create(
