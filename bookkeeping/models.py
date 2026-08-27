@@ -357,3 +357,38 @@ class StockValuationLine(ValidatedModel):
             errors['evidence_url'] = 'Manual valuation lines require evidence.'
         if errors:
             raise ValidationError(errors)
+
+
+class TaxRetentionRecord(WorkspaceOwnedModel, AppendOnlyModel):
+    """A stable source identity protected through its statutory retention date."""
+
+    source_type = models.CharField(max_length=64)
+    source_id = models.CharField(max_length=128)
+    income_year_end = models.DateField()
+    retain_until = models.DateField()
+    legal_hold = models.BooleanField(default=False)
+    reason = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['source_type', 'source_id']
+        constraints = [models.UniqueConstraint(
+            fields=['workspace', 'source_type', 'source_id'],
+            name='bookkeeping_retained_source_unique',
+        )]
+
+
+class LegalHoldEvent(WorkspaceOwnedModel, AppendOnlyModel):
+    """An append-only activation or release of a retained record's legal hold."""
+
+    retention = models.ForeignKey(TaxRetentionRecord, on_delete=models.PROTECT, related_name='hold_events')
+    active = models.BooleanField()
+    reason = models.TextField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
+    created = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        super().clean()
+        if self.retention_id and self.retention.workspace_id != self.workspace_id:
+            raise ValidationError({'retention': 'The retained source belongs to another workspace.'})

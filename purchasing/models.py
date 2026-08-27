@@ -27,6 +27,10 @@ from workspaces.models import WorkspaceOwnedModel
 
 
 ZERO = Decimal('0.0000')
+TAX_TREATMENT_CHOICES = (
+    ('standard', 'Standard-rated'), ('zero_rated', 'Zero-rated'),
+    ('exempt', 'Exempt'), ('out_of_scope', 'Outside GST'), ('unknown', 'Unknown'),
+)
 
 
 def operation_key():
@@ -493,11 +497,20 @@ class SupplierInvoiceLine(ValidatedModel):
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, default=ZERO, validators=[MinValueValidator(ZERO), MaxValueValidator(Decimal('100'))])
     tax_total = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO)])
     total_incl_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO)])
+    tax_treatment = models.CharField(max_length=16, choices=TAX_TREATMENT_CHOICES, default='unknown')
+    claim_input_tax = models.BooleanField(default=False)
+    claimable_percentage = models.DecimalField(
+        max_digits=7, decimal_places=4, default=ZERO,
+        validators=[MinValueValidator(ZERO), MaxValueValidator(Decimal('100'))],
+    )
+    apportionment_basis = models.TextField(blank=True, default='')
+    recoverable_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO, editable=False)
+    deductible_amount = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO, editable=False)
 
     class Meta:
         ordering = ['pk']
 
-    def clean(self):
+    def clean(self):  # pylint: disable=too-many-branches
         super().clean()
         errors = {}
         targets = sum(value is not None for value in (
@@ -520,6 +533,12 @@ class SupplierInvoiceLine(ValidatedModel):
             errors['expense_category'] = 'The category belongs to another workspace.'
         if self.total_incl_tax != self.subtotal_ex_tax + self.tax_total:
             errors['total_incl_tax'] = 'The line total must equal subtotal plus tax.'
+        if self.claim_input_tax and self.claimable_percentage == ZERO:
+            errors['claimable_percentage'] = 'A claimed amount needs a positive claimable percentage.'
+        if not self.claim_input_tax and self.claimable_percentage != ZERO:
+            errors['claimable_percentage'] = 'An unclaimed line must use zero percent.'
+        if self.claimable_percentage not in {ZERO, Decimal('100')} and not self.apportionment_basis.strip():
+            errors['apportionment_basis'] = 'Explain every partial input-tax claim.'
         if self.invoice_id and self.invoice.status != SupplierInvoice.Status.DRAFT:
             errors['invoice'] = 'Lines can only be added to a draft invoice.'
         if errors:
@@ -603,6 +622,7 @@ class SupplierPayment(WorkspaceOwnedModel, AppendOnlyModel):
     currency_code = models.CharField(max_length=3)
     method = models.CharField(max_length=16, choices=Method.choices)
     external_reference = models.CharField(max_length=255, blank=True, default='')
+    account_reference = models.CharField(max_length=255, blank=True, default='')
     notes = models.TextField(blank=True, default='')
     reversal_of = models.OneToOneField('self', on_delete=models.PROTECT, null=True, blank=True, related_name='reversal')
     operation_key = models.UUIDField(default=operation_key)
@@ -677,8 +697,18 @@ class BusinessExpense(WorkspaceOwnedModel, ValidatedModel):
     subtotal_ex_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO)])
     tax_total = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO, validators=[MinValueValidator(ZERO)])
     total_incl_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO)])
+    tax_treatment = models.CharField(max_length=16, choices=TAX_TREATMENT_CHOICES, default='unknown')
+    claim_input_tax = models.BooleanField(default=False)
+    claimable_percentage = models.DecimalField(
+        max_digits=7, decimal_places=4, default=ZERO,
+        validators=[MinValueValidator(ZERO), MaxValueValidator(Decimal('100'))],
+    )
+    apportionment_basis = models.TextField(blank=True, default='')
+    recoverable_tax = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO, editable=False)
+    deductible_amount = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, default=ZERO, editable=False)
     supplier_invoice = models.ForeignKey(SupplierInvoice, on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     paid_on = models.DateField(null=True, blank=True)
+    account_reference = models.CharField(max_length=255, blank=True, default='')
     garden_area = models.ForeignKey('garden.GardenArea', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     crop_plan = models.ForeignKey('plantings.NurseryProductionPlan', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     production_batch = models.ForeignKey('plantings.ProductionBatch', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
@@ -707,6 +737,12 @@ class BusinessExpense(WorkspaceOwnedModel, ValidatedModel):
             errors['payee'] = 'Name a supplier or payee.'
         if self.total_incl_tax != self.subtotal_ex_tax + self.tax_total:
             errors['total_incl_tax'] = 'The expense total must equal subtotal plus tax.'
+        if self.claim_input_tax and self.claimable_percentage == ZERO:
+            errors['claimable_percentage'] = 'A claimed amount needs a positive claimable percentage.'
+        if not self.claim_input_tax and self.claimable_percentage != ZERO:
+            errors['claimable_percentage'] = 'An unclaimed expense must use zero percent.'
+        if self.claimable_percentage not in {ZERO, Decimal('100')} and not self.apportionment_basis.strip():
+            errors['apportionment_basis'] = 'Explain every partial input-tax claim.'
         if self.supplier_invoice_id and self.paid_on:
             errors['paid_on'] = 'Payment is derived from the linked supplier invoice.'
         if bool(self.allocation_type) != bool(self.allocation_reference):

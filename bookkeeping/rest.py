@@ -14,8 +14,8 @@ from rest_framework.response import Response
 
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
-from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, Liability, StockValuationLine, TaxAsset
-from .services import build_report, capture_inventory, finalize_income_year, reverse_entry
+from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, LegalHoldEvent, Liability, StockValuationLine, TaxAsset, TaxRetentionRecord
+from .services import build_report, capture_inventory, finalize_income_year, reverse_entry, set_legal_hold
 
 
 def _run(command, *args, **kwargs):
@@ -77,6 +77,26 @@ class IncomeYearSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSer
         if (value.month, value.day) != (3, 31):
             raise serializers.ValidationError('Normal New Zealand income years must end on 31 March.')
         return value
+
+
+class LegalHoldEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LegalHoldEvent
+        fields = '__all__'
+        read_only_fields = ['id', 'workspace', 'retention', 'active', 'reason', 'created_by', 'created']
+
+
+class RetentionSerializer(serializers.ModelSerializer):
+    hold_events = LegalHoldEventSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = TaxRetentionRecord
+        fields = '__all__'
+        read_only_fields = [
+            'id', 'workspace', 'source_type', 'source_id', 'income_year_end',
+            'retain_until', 'legal_hold', 'reason', 'created_by', 'created',
+            'hold_events',
+        ]
 
 
 class LiabilityViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
@@ -184,9 +204,22 @@ class IncomeYearViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
         return response
 
 
+class RetentionViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    queryset = TaxRetentionRecord.objects.prefetch_related('hold_events')
+    serializer_class = RetentionSerializer
+
+    @action(detail=True, methods=['post'])
+    def hold(self, request, pk=None):
+        active = serializers.BooleanField().run_validation(request.data.get('active'))
+        reason = serializers.CharField().run_validation(request.data.get('reason'))
+        _run(set_legal_hold, self.get_object(), active, reason, request.user)
+        return Response(self.get_serializer(self.get_object()).data)
+
+
 router = routers.DefaultRouter()
 router.register('liabilities', LiabilityViewSet)
 router.register('entries', EntryViewSet)
 router.register('assets', TaxAssetViewSet)
 router.register('depreciation-schedules', ScheduleViewSet)
 router.register('income-years', IncomeYearViewSet)
+router.register('retention', RetentionViewSet)
