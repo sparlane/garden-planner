@@ -783,3 +783,159 @@ class ReversalBoundaryTests(CommerceFixtureTestCase):
         detail = self.client.get(f"{self.orders_url}{self.order['pk']}/")
         self.assertEqual(detail.data['status'], SalesOrder.Status.CONFIRMED)
         self.assertEqual(detail.data['commerce']['net_paid_total'], '0.0000')
+
+
+class AllocationStatusMachineTests(CommerceFixtureTestCase):
+    """Every reservation state either resolves its stock or has a way on.
+
+    Task 91's invariant again, one level down. A reservation that is neither
+    resolved nor able to move is a plant held out of saleable stock forever
+    with no operator action able to free it.
+    """
+
+    Status = SalesOrderAllocation.Status
+
+    # state -> the states one operator action can move it to.
+    TRANSITIONS = {
+        Status.PENDING: {Status.RESERVED},
+        Status.RESERVED: {Status.RELEASED, Status.EXPIRED, Status.FULFILLED},
+        Status.FULFILLED: {Status.RETURNED, Status.RESERVED},
+        Status.RETURNED: {Status.FULFILLED},
+        Status.RELEASED: set(),
+        Status.EXPIRED: set(),
+    }
+
+    # Released and expired reservations are resolved: the stock is back in
+    # general availability and a replacement reservation is what claims it
+    # again, so there is deliberately no route back into the same row.
+    RESOLVED = {Status.RELEASED, Status.EXPIRED}
+
+    def states_without_exits(self, transitions):
+        """Return unresolved states no operator action can move on from."""
+        return {
+            state for state, targets in transitions.items()
+            if state not in self.RESOLVED and not (targets - {state})
+        }
+
+    def test_no_unresolved_reservation_state_is_a_dead_end(self):
+        """A plant is never held by a reservation nobody can act on."""
+        self.assertEqual(self.states_without_exits(self.TRANSITIONS), set())
+
+    def test_a_state_added_without_an_exit_is_reported(self):
+        """The invariant catches the omission rather than assuming care."""
+        stuck = {**self.TRANSITIONS, self.Status.RETURNED: set()}
+        self.assertEqual(
+            self.states_without_exits(stuck), {self.Status.RETURNED},
+        )
+
+    def test_every_declared_state_is_a_real_choice(self):
+        """The table cannot describe a state the model does not have."""
+        named = set(self.TRANSITIONS) | set().union(*self.TRANSITIONS.values())
+        self.assertEqual(named, set(SalesOrderAllocation.Status.values))
+
+    def status_of(self, allocation_pk):
+        """Read one reservation's current state back from the database."""
+        return SalesOrderAllocation.objects.get(pk=allocation_pk).status
+
+    def close(self, order, allocation_pk, action_name):
+        """Release or expire one standing reservation."""
+        response = self.client.post(
+            f"{self.orders_url}{order['pk']}/{action_name}/",
+            {'allocations': [allocation_pk], 'reason': 'No longer wanted.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def test_one_walk_reaches_every_reservation_state(self):
+        """Each declared transition is taken once, against the real API."""
+        first = self.available_plant()
+        plants = [first, self.available_plant(
+            batch=first.batch, cell_planting=first.cell_planting,
+        )]
+        created = self.client.post(self.orders_url, {'status': 'draft'}, format='json')
+        order = created.data
+        line = self.client.post(self.lines_url, {
+            'order': order['pk'], 'line_type': 'seedling',
+            'variety': first.batch.variety_id,
+            'description': 'Sale seedlings', 'quantity': 2,
+            'unit_price': '10.0000', 'tax_rate': '15.0000',
+            'discount_type': 'fixed', 'discount_value': '1.0000',
+        }, format='json')
+        allocated = self.client.post(
+            f"{self.orders_url}{order['pk']}/allocate/",
+            {
+                'line': line.data['pk'],
+                'plant_ids': [plant.pk for plant in plants],
+                # Expiry is explicit rather than time-driven, but the action
+                # still refuses a reservation whose term has not run out.
+                'expires_at': '2020-01-01T00:00:00Z',
+            },
+            format='json',
+        )
+        released, kept = (row['pk'] for row in allocated.data)
+        self.assertEqual(self.status_of(kept), self.Status.PENDING)
+
+        self.client.post(f"{self.orders_url}{order['pk']}/confirm/", {}, format='json')
+        self.assertEqual(self.status_of(kept), self.Status.RESERVED)
+
+        self.close(order, released, 'release')
+        self.assertEqual(self.status_of(released), self.Status.RELEASED)
+
+        fulfillment = self.fulfill(order, [kept])
+        self.assertEqual(self.status_of(kept), self.Status.FULFILLED)
+
+        returned = self.client.post(f"{self.orders_url}{order['pk']}/returns/", {
+            'operation_key': str(uuid4()), 'reason': 'Customer changed plans.',
+            'items': [{
+                'fulfillment_line': fulfillment['lines'][0]['pk'],
+                'outcome': 'available', 'destination': self.store.pk,
+            }],
+        }, format='json')
+        self.assertEqual(returned.status_code, 201, returned.data)
+        self.assertEqual(self.status_of(kept), self.Status.RETURNED)
+
+        reversed_return = self.client.post(
+            f"{self.orders_url}{order['pk']}/returns/{returned.data['pk']}/reverse/",
+            {'operation_key': str(uuid4()), 'reason': 'Return entered in error.'},
+            format='json',
+        )
+        self.assertEqual(reversed_return.status_code, 201, reversed_return.data)
+        self.assertEqual(self.status_of(kept), self.Status.FULFILLED)
+
+        reversed_fulfillment = self.client.post(
+            f"{self.orders_url}{order['pk']}/fulfillments/{fulfillment['pk']}/reverse/",
+            {'operation_key': str(uuid4()), 'reason': 'Dispatch entered in error.'},
+            format='json',
+        )
+        self.assertEqual(
+            reversed_fulfillment.status_code, 201, reversed_fulfillment.data,
+        )
+        self.assertEqual(self.status_of(kept), self.Status.RESERVED)
+
+        self.close(order, kept, 'expire')
+        self.assertEqual(self.status_of(kept), self.Status.EXPIRED)
+
+    def test_a_resolved_reservation_is_replaced_rather_than_revived(self):
+        """Released and expired rows stay closed; a new reservation claims it."""
+        plant = self.available_plant()
+        order, allocations = self.confirmed_order([plant])
+        allocation = allocations[0]['pk']
+        self.close(order, allocation, 'release')
+
+        refused = self.client.post(f"{self.orders_url}{order['pk']}/fulfillments/", {
+            'operation_key': str(uuid4()), 'allocation_ids': [allocation],
+        }, format='json')
+        self.assertEqual(refused.status_code, 400, refused.data)
+        self.assertEqual(self.status_of(allocation), self.Status.RELEASED)
+
+        replacement = self.client.post(
+            f"{self.orders_url}{order['pk']}/allocate/",
+            {'line': order['lines'][0]['pk'], 'plant_ids': [plant.pk]},
+            format='json',
+        )
+        self.assertEqual(replacement.status_code, 201, replacement.data)
+        self.assertNotEqual(replacement.data[0]['pk'], allocation)
+        self.assertEqual(
+            self.status_of(replacement.data[0]['pk']), self.Status.RESERVED,
+        )
