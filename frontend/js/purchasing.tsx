@@ -25,12 +25,13 @@ import {
 import { getInventoryItems, getStockReceipts } from './api/inventory'
 import { getSuppliers } from './api/supplies'
 import { queryKeys } from './query'
-import { InventoryItem, StockReceipt, StockReceiptLine } from './types/inventory'
+import { InventoryItem, PurchaseTaxTreatment, StockReceipt, StockReceiptLine } from './types/inventory'
 import { PurchaseOrder, PurchaseOrderLine, SupplierInvoice } from './types/purchasing'
 import { Workspace } from './types/workspace'
-import { formatMoney } from './utils'
+import { errorsByField, formatMoney, sumMoney } from './utils'
 
 type PurchasingTab = 'dashboard' | 'requisitions' | 'orders' | 'invoices' | 'expenses'
+type AmountBasis = 'incl' | 'excl'
 
 function localToday() {
   const date = new Date()
@@ -707,6 +708,19 @@ function Orders({
   )
 }
 
+// GST-inclusive is how a receipt is usually written, GST-exclusive how a
+// supplier invoice usually is, so the form takes whichever pair of figures the
+// document actually shows and derives the third. The arithmetic runs through
+// sumMoney rather than Number so the preview cannot disagree with the totals
+// the server then stores from the same strings.
+function expenseAmounts(basis: AmountBasis, amount: string, tax: string) {
+  const taxTotal = sumMoney([tax])
+  const entered = sumMoney([amount])
+  const subtotal = basis === 'incl' ? sumMoney([entered, `-${taxTotal}`]) : entered
+  const total = basis === 'incl' ? entered : sumMoney([entered, taxTotal])
+  return { subtotal, taxTotal, total, reconciles: sumMoney([subtotal, taxTotal]) === total }
+}
+
 function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: Awaited<ReturnType<typeof getSuppliers>> }) {
   const queryClient = useQueryClient()
   const { data: categories = [] } = useQuery({ queryKey: queryKeys.purchasing.categories, queryFn: ({ signal }) => getExpenseCategories(signal) })
@@ -715,10 +729,15 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
   const [category, setCategory] = React.useState<number | ''>('')
   const [supplier, setSupplier] = React.useState<number | ''>('')
   const [payee, setPayee] = React.useState('')
+  const [incurredOn, setIncurredOn] = React.useState(localToday())
   const [paidOn, setPaidOn] = React.useState('')
-  const [subtotal, setSubtotal] = React.useState('0')
+  const [amountBasis, setAmountBasis] = React.useState<AmountBasis>('incl')
+  const [amount, setAmount] = React.useState('0')
   const [tax, setTax] = React.useState('0')
-  const [total, setTotal] = React.useState('0')
+  const [taxTreatment, setTaxTreatment] = React.useState<PurchaseTaxTreatment>('unknown')
+  const [claimInputTax, setClaimInputTax] = React.useState(false)
+  const [claimablePercentage, setClaimablePercentage] = React.useState('0')
+  const [apportionmentBasis, setApportionmentBasis] = React.useState('')
   const [allocationType, setAllocationType] = React.useState('')
   const [allocationReference, setAllocationReference] = React.useState('')
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })
@@ -730,18 +749,28 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
       await refresh()
     }
   })
+  const { subtotal, taxTotal, total, reconciles } = expenseAmounts(amountBasis, amount, tax)
+  const claimedPercentage = claimInputTax ? claimablePercentage : '0'
+  // Only a partial claim has to be explained, and the server draws that line at
+  // the two unapportioned percentages rather than at the text of the field, so
+  // the same comparison is made numerically here: "100.00" is a full claim too.
+  const apportioned = claimInputTax && Number(claimedPercentage) !== 100
   const create = useMutation({
     mutationFn: async () => {
       const draft = await createBusinessExpense({
         category,
         supplier: supplier || null,
         payee,
-        incurred_on: localToday(),
+        incurred_on: incurredOn,
         paid_on: paidOn || null,
         currency_code: workspace.currency_code,
         subtotal_ex_tax: subtotal,
-        tax_total: tax,
+        tax_total: taxTotal,
         total_incl_tax: total,
+        tax_treatment: taxTreatment,
+        claim_input_tax: claimInputTax,
+        claimable_percentage: claimedPercentage,
+        apportionment_basis: apportioned ? apportionmentBasis : '',
         allocation_type: allocationType,
         allocation_reference: allocationReference,
         attachment_url: '',
@@ -751,6 +780,31 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
     },
     onSuccess: refresh
   })
+  const fieldErrors = errorsByField(create.error)
+  function fieldError(field: string) {
+    return fieldErrors[field] ? <Form.Control.Feedback type="invalid">{fieldErrors[field]}</Form.Control.Feedback> : null
+  }
+  // Zero-rated, exempt and out-of-scope purchases carry no GST to record, and
+  // only a standard-rated one carries GST that can be claimed as input tax --
+  // the model has no second-hand or customs input-tax source to claim from.
+  const taxless = taxTreatment === 'zero_rated' || taxTreatment === 'exempt' || taxTreatment === 'out_of_scope'
+  function changeTreatment(value: PurchaseTaxTreatment) {
+    setTaxTreatment(value)
+    if (value === 'zero_rated' || value === 'exempt' || value === 'out_of_scope') setTax('0')
+    if (value !== 'standard') {
+      setClaimInputTax(false)
+      setClaimablePercentage('0')
+      setApportionmentBasis('')
+    }
+  }
+  const incomplete =
+    !category ||
+    (!supplier && !payee) ||
+    !incurredOn ||
+    !reconciles ||
+    subtotal.startsWith('-') ||
+    (claimInputTax && !(Number(claimablePercentage) > 0)) ||
+    (apportioned && !apportionmentBasis.trim())
   return (
     <>
       <Card body className="mb-3">
@@ -765,7 +819,8 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
         <h2 className="h5">Record business expense</h2>
         <Row className="g-2">
           <Col md={2}>
-            <Form.Select value={category} onChange={(event) => setCategory(Number(event.target.value))}>
+            <Form.Label htmlFor="expense-category">Category</Form.Label>
+            <Form.Select id="expense-category" value={category} isInvalid={'category' in fieldErrors} onChange={(event) => setCategory(Number(event.target.value))}>
               <option value="">Category…</option>
               {categories
                 .filter((entry) => entry.active)
@@ -775,9 +830,11 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
                   </option>
                 ))}
             </Form.Select>
+            {fieldError('category')}
           </Col>
           <Col md={2}>
-            <Form.Select value={supplier} onChange={(event) => setSupplier(Number(event.target.value))}>
+            <Form.Label htmlFor="expense-supplier">Supplier</Form.Label>
+            <Form.Select id="expense-supplier" value={supplier} onChange={(event) => setSupplier(Number(event.target.value))}>
               <option value="">Supplier (optional)…</option>
               {suppliers.map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
@@ -787,28 +844,147 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
             </Form.Select>
           </Col>
           <Col md={2}>
-            <Form.Control placeholder="Payee" value={payee} onChange={(event) => setPayee(event.target.value)} />
+            <Form.Label htmlFor="expense-payee">Payee</Form.Label>
+            <Form.Control id="expense-payee" placeholder="Payee" value={payee} isInvalid={'payee' in fieldErrors} onChange={(event) => setPayee(event.target.value)} />
+            {fieldError('payee')}
           </Col>
           <Col md={2}>
-            <Form.Control type="date" aria-label="Paid on (optional)" title="Paid on (optional)" value={paidOn} onChange={(event) => setPaidOn(event.target.value)} />
-          </Col>
-          <Col md={1}>
-            <Form.Control type="number" placeholder="Ex tax" value={subtotal} onChange={(event) => setSubtotal(event.target.value)} />
-          </Col>
-          <Col md={1}>
-            <Form.Control type="number" placeholder="Tax" value={tax} onChange={(event) => setTax(event.target.value)} />
-          </Col>
-          <Col md={1}>
-            <Form.Control type="number" placeholder="Total" value={total} onChange={(event) => setTotal(event.target.value)} />
-          </Col>
-          <Col md={1}>
-            <Form.Control placeholder="Allocation type" value={allocationType} onChange={(event) => setAllocationType(event.target.value)} />
+            <Form.Label htmlFor="expense-incurred-on">Incurred on</Form.Label>
+            <Form.Control
+              id="expense-incurred-on"
+              type="date"
+              value={incurredOn}
+              isInvalid={'incurred_on' in fieldErrors}
+              onChange={(event) => setIncurredOn(event.target.value)}
+            />
+            {fieldError('incurred_on')}
           </Col>
           <Col md={2}>
-            <Form.Control placeholder="Allocation reference" value={allocationReference} onChange={(event) => setAllocationReference(event.target.value)} />
+            <Form.Label htmlFor="expense-paid-on">Paid on</Form.Label>
+            <Form.Control id="expense-paid-on" type="date" value={paidOn} isInvalid={'paid_on' in fieldErrors} onChange={(event) => setPaidOn(event.target.value)} />
+            {fieldError('paid_on')}
+          </Col>
+          <Col md={2}>
+            <Form.Label htmlFor="expense-treatment">Tax treatment</Form.Label>
+            <Form.Select id="expense-treatment" value={taxTreatment} onChange={(event) => changeTreatment(event.target.value as PurchaseTaxTreatment)}>
+              <option value="unknown">Unknown</option>
+              <option value="standard">Standard-rated</option>
+              <option value="zero_rated">Zero-rated</option>
+              <option value="exempt">Exempt</option>
+              <option value="out_of_scope">Out of scope</option>
+            </Form.Select>
+          </Col>
+          <Col md={2}>
+            <Form.Label htmlFor="expense-basis">Amounts entered</Form.Label>
+            <Form.Select id="expense-basis" value={amountBasis} onChange={(event) => setAmountBasis(event.target.value as AmountBasis)}>
+              <option value="incl">Including GST</option>
+              <option value="excl">Excluding GST</option>
+            </Form.Select>
+          </Col>
+          <Col md={2}>
+            <Form.Label htmlFor="expense-amount">{amountBasis === 'incl' ? 'Total incl GST' : 'Amount excl GST'}</Form.Label>
+            <Form.Control
+              id="expense-amount"
+              type="number"
+              min="0"
+              step="0.0001"
+              value={amount}
+              isInvalid={'total_incl_tax' in fieldErrors || 'subtotal_ex_tax' in fieldErrors}
+              onChange={(event) => setAmount(event.target.value)}
+            />
+            {fieldError('subtotal_ex_tax')}
+            {fieldError('total_incl_tax')}
+          </Col>
+          <Col md={2}>
+            <Form.Label htmlFor="expense-tax">GST</Form.Label>
+            <Form.Control
+              id="expense-tax"
+              type="number"
+              min="0"
+              step="0.0001"
+              value={tax}
+              disabled={taxless}
+              isInvalid={'tax_total' in fieldErrors}
+              onChange={(event) => setTax(event.target.value)}
+            />
+            {fieldError('tax_total')}
+          </Col>
+          <Col md={3}>
+            <Form.Label>Recorded as</Form.Label>
+            <div className="form-control-plaintext" aria-live="polite">
+              {formatMoney(subtotal, workspace.currency_code)} + {formatMoney(taxTotal, workspace.currency_code)} GST = {formatMoney(total, workspace.currency_code)}
+            </div>
+          </Col>
+          {taxTreatment === 'standard' && (
+            <Col md={3}>
+              <Form.Check
+                className="mt-4"
+                type="checkbox"
+                id="expense-claim-input-tax"
+                label="Claim the GST as input tax"
+                checked={claimInputTax}
+                onChange={(event) => {
+                  setClaimInputTax(event.target.checked)
+                  setClaimablePercentage(event.target.checked ? '100' : '0')
+                  if (!event.target.checked) setApportionmentBasis('')
+                }}
+              />
+            </Col>
+          )}
+          {claimInputTax && (
+            <Col md={2}>
+              <Form.Label htmlFor="expense-claimable">Claimable %</Form.Label>
+              <Form.Control
+                id="expense-claimable"
+                type="number"
+                min="0"
+                max="100"
+                step="0.0001"
+                value={claimablePercentage}
+                isInvalid={'claimable_percentage' in fieldErrors}
+                onChange={(event) => setClaimablePercentage(event.target.value)}
+              />
+              {fieldError('claimable_percentage')}
+            </Col>
+          )}
+          {apportioned && (
+            <Col md={4}>
+              <Form.Label htmlFor="expense-apportionment">Apportionment basis</Form.Label>
+              <Form.Control
+                id="expense-apportionment"
+                placeholder="Why this share is business use"
+                value={apportionmentBasis}
+                isInvalid={'apportionment_basis' in fieldErrors}
+                onChange={(event) => setApportionmentBasis(event.target.value)}
+              />
+              {fieldError('apportionment_basis')}
+            </Col>
+          )}
+          <Col md={2}>
+            <Form.Label htmlFor="expense-allocation-type">Allocation type</Form.Label>
+            <Form.Control id="expense-allocation-type" placeholder="Allocation type" value={allocationType} onChange={(event) => setAllocationType(event.target.value)} />
+          </Col>
+          <Col md={3}>
+            <Form.Label htmlFor="expense-allocation-reference">Allocation reference</Form.Label>
+            <Form.Control
+              id="expense-allocation-reference"
+              placeholder="Allocation reference"
+              value={allocationReference}
+              onChange={(event) => setAllocationReference(event.target.value)}
+            />
           </Col>
         </Row>
-        <Button className="mt-2" disabled={!category || (!supplier && !payee) || create.isPending} onClick={() => create.mutate()}>
+        {!reconciles && (
+          <Alert className="mt-2 mb-0" variant="warning">
+            Enter the GST as a positive figure so the amount, the GST, and the total agree.
+          </Alert>
+        )}
+        {subtotal.startsWith('-') && (
+          <Alert className="mt-2 mb-0" variant="warning">
+            The GST is larger than the amount entered.
+          </Alert>
+        )}
+        <Button className="mt-2" disabled={incomplete || create.isPending} onClick={() => create.mutate()}>
           Record and confirm expense
         </Button>
         <ErrorMessage error={create.error || addCategory.error} />
@@ -816,10 +992,12 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
       <Table striped>
         <thead>
           <tr>
-            <th>Date</th>
+            <th>Incurred</th>
             <th>Category</th>
             <th>Payee</th>
             <th>Total</th>
+            <th>GST claimed</th>
+            <th>Deductible</th>
             <th>Status</th>
             <th>Payment</th>
             <th>Allocation</th>
@@ -832,6 +1010,8 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
               <td>{categories.find((entry) => entry.pk === expense.category)?.name}</td>
               <td>{suppliers.find((entry) => entry.pk === expense.supplier)?.name ?? expense.payee}</td>
               <td>{formatMoney(expense.total_incl_tax, expense.currency_code)}</td>
+              <td>{expense.status === 'draft' ? 'Not yet frozen' : formatMoney(expense.recoverable_tax, expense.currency_code)}</td>
+              <td>{expense.status === 'draft' ? 'Not yet frozen' : formatMoney(expense.deductible_amount, expense.currency_code)}</td>
               <td>{expense.status}</td>
               <td>{expense.payment_state.replace('_', ' ')}</td>
               <td>{expense.allocation_type ? `${expense.allocation_type}: ${expense.allocation_reference}` : 'Whole business'}</td>

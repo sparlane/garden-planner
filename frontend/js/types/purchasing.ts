@@ -1,3 +1,5 @@
+import { PurchaseTaxTreatment } from './inventory'
+
 type PurchasingStatus = 'draft' | 'confirmed' | 'closed' | 'cancelled'
 type RequisitionStatus = 'draft' | 'reviewed' | 'ordered' | 'cancelled'
 
@@ -113,6 +115,12 @@ interface BusinessExpense {
   subtotal_ex_tax: string
   tax_total: string
   total_incl_tax: string
+  tax_treatment: PurchaseTaxTreatment
+  claim_input_tax: boolean
+  claimable_percentage: string
+  apportionment_basis: string
+  recoverable_tax: string
+  deductible_amount: string
   supplier_invoice: number | null
   paid_on: string | null
   payment_state: 'paid' | 'unpaid' | 'part_paid'
