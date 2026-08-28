@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -13,7 +14,13 @@ from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
 
-from .ledger import UnitMovementRequest, post_unit_movement, unit_physical_state
+from .ledger import (
+    UnitMovementRequest,
+    UnitReconciliationRequest,
+    post_unit_movement,
+    reconcile_unit_opening,
+    unit_physical_state,
+)
 from .models import (
     InventoryItem,
     InventoryUnit,
@@ -26,8 +33,8 @@ from .models import (
 from .units import UnitCode
 
 
-class SerializedInventoryTests(TestCase):
-    """Receipts and unit actions preserve exact identity and audit history."""
+class SerializedInventoryTestCase(TestCase):
+    """A workspace with a serialized tray item, a store, and a growing house."""
 
     def setUp(self):
         super().setUp()
@@ -84,6 +91,52 @@ class SerializedInventoryTests(TestCase):
         response = self.client.post(f'/inventory/receipts/{receipt.pk}/post/')
         self.assertEqual(response.status_code, 200, response.data)
         return receipt
+
+    def unknown_opening_unit(self):
+        """Build the migrated tray unit the reconciliation workflow exists for.
+
+        Legacy openings arrived with neither a cost nor a real location, so
+        they sit at the reserved `SYSTEM-TRAY-UNKNOWN` location until someone
+        counts and values them.
+        """
+        unknown = Location.objects.create(
+            workspace=self.workspace,
+            name='Unknown tray location',
+            code='SYSTEM-TRAY-UNKNOWN',
+            location_type=Location.LocationType.ADJUSTMENT,
+        )
+        lot = StockLot.objects.create(
+            workspace=self.workspace,
+            item=self.item,
+            origin=StockLot.Origin.OPENING,
+            received_on=date(2026, 1, 1),
+            initial_base_quantity=Decimal('1'),
+            acquisition_total=None,
+            base_unit_cost=None,
+            currency_code=self.workspace.currency_code,
+        )
+        unit = InventoryUnit.objects.create(
+            workspace=self.workspace,
+            item=self.item,
+            source_lot=lot,
+            acquisition_cost=None,
+            currency_code=self.workspace.currency_code,
+            current_location=unknown,
+        )
+        StockMovement.objects.create(
+            workspace=self.workspace,
+            lot=lot,
+            unit=unit,
+            movement_type=StockMovement.MovementType.OPENING,
+            quantity=Decimal('1'),
+            destination=unknown,
+            occurred_at=timezone.now(),
+        )
+        return unit, unknown
+
+
+class SerializedInventoryTests(SerializedInventoryTestCase):
+    """Receipts and unit actions preserve exact identity and audit history."""
 
     def test_receipt_creates_one_costed_unit_and_movement_per_each(self):
         """Per-unit costs retain the receipt total despite currency rounding."""
@@ -228,39 +281,8 @@ class SerializedInventoryTests(TestCase):
 
     def test_legacy_opening_reconciliation_sets_cost_and_location_once(self):
         """Unknown opening facts become audited without rewriting the opening."""
-        unknown = Location.objects.create(
-            workspace=self.workspace,
-            name='Unknown tray location',
-            code='SYSTEM-TRAY-UNKNOWN',
-            location_type=Location.LocationType.ADJUSTMENT,
-        )
-        lot = StockLot.objects.create(
-            workspace=self.workspace,
-            item=self.item,
-            origin=StockLot.Origin.OPENING,
-            received_on=date(2026, 1, 1),
-            initial_base_quantity=Decimal('1'),
-            acquisition_total=None,
-            base_unit_cost=None,
-            currency_code=self.workspace.currency_code,
-        )
-        unit = InventoryUnit.objects.create(
-            workspace=self.workspace,
-            item=self.item,
-            source_lot=lot,
-            acquisition_cost=None,
-            currency_code=self.workspace.currency_code,
-            current_location=unknown,
-        )
-        StockMovement.objects.create(
-            workspace=self.workspace,
-            lot=lot,
-            unit=unit,
-            movement_type=StockMovement.MovementType.OPENING,
-            quantity=Decimal('1'),
-            destination=unknown,
-            occurred_at=timezone.now(),
-        )
+        unit, _unknown = self.unknown_opening_unit()
+        lot = unit.source_lot
 
         response = self.client.post(
             f'/inventory/serialized-units/{unit.pk}/reconcile-opening/',
@@ -286,3 +308,123 @@ class SerializedInventoryTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
+
+
+class OpeningReconciliationTests(SerializedInventoryTestCase):
+    """A migrated unit leaves its unknown location only by being audited."""
+
+    def reconcile(self, unit, destination, cost='7.2500'):
+        """Supply the audited cost and location for one opening unit."""
+        return reconcile_unit_opening(
+            self.workspace,
+            self.user,
+            UnitReconciliationRequest(
+                unit=unit,
+                acquisition_cost=Decimal(cost),
+                destination=destination,
+                occurred_at=timezone.now(),
+                reason='Counted and valued opening stock',
+            ),
+        )
+
+    def test_a_negative_audited_cost_is_refused(self):
+        """An audit supplies what the tray cost, which is never below zero."""
+        unit, _unknown = self.unknown_opening_unit()
+        with self.assertRaises(ValidationError) as caught:
+            self.reconcile(unit, self.store, cost='-0.0001')
+        self.assertIn('acquisition_cost', caught.exception.message_dict)
+        unit.refresh_from_db()
+        self.assertIsNone(unit.acquisition_cost)
+
+    def test_the_unknown_location_cannot_be_the_audited_answer(self):
+        """Naming where the unit already is settles nothing."""
+        unit, unknown = self.unknown_opening_unit()
+        with self.assertRaises(ValidationError) as caught:
+            self.reconcile(unit, unknown)
+        self.assertIn('destination', caught.exception.message_dict)
+        self.assertFalse(InventoryUnitReconciliation.objects.exists())
+
+    def test_an_inactive_destination_is_refused(self):
+        """Audited stock lands somewhere that still exists."""
+        unit, _unknown = self.unknown_opening_unit()
+        Location.objects.filter(pk=self.store.pk).update(active=False)
+        self.store.refresh_from_db()
+        with self.assertRaises(ValidationError) as caught:
+            self.reconcile(unit, self.store)
+        self.assertIn('destination', caught.exception.message_dict)
+
+    def test_only_an_opening_unit_can_be_reconciled(self):
+        """A received tray already has an audited cost and a real location."""
+        receipt = self.post_receipt(quantity='1')
+        unit = InventoryUnit.objects.get(
+            source_lot__receipt_line__receipt=receipt,
+        )
+        with self.assertRaisesMessage(
+                ValidationError, 'Only opening units can be reconciled.'):
+            self.reconcile(unit, self.growing)
+
+    def test_an_unreconciled_unit_refuses_every_other_stock_action(self):
+        """Nothing may be posted about a tray nobody has counted yet.
+
+        This is what makes the workflow the only way out: a unit at the
+        reserved location cannot be transferred, lost, or sold around it.
+        """
+        unit, _unknown = self.unknown_opening_unit()
+        with self.assertRaisesMessage(
+                ValidationError,
+                'Reconcile this opening unit before another stock action.'):
+            post_unit_movement(self.workspace, self.user, UnitMovementRequest(
+                unit=unit,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                destination=self.growing,
+                occurred_at=timezone.now(),
+                reason='Moved to the propagation house.',
+            ))
+
+    def test_the_reserved_location_is_never_a_destination(self):
+        """No ordinary action may put a unit back into migration limbo."""
+        receipt = self.post_receipt(quantity='1')
+        unit = InventoryUnit.objects.get(source_lot__receipt_line__receipt=receipt)
+        _unreconciled, unknown = self.unknown_opening_unit()
+        with self.assertRaisesMessage(
+                ValidationError,
+                'The unknown tray location is reserved for migration.'):
+            post_unit_movement(self.workspace, self.user, UnitMovementRequest(
+                unit=unit,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                destination=unknown,
+                occurred_at=timezone.now(),
+                reason='Moved back to limbo.',
+            ))
+
+    def test_a_reconciled_unit_moves_like_any_other(self):
+        """The audit is what opens the unit up to ordinary stock actions."""
+        unit, _unknown = self.unknown_opening_unit()
+        reconciliation = self.reconcile(unit, self.store)
+        self.assertEqual(reconciliation.acquisition_cost, Decimal('7.2500'))
+        self.assertEqual(
+            reconciliation.movement.movement_type,
+            StockMovement.MovementType.TRANSFER,
+        )
+        unit.refresh_from_db()
+        self.assertEqual(unit.current_location_id, self.store.pk)
+        self.assertEqual(unit.acquisition_cost, Decimal('7.2500'))
+        moved = post_unit_movement(self.workspace, self.user, UnitMovementRequest(
+            unit=unit,
+            movement_type=StockMovement.MovementType.TRANSFER,
+            destination=self.growing,
+            occurred_at=timezone.now(),
+            reason='Moved to the propagation house.',
+        ))
+        self.assertEqual(moved.destination_id, self.growing.pk)
+        self.assertEqual(unit_physical_state(unit), 'available')
+
+    def test_a_unit_is_reconciled_only_once(self):
+        """A second audit would rewrite a cost the books already carry."""
+        unit, _unknown = self.unknown_opening_unit()
+        self.reconcile(unit, self.store)
+        with self.assertRaisesMessage(
+                ValidationError, 'This unit has already been reconciled.'):
+            self.reconcile(unit, self.growing, cost='8.0000')
+        unit.refresh_from_db()
+        self.assertEqual(unit.acquisition_cost, Decimal('7.2500'))
