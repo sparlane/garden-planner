@@ -38,7 +38,7 @@ from tests.factories import (
 )
 from workspaces.models import Workspace, get_current_workspace
 
-from .availability import is_quarantined
+from .availability import case_is_active, is_quarantined
 from .models import HealthObservation, HealthObservationType, QuarantineAction
 from .operations import (
     act_on_quarantine,
@@ -50,8 +50,8 @@ from .reports import health_report
 from .services import preview_observation, record_observation
 
 
-class HealthOperationTests(TestCase):
-    """Health constraints compose with lifecycle and cohort services."""
+class HealthOperationTestCase(TestCase):
+    """A nursery workspace with observation and quarantine helpers."""
 
     def setUp(self):
         self.workspace = get_current_workspace()
@@ -87,6 +87,10 @@ class HealthOperationTests(TestCase):
                 plant, None, OutcomeRequest(event_type, reason='Commerce.'),
             )
         return plant
+
+
+class HealthOperationTests(HealthOperationTestCase):
+    """Health constraints compose with lifecycle and cohort services."""
 
     def test_quarantine_changes_register_availability_without_lifecycle_change(self):
         plant = make_specific_plant(workspace=self.workspace)
@@ -337,3 +341,208 @@ class HealthOperationTests(TestCase):
             row['seed_sources'][0]['supplier'],
             plant.cell_planting.seed_tray_planting.seeds_used.seeds.supplier_id,
         )
+
+
+class QuarantineCaseLifecycleTests(HealthOperationTestCase):
+    """A case is opened, worked, and closed exactly once, whatever it holds.
+
+    The existing tests reach a state and stop there. These follow each case to
+    the end, for plants and for cohorts, and assert what a closed case will and
+    will not accept afterwards.
+    """
+
+    CLOSING = (QuarantineAction.Action.RELEASE, QuarantineAction.Action.CULL)
+    ACTIONS = (
+        QuarantineAction.Action.RELEASE,
+        QuarantineAction.Action.ESCALATE,
+        QuarantineAction.Action.CULL,
+    )
+
+    def act(self, case, action_name, reason='Reviewed on the bench.', **values):
+        return act_on_quarantine(
+            self.workspace, None, case, action_name=action_name,
+            idempotency_key=uuid4(), reason=reason, **values,
+        )
+
+    def open_case_for_plant(self):
+        """Quarantine one returned plant, which holds a lifecycle state."""
+        plant = self.returned_plant()
+        return self.quarantine(self.observe('plant', plant)), plant
+
+    def open_case_for_cohort(self, quantity=4):
+        """Quarantine one whole counted cohort."""
+        plant = make_specific_plant(workspace=self.workspace)
+        cohort = PlantCohort.objects.create(
+            workspace=self.workspace, batch=plant.batch, quantity=quantity,
+        )
+        return self.quarantine(self.observe('cohort', cohort)), cohort
+
+    def test_escalating_raises_a_linked_task_and_leaves_the_case_open(self):
+        """Escalation asks for attention; it does not resolve anything."""
+        from work.models import WorkTask  # pylint: disable=import-outside-toplevel
+
+        case, plant = self.open_case_for_plant()
+        action = self.act(
+            case, QuarantineAction.Action.ESCALATE,
+            reason='Second opinion needed before a decision.',
+        )
+        task = WorkTask.objects.get(
+            source_snapshot__quarantine_action=action.pk,
+        )
+        self.assertEqual(task.priority, 100)
+        self.assertEqual(task.source_snapshot['quarantine_case'], case.pk)
+        self.assertTrue(case_is_active(case))
+        self.assertTrue(is_quarantined(plant))
+        self.assertEqual(
+            plant_lifecycle_summary(plant).state, LifecycleState.QUARANTINED,
+        )
+
+    def test_a_case_can_be_escalated_more_than_once_before_it_closes(self):
+        """Two people may each ask for attention on the same case."""
+        case, _plant = self.open_case_for_plant()
+        first = self.act(case, QuarantineAction.Action.ESCALATE, reason='Unsure.')
+        second = self.act(case, QuarantineAction.Action.ESCALATE, reason='Still unsure.')
+        self.assertNotEqual(first.pk, second.pk)
+        self.assertEqual(
+            case.actions.filter(
+                action=QuarantineAction.Action.ESCALATE,
+            ).count(), 2,
+        )
+        self.assertTrue(case_is_active(case))
+
+    def test_an_escalated_plant_case_still_closes_either_way(self):
+        """Escalation is not a dead end for the stock it is raised over."""
+        for closing, state in (
+                (QuarantineAction.Action.RELEASE, LifecycleState.AVAILABLE),
+                (QuarantineAction.Action.CULL, LifecycleState.CULLED)):
+            with self.subTest(closing=closing):
+                case, plant = self.open_case_for_plant()
+                self.act(case, QuarantineAction.Action.ESCALATE, reason='Unsure.')
+                self.act(case, closing, reason='Decision made after review.')
+                self.assertFalse(case_is_active(case))
+                self.assertFalse(is_quarantined(plant))
+                self.assertEqual(plant_lifecycle_summary(plant).state, state)
+
+    def test_a_closed_case_accepts_no_further_action(self):
+        """Nothing may be decided twice about the same reviewed stock."""
+        for closing in self.CLOSING:
+            for attempted in self.ACTIONS:
+                with self.subTest(closed_by=closing, attempted=attempted):
+                    case, _plant = self.open_case_for_plant()
+                    self.act(case, closing, reason='Decision made after review.')
+                    with self.assertRaisesMessage(
+                            ValidationError, 'This quarantine case is already closed.'):
+                        self.act(case, attempted, reason='Changed my mind.')
+
+    def test_every_action_states_why_it_was_taken(self):
+        """A decision about live stock is never recorded without a reason."""
+        case, _plant = self.open_case_for_plant()
+        for action_name in self.ACTIONS:
+            for reason in ('', '   '):
+                with self.subTest(action=action_name, reason=repr(reason)):
+                    with self.assertRaises(ValidationError) as caught:
+                        self.act(case, action_name, reason=reason)
+                    self.assertIn('reason', caught.exception.message_dict)
+        self.assertTrue(case_is_active(case))
+
+    def test_one_idempotency_key_records_one_action(self):
+        """A retried request returns the action it already recorded."""
+        case, _plant = self.open_case_for_plant()
+        key = uuid4()
+        values = {
+            'action_name': QuarantineAction.Action.ESCALATE,
+            'idempotency_key': key, 'reason': 'Second opinion needed.',
+        }
+        first = act_on_quarantine(self.workspace, None, case, **values)
+        second = act_on_quarantine(self.workspace, None, case, **values)
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(case.actions.filter(idempotency_key=key).count(), 1)
+        with self.assertRaisesMessage(
+                ValidationError, 'That key was used for different work.'):
+            act_on_quarantine(
+                self.workspace, None, case,
+                action_name=QuarantineAction.Action.CULL,
+                idempotency_key=key, reason='Second opinion needed.',
+            )
+
+    def test_a_release_must_take_stock_out_of_quarantine(self):
+        """Releasing into a quarantine bench would resolve nothing."""
+        case, _plant = self.open_case_for_plant()
+        quarantine_bench = make_location(
+            workspace=self.workspace, location_type='quarantine',
+        )
+        with self.assertRaisesMessage(
+                ValidationError, 'Released stock must leave quarantine.'):
+            self.act(
+                case, QuarantineAction.Action.RELEASE,
+                reason='Recovered.', destination=quarantine_bench,
+            )
+        self.assertTrue(case_is_active(case))
+        bench = make_location(workspace=self.workspace)
+        self.act(
+            case, QuarantineAction.Action.RELEASE,
+            reason='Recovered.', destination=bench,
+        )
+        self.assertFalse(case_is_active(case))
+
+    def test_a_released_cohort_becomes_changeable_again(self):
+        """Release is what lifts the structural lock quarantine imposes."""
+        case, cohort = self.open_case_for_cohort()
+        self.act(case, QuarantineAction.Action.RELEASE, reason='Nothing found.')
+        self.assertFalse(case_is_active(case))
+        self.assertFalse(is_quarantined(cohort))
+        cohort.refresh_from_db()
+        changed, _operation = change_cohort(
+            self.workspace, None, cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            idempotency_key=uuid4(), reason='Ordinary loss.', quantity=1,
+        )
+        self.assertEqual(changed.quantity, 3)
+
+    def test_a_culled_cohort_is_written_down_in_full_and_closes_its_case(self):
+        """Culling a cohort removes the counted stock it stood for."""
+        case, cohort = self.open_case_for_cohort()
+        action = self.act(
+            case, QuarantineAction.Action.CULL, reason='Disease confirmed.',
+        )
+        cohort.refresh_from_db()
+        self.assertEqual(cohort.quantity, 0)
+        self.assertEqual(
+            action.results.get().cohort_operation.action, CohortOperation.Action.LOSS,
+        )
+        self.assertFalse(case_is_active(case))
+        self.assertFalse(is_quarantined(cohort))
+
+    def test_an_escalated_cohort_case_still_closes(self):
+        """A cohort escalation is no more a dead end than a plant one."""
+        case, cohort = self.open_case_for_cohort()
+        self.act(case, QuarantineAction.Action.ESCALATE, reason='Unsure.')
+        self.assertTrue(case_is_active(case))
+        self.act(case, QuarantineAction.Action.CULL, reason='Disease confirmed.')
+        cohort.refresh_from_db()
+        self.assertEqual(cohort.quantity, 0)
+        self.assertFalse(case_is_active(case))
+
+    def test_an_open_case_always_admits_a_closing_action(self):
+        """No action a case accepts can leave it with nothing left to do.
+
+        Task 91's invariant, applied to the case rather than the plant: every
+        action reachable from an open case is either itself closing, or leaves
+        the case open and still able to close.
+        """
+        openers = (self.open_case_for_plant, self.open_case_for_cohort)
+        for opener in openers:
+            for action_name in self.ACTIONS:
+                with self.subTest(opener=opener.__name__, action=action_name):
+                    case, _member = opener()
+                    self.act(case, action_name, reason='Reviewed on the bench.')
+                    if action_name in self.CLOSING:
+                        self.assertFalse(case_is_active(case))
+                        continue
+                    self.assertTrue(case_is_active(case))
+                    self.act(
+                        case, QuarantineAction.Action.RELEASE,
+                        reason='Closed after escalation.',
+                    )
+                    self.assertFalse(case_is_active(case))
