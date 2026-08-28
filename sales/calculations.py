@@ -89,8 +89,20 @@ def distribute_money(total, count):
         raise ValueError('A money distribution needs at least one position.')
     share = money(total / count)
     values = [share] * count
+    # The last position absorbs the rounding residual, which is what makes the
+    # split exact. Nothing clamps the positions, so this cannot overdraw one.
     values[-1] = money(values[-1] + total - sum(values))
+    assert_parts_reconcile(values, total, 'money distribution')
     return values
+
+
+def assert_parts_reconcile(parts, total, description):
+    """Fail loudly when an exact split stops adding back to its source."""
+    allocated = money(sum(parts))
+    if allocated != total:
+        raise RuntimeError(
+            f'The {description} allocated {allocated:f} against {total:f}.'
+        )
 
 
 def line_position_amounts(line):
@@ -112,39 +124,74 @@ def line_position_amounts(line):
     }
 
 
-def proportional_refund(amount, available_lines):  # pylint: disable=too-many-locals
+def proportional_refund(amount, available_lines):
     """Allocate an inclusive refund and preserve each source line's ratios."""
     amount = money(amount)
     ordered = sorted(available_lines, key=lambda row: row['line'].pk)
     available_total = money(sum(row['remaining_total'] for row in ordered))
     if amount <= 0 or amount > available_total:
         raise ValueError('Refund amount exceeds the selected refundable value.')
-    inclusive = []
-    remaining = amount
-    for index, row in enumerate(ordered):
-        if index == len(ordered) - 1:
-            share = remaining
-        else:
-            share = money(amount * row['remaining_total'] / available_total)
-            share = min(share, row['remaining_total'], remaining)
-        inclusive.append(share)
-        remaining = money(remaining - share)
-    if remaining:
-        inclusive[-1] = money(inclusive[-1] + remaining)
-    result = []
-    for row, total in zip(ordered, inclusive):
-        source = row['line']
-        fraction = total / source.total_incl_tax
-        subtotal = money(source.subtotal_ex_tax * fraction)
-        tax = money(total - subtotal)
-        gross = money(source.gross_ex_tax * fraction)
-        discount = money(gross - subtotal)
-        result.append({
+    inclusive = _allocate_inclusive(amount, ordered, available_total)
+    return [
+        _refund_components(row['line'], total)
+        for row, total in zip(ordered, inclusive)
+    ]
+
+
+def _allocate_inclusive(amount, ordered, available_total):
+    """Split an inclusive refund proportionally without overdrawing a line.
+
+    Each share is capped at its own line's remaining total before anything
+    else, so a rounding residual can never be dumped on a line with no room
+    for it. That case is real rather than theoretical: 344.1157 spread over
+    four ordinary lines and a 0.0040 residue left by an earlier partial refund
+    rounds down often enough that the residue would be handed 0.0041, driving
+    its remaining refundable value negative for every later refund.
+
+    The residual those caps leave is then handed back from the last line
+    forwards to whichever lines still have headroom, which is what makes the
+    parts add back to the requested amount exactly.
+    """
+    shares = [
+        min(
+            money(amount * row['remaining_total'] / available_total),
+            row['remaining_total'],
+        )
+        for row in ordered
+    ]
+    residual = money(amount - sum(shares))
+    for index in reversed(range(len(shares))):
+        if not residual:
+            break
+        headroom = money(ordered[index]['remaining_total'] - shares[index])
+        step = max(min(residual, headroom), -shares[index])
+        shares[index] = money(shares[index] + step)
+        residual = money(residual - step)
+    assert_parts_reconcile(shares, amount, 'refund allocation')
+    return shares
+
+
+def _refund_components(source, total):
+    """Rebuild one refunded share from its source line's recognized ratios."""
+    if not source.total_incl_tax:
+        # A line given away at full discount has no ratios to preserve, and
+        # its remaining refundable value is zero, so its share is zero too.
+        return {
             'line': source,
-            'gross_ex_tax': gross,
-            'discount_ex_tax': discount,
-            'subtotal_ex_tax': subtotal,
-            'tax_total': tax,
+            'gross_ex_tax': money(0),
+            'discount_ex_tax': money(0),
+            'subtotal_ex_tax': money(0),
+            'tax_total': money(0),
             'total_incl_tax': total,
-        })
-    return result
+        }
+    fraction = total / source.total_incl_tax
+    subtotal = money(source.subtotal_ex_tax * fraction)
+    gross = money(source.gross_ex_tax * fraction)
+    return {
+        'line': source,
+        'gross_ex_tax': gross,
+        'discount_ex_tax': money(gross - subtotal),
+        'subtotal_ex_tax': subtotal,
+        'tax_total': money(total - subtotal),
+        'total_incl_tax': total,
+    }
