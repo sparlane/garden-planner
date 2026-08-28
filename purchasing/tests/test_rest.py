@@ -309,6 +309,101 @@ class PurchasingRestTests(APITestCase):
         self.assertEqual(summary.data['expenses']['total_incl_tax'], Decimal('23.0000'))
         self.assertEqual(summary.data['cash_paid'], Decimal('23.0000'))
 
+    def expense_category(self, name='Tools'):
+        """Create one reusable expense classification."""
+        category = self.client.post('/purchasing/expense-categories/', {
+            'name': name, 'notes': '', 'active': True,
+        }, format='json')
+        self.assertEqual(category.status_code, 201, category.data)
+        return category.data['pk']
+
+    def test_backdated_expense_keeps_its_own_date_and_claimed_gst(self):
+        """A cost entered days later is dated when it happened, not today."""
+        expense = self.client.post('/purchasing/expenses/', {
+            'category': self.expense_category(),
+            'payee': 'Hardware store',
+            'incurred_on': '2026-08-14',
+            'paid_on': '2026-08-14',
+            'currency_code': 'NZD',
+            'subtotal_ex_tax': '400.0000',
+            'tax_total': '60.0000',
+            'total_incl_tax': '460.0000',
+            'tax_treatment': 'standard',
+            'claim_input_tax': True,
+            'claimable_percentage': '100.0000',
+        }, format='json')
+        self.assertEqual(expense.status_code, 201, expense.data)
+        confirmed = self.client.post(
+            f"/purchasing/expenses/{expense.data['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(str(confirmed.data['incurred_on']), '2026-08-14')
+        self.assertEqual(Decimal(confirmed.data['recoverable_tax']), Decimal('60.0000'))
+        self.assertEqual(Decimal(confirmed.data['deductible_amount']), Decimal('400.0000'))
+
+    def test_unclaimed_expense_deducts_the_whole_gst_inclusive_cost(self):
+        """Without an input-tax claim the GST stays in the income-tax cost."""
+        expense = self.client.post('/purchasing/expenses/', {
+            'category': self.expense_category('Insurance'),
+            'payee': 'Insurer',
+            'incurred_on': '2026-08-10',
+            'currency_code': 'NZD',
+            'subtotal_ex_tax': '200.0000',
+            'tax_total': '30.0000',
+            'total_incl_tax': '230.0000',
+            'tax_treatment': 'standard',
+            'claim_input_tax': False,
+            'claimable_percentage': '0.0000',
+        }, format='json')
+        self.assertEqual(expense.status_code, 201, expense.data)
+        confirmed = self.client.post(
+            f"/purchasing/expenses/{expense.data['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(Decimal(confirmed.data['recoverable_tax']), Decimal('0.0000'))
+        self.assertEqual(Decimal(confirmed.data['deductible_amount']), Decimal('230.0000'))
+
+    def test_apportioned_expense_claim_requires_a_stated_basis(self):
+        """A partial claim is rejected as a field error until it is explained."""
+        payload = {
+            'category': self.expense_category('Power'),
+            'payee': 'Lines company',
+            'incurred_on': '2026-08-12',
+            'currency_code': 'NZD',
+            'subtotal_ex_tax': '100.0000',
+            'tax_total': '15.0000',
+            'total_incl_tax': '115.0000',
+            'tax_treatment': 'standard',
+            'claim_input_tax': True,
+            'claimable_percentage': '60.0000',
+        }
+        rejected = self.client.post('/purchasing/expenses/', payload, format='json')
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('apportionment_basis', rejected.data)
+        accepted = self.client.post('/purchasing/expenses/', dict(
+            payload, apportionment_basis='Sixty percent of the meter runs the packhouse',
+        ), format='json')
+        self.assertEqual(accepted.status_code, 201, accepted.data)
+        confirmed = self.client.post(
+            f"/purchasing/expenses/{accepted.data['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(Decimal(confirmed.data['recoverable_tax']), Decimal('9.0000'))
+        self.assertEqual(Decimal(confirmed.data['deductible_amount']), Decimal('106.0000'))
+
+    def test_expense_totals_must_reconcile(self):
+        """A mistyped total is a field error rather than a stored inconsistency."""
+        rejected = self.client.post('/purchasing/expenses/', {
+            'category': self.expense_category('Freight'),
+            'payee': 'Courier',
+            'incurred_on': '2026-08-12',
+            'currency_code': 'NZD',
+            'subtotal_ex_tax': '100.0000',
+            'tax_total': '15.0000',
+            'total_incl_tax': '120.0000',
+            'tax_treatment': 'standard',
+        }, format='json')
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('total_incl_tax', rejected.data)
+
     def test_collections_require_authentication(self):
         """Purchasing data is not exposed anonymously."""
         self.client.force_authenticate(user=None)

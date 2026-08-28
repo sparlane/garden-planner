@@ -615,8 +615,18 @@ class BusinessExpenseViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet
     queryset = BusinessExpense.objects.select_related('category', 'supplier', 'supplier_invoice')
     serializer_class = BusinessExpenseSerializer
 
+    # The expense model carries its own arithmetic and input-tax rules, and
+    # raises them from save() rather than from a serializer field. Routing
+    # every write through _run turns those into the same field-level 400 the
+    # entry form renders against the control that is wrong, instead of a 500.
     def perform_create(self, serializer):
-        serializer.save(workspace=self.get_current_workspace(), created_by=self.request.user)
+        _run(serializer.save, workspace=self.get_current_workspace(), created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        _run(serializer.save)
+
+    def perform_destroy(self, instance):
+        _run(instance.delete)
 
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
