@@ -560,6 +560,20 @@ def order_commerce_summary(order):
     }
 
 
+def _refuse_reversed(original, field, label):
+    """Refuse a second reversal, and a reversal of a reversal.
+
+    A reversal is an ordinary document on the order, so the route that finds
+    the original finds it too. Locking with `reversal_of__isnull=True` used to
+    filter it out here, which raised `DoesNotExist` and reached the client as a
+    server error instead of a field error explaining the problem.
+    """
+    if original.reversal_of_id is not None:
+        raise ValidationError({field: f'A {label} reversal cannot itself be reversed.'})
+    if hasattr(original, 'reversal'):
+        raise ValidationError({field: f'This {label} is already reversed.'})
+
+
 @transaction.atomic
 def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=None):
     """Append a fulfillment reversal and restore its exact reservations."""
@@ -572,9 +586,8 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
         return existing
     original = Fulfillment.objects.select_for_update(of=('self',)).prefetch_related(
         'lines__allocation', 'packaging_lines',
-    ).get(pk=original.pk, reversal_of__isnull=True)
-    if hasattr(original, 'reversal'):
-        raise ValidationError({'fulfillment': 'This fulfillment is already reversed.'})
+    ).get(pk=original.pk)
+    _refuse_reversed(original, 'fulfillment', 'fulfillment')
     if _effective(SalesReturn.objects.filter(
             lines__fulfillment_line__fulfillment=original)).exists():
         raise ValidationError({'fulfillment': 'Reverse linked returns first.'})
@@ -611,11 +624,8 @@ def reverse_payment(original, user, *, operation_key, reason, occurred_at=None):
     existing = _existing(Payment, original.workspace, operation_key, fingerprint)
     if existing:
         return existing
-    original = Payment.objects.select_for_update(of=('self',)).get(
-        pk=original.pk, reversal_of__isnull=True,
-    )
-    if hasattr(original, 'reversal'):
-        raise ValidationError({'payment': 'This payment is already reversed.'})
+    original = Payment.objects.select_for_update(of=('self',)).get(pk=original.pk)
+    _refuse_reversed(original, 'payment', 'payment')
     if _effective(original.refunds.all()).exists():
         raise ValidationError({'payment': 'Reverse linked refunds first.'})
     return Payment.objects.create(
@@ -639,11 +649,8 @@ def reverse_refund(original, user, *, operation_key, reason, occurred_at=None):
     existing = _existing(Refund, original.workspace, operation_key, fingerprint)
     if existing:
         return existing
-    original = Refund.objects.select_for_update(of=('self',)).get(
-        pk=original.pk, reversal_of__isnull=True,
-    )
-    if hasattr(original, 'reversal'):
-        raise ValidationError({'refund': 'This refund is already reversed.'})
+    original = Refund.objects.select_for_update(of=('self',)).get(pk=original.pk)
+    _refuse_reversed(original, 'refund', 'refund')
     return Refund.objects.create(
         workspace=original.workspace, order=original.order,
         payment=original.payment, sales_return=original.sales_return,
@@ -667,9 +674,8 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         return existing
     original = SalesReturn.objects.select_for_update(of=('self',)).prefetch_related(
         'lines__fulfillment_line__allocation',
-    ).get(pk=original.pk, reversal_of__isnull=True)
-    if hasattr(original, 'reversal'):
-        raise ValidationError({'sales_return': 'This return is already reversed.'})
+    ).get(pk=original.pk)
+    _refuse_reversed(original, 'sales_return', 'return')
     if _effective(original.refunds.all()).exists():
         raise ValidationError({'sales_return': 'Reverse linked refunds first.'})
     targets = []
