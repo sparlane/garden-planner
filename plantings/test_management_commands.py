@@ -47,6 +47,7 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
             cell=self.cell,
             quantity=2,
         )
+        self.output = StringIO()
         self.square = make_garden_square()
         self.transplant = GardenSquareTransplant.objects.create(
             original_planting=self.planting,
@@ -55,6 +56,20 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
             location=self.square,
             notes='Legacy transplant notes',
         )
+
+    def run_command(self, *args, **options):
+        """Run the conversion command with its output captured.
+
+        The text is kept on `self.output` as well as returned, so a test whose
+        invocation raises can still read what the operator would have seen.
+        Nothing calls the command any other way, so no invocation can dump a
+        transplant listing into the test run.
+        """
+        self.output = StringIO()
+        call_command(
+            'convert_legacy_transplant', *args, stdout=self.output, **options,
+        )
+        return self.output.getvalue()
 
     def _command_options(self, **overrides):
         options = {
@@ -75,16 +90,10 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
 
     def test_inspection_lists_labels_and_source_allocations(self):
         """An incomplete invocation gives the operator actionable context."""
-        output = StringIO()
-
         with self.assertRaisesMessage(CommandError, 'Choose --cell-planting'):
-            call_command(
-                'convert_legacy_transplant',
-                self.transplant.pk,
-                stdout=output,
-            )
+            self.run_command(self.transplant.pk)
 
-        details = output.getvalue()
+        details = self.output.getvalue()
         variety = self.planting.seeds_used.seeds.plant_variety
         self.assertIn(f'Plant: {variety.plant.name}', details)
         self.assertIn(f'Variety: {variety.name}', details)
@@ -95,17 +104,10 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
 
     def test_default_mode_previews_without_writing(self):
         """Supplying a valid mapping remains non-mutating without --apply."""
-        output = StringIO()
+        details = self.run_command(self.transplant.pk, **self._command_options())
 
-        call_command(
-            'convert_legacy_transplant',
-            self.transplant.pk,
-            stdout=output,
-            **self._command_options(),
-        )
-
-        self.assertIn('New plants to create: 5', output.getvalue())
-        self.assertIn('Dry run only', output.getvalue())
+        self.assertIn('New plants to create: 5', details)
+        self.assertIn('Dry run only', details)
         self.assertTrue(
             GardenSquareTransplant.objects.filter(pk=self.transplant.pk).exists()
         )
@@ -118,13 +120,13 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
             SpecificPlantLocation.objects.values_list('pk', flat=True)
         )
 
-        call_command(
-            'convert_legacy_transplant',
+        details = self.run_command(
             self.transplant.pk,
             apply_changes=True,
             existing_plant=[plant.pk for plant in existing_plants],
             **self._command_options(),
         )
+        self.assertIn('Converted and deleted', details)
 
         self.assertFalse(
             GardenSquareTransplant.objects.filter(pk=self.transplant.pk).exists()
@@ -154,8 +156,7 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
         other_cell_planting = make_seed_tray_cell_planting()
 
         with self.assertRaisesMessage(CommandError, 'does not belong'):
-            call_command(
-                'convert_legacy_transplant',
+            self.run_command(
                 self.transplant.pk,
                 apply_changes=True,
                 **self._command_options(
@@ -173,8 +174,7 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
         plant = make_specific_plant(cell_planting=self.cell_planting)
 
         with self.assertRaisesMessage(CommandError, 'has no garden history'):
-            call_command(
-                'convert_legacy_transplant',
+            self.run_command(
                 self.transplant.pk,
                 existing_plant=[plant.pk],
                 **self._command_options(),
@@ -186,11 +186,7 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
         self.transplant.save(update_fields=['removed'])
 
         with self.assertRaisesMessage(CommandError, 'no truthful'):
-            call_command(
-                'convert_legacy_transplant',
-                self.transplant.pk,
-                **self._command_options(),
-            )
+            self.run_command(self.transplant.pk, **self._command_options())
 
     def test_apply_rolls_back_when_aggregate_delete_fails(self):
         """No partial individual history survives a failed final deletion."""
@@ -200,8 +196,7 @@ class ConvertLegacyTransplantTests(TestCase):  # pylint: disable=too-many-instan
             side_effect=IntegrityError('simulated delete failure'),
         ):
             with self.assertRaises(IntegrityError):
-                call_command(
-                    'convert_legacy_transplant',
+                self.run_command(
                     self.transplant.pk,
                     apply_changes=True,
                     **self._command_options(),
