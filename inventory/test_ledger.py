@@ -37,8 +37,8 @@ from .models import (
 from .units import UnitCode
 
 
-class LedgerServiceTests(TestCase):
-    """Posting services maintain balances and document audit trails atomically."""
+class LedgerFixtureTestCase(TestCase):
+    """A workspace with a costed media item, two locations, and a supplier."""
 
     def setUp(self):
         super().setUp()
@@ -115,6 +115,10 @@ class LedgerServiceTests(TestCase):
                 reason='Audited opening balance',
             ),
         )
+
+
+class LedgerServiceTests(LedgerFixtureTestCase):
+    """Posting services maintain balances and document audit trails atomically."""
 
     def test_post_receipt_creates_exact_lots_costs_and_balances(self):
         """Every line becomes one immutable valued lot and receipt movement."""
@@ -328,6 +332,166 @@ class LedgerServiceTests(TestCase):
                 self.assertIn('reason', context.exception.message_dict)
 
 
+class ReversalChainTests(LedgerFixtureTestCase):
+    """A row is reversed once, by the document that owns it, and no further.
+
+    Reversal is how every correction is made in this ledger, so the guards
+    around it are the ones that decide whether a balance can be walked back to
+    a figure nobody posted. None of them had a test.
+    """
+
+    def consume(self, lot, quantity=Decimal('10')):
+        """Take stock out of the store as an ordinary standalone movement."""
+        return post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=quantity,
+                source=self.store,
+                reference='Propagation batch 1',
+            ),
+        )
+
+    def counted_stocktake(self, lot, counted=Decimal('90')):
+        """Post a count that finds less stock than the ledger expected."""
+        stocktake = Stocktake.objects.create(
+            workspace=self.workspace,
+            counted_at=timezone.now(),
+            notes='Weekly count',
+            created_by=self.user,
+        )
+        StocktakeLine.objects.create(
+            stocktake=stocktake,
+            lot=lot,
+            location=self.store,
+            counted_quantity=counted,
+            unit_code=UnitCode.MILLILITRE,
+            counted_base_quantity=counted,
+            reason='Container spill',
+        )
+        return post_stocktake(stocktake, self.user)
+
+    def test_a_reversal_cannot_itself_be_reversed(self):
+        """Undoing a correction means posting a fact, not negating a negation."""
+        lot, _opening = self.make_opening()
+        reversal = reverse_movement(
+            self.consume(lot), self.user, 'Consumption entered twice',
+        )
+        with self.assertRaises(ValidationError) as caught:
+            reverse_movement(reversal, self.user, 'Reversal entered twice')
+        self.assertIn('movement', caught.exception.message_dict)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+
+    def test_a_movement_is_reversed_only_once(self):
+        """A second reversal would take the stock out twice."""
+        lot, _opening = self.make_opening()
+        consumption = self.consume(lot)
+        reverse_movement(consumption, self.user, 'Consumption entered twice')
+        with self.assertRaises(ValidationError) as caught:
+            reverse_movement(consumption, self.user, 'And again')
+        self.assertIn('movement', caught.exception.message_dict)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+
+    def test_a_reversal_states_why_it_was_needed(self):
+        """A correction with no reason cannot enter the audit trail."""
+        lot, _opening = self.make_opening()
+        consumption = self.consume(lot)
+        for reason in ('', '   '):
+            with self.subTest(reason=repr(reason)):
+                with self.assertRaises(ValidationError) as caught:
+                    reverse_movement(consumption, self.user, reason)
+                self.assertIn('reason', caught.exception.message_dict)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('90'))
+
+    def test_stocktake_rows_are_reversed_only_through_their_stocktake(self):
+        """A count restores every variance it posted, or none of them."""
+        lot, _opening = self.make_opening()
+        _posted, movements = self.counted_stocktake(lot)
+        with self.assertRaisesMessage(
+                ValidationError, 'Reverse stocktake movements through their stocktake.'):
+            reverse_movement(movements[0], self.user, 'Counted the wrong container')
+        self.assertEqual(physical_balance(lot, self.store), Decimal('90'))
+
+    def test_a_document_reverses_the_rows_it_posted_only_once(self):
+        """A second document reversal would restore the same stock twice."""
+        lot, _opening = self.make_opening()
+        posted, _movements = self.counted_stocktake(lot)
+        reverse_stocktake(posted, self.user, 'Counted the wrong container')
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+        with self.assertRaises(ValidationError) as caught:
+            reverse_stocktake(posted, self.user, 'And again')
+        self.assertIn('status', caught.exception.message_dict)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+
+        receipt = self.make_receipt()
+        self.add_receipt_line(receipt)
+        received, lots = post_receipt(receipt, self.user)
+        reverse_receipt(received, self.user, 'Supplier delivery cancelled')
+        with self.assertRaises(ValidationError) as caught:
+            reverse_receipt(received, self.user, 'And again')
+        self.assertIn('status', caught.exception.message_dict)
+        self.assertEqual(physical_balance(lots[0], self.store), Decimal('0'))
+
+    def test_a_reversed_stocktake_row_cannot_be_reversed_a_second_way(self):
+        """Neither route may undo a variance the other already undid."""
+        lot, _opening = self.make_opening()
+        posted, movements = self.counted_stocktake(lot)
+        reverse_stocktake(posted, self.user, 'Counted the wrong container')
+        with self.assertRaises(ValidationError) as caught:
+            reverse_movement(movements[0], self.user, 'Counted the wrong container')
+        self.assertIn('movement', caught.exception.message_dict)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+
+    def test_a_chain_of_reversals_returns_every_location_to_where_it_started(self):
+        """The ledger is walked back fact by fact, not by rewriting rows."""
+        lot, _opening = self.make_opening()
+        transfer = post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                quantity=Decimal('40'),
+                source=self.store,
+                destination=self.growing,
+            ),
+        )
+        consumption = post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('25'),
+                source=self.growing,
+                reference='Propagation batch 1',
+            ),
+        )
+        posted, variances = self.counted_stocktake(lot, counted=Decimal('50'))
+        self.assertEqual(physical_balance(lot, self.store), Decimal('50'))
+
+        reverse_stocktake(posted, self.user, 'Counted the wrong container')
+        reverse_movement(consumption, self.user, 'Consumption entered twice')
+        reverse_movement(transfer, self.user, 'Wrong destination')
+
+        self.assertEqual(physical_balance(lot, self.store), Decimal('100'))
+        self.assertEqual(physical_balance(lot, self.growing), Decimal('0'))
+        # Every original row survives its correction, so the history still
+        # shows what was posted as well as what was undone.
+        self.assertEqual(
+            set(
+                StockMovement.objects.filter(lot=lot, reversal_of__isnull=False)
+                .values_list('reversal_of_id', flat=True)
+            ),
+            {transfer.pk, consumption.pk, variances[0].pk},
+        )
+        self.assertEqual(
+            StockMovement.objects.filter(lot=lot, reversal_of__isnull=True).count(), 4,
+        )
+
+
 class UnknownQuantityReversalTests(TestCase):
     """A lot of unknown quantity has no balance to hold a reversal to.
 
@@ -396,6 +560,61 @@ class UnknownQuantityReversalTests(TestCase):
 
         self.assertEqual(reversal.movement_type, StockMovement.MovementType.REVERSAL)
         self.assertEqual(physical_balance(self.lot, self.container), Decimal('-8'))
+
+    def _unknown_receipt(self):
+        """Post a seed receipt that records a packet without counting it."""
+        receipt = StockReceipt.objects.create(
+            workspace=self.workspace,
+            supplier=Supplier.objects.create(
+                workspace=self.workspace, name='Packet supplier',
+            ),
+            received_date=date(2026, 8, 1),
+            currency_code=self.workspace.currency_code,
+            created_by=self.user,
+        )
+        StockReceiptLine.objects.create(
+            receipt=receipt,
+            item=self.item,
+            quantity=None,
+            quantity_certainty=QuantityCertainty.UNKNOWN,
+            unit_code=UnitCode.SEED,
+            base_quantity=None,
+            line_cost_ex_tax=Decimal('4'),
+            destination=self.container,
+        )
+        return post_receipt(receipt, self.user)
+
+    def test_an_unused_unknown_receipt_reverses_although_it_moved_no_stock(self):
+        """There was never a quantity to walk back, only a document."""
+        posted, lots = self._unknown_receipt()
+        self.assertEqual(StockMovement.objects.filter(lot=lots[0]).count(), 0)
+
+        reversed_receipt, reversals = reverse_receipt(
+            posted, self.user, 'Packet returned unopened.',
+        )
+
+        self.assertEqual(reversed_receipt.status, StockReceipt.Status.REVERSED)
+        self.assertEqual(reversals, [])
+
+    def test_an_unknown_receipt_cannot_be_reversed_once_seed_has_been_sown(self):
+        """Undoing the packet would leave sowings drawn from nothing."""
+        posted, lots = self._unknown_receipt()
+        post_stock_movement(self.workspace, self.user, MovementRequest(
+            lot=lots[0],
+            movement_type=StockMovement.MovementType.CONSUMPTION,
+            quantity=Decimal('12'),
+            source=self.container,
+            occurred_at=timezone.now(),
+            reason='Sown.',
+            enforce_source_balance=False,
+        ))
+
+        with self.assertRaises(ValidationError) as caught:
+            reverse_receipt(posted, self.user, 'Packet returned unopened.')
+
+        self.assertIn('status', caught.exception.message_dict)
+        posted.refresh_from_db()
+        self.assertEqual(posted.status, StockReceipt.Status.POSTED)
 
     def test_a_counted_lot_still_has_its_balance_enforced(self):
         """Relaxing the check where a figure exists would hide real errors."""
