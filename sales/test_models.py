@@ -1,15 +1,23 @@
 """Model and arithmetic contracts for customer sales."""
 
+import random
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 from workspaces.models import get_current_workspace
 
-from .calculations import line_position_amounts, proportional_refund
+from . import calculations
+from .calculations import (
+    distribute_money,
+    line_position_amounts,
+    money,
+    proportional_refund,
+)
 from .models import Customer, SalesOrder, SalesOrderLine
 from .services import create_order, update_pricing_mode
 
@@ -143,3 +151,189 @@ class SalesOrderArithmeticTests(TestCase):
         self.assertEqual(result['discount_ex_tax'], Decimal('0.5000'))
         self.assertEqual(result['subtotal_ex_tax'], Decimal('4.5000'))
         self.assertEqual(result['tax_total'], Decimal('0.6750'))
+
+
+class RefundAllocationTests(SimpleTestCase):
+    """An inclusive refund splits exactly and never overdraws one line."""
+
+    def make_source(self, pk, total, *, tax_rate=Decimal('15')):
+        """Build a fulfilled line whose components add to a given total."""
+        subtotal = money(total / (Decimal('1') + tax_rate / Decimal('100')))
+        return SimpleNamespace(
+            pk=pk,
+            gross_ex_tax=money(subtotal * Decimal('1.1')),
+            discount_ex_tax=money(subtotal * Decimal('0.1')),
+            subtotal_ex_tax=subtotal,
+            tax_total=money(total - subtotal),
+            total_incl_tax=money(total),
+        )
+
+    def available(self, totals, remaining=None):
+        """Offer lines for refund, optionally with value already refunded."""
+        remaining = totals if remaining is None else remaining
+        return [
+            {'line': self.make_source(index, total), 'remaining_total': money(left)}
+            for index, (total, left) in enumerate(zip(totals, remaining), start=1)
+        ]
+
+    def assert_allocation_is_sound(self, amount, rows, shares):
+        """Every allocation adds back exactly and stays inside each line."""
+        self.assertEqual(
+            money(sum(share['total_incl_tax'] for share in shares)), money(amount),
+        )
+        for row, share in zip(rows, shares):
+            self.assertIs(share['line'], row['line'])
+            self.assertGreaterEqual(share['total_incl_tax'], Decimal('0'))
+            self.assertLessEqual(share['total_incl_tax'], row['remaining_total'])
+            self.assertEqual(
+                share['subtotal_ex_tax'] + share['tax_total'],
+                share['total_incl_tax'],
+            )
+            self.assertEqual(
+                share['gross_ex_tax'] - share['discount_ex_tax'],
+                share['subtotal_ex_tax'],
+            )
+
+    def test_two_lines_split_in_proportion_to_their_remaining_value(self):
+        """A refund across two lines follows the values still refundable."""
+        rows = self.available([Decimal('30.0000'), Decimal('10.0000')])
+        shares = proportional_refund(Decimal('20.0000'), rows)
+        self.assertEqual(
+            [share['total_incl_tax'] for share in shares],
+            [Decimal('15.0000'), Decimal('5.0000')],
+        )
+        self.assert_allocation_is_sound(Decimal('20.0000'), rows, shares)
+
+    def test_ten_lines_absorb_an_indivisible_amount_without_losing_a_part(self):
+        """A total that cannot divide evenly still adds back exactly."""
+        rows = self.available([Decimal('1.0000')] * 10)
+        shares = proportional_refund(Decimal('0.3333'), rows)
+        self.assert_allocation_is_sound(Decimal('0.3333'), rows, shares)
+
+    def test_refunding_the_whole_available_total_returns_each_line_entire(self):
+        """A full refund hands every line back exactly what remained on it."""
+        totals = [Decimal('11.3300'), Decimal('7.7700'), Decimal('0.0100')]
+        rows = self.available(totals)
+        amount = money(sum(totals))
+        shares = proportional_refund(amount, rows)
+        self.assertEqual([share['total_incl_tax'] for share in shares], totals)
+        self.assert_allocation_is_sound(amount, rows, shares)
+
+    def test_a_residue_left_by_an_earlier_refund_is_never_overdrawn(self):
+        """Rounding drift lands on a line with room, not on a spent one.
+
+        Allocating 344.1157 proportionally rounds four of these lines down,
+        and the residual quantum used to be handed to the last line by
+        construction — which had 0.0040 left and would go negative.
+        """
+        totals = [
+            Decimal('183.0326'), Decimal('24.9388'), Decimal('9.2674'),
+            Decimal('126.8753'), Decimal('40.0000'),
+        ]
+        remaining = totals[:4] + [Decimal('0.0040')]
+        rows = self.available(totals, remaining)
+        amount = Decimal('344.1157')
+        shares = proportional_refund(amount, rows)
+        self.assertEqual(shares[-1]['total_incl_tax'], Decimal('0.0040'))
+        self.assert_allocation_is_sound(amount, rows, shares)
+
+    def test_a_fully_refunded_line_receives_nothing_more(self):
+        """An exhausted balance takes no share of a later refund."""
+        rows = self.available(
+            [Decimal('20.0000'), Decimal('20.0000')],
+            [Decimal('0.0000'), Decimal('20.0000')],
+        )
+        shares = proportional_refund(Decimal('12.0000'), rows)
+        self.assertEqual(shares[0]['total_incl_tax'], Decimal('0.0000'))
+        self.assertEqual(shares[1]['total_incl_tax'], Decimal('12.0000'))
+        self.assert_allocation_is_sound(Decimal('12.0000'), rows, shares)
+
+    def test_a_line_given_away_at_full_discount_allocates_no_components(self):
+        """A zero-value line has no ratios to preserve and no share to take."""
+        free = SimpleNamespace(
+            pk=1, gross_ex_tax=Decimal('10.0000'),
+            discount_ex_tax=Decimal('10.0000'), subtotal_ex_tax=Decimal('0.0000'),
+            tax_total=Decimal('0.0000'), total_incl_tax=Decimal('0.0000'),
+        )
+        rows = [
+            {'line': free, 'remaining_total': Decimal('0.0000')},
+            {'line': self.make_source(2, Decimal('23.0000')),
+             'remaining_total': Decimal('23.0000')},
+        ]
+        shares = proportional_refund(Decimal('23.0000'), rows)
+        self.assertEqual(shares[0]['total_incl_tax'], Decimal('0.0000'))
+        self.assertEqual(shares[0]['gross_ex_tax'], Decimal('0.0000'))
+        self.assert_allocation_is_sound(Decimal('23.0000'), rows, shares)
+
+    def test_a_refund_beyond_the_available_total_is_refused(self):
+        """The guard rejects what no selected line can fund."""
+        rows = self.available([Decimal('5.0000')])
+        for amount in (Decimal('0'), Decimal('-1.0000'), Decimal('5.0001')):
+            with self.assertRaises(ValueError):
+                proportional_refund(amount, rows)
+
+    def test_allocation_is_exact_over_generated_amounts_and_line_shapes(self):
+        """The parts always sum back to the source, whatever the shape.
+
+        Density of cases matters more than any one example here: the drift
+        that overdraws a line only appears at particular combinations of
+        magnitude, line count, and requested amount.
+        """
+        generator = random.Random(20260828)
+        for case in range(2000):
+            count = generator.randint(1, 8)
+            scale = generator.choice([50, 10_000, 20_000_000])
+            totals = [
+                money(Decimal(generator.randint(1, scale)) / 10_000)
+                for _ in range(count)
+            ]
+            remaining = [
+                money(total * Decimal(generator.randint(0, 100)) / 100)
+                for total in totals
+            ]
+            available_total = money(sum(remaining))
+            if available_total <= 0:
+                continue
+            amount = money(
+                Decimal(generator.randint(1, int(available_total * 10_000))) / 10_000
+            )
+            rows = [
+                {'line': self.make_source(index, total), 'remaining_total': left}
+                for index, (total, left) in enumerate(zip(totals, remaining), start=1)
+            ]
+            with self.subTest(case=case, amount=amount):
+                self.assert_allocation_is_sound(
+                    amount, rows, proportional_refund(amount, rows),
+                )
+
+    def test_a_split_that_loses_a_part_is_refused(self):
+        """The post-condition is what states the exactness guarantee."""
+        exact = [Decimal('6.0000'), Decimal('3.0000')]
+        calculations.assert_parts_reconcile(exact, Decimal('9.0000'), 'test split')
+        for lost in (Decimal('0.0001'), Decimal('-0.0001')):
+            with self.assertRaisesRegex(RuntimeError, 'test split'):
+                calculations.assert_parts_reconcile(
+                    [exact[0], money(exact[1] - lost)], Decimal('9.0000'), 'test split',
+                )
+
+    def test_every_exact_split_checks_itself_before_returning(self):
+        """Both splits route their result through the post-condition.
+
+        Neither loop is exact because it is written carefully; it is exact
+        because this check would fail if a restructuring dropped a residual.
+        """
+        with mock.patch.object(
+                calculations, 'assert_parts_reconcile',
+                wraps=calculations.assert_parts_reconcile,
+        ) as guard:
+            positions = distribute_money(Decimal('10.0000'), 3)
+            shares = proportional_refund(Decimal('9.0000'), self.available(
+                [Decimal('6.0000'), Decimal('3.0000')],
+            ))
+        self.assertEqual(guard.call_args_list, [
+            mock.call(positions, Decimal('10.0000'), 'money distribution'),
+            mock.call(
+                [share['total_incl_tax'] for share in shares],
+                Decimal('9.0000'), 'refund allocation',
+            ),
+        ])
