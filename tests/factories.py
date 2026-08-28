@@ -554,3 +554,20 @@ def make_specific_plant_location(**overrides):
     }
     defaults.update(values)
     return SpecificPlantLocation.objects.create(**defaults)
+
+
+def make_plant_at_location(location, **overrides):
+    """Create one specific plant standing directly at a physical location.
+
+    `make_specific_plant_location` defaults to a seed-tray cell, which is where
+    a seedling starts. This is the other placement, and the health, stocktake,
+    and register suites all need a plant standing on a named bench.
+    """
+    plant = overrides.pop('plant', None) or make_specific_plant(**overrides)
+    make_specific_plant_location(
+        specific_plant=plant,
+        location_type=SpecificPlantLocation.LOCATION,
+        seed_tray_cell=None,
+        location=location,
+    )
+    return plant

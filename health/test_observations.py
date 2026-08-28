@@ -10,7 +10,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
-from plantings.models import PlantCohort, SpecificPlantLocation
+from plantings.models import PlantCohort
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_seed_tray_cell_planting,
@@ -18,6 +18,7 @@ from tests.factories import (
     make_seed_tray_generation,
     make_seed_tray_planting,
     make_location,
+    make_plant_at_location,
     make_specific_plant,
     make_specific_plant_location,
 )
@@ -224,13 +225,7 @@ class HealthObservationRestTests(RESTContractTestCase):
 
     def test_active_alerts_surface_in_location_and_task_views(self):
         location = make_location(workspace=self.workspace)
-        plant = make_specific_plant(workspace=self.workspace)
-        make_specific_plant_location(
-            specific_plant=plant,
-            location_type=SpecificPlantLocation.LOCATION,
-            seed_tray_cell=None,
-            location=location,
-        )
+        plant = make_plant_at_location(location, workspace=self.workspace)
         scopes = [{'type': 'plant', 'id': plant.pk}]
         preview = self.client.post(
             '/health/observations/preview/', {'scopes': scopes}, format='json',
