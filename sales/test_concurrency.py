@@ -3,6 +3,7 @@
 # pylint: disable=duplicate-code,missing-function-docstring
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -11,13 +12,15 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
+from django.utils import timezone
 
 from plantings.lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
 from tests.factories import make_seed_tray, make_specific_plant
 from workspaces.models import Workspace
 
 from .commerce import post_fulfillment
-from .models import SalesOrder, SalesOrderAllocation, SalesOrderLine
+from .expiry import expire_due_reservations
+from .models import ReservationEvent, SalesOrder, SalesOrderAllocation, SalesOrderLine
 from .services import allocate_targets, confirm_order, create_order
 
 
@@ -157,3 +160,51 @@ class ConcurrentFulfillmentTests(ReservationConcurrencyTestCase):
             results = sorted(pool.map(self._fulfill, range(2)))
         self.assertEqual(results, ['fulfilled', 'rejected'])
         self.assertEqual(SalesOrderAllocation.objects.filter(status='fulfilled').count(), 1)
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentReservationExpiryTests(ReservationConcurrencyTestCase):
+    """Two schedules sweeping at once expire one lapsed hold exactly once.
+
+    The sweep is meant to be safe to run as often as a deployment likes, which
+    means a slow run and the next tick overlapping has to be uneventful rather
+    than a second release of the same hold. The order lock is what makes the
+    later sweep re-read and find nothing due.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='expiry-racer')
+        plant = make_specific_plant(workspace=self.workspace)
+        record_germination_event(plant, self.user)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        order, line = self._order_with_line(
+            SalesOrderLine.LineType.SEEDLING, variety=plant.batch.variety,
+        )
+        allocation = allocate_targets(line, self.user, plant_ids=[plant.pk])[0]
+        confirm_order(order, self.user)
+        SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
+            expires_at=timezone.now() - timedelta(hours=1),
+        )
+        self.allocation_pk = allocation.pk
+
+    def _sweep(self, _index):
+        close_old_connections()
+        expired = expire_due_reservations(self.workspace)
+        close_old_connections()
+        return len(expired)
+
+    def test_only_one_sweep_expires_the_hold(self):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(pool.map(self._sweep, range(2)))
+        self.assertEqual(results, [0, 1])
+        self.assertEqual(
+            ReservationEvent.objects.filter(
+                allocation_id=self.allocation_pk,
+                event_type=ReservationEvent.EventType.EXPIRED,
+            ).count(),
+            1,
+        )

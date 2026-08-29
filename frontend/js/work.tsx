@@ -21,6 +21,9 @@ const TASK_TYPES = [
   ['stocktake', 'Stocktake'],
   ['order_picking', 'Order picking'],
   ['stage_review', 'Stage review'],
+  ['health_inspection', 'Health inspection'],
+  ['treatment_follow_up', 'Treatment follow-up'],
+  ['reservation_review', 'Reservation review'],
   ['custom', 'Custom']
 ]
 

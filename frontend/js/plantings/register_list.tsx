@@ -2,7 +2,7 @@ import React from 'react'
 import { Badge, Form, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
 
-import { formatDate, formatDateTime, formatMoney } from '../utils'
+import { formatDate, formatDateTime, formatHoldRemaining, formatMoney } from '../utils'
 import { NurseryRegisterRow } from '../types/plantings'
 import { LifecycleStateBadge } from './lifecycle'
 
@@ -132,6 +132,7 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
               {row.reserved && (
                 <div>
                   <Badge bg="primary">Reserved · unavailable</Badge>
+                  <div className="text-muted small">Hold {formatHoldRemaining(row.reserved_until)}</div>
                 </div>
               )}
             </td>

@@ -27,11 +27,17 @@ from plantings.models import (
 )
 from plants.metadata import variety_days
 from plants.models import MaturityBasis
+from sales.models import SalesOrder, SalesOrderAllocation
 
 from .models import WorkTask, WorkTaskRule
 
 
 OPEN_BATCHES = (ProductionBatch.Status.PLANNED, ProductionBatch.Status.ACTIVE)
+
+#: Orders whose reservations are still worth someone's attention. A
+#: cancelled or fully fulfilled order holds nothing, so a lapsed hold on one
+#: is history rather than work.
+OPEN_ORDERS = (SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_FULFILLED)
 
 
 @dataclass(frozen=True)
@@ -487,6 +493,114 @@ def _health_follow_up_tasks(rule):
     return [task for task in tasks if task]
 
 
+def _allocation_variety(allocation):
+    """Return the variety a hold is on, or None for a serialized tray unit."""
+    return allocation.plant.batch.variety if allocation.plant_id else None
+
+
+def _held_target(allocation):
+    """Link the exact plant or tray one hold is keeping off the floor."""
+    if allocation.plant_id:
+        return TargetLink(
+            allocation.plant, f'Plant {allocation.plant_id}',
+            f'/plantings/plants/{allocation.plant_id}',
+        )
+    return TargetLink(
+        allocation.inventory_unit, f'Unit {allocation.inventory_unit_id}',
+    )
+
+
+def _order_target(order):
+    return TargetLink(order, order.order_number, f'/sales/orders/{order.pk}')
+
+
+def _reservation_allocations(rule, status):
+    """Group one workspace's holds in a status by the order that placed them."""
+    rows = SalesOrderAllocation.objects.filter(
+        line__order__workspace=rule.workspace,
+        line__order__status__in=OPEN_ORDERS,
+        status=status,
+        expires_at__isnull=False,
+    ).select_related(
+        'line__order', 'plant__batch__variety__plant', 'inventory_unit',
+    ).order_by('expires_at', 'pk')
+    grouped = {}
+    for allocation in rows:
+        if not _allows(rule, variety=_allocation_variety(allocation)):
+            continue
+        grouped.setdefault(allocation.line.order, []).append(allocation)
+    return grouped
+
+
+def _reservation_expiry_tasks(rule):
+    """Project holds about to lapse, and the orders a lapse has left short.
+
+    Expiry itself is automatic (`sales.expiry`), so these are not approvals.
+    The first kind is the warning: with a negative start offset the rule puts
+    a hold in the queue the days before it lapses, while extending or
+    fulfilling it is still a choice. The second is what the lapse left behind
+    — an order still owed stock it no longer holds — and it stops projecting
+    as soon as the line is allocated again, cancelled, or fulfilled.
+    """
+    timezone_name = ZoneInfo(rule.workspace.timezone)
+    tasks = []
+    for order, allocations in _reservation_allocations(
+            rule, SalesOrderAllocation.Status.RESERVED).items():
+        due = allocations[0].expires_at.astimezone(timezone_name).date()
+        tasks.append(_source_task(
+            rule, f'reservation:{order.pk}',
+            f'Reservation expiry: {order.order_number}', due, due,
+            [_order_target(order), *(_held_target(row) for row in allocations)],
+            {
+                'order': order.pk,
+                'expires_at': allocations[0].expires_at.isoformat(),
+                'held_count': len(allocations),
+            },
+        ))
+    for order, allocations in _reservation_allocations(
+            rule, SalesOrderAllocation.Status.EXPIRED).items():
+        short = _short_lines(order)
+        lapsed = [row for row in allocations if row.line_id in short]
+        if not lapsed:
+            continue
+        due = lapsed[-1].expires_at.astimezone(timezone_name).date()
+        tasks.append(_source_task(
+            rule, f'reservation-lapsed:{order.pk}',
+            f'Reallocate lapsed hold: {order.order_number}', due, due,
+            [_order_target(order), *(
+                TargetLink(short[line_id], f'Line {line_id}', f'/sales/orders/{order.pk}')
+                for line_id in sorted({row.line_id for row in lapsed})
+            )],
+            {
+                'order': order.pk,
+                'expires_at': lapsed[-1].expires_at.isoformat(),
+                'lapsed_count': len(lapsed),
+            },
+        ))
+    return [task for task in tasks if task]
+
+
+def _short_lines(order):
+    """Return the order's lines still owed stock, by identifier.
+
+    A line whose remaining allocations already cover its quantity has been
+    dealt with, however its earlier holds ended.
+    """
+    lines = {}
+    for line in order.lines.prefetch_related('allocations'):
+        held = sum(
+            1 for allocation in line.allocations.all()
+            if allocation.status in {
+                SalesOrderAllocation.Status.PENDING,
+                SalesOrderAllocation.Status.RESERVED,
+                SalesOrderAllocation.Status.FULFILLED,
+            }
+        )
+        if held < line.quantity:
+            lines[line.pk] = line
+    return lines
+
+
 PROJECTORS = {
     WorkTaskRule.Trigger.GERMINATION: _sowing_tasks,
     WorkTaskRule.Trigger.MATURITY: _maturity_tasks,
@@ -494,6 +608,7 @@ PROJECTORS = {
     WorkTaskRule.Trigger.STAGE_AGE: _growth_tasks,
     WorkTaskRule.Trigger.EXPECTED_READY: lambda rule: _growth_tasks(rule, expected_ready=True),
     WorkTaskRule.Trigger.HEALTH_FOLLOW_UP: _health_follow_up_tasks,
+    WorkTaskRule.Trigger.RESERVATION_EXPIRY: _reservation_expiry_tasks,
 }
 
 

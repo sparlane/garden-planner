@@ -91,6 +91,7 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     sellable = serializers.BooleanField(read_only=True)
     quarantined = serializers.BooleanField(read_only=True)
     reserved = serializers.BooleanField(read_only=True)
+    reserved_until = serializers.DateTimeField(read_only=True, allow_null=True)
     final_outcome = serializers.CharField(read_only=True, allow_null=True)
     final_outcome_at = serializers.DateTimeField(read_only=True, allow_null=True)
     location_type = serializers.CharField(
