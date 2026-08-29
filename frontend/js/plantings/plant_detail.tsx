@@ -220,6 +220,15 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
                 <dd className="col-sm-7">{formatDateTime(plant.germinated)}</dd>
                 <dt className="col-sm-5">Offerable</dt>
                 <dd className="col-sm-7">{plant.sellable ? 'Yes' : 'No'}</dd>
+                <dt className="col-sm-5">Sales allocation</dt>
+                <dd className="col-sm-7">
+                  {plant.allocation_status === 'none' ? 'Free' : plant.allocation_status === 'tentative' ? 'Tentatively claimed' : 'Reserved'}
+                  {plant.allocation_orders.map((claim) => (
+                    <div key={`${claim.order}:${claim.status}`}>
+                      <NavLink to={`/sales/orders/${claim.order}`}>{claim.order_number}</NavLink> · {claim.status === 'pending' ? 'tentative' : 'reserved'}
+                    </div>
+                  ))}
+                </dd>
                 <dt className="col-sm-5">In this state since</dt>
                 <dd className="col-sm-7">{plant.state_since === null ? 'Not recorded' : formatDateTime(plant.state_since)}</dd>
                 <dt className="col-sm-5">Final outcome</dt>

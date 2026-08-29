@@ -150,6 +150,8 @@ class RegisterContractTests(RegisterTestCase):
         self.make_plant()
         self.assertEqual(sorted(self.page()['results'][0]), [
             'age_days',
+            'allocation_orders',
+            'allocation_status',
             'batch',
             'batch_code',
             'container',
@@ -583,4 +585,6 @@ class RegisterQueryBudgetTests(RegisterTestCase):
         self.assertEqual(len(small.data['results']), 5)
         self.assertEqual(len(large.data['results']), 60)
         self.assertEqual(len(large_queries), len(small_queries))
-        self.assertLessEqual(len(small_queries), 8, small_queries.captured_queries)
+        # Active order references add one bounded prefetch, while the equality
+        # above continues to guard against a query per register row.
+        self.assertLessEqual(len(small_queries), 9, small_queries.captured_queries)

@@ -25,6 +25,9 @@ from .models import (
 )
 
 
+TENTATIVE_CLAIM = 'tentatively_claimed'
+
+
 @transaction.atomic
 def create_order(workspace, user, **values):
     """Create an order with locked numbering and workspace term snapshots."""
@@ -123,6 +126,31 @@ def _target_error(line, target):
     return 'already_reserved' if reserved else None
 
 
+def _target_allocations(line, target, statuses):
+    """Return other active claims for a target, with readable order context."""
+    identity = (
+        {'plant': target}
+        if line.line_type == SalesOrderLine.LineType.SEEDLING
+        else {'inventory_unit': target}
+    )
+    return (
+        SalesOrderAllocation.objects
+        .filter(**identity, status__in=statuses)
+        .exclude(line=line)
+        .select_related('line__order')
+        .order_by('line__order__order_number', 'pk')
+    )
+
+
+def _allocation_reference(allocation):
+    """Describe the competing promise without exposing mutable line details."""
+    return {
+        'order': allocation.line.order_id,
+        'order_number': allocation.line.order.order_number,
+        'status': allocation.status,
+    }
+
+
 def preview_targets(line, plant_ids=(), unit_ids=()):
     """Resolve explicit target IDs to compatible selections and conflicts."""
     workspace = line.order.workspace
@@ -140,6 +168,7 @@ def preview_targets(line, plant_ids=(), unit_ids=()):
     }
     selected = []
     conflicts = []
+    warnings = []
     for target_id in ids:
         target = targets.get(target_id)
         if target is None:
@@ -150,10 +179,24 @@ def preview_targets(line, plant_ids=(), unit_ids=()):
             continue
         reason = _target_error(line, target)
         if reason:
-            conflicts.append({'id': target_id, 'reason': reason})
+            conflict = {'id': target_id, 'reason': reason}
+            if reason == 'already_reserved':
+                holder = _target_allocations(
+                    line, target, [SalesOrderAllocation.Status.RESERVED],
+                ).first()
+                if holder is not None:
+                    conflict.update(_allocation_reference(holder))
+            conflicts.append(conflict)
         else:
             selected.append(target_id)
-    return {'selected': selected, 'conflicts': conflicts}
+            for claim in _target_allocations(
+                    line, target, [SalesOrderAllocation.Status.PENDING]):
+                warnings.append({
+                    'id': target_id,
+                    'reason': TENTATIVE_CLAIM,
+                    **_allocation_reference(claim),
+                })
+    return {'selected': selected, 'conflicts': conflicts, 'warnings': warnings}
 
 
 @transaction.atomic
@@ -257,7 +300,15 @@ def confirm_order(order, user):
             target = plants[allocation.plant_id] if allocation.plant_id else units[allocation.inventory_unit_id]
             reason = _target_error(allocation.line, target)
             if reason:
-                raise ValidationError({'allocations': f'Target {target.pk}: {reason}.'})
+                holder = _target_allocations(
+                    allocation.line,
+                    target,
+                    [SalesOrderAllocation.Status.RESERVED],
+                ).first()
+                held_by = f' by {holder.line.order.order_number}' if holder else ''
+                raise ValidationError({
+                    'allocations': f'Target {target.pk}: {reason}{held_by}.',
+                })
             SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
                 status=SalesOrderAllocation.Status.RESERVED,
                 updated=timezone.now(),

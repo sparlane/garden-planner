@@ -92,6 +92,8 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     quarantined = serializers.BooleanField(read_only=True)
     reserved = serializers.BooleanField(read_only=True)
     reserved_until = serializers.DateTimeField(read_only=True, allow_null=True)
+    allocation_status = serializers.CharField(read_only=True)
+    allocation_orders = serializers.SerializerMethodField()
     final_outcome = serializers.CharField(read_only=True, allow_null=True)
     final_outcome_at = serializers.DateTimeField(read_only=True, allow_null=True)
     location_type = serializers.CharField(
@@ -143,6 +145,17 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     def get_currency_code(self, plant):  # pylint: disable=unused-argument
         """Name the currency the cost is expressed in, so it cannot separate."""
         return self.context['workspace'].currency_code
+
+    def get_allocation_orders(self, plant):
+        """List every open quote or order currently naming this plant."""
+        return [
+            {
+                'order': allocation.line.order_id,
+                'order_number': allocation.line.order.order_number,
+                'status': allocation.status,
+            }
+            for allocation in plant.active_sales_allocations
+        ]
 
 
 class NurseryPlantRegisterViewSet(

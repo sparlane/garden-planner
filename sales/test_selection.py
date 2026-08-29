@@ -267,10 +267,10 @@ class SeedlingSelectionTests(SelectionFixture):
                 preview = self.preview(order, line, plant_ids=[refused])
                 self.assertEqual(preview.status_code, 200, preview.data)
                 self.assertEqual(preview.data['selected'], [])
-                self.assertEqual(
-                    preview.data['conflicts'],
-                    [{'id': refused, 'reason': reason}],
-                )
+                self.assertEqual(preview.data['conflicts'][0]['id'], refused)
+                self.assertEqual(preview.data['conflicts'][0]['reason'], reason)
+                if reason == 'already_reserved':
+                    self.assertIn('order_number', preview.data['conflicts'][0])
 
                 allocated = self.allocate(order, line, plant_ids=[refused])
                 self.assertEqual(allocated.status_code, 400, allocated.data)
@@ -295,10 +295,9 @@ class SeedlingSelectionTests(SelectionFixture):
             sorted(preview.data['selected']),
             sorted([wanted.pk, spare.pk]),
         )
-        self.assertEqual(
-            preview.data['conflicts'],
-            [{'id': held.pk, 'reason': 'already_reserved'}],
-        )
+        self.assertEqual(preview.data['conflicts'][0]['id'], held.pk)
+        self.assertEqual(preview.data['conflicts'][0]['reason'], 'already_reserved')
+        self.assertIn('order_number', preview.data['conflicts'][0])
         self.assertEqual(
             self.allocate(
                 order, line, plant_ids=preview.data['selected'],

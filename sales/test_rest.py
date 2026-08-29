@@ -127,6 +127,88 @@ class SalesRESTTests(RESTContractTestCase):
         )
         self.assertEqual(failed.status_code, 400)
 
+    def test_tentative_claims_name_competing_orders_without_blocking(self):
+        """Soft claims stay selectable while every affected screen names them."""
+        plant = self.make_available_plant()
+        first = self.create_order()
+        first_line = self.add_seedling_line(first, plant)
+        self.allocate(first, first_line, plants=[plant.pk])
+        second = self.create_order()
+        second_line = self.add_seedling_line(second, plant)
+
+        preview = self.client.post(
+            f"{self.orders_url}{second['pk']}/allocation-preview/",
+            {'line': second_line['pk'], 'plant_ids': [plant.pk]},
+            format='json',
+        )
+
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['selected'], [plant.pk])
+        self.assertEqual(preview.data['conflicts'], [])
+        self.assertEqual(preview.data['warnings'], [{
+            'id': plant.pk,
+            'reason': 'tentatively_claimed',
+            'order': first['pk'],
+            'order_number': first['order_number'],
+            'status': SalesOrderAllocation.Status.PENDING,
+        }])
+        self.allocate(second, second_line, plants=[plant.pk])
+
+        first_detail = self.client.get(f"{self.orders_url}{first['pk']}/")
+        self.assertEqual(first_detail.data['lines'][0]['allocations'][0]['competing_claims'], [{
+            'order': second['pk'],
+            'order_number': second['order_number'],
+            'status': SalesOrderAllocation.Status.PENDING,
+        }])
+        register = self.client.get('/plantings/register/', {'allocation_status': 'tentative'})
+        self.assertEqual(register.data['count'], 1)
+        self.assertEqual(register.data['totals']['tentative'], 1)
+        self.assertTrue(register.data['results'][0]['sellable'])
+        self.assertEqual(
+            [claim['order_number'] for claim in register.data['results'][0]['allocation_orders']],
+            [first['order_number'], second['order_number']],
+        )
+        plant_detail = self.client.get(f'/plantings/specificplants/{plant.pk}/')
+        self.assertEqual(plant_detail.data['allocation_status'], 'tentative')
+        self.assertEqual(len(plant_detail.data['allocation_orders']), 2)
+
+        confirmed = self.client.post(f"{self.orders_url}{first['pk']}/confirm/", {})
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        losing_order = self.client.get(f"{self.orders_url}{second['pk']}/")
+        self.assertEqual(
+            losing_order.data['lines'][0]['allocations'][0]['competing_claims'][0]['status'],
+            SalesOrderAllocation.Status.RESERVED,
+        )
+        failed = self.client.post(f"{self.orders_url}{second['pk']}/confirm/", {})
+        self.assertEqual(failed.status_code, 400, failed.data)
+        self.assertIn(first['order_number'], failed.data['allocations'][0])
+
+    def test_tentative_tray_claim_warns_and_names_the_other_order(self):
+        """Serialized units use the same soft-claim contract as seedlings."""
+        tray = make_seed_tray(workspace=self.workspace)
+        orders = [self.create_order(), self.create_order()]
+        lines = []
+        for order in orders:
+            response = self.client.post(self.lines_url, {
+                'order': order['pk'], 'line_type': 'tray',
+                'tray_item': tray.inventory_unit.item_id,
+                'description': 'Propagation tray', 'quantity': 1,
+                'unit_price': '10.0000', 'tax_rate': '15.0000',
+            }, format='json')
+            self.assertEqual(response.status_code, 201, response.data)
+            lines.append(response.data)
+        self.allocate(orders[0], lines[0], units=[tray.inventory_unit_id])
+
+        preview = self.client.post(
+            f"{self.orders_url}{orders[1]['pk']}/allocation-preview/",
+            {'line': lines[1]['pk'], 'unit_ids': [tray.inventory_unit_id]},
+            format='json',
+        )
+
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['selected'], [tray.inventory_unit_id])
+        self.assertEqual(preview.data['warnings'][0]['order_number'], orders[0]['order_number'])
+
     def test_release_retains_history_and_restores_register_availability(self):
         """Explicit release changes availability without deleting its audit."""
         plant = self.make_available_plant()

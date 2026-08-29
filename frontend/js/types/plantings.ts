@@ -389,6 +389,16 @@ interface SpecificPlantDetail extends SpecificPlant {
   growth: NurseryGrowth
   nursery_observations: Array<NurseryObservation>
   attachments: Array<ImageAttachment>
+  allocation_status: PlantAllocationStatus
+  allocation_orders: Array<PlantAllocationOrder>
+}
+
+type PlantAllocationStatus = 'none' | 'tentative' | 'reserved'
+
+interface PlantAllocationOrder {
+  order: number
+  order_number: string
+  status: 'pending' | 'reserved'
 }
 
 interface GrowthCatalogValue {
@@ -462,6 +472,8 @@ interface NurseryRegisterRow {
   quarantined: boolean
   reserved: boolean
   reserved_until: string | null
+  allocation_status: PlantAllocationStatus
+  allocation_orders: Array<PlantAllocationOrder>
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
   location_type: PlantPlacementType | null
@@ -519,6 +531,7 @@ interface NurseryRegisterFilters {
   sellable?: boolean
   quarantined?: boolean
   reserved?: boolean
+  allocation_status?: PlantAllocationStatus
   germinated_from?: string
   germinated_to?: string
   location_type?: PlantPlacementType | 'none'
@@ -546,6 +559,7 @@ type NurseryRegisterTotals = Record<PlantLifecycleState, number> & {
   unresolved: number
   quarantined: number
   reserved: number
+  tentative: number
   stage_counts: Record<string, number>
   grade_counts: Record<string, number>
   container_counts: Record<string, number>
@@ -1015,6 +1029,7 @@ export {
   PlantLifecycleEvent,
   PlantLifecycleEventType,
   PlantLifecycleState,
+  PlantAllocationStatus,
   PlantOutcome,
   PlantOutcomeAction,
   ReversePlantEvent,
