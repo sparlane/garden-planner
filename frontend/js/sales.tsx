@@ -36,7 +36,7 @@ import { getPlantVarieties } from './api/plants'
 import { queryClient, queryKeys } from './query'
 import { AllocationPreview, Customer, SalesDiscountType, SalesLineType, SalesOrder, SalesOrderLine, SalesTaxTreatment } from './types/sales'
 import { Workspace } from './types/workspace'
-import { formatDate, formatMoney, localDatetimeInputValue } from './utils'
+import { formatDate, formatDateTime, formatHoldRemaining, formatMoney, localDatetimeInputValue } from './utils'
 
 // 'Not yet classified' is shown as its own state rather than folded into
 // zero-rated: a GST return reports zero-rated supplies in their own box, and
@@ -380,7 +380,8 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         {line.allocations.map((allocation) => (
           <li key={allocation.pk}>
             {allocation.plant ? `Plant #${allocation.plant}` : allocation.asset_code} · {allocation.status}
-            {allocation.expires_at && ` · expires ${formatDate(allocation.expires_at)}`}
+            {allocation.status === 'reserved' && ` · hold ${formatHoldRemaining(allocation.expires_at)}`}
+            {allocation.expires_at && ` · expiry ${formatDateTime(allocation.expires_at)}`}
             {allocation.status === 'reserved' && (
               <>
                 {' '}

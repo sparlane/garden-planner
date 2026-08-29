@@ -461,6 +461,7 @@ interface NurseryRegisterRow {
   sellable: boolean
   quarantined: boolean
   reserved: boolean
+  reserved_until: string | null
   final_outcome: PlantLifecycleEventType | null
   final_outcome_at: string | null
   location_type: PlantPlacementType | null

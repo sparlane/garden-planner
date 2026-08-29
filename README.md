@@ -138,6 +138,16 @@ Before setup:
 
 Run `./setup-venv.sh`; it substitutes any provided database variables and applies migrations to the configured PostgreSQL database.
 
+Scheduled commands (required):
+
+- `python manage.py expire_reservations` releases sales reservations whose recorded expiry has passed, returning the held plants and trays to saleable stock. Nothing else calls it. Without a schedule, an expiry set on a hold is recorded and never acted on, and a quote nobody pursued keeps its best stock off the floor until somebody closes the order by hand.
+- Run it from cron or a container schedule, using the deployment's virtualenv and project directory. Hourly is enough for holds measured in days:
+  ```cron
+  17 * * * * cd /srv/garden-tracker && venv/bin/python manage.py expire_reservations >> var/log/expire-reservations.log 2>&1
+  ```
+- The command is safe to run as often as the deployment likes. A run with nothing due writes nothing, two overlapping runs cannot expire the same hold twice, and a hold with no recorded expiry is never touched. Add `--dry-run` to list what would lapse without changing anything.
+- Every expiry appends the same reservation event an operator's manual expiry would, so `/sales/orders/<pk>/` shows why each hold ended. In a Nursery workspace the **Work** queue also carries the `reservation-expiry` rule, which raises holds in the two days before they lapse and orders a lapse has left short of stock.
+
 Development notes
 - Python dependencies are defined by `requirements.txt`. Recreate a stale local `venv` before setup when it contains older or untracked dependency versions.
 
@@ -206,7 +216,7 @@ Workspace and account boundaries
 
 Nursery work scheduling
 - Open **Work** in a Nursery workspace to review Today, This week, Overdue, Snoozed, and Completed queues. Generated tasks remain live projections until an operator first acts on them, so correcting a source date moves the outstanding work instead of leaving a stale copy.
-- Safe rules cover expected germination, approved production milestones, stage target ages, recorded ready dates, and expected maturity. Add calendar rules for watering, feeding, thinning, spacing, potting-on, hardening, or other local routines; recurrence is evaluated in the workspace timezone.
+- Safe rules cover expected germination, approved production milestones, stage target ages, recorded ready dates, expected maturity, health follow-ups, and sales reservation expiry. Add calendar rules for watering, feeding, thinning, spacing, potting-on, hardening, or other local routines; recurrence is evaluated in the workspace timezone.
 - Completing a task records that the work was reviewed but does not move plants, consume inventory, or perform another domain action. Perform the authoritative workflow first and link its result when completing the task.
 - Until workspace memberships ship, every active Django account is assignable and every authenticated account has the same workspace access. The in-app queue is authoritative; email and push delivery are not implemented.
 

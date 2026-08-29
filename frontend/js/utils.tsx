@@ -237,6 +237,22 @@ function formatDateRange(start: string | null | undefined, end: string | null | 
   return `${formatDate(start ?? '')} - ${formatDate(end ?? '')}`
 }
 
+// A reservation's remaining hold time, which is what an operator deciding
+// about held stock actually reads: "in 3 days" answers "can I sell it this
+// week?" where a bare expiry date does not. An open-ended hold has no expiry
+// and never lapses, so it gets the fallback rather than an invented deadline.
+function formatHoldRemaining(expiresAt: string | null | undefined, fallback = 'No expiry'): string {
+  if (!expiresAt) return fallback
+  const expiry = new Date(expiresAt)
+  if (isNaN(expiry.getTime())) return fallback
+  const minutes = Math.round((expiry.getTime() - Date.now()) / 60000)
+  const elapsed = minutes <= 0
+  const magnitude = Math.abs(minutes)
+  const [amount, unit] = magnitude < 60 ? [magnitude, 'minute'] : magnitude < 60 * 24 ? [Math.floor(magnitude / 60), 'hour'] : [Math.floor(magnitude / (60 * 24)), 'day']
+  const plural = `${amount} ${unit}${amount === 1 ? '' : 's'}`
+  return elapsed ? `lapsed ${plural} ago` : `in ${plural}`
+}
+
 // Quantities arrive as zero-padded decimal strings ("24.000000000"). Trim the padding without
 // parsing to a number, which would reintroduce float artifacts the decimal column avoids.
 function formatQuantity(value: string | number | null | undefined, fallback = ''): string {
@@ -324,6 +340,7 @@ export {
   formatDate,
   formatDateTime,
   formatDateRange,
+  formatHoldRemaining,
   formatQuantity,
   formatMeasure,
   formatMoney,

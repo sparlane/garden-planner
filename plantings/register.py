@@ -202,6 +202,18 @@ def register_projection(workspace):
                 status=SalesOrderAllocation.Status.RESERVED,
             ),
         ),
+        # When the current hold lapses, so an operator filtering on reserved
+        # can tell a hold that frees itself tonight from one with no end at
+        # all. A plant carries at most one reserved allocation — the unique
+        # constraint on `sales_one_active_plant_reservation` — so this is the
+        # hold's own expiry rather than a choice between several.
+        reserved_until=Subquery(
+            SalesOrderAllocation.objects.filter(
+                plant_id=OuterRef('pk'),
+                status=SalesOrderAllocation.Status.RESERVED,
+            ).values('expires_at')[:1],
+            output_field=DateTimeField(),
+        ),
     )
     return queryset.annotate(
         sellable=Case(

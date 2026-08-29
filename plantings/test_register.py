@@ -176,6 +176,7 @@ class RegisterContractTests(RegisterTestCase):
             'plant_name',
             'quarantined',
             'reserved',
+            'reserved_until',
             'seed_tray',
             'seed_tray_cell',
             'sellable',
