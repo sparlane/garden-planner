@@ -19,7 +19,13 @@ from inventory.models import (
     StocktakeVariance,
 )
 from sales.models import SalesOrder, SalesOrderAllocation, SalesOrderLine
-from tests.factories import make_inventory_item, make_location, make_seed_tray, make_stock_lot
+from tests.factories import (
+    make_inventory_item,
+    make_location,
+    make_seed_tray,
+    make_seed_tray_planting,
+    make_stock_lot,
+)
 from workspaces.models import get_current_workspace
 
 
@@ -85,6 +91,51 @@ class InventoryReportTests(APITestCase):
         })
         self.assertIsNone(response.data['results'][0]['physical_value'])
         self.assertEqual(response.data['data_quality'][0]['code'], 'unvalued_inventory')
+
+    def test_a_filter_nobody_asked_for_does_not_narrow_the_report(self):
+        item = make_inventory_item(
+            workspace=self.workspace,
+            name='Nearly out',
+            reorder_level=Decimal('10'),
+        )
+        lot = make_stock_lot(
+            workspace=self.workspace, item=item, location=self.location,
+            quantity=Decimal('4'),
+        )
+
+        default = self.client.get('/reports/inventory-balances/')
+
+        self.assertEqual(default.status_code, 200, default.data)
+        self.assertNotIn('low_stock', default.data['filters'])
+        row = next(
+            entry for entry in default.data['results']
+            if entry['lot_id'] == lot.pk
+        )
+        self.assertTrue(row['low_stock'])
+
+        asked = self.client.get(
+            '/reports/inventory-balances/', {'low_stock': 'false'},
+        )
+        self.assertEqual(asked.data['filters']['low_stock'], False)
+        self.assertNotIn(
+            lot.pk, {entry['lot_id'] for entry in asked.data['results']},
+        )
+
+    def test_the_tray_and_order_reports_share_that_three_state_filter(self):
+        make_seed_tray_planting(
+            seed_tray=make_seed_tray(workspace=self.workspace),
+        )
+
+        trays = self.client.get('/reports/serialized-trays/')
+        self.assertEqual(trays.status_code, 200, trays.data)
+        self.assertNotIn('in_use', trays.data['filters'])
+        self.assertEqual(
+            [row['in_use'] for row in trays.data['results']], [True],
+        )
+
+        orders = self.client.get('/reports/orders/')
+        self.assertEqual(orders.status_code, 200, orders.data)
+        self.assertNotIn('overdue', orders.data['filters'])
 
     def test_csv_uses_same_filters_and_stable_headers(self):
         item = make_inventory_item(workspace=self.workspace, name='Compost')
