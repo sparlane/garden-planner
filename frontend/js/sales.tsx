@@ -395,6 +395,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                 )}
               </>
             )}
+            {allocation.competing_claims.map((claim) => (
+              <div className="text-warning" key={`${claim.order}:${claim.status}`}>
+                Also {claim.status === 'pending' ? 'claimed' : 'reserved'} by <Link to={`/sales/orders/${claim.order}`}>{claim.order_number}</Link>
+              </div>
+            ))}
           </li>
         ))}
       </ul>
@@ -443,11 +448,22 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
             </Col>
           </Row>
           {preview && (
-            <Alert variant={preview.conflicts.length ? 'warning' : 'success'} className="mt-2">
-              {preview.selected.length} eligible. {preview.conflicts.length} conflicts.
+            <Alert variant={preview.conflicts.length || preview.warnings.length ? 'warning' : 'success'} className="mt-2">
+              {preview.selected.length} eligible. {preview.conflicts.length} conflicts. {preview.warnings.length} warnings.
               {preview.conflicts.map((conflict) => (
                 <div key={`${conflict.id}:${conflict.reason}`}>
                   #{conflict.id}: {conflict.reason.replaceAll('_', ' ')}
+                  {conflict.order_number && (
+                    <>
+                      {' '}
+                      by <Link to={`/sales/orders/${conflict.order}`}>{conflict.order_number}</Link>
+                    </>
+                  )}
+                </div>
+              ))}
+              {preview.warnings.map((warning) => (
+                <div key={`${warning.id}:${warning.order}`}>
+                  #{warning.id}: tentatively claimed by <Link to={`/sales/orders/${warning.order}`}>{warning.order_number}</Link>; allocation is still allowed.
                 </div>
               ))}
               <Button className="mt-2" disabled={preview.selected.length === 0 || active + preview.selected.length > line.quantity} onClick={() => allocate.mutate()}>

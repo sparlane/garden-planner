@@ -13,7 +13,7 @@ projected from append-only Nursery observations.
 from datetime import timedelta
 from typing import NamedTuple
 
-from django.db.models import BooleanField, Case, Count, DateField, DateTimeField, DecimalField, DurationField, Exists, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value, When
+from django.db.models import BooleanField, Case, CharField, Count, DateField, DateTimeField, DecimalField, DurationField, Exists, ExpressionWrapper, F, IntegerField, OuterRef, Q, Subquery, Sum, TextField, Value, When
 from django.db.models.functions import Coalesce, Now
 from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
@@ -23,7 +23,7 @@ from inventory.rest_query import parse_boolean, parse_date, parse_datetime, pars
 from locations.models import Location
 from labels.models import LabelCode
 from health.availability import quarantine_expression, with_quarantine
-from sales.models import SalesOrderAllocation
+from sales.models import SalesOrderAllocation, active_allocation_prefetch
 
 from .lifecycle import FINAL_STATES, SELLABLE_STATES, LifecycleState, with_lifecycle_state
 from .models import NurseryObservation, SpecificPlant, SpecificPlantLocation
@@ -36,6 +36,7 @@ LOCATION_TYPES = {
     SpecificPlantLocation.LOCATION,
 }
 UNPLACED = 'none'
+ALLOCATION_STATUSES = {'none', 'tentative', 'reserved'}
 
 #: The orderings the register offers, each ending in the primary key so that
 #: paging through equal sort values cannot repeat or skip a plant.
@@ -70,6 +71,7 @@ class RegisterFilters(NamedTuple):
     sellable: object = None
     quarantined: object = None
     reserved: object = None
+    allocation_status: object = None
     germinated_from: object = None
     germinated_to: object = None
     location_type: object = None
@@ -105,6 +107,10 @@ def parse_register_filters(query_params):
     if ordering.lstrip('-') not in ORDERINGS:
         raise ValidationError({'ordering': 'Select a valid ordering.'})
 
+    allocation_status = query_params.get('allocation_status') or None
+    if allocation_status is not None and allocation_status not in ALLOCATION_STATUSES:
+        raise ValidationError({'allocation_status': 'Select a valid allocation status.'})
+
     return RegisterFilters(
         variety=parse_integer(query_params.get('variety'), 'variety'),
         batch=parse_integer(query_params.get('batch'), 'batch'),
@@ -112,6 +118,7 @@ def parse_register_filters(query_params):
         sellable=parse_boolean(query_params.get('sellable'), 'sellable'),
         quarantined=parse_boolean(query_params.get('quarantined'), 'quarantined'),
         reserved=parse_boolean(query_params.get('reserved'), 'reserved'),
+        allocation_status=allocation_status,
         germinated_from=parse_datetime(query_params.get('germinated_from'), 'germinated_from'),
         germinated_to=parse_datetime(query_params.get('germinated_to'), 'germinated_to'),
         location_type=location_type,
@@ -214,8 +221,20 @@ def register_projection(workspace):
             ).values('expires_at')[:1],
             output_field=DateTimeField(),
         ),
+        tentative=Exists(
+            SalesOrderAllocation.objects.filter(
+                plant_id=OuterRef('pk'),
+                status=SalesOrderAllocation.Status.PENDING,
+            ),
+        ),
     )
     return queryset.annotate(
+        allocation_status=Case(
+            When(reserved=True, then=Value('reserved')),
+            When(tentative=True, then=Value('tentative')),
+            default=Value('none'),
+            output_field=CharField(),
+        ),
         sellable=Case(
             When(
                 ~quarantine_expression(),
@@ -287,7 +306,7 @@ def register_projection(workspace):
             ),
             output_field=DateTimeField(),
         ),
-    )
+    ).prefetch_related(active_allocation_prefetch())
 
 
 def _apply_search(queryset, search):
@@ -321,6 +340,8 @@ def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
         queryset = queryset.filter(quarantined=filters.quarantined)
     if filters.reserved is not None:
         queryset = queryset.filter(reserved=filters.reserved)
+    if filters.allocation_status is not None:
+        queryset = queryset.filter(allocation_status=filters.allocation_status)
     if filters.germinated_from is not None:
         queryset = queryset.filter(germinated__gte=filters.germinated_from)
     if filters.germinated_to is not None:
@@ -399,10 +420,11 @@ def register_totals(queryset):
         'unresolved': 0,
         'quarantined': 0,
         'reserved': 0,
+        'tentative': 0,
         **{state.value: 0 for state in LifecycleState},
     }
     core_rows = queryset.order_by().values(
-        'lifecycle_state', 'quarantined', 'reserved',
+        'lifecycle_state', 'quarantined', 'reserved', 'allocation_status',
     ).annotate(count=Count('pk'))
     for row in core_rows:
         count = row['count']
@@ -414,6 +436,8 @@ def register_totals(queryset):
             totals['quarantined'] += count
         if row['reserved']:
             totals['reserved'] += count
+        if row['allocation_status'] == 'tentative':
+            totals['tentative'] += count
         if state != LifecycleState.AVAILABLE or (
             not row['quarantined'] and not row['reserved']
         ):

@@ -19,6 +19,7 @@ from attachments.rest import AttachmentSerializer
 from locations.occupancy import check_capacity, plant_contribution
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
+from sales.models import SalesOrderAllocation, active_allocation_prefetch
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
 from .batches import lock_batch_with_plants
@@ -556,11 +557,34 @@ class SpecificPlantDetailSerializer(SpecificPlantSerializer):
     growth = serializers.SerializerMethodField()
     nursery_observations = serializers.SerializerMethodField()
     attachments = AttachmentSerializer(source='image_attachments', many=True, read_only=True)
+    allocation_status = serializers.SerializerMethodField()
+    allocation_orders = serializers.SerializerMethodField()
 
     class Meta(SpecificPlantSerializer.Meta):
         fields = SpecificPlantSerializer.Meta.fields + [
             'lifecycle_events', 'availability_intervals', 'growth',
-            'nursery_observations', 'attachments',
+            'nursery_observations', 'attachments', 'allocation_status',
+            'allocation_orders',
+        ]
+
+    def get_allocation_status(self, plant):
+        """Summarize active promises, with a firm hold taking precedence."""
+        statuses = {allocation.status for allocation in plant.active_sales_allocations}
+        if SalesOrderAllocation.Status.RESERVED in statuses:
+            return 'reserved'
+        if SalesOrderAllocation.Status.PENDING in statuses:
+            return 'tentative'
+        return 'none'
+
+    def get_allocation_orders(self, plant):
+        """Name the open quotes and orders currently promising this plant."""
+        return [
+            {
+                'order': allocation.line.order_id,
+                'order_number': allocation.line.order.order_number,
+                'status': allocation.status,
+            }
+            for allocation in plant.active_sales_allocations
         ]
 
     def get_growth(self, plant):
@@ -975,6 +999,7 @@ class SpecificPlantViewSet(PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixi
     queryset = SpecificPlant.objects.prefetch_related(
         'locations', 'locations__seed_tray_cell', 'locations__garden_square',
         'lifecycle_events', 'image_attachments',
+        active_allocation_prefetch(),
     )
     serializer_class = SpecificPlantSerializer
 

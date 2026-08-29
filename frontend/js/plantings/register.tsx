@@ -8,7 +8,7 @@ import { getGrowthStages, getNurseryRegister, getPlantGrades, getProductionBatch
 import { getPlantVarieties } from '../api/plants'
 import { getSeedTrayGenerations, getSeedTrays } from '../api/seedtrays'
 import { queryKeys } from '../query'
-import { NurseryRegisterFilters, NurseryRegisterOrdering, NurseryRegisterTotals, PlantLifecycleState } from '../types/plantings'
+import { NurseryRegisterFilters, NurseryRegisterOrdering, NurseryRegisterTotals, PlantAllocationStatus, PlantLifecycleState } from '../types/plantings'
 import { STATE_LABELS } from './lifecycle'
 import { EMPTY_SELECTION, RegisterSelection, RegisterTable } from './register_list'
 import { BulkOperationPanel } from './bulk_operations'
@@ -53,6 +53,7 @@ function RegisterTotals({ totals }: TotalsProps) {
     { label: 'Growing', value: totals.growing },
     { label: 'Available', value: totals.available, variant: 'text-success' },
     { label: 'Quarantined', value: totals.quarantined, variant: 'text-warning' },
+    { label: 'Tentative', value: totals.tentative, variant: 'text-warning' },
     { label: 'Reserved', value: totals.reserved, variant: 'text-primary' },
     { label: 'Unresolved', value: totals.unresolved },
     { label: 'Retained', value: totals.retained },
@@ -119,7 +120,7 @@ function NurseryRegisterView() {
   const [readyTo, setReadyTo] = React.useState('')
   const [stageOverdue, setStageOverdue] = React.useState(false)
   const [quarantined, setQuarantined] = React.useState<boolean | undefined>(undefined)
-  const [reserved, setReserved] = React.useState<boolean | undefined>(undefined)
+  const [allocationStatus, setAllocationStatus] = React.useState<PlantAllocationStatus | undefined>(undefined)
   const [page, setPage] = React.useState(1)
   const [selection, setSelection] = React.useState<RegisterSelection>(EMPTY_SELECTION)
 
@@ -141,7 +142,7 @@ function NurseryRegisterView() {
     expected_ready_to: readyTo || undefined,
     stage_overdue: stageOverdue || undefined,
     quarantined,
-    reserved,
+    allocation_status: allocationStatus,
     ordering,
     page,
     page_size: PAGE_SIZE
@@ -210,12 +211,13 @@ function NurseryRegisterView() {
         <Col md={3}>
           <Form.Label>Reservation</Form.Label>
           <Form.Select
-            value={reserved === undefined ? '' : String(reserved)}
-            onChange={(event) => narrow(setReserved)(event.target.value === '' ? undefined : event.target.value === 'true')}
+            value={allocationStatus ?? ''}
+            onChange={(event) => narrow(setAllocationStatus)(event.target.value === '' ? undefined : (event.target.value as PlantAllocationStatus))}
           >
             <option value="">Any status</option>
-            <option value="true">Reserved</option>
-            <option value="false">Not reserved</option>
+            <option value="none">Free</option>
+            <option value="tentative">Tentatively claimed</option>
+            <option value="reserved">Reserved</option>
           </Form.Select>
         </Col>
         <Col md={3}>

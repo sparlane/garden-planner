@@ -358,6 +358,20 @@ class SalesOrderAllocation(models.Model):
         return super().delete(*args, **kwargs)
 
 
+def active_allocation_prefetch():
+    """Prefetch active target promises with their readable order reference."""
+    return models.Prefetch(
+        'sales_allocations',
+        queryset=SalesOrderAllocation.objects.filter(
+            status__in=[
+                SalesOrderAllocation.Status.PENDING,
+                SalesOrderAllocation.Status.RESERVED,
+            ],
+        ).select_related('line__order').order_by('line__order__order_number', 'pk'),
+        to_attr='active_sales_allocations',
+    )
+
+
 class ReservationEvent(models.Model):
     """An immutable fact in one allocation's reservation lifecycle."""
 

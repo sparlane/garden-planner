@@ -44,6 +44,13 @@ interface SalesAllocation {
   created: string
   updated: string
   events: Array<ReservationEvent>
+  competing_claims: Array<AllocationOrderReference>
+}
+
+interface AllocationOrderReference {
+  order: number
+  order_number: string
+  status: 'pending' | 'reserved'
 }
 
 interface SalesOrderLine {
@@ -239,7 +246,8 @@ interface SalesOrderLineWrite {
 
 interface AllocationPreview {
   selected: Array<number>
-  conflicts: Array<{ id: number; reason: string }>
+  conflicts: Array<{ id: number; reason: string; order?: number; order_number?: string; status?: SalesAllocationStatus }>
+  warnings: Array<{ id: number; reason: 'tentatively_claimed' } & AllocationOrderReference>
 }
 
 export {

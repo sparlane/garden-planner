@@ -97,11 +97,41 @@ class AllocationSerializer(serializers.ModelSerializer):
 
     events = ReservationEventSerializer(many=True, read_only=True)
     asset_code = serializers.CharField(source='inventory_unit.asset_code', read_only=True, allow_null=True)
+    competing_claims = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesOrderAllocation
-        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events']
+        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
         read_only_fields = fields
+
+    def get_competing_claims(self, allocation):
+        """Name other open orders promising this allocation's exact target."""
+        identity = (
+            {'plant_id': allocation.plant_id}
+            if allocation.plant_id
+            else {'inventory_unit_id': allocation.inventory_unit_id}
+        )
+        claims = (
+            SalesOrderAllocation.objects
+            .filter(
+                **identity,
+                status__in=[
+                    SalesOrderAllocation.Status.PENDING,
+                    SalesOrderAllocation.Status.RESERVED,
+                ],
+            )
+            .exclude(line__order_id=allocation.line.order_id)
+            .select_related('line__order')
+            .order_by('line__order__order_number', 'pk')
+        )
+        return [
+            {
+                'order': claim.line.order_id,
+                'order_number': claim.line.order.order_number,
+                'status': claim.status,
+            }
+            for claim in claims
+        ]
 
 
 class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):

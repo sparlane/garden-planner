@@ -135,6 +135,18 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
                   <div className="text-muted small">Hold {formatHoldRemaining(row.reserved_until)}</div>
                 </div>
               )}
+              {row.allocation_status === 'tentative' && (
+                <div>
+                  <Badge bg="warning" text="dark">
+                    Tentatively claimed · still available
+                  </Badge>
+                </div>
+              )}
+              {row.allocation_orders.map((claim) => (
+                <div className="small" key={`${claim.order}:${claim.status}`}>
+                  <NavLink to={`/sales/orders/${claim.order}`}>{claim.order_number}</NavLink> · {claim.status === 'pending' ? 'tentative' : 'reserved'}
+                </div>
+              ))}
             </td>
             <td>
               {row.stage_name ?? '—'}
