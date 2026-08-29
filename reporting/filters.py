@@ -1,6 +1,22 @@
 """Strict validated query schemas for Nursery reports."""
 
 from rest_framework import serializers
+from rest_framework.fields import empty
+
+
+class ReportBooleanField(serializers.BooleanField):
+    """A three-state query filter: true, false, or not asked.
+
+    `BooleanField` reads a missing key as False, because an HTML form omits an
+    unticked checkbox and there is no other way to tell. A report filter is a
+    query string rather than a form, and every one of these narrows the rows:
+    reading "not asked" as "false" made the default view of a report the one
+    that hides the rows the filter is about -- low stock, trays in use,
+    overdue orders. Restoring the sentinel leaves the filter out of the
+    validated data entirely when nobody asked for it.
+    """
+
+    default_empty_html = empty
 
 
 class BaseReportFilters(serializers.Serializer):  # pylint: disable=abstract-method
@@ -26,7 +42,7 @@ class InventoryBalanceFilters(BaseReportFilters):  # pylint: disable=abstract-me
     lot = serializers.IntegerField(required=False, min_value=1)
     location = serializers.IntegerField(required=False, min_value=1)
     expires_before = serializers.DateField(required=False)
-    low_stock = serializers.BooleanField(required=False)
+    low_stock = ReportBooleanField(required=False)
 
 
 class SerializedTrayFilters(BaseReportFilters):  # pylint: disable=abstract-method
@@ -38,7 +54,7 @@ class SerializedTrayFilters(BaseReportFilters):  # pylint: disable=abstract-meth
         required=False,
         choices=('available', 'quarantined', 'lost', 'retired', 'dispatched', 'returned'),
     )
-    in_use = serializers.BooleanField(required=False)
+    in_use = ReportBooleanField(required=False)
 
 
 class MovementFilters(BaseReportFilters):  # pylint: disable=abstract-method
@@ -123,7 +139,7 @@ class OrderFilters(CommerceFilters):  # pylint: disable=abstract-method
     """Operational order-state filters."""
 
     status = serializers.CharField(required=False)
-    overdue = serializers.BooleanField(required=False)
+    overdue = ReportBooleanField(required=False)
 
 
 class DashboardFilters(BaseReportFilters):  # pylint: disable=abstract-method
