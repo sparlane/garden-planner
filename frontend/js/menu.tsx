@@ -109,6 +109,11 @@ function GPTopBar({ workspace }: GPTopBarProps) {
             Seed Trays
           </Nav.Link>
           <NavDropdown title="Planting" active={plantingActive}>
+            {workspace.mode === 'garden' && (
+              <NavDropdown.Item as={NavLink} to="/plantings/garden-register">
+                What’s growing
+              </NavDropdown.Item>
+            )}
             {workspace.mode === 'nursery' && (
               <>
                 <NavDropdown.Item as={NavLink} to="/plantings/register">

@@ -351,6 +351,72 @@ class GardenPlanting(WorkspaceOwnedModel):
         return f'{self.quantity} {self.batch.variety} at {place}'
 
 
+class GardenPlantingStatusEvent(WorkspaceOwnedModel):
+    """One append-only finish, failure, or correction for an aggregate crop."""
+
+    class EventType(models.TextChoices):
+        """Aggregate outcomes and the fact that reverses either one."""
+
+        FINISHED = 'finished', 'Finished'
+        FAILED = 'failed', 'Failed'
+        CORRECTED = 'corrected', 'Corrected'
+
+    planting = models.ForeignKey(
+        GardenPlanting, on_delete=models.PROTECT, related_name='status_events',
+    )
+    event_type = models.CharField(max_length=12, choices=EventType.choices)
+    occurred_on = models.DateField()
+    reason = models.TextField(blank=True, default='')
+    reversal_of = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='reversal',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['occurred_on', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(event_type='corrected', reversal_of__isnull=False) | (~models.Q(event_type='corrected') & models.Q(reversal_of__isnull=True)),
+                name='garden_status_correction_has_target',
+            ),
+        ]
+
+    def clean(self):
+        """Keep the audit fact on one aggregate crop in one workspace."""
+        super().clean()
+        errors = {}
+        if self.planting_id:
+            if self.planting.workspace_id != self.workspace_id:
+                errors['planting'] = 'The planting belongs to another workspace.'
+            if self.planting.tracking != GardenPlanting.Tracking.AGGREGATE:
+                errors['planting'] = 'Individual plants use plant lifecycle events.'
+            if self.occurred_on < self.planting.recorded_on:
+                errors['occurred_on'] = 'The event cannot predate the planting.'
+        if self.reversal_of_id:
+            if self.reversal_of.planting_id != self.planting_id:
+                errors['reversal_of'] = 'The corrected event belongs to another planting.'
+            if self.reversal_of.event_type == self.EventType.CORRECTED:
+                errors['reversal_of'] = 'A correction cannot itself be corrected.'
+            if not self.reason.strip():
+                errors['reason'] = 'Explain why the earlier event was wrong.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Garden planting status events are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Garden planting status events cannot be deleted.')
+
+
 class Planting(WorkspaceOwnedModel):
     """
     An abstract class for planting of seeds

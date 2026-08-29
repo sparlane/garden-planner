@@ -27,6 +27,7 @@ import { InputApplicationsView } from './applications/applications.js'
 import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
 import { NurseryRegisterView } from './plantings/register.js'
+import { GardenRegisterDetailView, GardenRegisterView } from './plantings/garden_register.js'
 import { PlantDetailView } from './plantings/plant_detail.js'
 import { CohortDetailView, CohortRegisterView } from './plantings/cohorts.js'
 import { GrowthCatalogsView } from './plantings/growth_catalogs.js'
@@ -132,6 +133,22 @@ function FrontEndPage() {
           element={
             <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
               <NurseryRegisterView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/plantings/garden-register"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['garden']}>
+              <GardenRegisterView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/plantings/garden-register/:registerKey"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['garden']}>
+              <GardenRegisterDetailView />
             </WorkspaceModeRoute>
           }
         />
