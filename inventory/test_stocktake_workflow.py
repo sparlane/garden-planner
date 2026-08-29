@@ -12,7 +12,19 @@ from rest_framework.test import APITestCase
 from locations.models import Location
 from plantings.lifecycle import LifecycleState, plant_lifecycle_summary
 from plantings.models import PlantCohort
-from tests.factories import make_plant_at_location, make_seed_tray, make_specific_plant
+from seeds.models import SeedPacket
+from seeds.services import (
+    ensure_packet_inventory_identity,
+    packet_inventory_snapshot,
+)
+from tests.factories import (
+    make_plant_at_location,
+    make_plant_variety,
+    make_seed_packet,
+    make_seed_tray,
+    make_specific_plant,
+    make_supplier,
+)
 from workspaces.models import Workspace, get_current_workspace
 
 from .ledger import (
@@ -589,11 +601,12 @@ class StocktakeDomainReconciliationTests(APITestCase):
             location_type=Location.LocationType.GROWING,
         )
 
-    def open_over(self, target_type):
-        """Open a blind count of one kind of stock standing on bench one."""
+    def open_over(self, target_type, location=None):
+        """Open a blind count of one kind of stock standing in one place."""
         response = self.client.post(self.url, {
             'scope': {
-                'location': self.bench.pk, 'target_types': [target_type],
+                'location': (location or self.bench).pk,
+                'target_types': [target_type],
             },
             'blind': True, 'notes': f'{target_type} count',
         }, format='json')
@@ -766,3 +779,101 @@ class StocktakeDomainReconciliationTests(APITestCase):
             ).count(),
             1,
         )
+
+    def received_packet(self, quantity='20', price='5.0000'):
+        """Receive one packet of a known size through the seed workflow."""
+        catalog = self.client.post('/seeds/seeds/', {
+            'supplier': make_supplier(workspace=self.workspace).pk,
+            'plant_variety': make_plant_variety(workspace=self.workspace).pk,
+            'base_unit': 'seed',
+        }, format='json')
+        self.assertEqual(catalog.status_code, 201, catalog.data)
+        draft = self.client.post('/seeds/packet-receipts/', {
+            'seeds': catalog.data['pk'],
+            'quantity_certainty': 'exact',
+            'quantity': quantity,
+            'line_price': price,
+            'received_date': '2026-08-02',
+        }, format='json')
+        self.assertEqual(draft.status_code, 201, draft.data)
+        posted = self.client.post(
+            f"/seeds/packet-receipts/{draft.data['pk']}/post/", {}, format='json',
+        )
+        self.assertEqual(posted.status_code, 201, posted.data)
+        return SeedPacket.objects.get(pk=posted.data['pk'])
+
+    def packet_inventory(self, packet):
+        """Return what the seeds app currently says is in one packet."""
+        packet.refresh_from_db()
+        return packet_inventory_snapshot(packet)
+
+    def test_a_short_packet_count_is_posted_and_compensated(self):
+        """A packet counted short draws the difference out of its container."""
+        packet = self.received_packet()
+        stocktake_id, target_id = self.open_over(
+            'seed_packet', packet.storage_location,
+        )
+        self.count(stocktake_id, target_id, counted_quantity='17')
+        posted = self.resolve_and_post(
+            stocktake_id, 'adjust', 'Three seeds spilled',
+        )
+
+        self.assertEqual(
+            posted['targets'][0]['reconciliations'][0]['domain'], 'seed_packet',
+        )
+        counted = self.packet_inventory(packet)
+        self.assertEqual(counted['remaining_quantity'], Decimal('17'))
+        # Nothing was sown, so the shortfall says the packet never held
+        # twenty rather than that three went missing after it was opened.
+        self.assertEqual(counted['received_quantity'], Decimal('17'))
+        self.assertEqual(
+            physical_balance(packet.stock_lot, packet.storage_location),
+            Decimal('17'),
+        )
+
+        self.reverse(stocktake_id)
+
+        restored = self.packet_inventory(packet)
+        self.assertEqual(restored['remaining_quantity'], Decimal('20'))
+        self.assertEqual(restored['received_quantity'], Decimal('20'))
+
+    def test_counting_an_unopened_packet_establishes_what_is_in_it(self):
+        """The count is the first number the packet has ever had."""
+        packet = ensure_packet_inventory_identity(
+            make_seed_packet(workspace=self.workspace),
+        )
+        before = self.packet_inventory(packet)
+        self.assertEqual(before['quantity_certainty'], 'unknown')
+        self.assertIsNone(before['remaining_quantity'])
+
+        stocktake_id, target_id = self.open_over(
+            'seed_packet', packet.storage_location,
+        )
+        self.count(stocktake_id, target_id, counted_quantity='24')
+        self.resolve_and_post(stocktake_id, 'adjust', 'Counted the contents')
+
+        counted = self.packet_inventory(packet)
+        self.assertEqual(counted['quantity_certainty'], 'exact')
+        self.assertEqual(counted['remaining_quantity'], Decimal('24'))
+        self.assertEqual(counted['received_quantity'], Decimal('24'))
+
+        self.reverse(stocktake_id)
+
+        restored = self.packet_inventory(packet)
+        self.assertEqual(restored['quantity_certainty'], 'unknown')
+        self.assertIsNone(restored['remaining_quantity'])
+
+    def test_a_packet_counted_at_what_it_already_held_raises_no_variance(self):
+        """Agreement is not a correction, and nothing should be posted for it."""
+        packet = self.received_packet()
+        stocktake_id, target_id = self.open_over(
+            'seed_packet', packet.storage_location,
+        )
+        self.count(stocktake_id, target_id, counted_quantity='20')
+
+        review = self.client.post(
+            f'{self.url}{stocktake_id}/begin-review/', {}, format='json',
+        )
+
+        self.assertEqual(review.status_code, 200, review.data)
+        self.assertEqual(review.data['targets'][0]['variances'], [])
