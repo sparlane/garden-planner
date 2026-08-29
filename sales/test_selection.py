@@ -28,6 +28,24 @@ from . import services
 from .models import SalesOrder
 
 
+#: Why a seedling line can refuse a plant, in the order `_target_error` and
+#: `preview_targets` decide them. Shared so the reachability walk below and the
+#: table it is checked against cannot drift apart.
+SEEDLING_REASONS = (
+    'wrong_variety',
+    'not_sellable',
+    'quarantined',
+    'already_reserved',
+    'wrong_workspace',
+    'unknown',
+)
+
+#: Why a tray line can refuse a serialized unit. A tray line reaches the
+#: workspace and unknown-identity checks the same way a seedling line does, so
+#: only the two it decides for itself are listed.
+TRAY_REASONS = ('wrong_item', 'not_available')
+
+
 def declared_conflict_reasons():
     """Return every reason the selection code can attach to a target.
 
@@ -232,27 +250,14 @@ class SeedlingSelectionTests(SelectionFixture):
 
     def test_the_declared_reasons_are_the_ones_the_code_can_produce(self):
         """A reason added without a case here would go unexercised."""
-        seedling = {
-            'wrong_variety',
-            'not_sellable',
-            'quarantined',
-            'already_reserved',
-            'wrong_workspace',
-            'unknown',
-        }
-        tray = {'wrong_item', 'not_available'}
-        self.assertEqual(seedling | tray, declared_conflict_reasons())
+        self.assertEqual(
+            set(SEEDLING_REASONS) | set(TRAY_REASONS),
+            declared_conflict_reasons(),
+        )
 
     def test_every_refusal_is_reachable_and_allocate_refuses_it_too(self):
         """The preview is only worth reading if allocation agrees with it."""
-        for reason in (
-                'wrong_variety',
-                'not_sellable',
-                'quarantined',
-                'already_reserved',
-                'wrong_workspace',
-                'unknown',
-        ):
+        for reason in SEEDLING_REASONS:
             with self.subTest(reason=reason):
                 wanted = self.ready_plant()
                 order = self.create_order()
@@ -333,6 +338,7 @@ class TraySelectionTests(SelectionFixture):
             ).inventory_unit_id,
             'not_available': self.dispatched_unit(tray),
         }
+        self.assertEqual(tuple(cases), TRAY_REASONS)
         for reason, unit_id in cases.items():
             with self.subTest(reason=reason):
                 order = self.create_order()
