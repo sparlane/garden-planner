@@ -31,6 +31,9 @@ import {
   GardenQuickAddEntry,
   GardenQuickAddReview,
   GardenQuickAddedPlanting,
+  GardenRegisterDetail,
+  GardenRegisterFilters,
+  GardenRegisterPage,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
@@ -176,6 +179,30 @@ function createGardenQuickAdd(review: GardenQuickAddReview): Promise<Array<Garde
 
 function getGardenQuickAddedPlantings(signal?: AbortSignal): Promise<Array<GardenQuickAddedPlanting>> {
   return fetchAsJson<Array<GardenQuickAddedPlanting>>('/plantings/garden-quick-add/', signal)
+}
+
+function gardenRegisterQuery(filters: GardenRegisterFilters): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  return query.size > 0 ? `?${query.toString()}` : ''
+}
+
+function getGardenRegister(filters: GardenRegisterFilters = {}, signal?: AbortSignal): Promise<GardenRegisterPage> {
+  return fetchAsJson<GardenRegisterPage>(`/plantings/garden-register/${gardenRegisterQuery(filters)}`, signal)
+}
+
+function getGardenRegisterDetail(key: string, signal?: AbortSignal): Promise<GardenRegisterDetail> {
+  return fetchAsJson<GardenRegisterDetail>(`/plantings/garden-register/${key}/`, signal)
+}
+
+function finishGardenRegisterCrop(key: string, eventType: 'finished' | 'failed', reason = ''): Promise<Response> {
+  return csrfPost(`/plantings/garden-register/${key}/finish/`, { event_type: eventType, reason })
+}
+
+function correctGardenRegisterStatus(key: string, event: number, reason: string): Promise<Response> {
+  return csrfPost(`/plantings/garden-register/${key}/correct-status/`, { event, reason })
 }
 
 function getSpecificPlantsBySeedTray(seedTrayPk: number, signal?: AbortSignal): Promise<Array<SpecificPlant>> {
@@ -388,6 +415,10 @@ export {
   previewGardenQuickAdd,
   createGardenQuickAdd,
   getGardenQuickAddedPlantings,
+  getGardenRegister,
+  getGardenRegisterDetail,
+  finishGardenRegisterCrop,
+  correctGardenRegisterStatus,
   getSpecificPlantsBySeedTray,
   addSpecificPlant,
   addSpecificPlantLocation,

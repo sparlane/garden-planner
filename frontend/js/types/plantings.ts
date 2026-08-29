@@ -265,6 +265,87 @@ interface GardenQuickAddedPlanting extends GardenQuickAddEntry {
   finished_on: string | null
 }
 
+type GardenRegisterRecordType = 'aggregate' | 'individual'
+type GardenRegisterState = 'current' | 'finished' | 'all' | PlantLifecycleState
+
+interface GardenRegisterTask {
+  id: number
+  title: string
+  due: string
+  status: string
+  url: string
+}
+
+interface GardenRegisterRow {
+  key: string
+  record_type: GardenRegisterRecordType
+  record_id: number
+  plant: number
+  plant_name: string
+  variety: number
+  variety_name: string
+  batch: number
+  batch_code: string
+  name: string
+  source: GardenPlantingSource
+  state: string
+  quantity: number
+  quantity_is_approximate: boolean
+  perennial: boolean
+  container: boolean
+  planted_on: string
+  date_is_approximate: boolean
+  location: string
+  location_label: string
+  expected_harvest_early: string | null
+  expected_harvest_late: string | null
+  health_flag: boolean
+  next_task: GardenRegisterTask | null
+  finished_on: string | null
+}
+
+interface GardenRegisterFilters {
+  crop?: number
+  variety?: number
+  location?: string
+  source?: GardenPlantingSource
+  state?: GardenRegisterState
+  planted_from?: string
+  planted_to?: string
+  expected_harvest_from?: string
+  expected_harvest_to?: string
+  health?: boolean
+  next_task?: boolean
+  search?: string
+  ordering?: 'planted' | '-planted' | 'crop' | '-crop' | 'location' | '-location' | 'expected_harvest' | '-expected_harvest'
+  page?: number
+}
+
+interface GardenRegisterTotals {
+  rows: number
+  quantity: number
+  aggregate_rows: number
+  individual_plants: number
+  perennials: number
+  containers: number
+  unplaced: number
+  health_flags: number
+}
+
+interface GardenRegisterPage {
+  count: number
+  next: string | null
+  previous: string | null
+  results: Array<GardenRegisterRow>
+  totals: GardenRegisterTotals
+}
+
+interface GardenRegisterDetail extends GardenRegisterRow {
+  links: Record<'garden' | 'batch' | 'plant' | 'harvest' | 'care' | 'health' | 'tasks', string | null>
+  origin: { seed_packet: number | null; supplier: number | null; purchase_cost: string | null; notes: string } | null
+  history: Array<{ id: number; type: string; occurred_on: string; reason: string; reversal_of: number | null }>
+}
+
 // Where a plant is. A plant in a tray records the cell rather than the bench
 // the tray stands on, because the tray's own placement already says that.
 type PlantPlacementType = 'seed_tray_cell' | 'garden_square' | 'location'
@@ -1072,6 +1153,12 @@ export {
   GardenQuickAddReview,
   GardenQuickAddWarning,
   GardenQuickAddedPlanting,
+  GardenRegisterDetail,
+  GardenRegisterFilters,
+  GardenRegisterPage,
+  GardenRegisterRow,
+  GardenRegisterState,
+  GardenRegisterTotals,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,

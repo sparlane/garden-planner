@@ -25,6 +25,7 @@ from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, reg
 from .batches import lock_batch_with_plants
 from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
 from .garden_quick_add import register_garden_quick_add_routes
+from .garden_register_rest import register_garden_register_routes
 from .harvest_rest import register_harvest_routes
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
@@ -1120,6 +1121,7 @@ register_growth_routes(router)
 register_cohort_routes(router)
 register_planning_routes(router)
 register_garden_quick_add_routes(router)
+register_garden_register_routes(router)
 
 
 def _register_bulk_routes():
