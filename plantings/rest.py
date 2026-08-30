@@ -27,9 +27,27 @@ from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSeri
 from .garden_quick_add import register_garden_quick_add_routes
 from .garden_register_rest import register_garden_register_routes
 from .harvest_rest import register_harvest_routes
+from .germination import (
+    close_germination,
+    current_closure,
+    germination_json,
+    reopen_germination,
+    validate_late_germination,
+)
 from .lifecycle import record_germination_event, record_transplant_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
-from .models import GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting, NurseryObservation, SeedTrayPlanting, GardenSquareTransplant, SeedTrayCellPlanting, SpecificPlant, SpecificPlantLocation
+from .models import (
+    CohortOperation,
+    GardenRowDirectSowPlanting,
+    GardenSquareDirectSowPlanting,
+    GardenSquareTransplant,
+    NurseryObservation,
+    SeedTrayCellPlanting,
+    SeedTrayPlanting,
+    SowingGerminationClosure,
+    SpecificPlant,
+    SpecificPlantLocation,
+)
 from .register_rest import register_register_routes
 from .growth_rest import NurseryObservationSerializer, register_growth_routes
 from .planning_rest import register_planning_routes
@@ -142,13 +160,14 @@ class SeedTrayPlantingSerializer(TrayGenerationSowingSerializerMixin, BatchedSow
     """
     cell_plantings = SeedTrayCellPlantingNestedSerializer(many=True, required=False)
     new_batch = InlineBatchSerializer(required=False, write_only=True)
+    germination = serializers.SerializerMethodField()
 
     class Meta:
         model = SeedTrayPlanting
         fields = [
             'pk', 'planted', 'seeds_used', 'batch', 'new_batch', 'quantity',
             'seed_tray', 'generation', 'location', 'removed', 'notes',
-            'cell_plantings',
+            'cell_plantings', 'germination',
         ]
         extra_kwargs = {
             'batch': {'required': False},
@@ -161,6 +180,10 @@ class SeedTrayPlantingSerializer(TrayGenerationSowingSerializerMixin, BatchedSow
         'seed_tray': 'workspace',
         'generation': 'tray__workspace',
     }
+
+    def get_germination(self, planting):
+        """Return the sowing's germination figures and whether they are final."""
+        return germination_json(planting)
 
     def _get_effective_cell_plantings(self, data):
         """Return submitted replacements or the retained cell plantings."""
@@ -482,6 +505,12 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
     state_since = serializers.SerializerMethodField()
     first_ready_at = serializers.SerializerMethodField()
     label_code = serializers.SerializerMethodField()
+    #: Why a seedling is being recorded against a sowing already declared
+    #: finished germinating. Ignored on an open sowing and required on a closed
+    #: one, which is the late-germination policy `plantings.germination` states.
+    reason = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, default='',
+    )
 
     class Meta:
         model = SpecificPlant
@@ -493,6 +522,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
             'batch',
             'germinated',
             'notes',
+            'reason',
             'label_code',
             'locations',
         ] + PlantLifecycleSerializerMixin.LIFECYCLE_FIELDS
@@ -517,7 +547,18 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
                 })
         return data
 
+    def update(self, instance, validated_data):
+        """Drop the late-germination reason, which only describes a creation.
+
+        It is a fact about a seedling coming up, recorded on the germination
+        event at the moment the plant is made. An edit to an existing plant has
+        no germination to explain.
+        """
+        validated_data.pop('reason', None)
+        return super().update(instance, validated_data)
+
     def create(self, validated_data):
+        reason = validated_data.pop('reason', '')
         with transaction.atomic():
             try:
                 cell_planting = SeedTrayCellPlanting.objects.select_for_update().get(
@@ -531,6 +572,10 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
                 }) from exc
             validated_data['cell_planting'] = cell_planting
             batch = lock_batch_with_plants(cell_planting.seed_tray_planting.batch)
+            try:
+                validate_late_germination(cell_planting, reason)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(_model_errors(exc)) from exc
             plant = SpecificPlant.objects.create(**validated_data)
             SpecificPlantLocation.objects.create(
                 specific_plant=plant,
@@ -539,7 +584,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
                 started=plant.germinated,
             )
             user = self.context['request'].user
-            record_germination_event(plant, user)
+            record_germination_event(plant, user, reason=reason)
             # A new seedling re-divides whatever its cell was carrying, so the
             # subledger is brought back in step here rather than drifting until
             # somebody asks for a report. Imported inside the call because
@@ -886,6 +931,76 @@ class SowingCorrectionViewSetMixin:  # pylint: disable=too-few-public-methods
         })
 
 
+class GerminationCloseSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Validate the decision that a sowing has finished germinating.
+
+    The remainder is not supplied by the caller. It is whatever the sown seed
+    exceeds the seedlings by at the moment the close is written, counted under
+    a lock, so two operators closing the same tray cannot disagree about it.
+    """
+
+    closed_at = serializers.DateTimeField(required=False)
+    loss_cause = serializers.ChoiceField(
+        choices=SowingGerminationClosure.LOSS_CAUSE_CHOICES,
+        required=False,
+        default=CohortOperation.LossCause.FAILED,
+    )
+    reason = serializers.CharField(
+        required=False, allow_blank=True, default='', trim_whitespace=True,
+    )
+
+
+class GerminationReopenSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Validate withdrawing a close that should never have been recorded."""
+
+    reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
+
+
+class GerminationClosureViewSetMixin:  # pylint: disable=too-few-public-methods
+    """Expose closing and reopening germination on a tray sowing.
+
+    Both actions live on the sowing rather than on the closure, because the
+    sowing is what an operator has in front of them and what every screen
+    already addresses. `plantings.germination` holds the policy the two
+    actions divide between them.
+    """
+
+    @action(detail=True, methods=['post'], url_path='close-germination')
+    def close_sowing_germination(self, request, pk=None, **kwargs):  # pylint: disable=unused-argument
+        """Declare this sowing finished germinating."""
+        serializer = GerminationCloseSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        try:
+            close_germination(
+                self.get_object(),
+                request.user,
+                closed_at=values.get('closed_at'),
+                loss_cause=values['loss_cause'],
+                reason=values['reason'],
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_model_errors(exc)) from exc
+        return Response(self.get_serializer(self.get_object()).data)
+
+    @action(detail=True, methods=['post'], url_path='reopen-germination')
+    def reopen_sowing_germination(self, request, pk=None, **kwargs):  # pylint: disable=unused-argument
+        """Withdraw a close recorded in error, returning the sowing to open."""
+        serializer = GerminationReopenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        sowing = self.get_object()
+        closure = current_closure(sowing)
+        if closure is None:
+            raise serializers.ValidationError({
+                'detail': 'This sowing is not closed.',
+            })
+        try:
+            reopen_germination(closure, request.user, serializer.validated_data['reason'])
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_model_errors(exc)) from exc
+        return Response(self.get_serializer(self.get_object()).data)
+
+
 class PostedSowingDestroyMixin:  # pylint: disable=too-few-public-methods
     """Preserve a planting once immutable stock history refers to it."""
 
@@ -944,6 +1059,7 @@ class ProtectedSeedTrayPlantingDestroyMixin:  # pylint: disable=too-few-public-m
 
 
 class SeedTrayPlantingViewSet(
+    GerminationClosureViewSetMixin,
     SowingCorrectionViewSetMixin,
     ProtectedSeedTrayPlantingDestroyMixin,
     CurrentWorkspaceViewSetMixin,
@@ -958,6 +1074,7 @@ class SeedTrayPlantingViewSet(
 
 class SeedTrayPlantingViewSeedTraySet(
     TrayGenerationFilterMixin,
+    GerminationClosureViewSetMixin,
     SowingCorrectionViewSetMixin,
     ProtectedSeedTrayPlantingDestroyMixin,
     CurrentWorkspaceViewSetMixin,

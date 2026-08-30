@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.db.models import Q
 
 from costing.services import batch_cost_breakdown
+from plantings.germination import germination_summaries
 from plantings.lifecycle import lifecycle_summaries
 from plantings.loss import LOSS_CAUSES, batch_loss_by_cause
 from plantings.models import (
@@ -43,6 +44,39 @@ def _original_cohort_output(batch):
         for event in operation.events.all()
         if event.cohort.batch_id == batch.pk
     )
+
+
+def _batch_germination(batch):
+    """Total this batch's tray sowings, and say whether the total is final.
+
+    Only tray sowings answer the question: a direct-sown row produces a crop
+    rather than a countable set of seedlings, which is the same distinction
+    `costing.allocation.unattributable_share` draws about its cost. A batch
+    with one open sowing among four has a provisional rate, because the one
+    that can still rise is enough to make the total a floor.
+    """
+    sown = observed = ungerminated = 0
+    open_sowings = closed_sowings = 0
+    sowings = list(SeedTrayPlanting.objects.filter(batch=batch).order_by('pk'))
+    for summary in germination_summaries(sowings).values():
+        sown += summary['sown_quantity']
+        observed += summary['observed_count']
+        ungerminated += summary['ungerminated']
+        if summary['provisional']:
+            open_sowings += 1
+        else:
+            closed_sowings += 1
+    return {
+        'germination_sown': sown,
+        'germination_observed': observed,
+        'germination_ungerminated': ungerminated,
+        'germination_rate': (
+            decimal_string(Decimal(observed) / Decimal(sown), 6) if sown else None
+        ),
+        'germination_provisional': open_sowings > 0,
+        'germination_open_sowings': open_sowings,
+        'germination_closed_sowings': closed_sowings,
+    }
 
 
 def _batch_row(batch):  # pylint: disable=too-many-locals
@@ -85,6 +119,7 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
         'cohort_states': dict(sorted(cohort_states.items())),
         'loss_by_cause': losses,
         'loss_quantity': sum(losses.values()),
+        **_batch_germination(batch),
         'production_loss': cost['totals']['production_loss'],
         'plant_inventory_value': cost['totals']['plant_inventory'],
         'cogs_value': cost['totals']['cogs'],
@@ -142,6 +177,16 @@ def production_batches(workspace, filters):
             ),
             'drill_down': '/plantings/cohorts/?loss_cause=unspecified',
         })
+    open_germination = sum(row['germination_open_sowings'] for row in rows)
+    if open_germination:
+        quality.append({
+            'code': 'provisional_germination_rate', 'count': open_germination,
+            'message': (
+                'These sowings have not been declared finished germinating, so '
+                'the batch germination rate is a floor rather than a result.'
+            ),
+            'drill_down': '/reports/germination/?provisional=true',
+        })
     if provisional:
         quality.append({
             'code': 'provisional_production_cost', 'count': provisional,
@@ -161,7 +206,10 @@ def production_batches(workspace, filters):
             'actual_start', 'output_finalized_at', 'sown_quantity',
             'original_output', 'output_rate', 'current_seedlings',
             'individual_states', 'cohort_states', 'loss_by_cause',
-            'loss_quantity', 'production_loss',
+            'loss_quantity', 'germination_sown', 'germination_observed',
+            'germination_ungerminated', 'germination_rate',
+            'germination_provisional', 'germination_open_sowings',
+            'germination_closed_sowings', 'production_loss',
             'plant_inventory_value', 'cogs_value', 'unresolved_value',
             'unattributed_value', 'provisional_total', 'final_total', 'unit_cost',
             'currency_code', 'provisional', 'unvalued', 'input_layers',
@@ -175,6 +223,10 @@ def production_batches(workspace, filters):
                 for cause in LOSS_CAUSES
             },
             'loss_quantity': sum(row['loss_quantity'] for row in rows),
+            'germination_sown': sum(row['germination_sown'] for row in rows),
+            'germination_observed': sum(row['germination_observed'] for row in rows),
+            'germination_ungerminated': sum(row['germination_ungerminated'] for row in rows),
+            'germination_open_sowings': open_germination,
             'provisional_batches': provisional,
             'unvalued_batches': unvalued,
         },

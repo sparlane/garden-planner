@@ -10,6 +10,7 @@ from .models import WorkTaskRule, WorkTaskType
 
 DEFAULT_RULES = (
     ('germination-check', 'Germination checks', WorkTaskType.GERMINATION, WorkTaskRule.Trigger.GERMINATION),
+    ('germination-assessment', 'Germination assessments', WorkTaskType.GERMINATION_ASSESSMENT, WorkTaskRule.Trigger.GERMINATION_WINDOW_END),
     ('planned-milestone', 'Production milestones', WorkTaskType.STAGE, WorkTaskRule.Trigger.PLAN_MILESTONE),
     ('stage-review', 'Stage reviews', WorkTaskType.STAGE, WorkTaskRule.Trigger.STAGE_AGE),
     ('ready-review', 'Ready-date reviews', WorkTaskType.READY, WorkTaskRule.Trigger.EXPECTED_READY),

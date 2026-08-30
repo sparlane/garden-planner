@@ -35,6 +35,7 @@ import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from './api/seedtra
 import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
 import { BatchChooser, isChoiceComplete, type BatchChoice } from './plantings/batch_chooser'
+import { GerminationStateBadge } from './plantings/germination'
 import { queryKeys } from './query'
 import { GardenQuickAddButton, GardenQuickAddedList } from './plantings/garden_quick_add'
 import { buildSeedTrayCellGrid } from './seedtray/grid'
@@ -403,6 +404,9 @@ function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correc
         <span title="Number of seeds or seed clusters sown">Sown: {planting.quantity}</span> (
         <span title="Number of individual plants that have germinated">Germinated: {planting.germinated_count}</span>,{' '}
         <span title="Number that have been transplanted to a garden square">Transplanted: {planting.transplanted_count}</span>)
+        <div>
+          <GerminationStateBadge germination={planting.germination} />
+        </div>
       </td>
       <td>{formatDate(planting.planted)}</td>
       <td>{planting.seed_tray}</td>

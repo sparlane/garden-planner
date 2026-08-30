@@ -13,6 +13,7 @@ from locations.models import Location
 from locations.occupancy import capacity_chain, location_occupancy
 
 from .batches import lock_batch_with_plants
+from .germination import validate_late_germination
 from .lifecycle import (
     STATE_AFTER,
     EventType,
@@ -467,7 +468,7 @@ def _create_germinated_plant(operation, user, request, allocation, notes):
         seed_tray_cell=allocation.cell,
         started=request.occurred_at,
     )
-    event = record_germination_event(plant, user)
+    event = record_germination_event(plant, user, reason=request.reason)
     BulkPlantOperationResult.objects.create(
         workspace=operation.workspace,
         operation=operation,
@@ -498,6 +499,10 @@ def _apply_germination(operation, user, request):
     locked_batches = [
         lock_batch_with_plants(batches[batch_id]) for batch_id in sorted(batches)
     ]
+    # Checked once per sowing before anything is written, so a bulk entry
+    # against a closed sowing is rejected whole rather than half-applied.
+    for allocation in allocations:
+        validate_late_germination(allocation, request.reason)
     notes = request.action_payload.get('notes', '')
     for allocation in allocations:
         for _index in range(quantities[allocation.pk]):

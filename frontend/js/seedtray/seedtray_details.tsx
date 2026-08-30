@@ -28,7 +28,9 @@ import { buildSeedTrayCellGrid } from './grid'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { BulkPlantOperationRequest, PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
 import {
+  closeSowingGermination,
   getPlantingSeedTray,
+  reopenSowingGermination,
   getSpecificPlantsBySeedTray,
   getSpecificPlantLifecycleEvents,
   postBulkPlantOperation,
@@ -38,6 +40,9 @@ import {
   reverseSpecificPlantEvent
 } from '../api/plantings'
 import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, REASON_PROMPTS, REASON_REQUIRED_ACTIONS } from '../plantings/lifecycle'
+import { GerminationSummary } from '../plantings/germination'
+import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
+import { CohortLossCause } from '../types/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
 import { SeedPacketDetails } from '../types/seeds'
 import { getSeedPacketsCurrent } from '../api/seeds'
@@ -265,6 +270,10 @@ type GerminationFormProps = {
   selections: Array<GerminationSelection>
   date: string
   notes: string
+  // Whether any selected cell belongs to a sowing already declared finished
+  // germinating. The server requires a reason for one of those, so the form
+  // asks for it here rather than letting the save come back rejected.
+  late: boolean
   onChangeDate: (value: string) => void
   onChangeQuantity: (cellPlantingPk: number, value: number) => void
   onChangeNotes: (value: string) => void
@@ -272,7 +281,7 @@ type GerminationFormProps = {
   onCancel: () => void
 }
 
-const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, notes, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => {
+const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, notes, late, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => {
   const totalQuantity = selections.reduce((total, selection) => total + selection.quantity, 0)
   return (
     <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 400 }}>
@@ -280,6 +289,11 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, not
       <p>
         {selections.length} cell{selections.length === 1 ? '' : 's'} selected
       </p>
+      {late && (
+        <Alert variant="warning" className="py-2">
+          This sowing was declared finished germinating. A seedling recorded now is a late arrival, so it needs a reason — the closure stands and the count moves on.
+        </Alert>
+      )}
       {selections.map((selection) => {
         const otherQuantity = totalQuantity - selection.quantity
         return (
@@ -305,11 +319,12 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, not
       </div>
       <div style={{ marginTop: 8 }}>
         <label>
-          Notes: <input type="text" value={notes} onChange={(e) => onChangeNotes(e.target.value)} placeholder="Optional" />
+          {late ? 'Reason: ' : 'Notes: '}
+          <input type="text" value={notes} onChange={(e) => onChangeNotes(e.target.value)} placeholder={late ? 'Why is this coming up after the close?' : 'Optional'} />
         </label>
       </div>
       <div style={{ marginTop: 8 }}>
-        <Button variant="success" onClick={onSave} disabled={!date || selections.some((selection) => selection.quantity < 1) || totalQuantity > 5000}>
+        <Button variant="success" onClick={onSave} disabled={!date || (late && !notes.trim()) || selections.some((selection) => selection.quantity < 1) || totalQuantity > 5000}>
           Review {totalQuantity} plant{totalQuantity === 1 ? '' : 's'}
         </Button>{' '}
         <Button variant="secondary" onClick={onCancel}>
@@ -317,6 +332,58 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, not
         </Button>
       </div>
     </div>
+  )
+}
+
+type GerminationCloseFormProps = {
+  sowing: SeedTrayPlanting
+  cause: CohortLossCause
+  reason: string
+  busy: boolean
+  onChangeCause: (value: CohortLossCause) => void
+  onChangeReason: (value: string) => void
+  onSave: () => void
+  onCancel: () => void
+}
+
+// Declaring a sowing finished. The remainder is shown rather than typed: the
+// server counts it at the moment of the close, so anything entered here would
+// only be a guess at what it is about to find.
+const GerminationCloseForm: React.FC<GerminationCloseFormProps> = ({ sowing, cause, reason, busy, onChangeCause, onChangeReason, onSave, onCancel }) => {
+  const germination = sowing.germination
+  const remainder = germination ? germination.ungerminated : 0
+  return (
+    <Card className="mb-3" style={{ maxWidth: 480 }}>
+      <Card.Body>
+        <Card.Title>Finished germinating — sowing #{sowing.pk}</Card.Title>
+        <p className="mb-2">
+          {germination?.observed_count ?? 0} of {germination?.sown_quantity ?? 0} seeds came up. Closing makes that a final figure, and records the remaining {remainder} as seed
+          that never germinated.
+        </p>
+        {remainder > 0 && (
+          <Form.Group className="mb-2" controlId="germination-close-cause">
+            <Form.Label>What happened to the seed that did not come up?</Form.Label>
+            <Form.Select value={cause} onChange={(event) => onChangeCause(event.target.value as CohortLossCause)}>
+              {RECORDABLE_LOSS_CAUSES.map((option) => (
+                <option key={option} value={option}>
+                  {lossCauseLabel(option)}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        )}
+        <Form.Group className="mb-2" controlId="germination-close-reason">
+          <Form.Label>Note</Form.Label>
+          <Form.Control type="text" value={reason} onChange={(event) => onChangeReason(event.target.value)} placeholder="Optional" />
+        </Form.Group>
+        <Button variant="success" onClick={onSave} disabled={busy}>
+          Close germination
+        </Button>{' '}
+        <Button variant="secondary" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+      </Card.Body>
+    </Card>
   )
 }
 
@@ -546,6 +613,9 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const [inventoryDestination, setInventoryDestination] = React.useState<number>()
   const [inventoryReason, setInventoryReason] = React.useState('')
   const [inventoryCost, setInventoryCost] = React.useState('0.0000')
+  const [closingSowing, setClosingSowing] = React.useState<SeedTrayPlanting>()
+  const [closingCause, setClosingCause] = React.useState<CohortLossCause>('failed')
+  const [closingReason, setClosingReason] = React.useState('')
   const [cleaning, setCleaning] = React.useState(false)
   const [applyingFillInput, setApplyingFillInput] = React.useState(false)
   const seedTrayModelsQuery = useQuery({
@@ -615,6 +685,24 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlants(seedTrayPk) }),
         cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays })
       ])
+  })
+  // Closing changes the sowing, the cost allocation behind it, and every count
+  // a screen shows against it, so both actions revalidate the same family the
+  // germination entry does.
+  function invalidateGermination() {
+    return Promise.all([
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.seedTray(seedTrayPk) }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlants(seedTrayPk) }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays })
+    ])
+  }
+  const germinationClosureMutation = useMutation({
+    mutationFn: ({ planting, cause, reason }: { planting: number; cause: CohortLossCause; reason: string }) => closeSowingGermination(planting, { loss_cause: cause, reason }),
+    onSuccess: invalidateGermination
+  })
+  const germinationReopenMutation = useMutation({
+    mutationFn: ({ planting, reason }: { planting: number; reason: string }) => reopenSowingGermination(planting, reason),
+    onSuccess: invalidateGermination
   })
   const moveMutation = useMutation({
     mutationFn: ({ plantPk, move }: { plantPk: number; move: SpecificPlantMove }) => moveSpecificPlant(plantPk, move),
@@ -705,6 +793,15 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       }))
     })
   )
+  // Which sowing each selectable cell belongs to, so the entry form can tell
+  // whether a seedling recorded now is a late arrival against a closed sowing.
+  const sowingOfCellPlanting = plantings.reduce<Record<number, SeedTrayPlanting>>((sowings, planting) => {
+    planting.cell_plantings?.forEach((cell) => {
+      sowings[cell.pk] = planting
+    })
+    return sowings
+  }, {})
+  const selectionIsLate = germinationSelections.some((selection) => sowingOfCellPlanting[selection.cellPlantingPk]?.germination?.provisional === false)
   const isLoading = [
     seedTrayModelsQuery,
     seedTraysQuery,
@@ -745,6 +842,23 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     await germinationMutation.mutateAsync(request)
     setGerminationSelections([])
     setGerminationNotes('')
+  }
+
+  async function handleCloseGermination() {
+    if (!closingSowing) return
+    await germinationClosureMutation.mutateAsync({
+      planting: closingSowing.pk,
+      cause: closingCause,
+      reason: closingReason
+    })
+    setClosingSowing(undefined)
+    setClosingReason('')
+  }
+
+  async function handleReopenGermination(planting: SeedTrayPlanting) {
+    const reason = globalThis.prompt('Why is this close being withdrawn? A seedling that genuinely came up late is recorded as a germination instead.')
+    if (!reason || !reason.trim()) return
+    await germinationReopenMutation.mutateAsync({ planting: planting.pk, reason })
   }
 
   function toggleGerminationSelection(cellPlantingPk: number, cellLabel: string) {
@@ -1103,6 +1217,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
             <th>Planted On</th>
             <th>Seeds / clusters sown</th>
             <th>Seeds Used</th>
+            <th>Germination</th>
             <th>Notes</th>
             <th>Removed</th>
           </tr>
@@ -1118,6 +1233,20 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
                 <td>
                   {packet?.plant} - {packet?.variety}
                 </td>
+                <td>
+                  <GerminationSummary germination={planting.germination} />
+                  <div className="mt-1">
+                    {planting.germination?.provisional ? (
+                      <Button size="sm" variant="outline-secondary" onClick={() => setClosingSowing(planting)} disabled={germinationClosureMutation.isPending}>
+                        Finished germinating
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline-secondary" onClick={() => handleReopenGermination(planting)} disabled={germinationReopenMutation.isPending}>
+                        Correct this close
+                      </Button>
+                    )}
+                  </div>
+                </td>
                 <td>{planting.notes}</td>
                 <td>{planting.removed ? 'Yes' : ''}</td>
               </tr>
@@ -1125,6 +1254,18 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           })}
         </tbody>
       </Table>
+      {closingSowing && (
+        <GerminationCloseForm
+          sowing={closingSowing}
+          cause={closingCause}
+          reason={closingReason}
+          busy={germinationClosureMutation.isPending}
+          onChangeCause={setClosingCause}
+          onChangeReason={setClosingReason}
+          onSave={handleCloseGermination}
+          onCancel={() => setClosingSowing(undefined)}
+        />
+      )}
       <div className="d-flex align-items-center gap-2 mb-2">
         <span className="text-muted">Select one or more sown cells to record germination.</span>
         <Button size="sm" variant="outline-success" onClick={() => setGerminationSelections(allGerminationSelections)} disabled={allGerminationSelections.length === 0}>
@@ -1164,6 +1305,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           selections={germinationSelections}
           date={germinationDate}
           notes={germinationNotes}
+          late={selectionIsLate}
           onChangeDate={setGerminationDate}
           onChangeQuantity={changeGerminationQuantity}
           onChangeNotes={setGerminationNotes}

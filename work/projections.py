@@ -22,6 +22,7 @@ from plantings.models import (
     PlantCohort,
     ProductionBatch,
     SeedTrayPlanting,
+    SowingGerminationClosure,
     SpecificPlant,
     SpecificPlantLocation,
 )
@@ -137,12 +138,59 @@ def _source_task(rule, key, title, start_day, end_day, targets, snapshot):
     )
 
 
+def _open_germination_sowings(rule):
+    """Return this workspace's tray sowings that are still germinating.
+
+    A sowing somebody has declared finished has nothing left to check and
+    nothing left to assess, so both germination projections drop it. That is
+    what makes the assessment task clear on close rather than needing to be
+    dismissed.
+    """
+    return SeedTrayPlanting.objects.filter(
+        workspace=rule.workspace, removed=False, batch__status__in=OPEN_BATCHES,
+    ).exclude(
+        Exists(SowingGerminationClosure.objects.filter(
+            sowing=OuterRef('pk'), reopened_at__isnull=True,
+        )),
+    ).select_related('batch__variety__plant', 'seed_tray')
+
+
+def _germination_assessment_tasks(rule):
+    """Ask for a decision once a sowing has passed its germination window.
+
+    The variety's recorded day range prompts the question; it does not answer
+    it. Anything that came up is already counted, so what is left is a
+    judgement about whether more will — which is exactly the judgement
+    `plantings.germination.close_germination` records.
+    """
+    tasks = []
+    for sowing in _open_germination_sowings(rule):
+        variety = sowing.batch.variety
+        _minimum, maximum = _metadata_days(variety, 'germination')
+        if maximum is None or not _allows(rule, variety=variety):
+            continue
+        planted = sowing.planted.astimezone(ZoneInfo(rule.workspace.timezone)).date()
+        due_day = planted + timedelta(days=maximum)
+        targets = [TargetLink(sowing, f'Sowing {sowing.pk}')]
+        if sowing.seed_tray_id:
+            targets.append(TargetLink(sowing.seed_tray, f'Tray {sowing.seed_tray_id}', f'/seedtrays/{sowing.seed_tray_id}'))
+        tasks.append(_source_task(
+            rule, f'sowing:{sowing.pk}', f'Assess germination: {variety}',
+            due_day, due_day, targets,
+            {'sowing': sowing.pk, 'planted': sowing.planted.isoformat(), 'window_ends': due_day.isoformat()},
+        ))
+    return [task for task in tasks if task]
+
+
 def _sowing_tasks(rule, maturity=False):
     prefix = 'maturity' if maturity else 'germination'
     label = 'Harvest review' if maturity else 'Germination check'
-    rows = SeedTrayPlanting.objects.filter(
-        workspace=rule.workspace, removed=False, batch__status__in=OPEN_BATCHES,
-    ).select_related('batch__variety__plant', 'seed_tray')
+    if maturity:
+        rows = SeedTrayPlanting.objects.filter(
+            workspace=rule.workspace, removed=False, batch__status__in=OPEN_BATCHES,
+        ).select_related('batch__variety__plant', 'seed_tray')
+    else:
+        rows = _open_germination_sowings(rule)
     tasks = []
     for sowing in rows:
         variety = sowing.batch.variety
@@ -603,6 +651,7 @@ def _short_lines(order):
 
 PROJECTORS = {
     WorkTaskRule.Trigger.GERMINATION: _sowing_tasks,
+    WorkTaskRule.Trigger.GERMINATION_WINDOW_END: _germination_assessment_tasks,
     WorkTaskRule.Trigger.MATURITY: _maturity_tasks,
     WorkTaskRule.Trigger.PLAN_MILESTONE: _milestone_tasks,
     WorkTaskRule.Trigger.STAGE_AGE: _growth_tasks,

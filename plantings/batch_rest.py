@@ -36,6 +36,7 @@ from .batches import (
     lock_batch_for_sowing,
     reopen_batch,
 )
+from .germination import germination_json
 from .models import GardenPlanting, ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
 from .yields import batch_harvest_finished_count, batch_harvest_totals
 
@@ -115,6 +116,7 @@ class BatchSowingSerializer(serializers.Serializer):  # pylint: disable=abstract
     notes = serializers.CharField(read_only=True, allow_null=True)
     cells = serializers.ListField(read_only=True)
     plants_observed = serializers.IntegerField(read_only=True)
+    germination = serializers.DictField(read_only=True, allow_null=True)
 
 
 def _describe_cells(sowing):
@@ -151,6 +153,7 @@ def _describe_sowing(sowing):
             'notes': sowing.notes,
             'cells': [],
             'plants_observed': sowing.specific_plants.count(),
+            'germination': None,
         }
     is_tray = hasattr(sowing, 'cell_plantings')
     location = getattr(sowing, 'location', None)
@@ -168,6 +171,9 @@ def _describe_sowing(sowing):
         'notes': sowing.notes,
         'cells': cells,
         'plants_observed': sum(cell['plants_observed'] for cell in cells),
+        # Only a tray sowing can be closed: it is the only shape whose seed
+        # produces countable seedlings rather than a crop.
+        'germination': germination_json(sowing) if is_tray else None,
     }
 
 

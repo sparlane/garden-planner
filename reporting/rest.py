@@ -9,6 +9,7 @@ from .common import csv_response, normalized_filters, report_response
 from .filters import (
     CommerceFilters,
     DashboardFilters,
+    GerminationFilters,
     GstEntryFilters,
     GstPeriodFilters,
     InventoryBalanceFilters,
@@ -22,6 +23,7 @@ from .filters import (
 )
 from .commerce import dashboard_report, order_report, profitability_report
 from .documents import supply_document_report
+from .germination import germination_rates
 from .gst import gst_entry_report, gst_period_report
 from .production import production_batches
 from .traceability import lot_trace, plant_trace
@@ -93,6 +95,12 @@ StocktakeVarianceView = _view(
 StocktakeVarianceExportView = _view(
     'StocktakeVarianceExportView', StocktakeVarianceFilters,
     stocktake_variances, True,
+)
+GerminationView = _view(
+    'GerminationView', GerminationFilters, germination_rates,
+)
+GerminationExportView = _view(
+    'GerminationExportView', GerminationFilters, germination_rates, True,
 )
 ProductionView = _view(
     'ProductionView', ProductionFilters, production_batches,

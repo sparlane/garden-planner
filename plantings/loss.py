@@ -39,6 +39,17 @@ The cohort actions `observe`, `adjust`, `split`, `merge` and `promote` are about
 anonymous quantity rather than loss, and have no individual counterpart on
 purpose.
 
+Ungerminated seed borrows the cause vocabulary without joining these totals.
+`SowingGerminationClosure` records the seed a closed sowing never turned into a
+seedling, with a cause from `RECORDABLE_CAUSES`, so loss by cause reads the same
+whether the thing lost had an identity, a cohort, or never came up at all. It
+stays out of `loss_by_cause` because it is counted in seeds: a seed that never
+germinated was never a unit of stock, so adding it to a plant total would make
+the production report's loss equation stop reconciling against the plants and
+cohort units it is derived from. `reporting.germination` totals it separately,
+and its cost reaches production loss through `costing.allocation.retire_ungerminated`
+rather than through anything here.
+
 Adding an event or a cause to either side means adding it here, or saying here
 why it has no counterpart.
 """

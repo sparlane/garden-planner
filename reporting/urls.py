@@ -4,6 +4,8 @@ from django.urls import path
 
 from .rest import (
     DashboardView,
+    GerminationExportView,
+    GerminationView,
     GstEntryExportView,
     GstEntryView,
     GstPeriodExportView,
@@ -41,6 +43,8 @@ urlpatterns = [
     path('inventory-movements/export/', MovementExportView.as_view()),
     path('stocktake-variances/', StocktakeVarianceView.as_view()),
     path('stocktake-variances/export/', StocktakeVarianceExportView.as_view()),
+    path('germination/', GerminationView.as_view()),
+    path('germination/export/', GerminationExportView.as_view()),
     path('production-batches/', ProductionView.as_view()),
     path('production-batches/export/', ProductionExportView.as_view()),
     path('orders/', OrderView.as_view()),
