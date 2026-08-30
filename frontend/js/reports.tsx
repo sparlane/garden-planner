@@ -10,7 +10,7 @@ import { DashboardRow, LossByCause, ProductionTotals, ProfitabilityTotals, Repor
 import { CohortLossCause } from './types/plantings'
 import { formatDateTime, formatMoney } from './utils'
 
-type ReportPage = 'dashboard' | 'inventory' | 'production' | 'orders' | 'profitability' | 'traceability' | 'gst'
+type ReportPage = 'dashboard' | 'inventory' | 'production' | 'germination' | 'orders' | 'profitability' | 'traceability' | 'gst'
 
 // The period totals and the rows every total is the sum of. They are two
 // reports rather than one because the second is the evidence for the first,
@@ -124,15 +124,26 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
     updated.delete('page')
     setParams(updated)
   }
-  const dated = ['dashboard', 'production', 'orders', 'profitability', 'gst'].includes(page)
+  const dated = ['dashboard', 'production', 'germination', 'orders', 'profitability', 'gst'].includes(page)
   const gstEntries = page === 'gst' && params.get('section') === 'entries'
   return (
     <Card body className="mb-3">
       <Row className="g-2">
         {dated && <FilterField label="From" name="date_from" type="date" params={params} update={update} />}
         {dated && <FilterField label="To" name="date_to" type="date" params={params} update={update} />}
-        {['production', 'profitability'].includes(page) && <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />}
-        {['production', 'profitability'].includes(page) && <FilterField label="Batch ID" name="batch" type="number" params={params} update={update} />}
+        {['production', 'germination', 'profitability'].includes(page) && <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />}
+        {['production', 'germination', 'profitability'].includes(page) && <FilterField label="Batch ID" name="batch" type="number" params={params} update={update} />}
+        {page === 'germination' && <FilterField label="Tray ID" name="seed_tray" type="number" params={params} update={update} />}
+        {page === 'germination' && (
+          <Col md={3}>
+            <Form.Label>Finished germinating</Form.Label>
+            <Form.Select value={params.get('provisional') ?? ''} onChange={(event) => update('provisional', event.target.value)}>
+              <option value="">Every sowing</option>
+              <option value="false">Closed sowings only</option>
+              <option value="true">Still germinating</option>
+            </Form.Select>
+          </Col>
+        )}
         {page === 'orders' && <FilterField label="Order reference" name="order" params={params} update={update} />}
         {page === 'profitability' && <FilterField label="Customer ID" name="customer" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Item ID" name="item" type="number" params={params} update={update} />}

@@ -21,6 +21,7 @@ class WorkTaskType(models.TextChoices):
     """Stable categories shared by rules, projections, and manual work."""
 
     GERMINATION = 'germination_check', 'Germination check'
+    GERMINATION_ASSESSMENT = 'germination_assessment', 'Germination assessment'
     WATERING = 'watering', 'Watering'
     FEEDING = 'feeding', 'Feeding'
     THINNING = 'thinning', 'Thinning'
@@ -45,6 +46,7 @@ class WorkTaskRule(WorkspaceOwnedModel):
         """Available authoritative scheduling anchors."""
 
         GERMINATION = 'sowing_germination', 'Expected sowing germination'
+        GERMINATION_WINDOW_END = 'sowing_germination_end', 'End of sowing germination window'
         PLAN_MILESTONE = 'plan_milestone', 'Approved plan milestone'
         STAGE_AGE = 'stage_age', 'Current stage target age'
         EXPECTED_READY = 'expected_ready', 'Recorded expected-ready date'

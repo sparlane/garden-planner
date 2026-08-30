@@ -9,6 +9,7 @@ from health.models import HealthObservation, HealthObservationType
 from health.operations import record_follow_up
 from health.services import preview_observation, record_observation
 
+from plantings.germination import close_germination, reopen_germination
 from plantings.models import (
     GardenSquareTransplant,
     ProductionBatch,
@@ -20,6 +21,7 @@ from tests.factories import (
     make_garden_square,
     make_plant_variety,
     make_seed_packet,
+    make_seed_tray,
     make_seed_tray_cell_planting,
     make_seed_tray_planting,
     make_seeds,
@@ -66,6 +68,63 @@ class WorkProjectionTests(TestCase):
         after = projected_tasks(self.workspace)
         self.assertEqual(before[0].key, after[0].key)
         self.assertEqual(after[0].due_start - before[0].due_start, timedelta(days=3))
+
+    def _germinating_sowing(self, **overrides):
+        """Create one tray sowing with a three-to-five-day window."""
+        variety = make_plant_variety(
+            workspace=self.workspace, germination_days_min=3, germination_days_max=5,
+        )
+        seeds = make_seeds(workspace=self.workspace, plant_variety=variety)
+        packet = make_seed_packet(workspace=self.workspace, seeds=seeds)
+        batch = ProductionBatch.objects.create(
+            workspace=self.workspace, code='B-ASSESS', variety=variety,
+        )
+        return SeedTrayPlanting.objects.create(
+            workspace=self.workspace, batch=batch, seeds_used=packet,
+            quantity=10, planted=datetime(2026, 8, 1, tzinfo=datetime_timezone.utc),
+            **overrides,
+        )
+
+    @staticmethod
+    def _of_type(tasks, task_type):
+        """Return only the projections of one task type."""
+        return [task for task in tasks if task.task_type == task_type]
+
+    def test_assessment_is_asked_for_at_the_end_of_the_germination_window(self):
+        """The recorded day range prompts the question it cannot answer."""
+        sowing = self._germinating_sowing()
+        tasks = self._of_type(
+            projected_tasks(self.workspace), WorkTaskType.GERMINATION_ASSESSMENT,
+        )
+        self.assertEqual(len(tasks), 1)
+        planted = sowing.planted.astimezone(ZoneInfo(self.workspace.timezone)).date()
+        self.assertEqual(
+            tasks[0].due_end.astimezone(ZoneInfo(self.workspace.timezone)).date(),
+            planted + timedelta(days=5),
+        )
+
+    def test_closing_the_sowing_clears_both_germination_projections(self):
+        """Neither question survives the answer, so neither needs dismissing."""
+        tray = make_seed_tray(workspace=self.workspace)
+        sowing = self._germinating_sowing(seed_tray=tray)
+        make_seed_tray_cell_planting(seed_tray_planting=sowing, quantity=10)
+        germination_types = {
+            WorkTaskType.GERMINATION, WorkTaskType.GERMINATION_ASSESSMENT,
+        }
+
+        def germination_tasks():
+            return [
+                task for task in projected_tasks(self.workspace)
+                if task.task_type in germination_types
+            ]
+
+        self.assertEqual(len(germination_tasks()), 2)
+        closure = close_germination(
+            sowing, None, loss_cause='failed', reason='Window has passed.',
+        )
+        self.assertEqual(germination_tasks(), [])
+        reopen_germination(closure, None, 'Closed the wrong tray.')
+        self.assertEqual(len(germination_tasks()), 2)
 
     def test_daily_recurrence_retains_local_time_across_dst(self):
         """Calendar arithmetic does not shift a task at the DST boundary."""

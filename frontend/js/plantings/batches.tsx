@@ -17,6 +17,7 @@ import { getInputApplications } from '../api/applications'
 import { FamilyTotals, HarvestTable } from './harvest_list'
 import { STATE_LABELS } from './lifecycle'
 import { BatchCosts } from './batch_costs'
+import { GerminationSummary } from './germination'
 import { addBatchCta, backToBatchListLink, batchCodeLabel, batchListHeading, batchStatusLabel, batchStatusLabels, createBatchCta, newBatchCta } from './batch_terms'
 
 const STATUS_VARIANTS: Record<ProductionBatchStatus, string> = {
@@ -364,6 +365,11 @@ function BatchSowings({ batch }: { batch: ProductionBatchDetail }) {
               )}
               {sowing.location && <> · {sowing.location}</>}
             </div>
+            {sowing.germination && (
+              <div className="mt-1">
+                <GerminationSummary germination={sowing.germination} />
+              </div>
+            )}
             {sowing.cells.length > 0 && (
               <Table size="sm" className="mt-2">
                 <thead>

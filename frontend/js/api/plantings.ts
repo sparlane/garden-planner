@@ -28,6 +28,7 @@ import {
   SeedTrayPlanting,
   GardenSquareTransplanting,
   GardenSquarePlanting,
+  GerminationClose,
   GardenQuickAddEntry,
   GardenQuickAddReview,
   GardenQuickAddedPlanting,
@@ -146,6 +147,19 @@ function completePlantingSeedTray(plantingPk: number) {
 
 function correctSeedTraySowing(plantingPk: number, data: SowingCorrection) {
   return csrfPost(`/plantings/seedtray/${plantingPk}/correct-sowing/`, data)
+}
+
+// Declaring a sowing finished germinating. The remainder is not sent: the
+// server counts it under a lock, so two operators closing the same tray cannot
+// disagree about how many seeds never came up.
+function closeSowingGermination(plantingPk: number, data: GerminationClose): Promise<SeedTrayPlanting> {
+  return csrfPost(`/plantings/seedtray/${plantingPk}/close-germination/`, data).then((response) => response.json() as Promise<SeedTrayPlanting>)
+}
+
+// Withdrawing a close recorded in error. A seedling that genuinely came up
+// late is not this: it is an ordinary germination carrying a reason.
+function reopenSowingGermination(plantingPk: number, reason: string): Promise<SeedTrayPlanting> {
+  return csrfPost(`/plantings/seedtray/${plantingPk}/reopen-germination/`, { reason }).then((response) => response.json() as Promise<SeedTrayPlanting>)
 }
 
 function getPlantingTransplantedGardenSquares(signal?: AbortSignal): Promise<Array<GardenSquareTransplanting>> {
@@ -408,6 +422,8 @@ export {
   addPlantingSeedTray,
   completePlantingSeedTray,
   correctSeedTraySowing,
+  closeSowingGermination,
+  reopenSowingGermination,
   getPlantingTransplantedGardenSquares,
   completePlantingTransplantedGardenSquare,
   getPlantingSeedTrayCurrent,

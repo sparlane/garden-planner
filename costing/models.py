@@ -93,6 +93,7 @@ class CostAllocationRun(WorkspaceOwnedModel):
         SOWING_POSTED = 'sowing_posted', 'Sowing posted'
         SOWING_CORRECTED = 'sowing_corrected', 'Sowing corrected'
         GERMINATION = 'germination', 'Germination observed'
+        GERMINATION_CLOSED = 'germination_closed', 'Germination closed'
         GENERATION_CLOSED = 'generation_closed', 'Tray generation cleaned'
         OUTPUT_FINALIZED = 'output_finalized', 'Batch output finalized'
         MANUAL_RECALCULATE = 'manual_recalculate', 'Recalculated by an operator'

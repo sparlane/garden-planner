@@ -21,6 +21,7 @@ from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
 from inventory.models import InventoryItem
+from plantings.germination import ungerminated_by_cell
 from plantings.models import (
     GardenPlanting,
     GardenRowDirectSowPlanting,
@@ -40,6 +41,7 @@ from .allocation import (
     plant_shares,
     resolve_cells_to_plants,
     resolve_unidentified_to_cohorts,
+    retire_ungerminated,
     seed_shares,
     unattributable_share,
     whole_source_share,
@@ -208,6 +210,10 @@ def _seed_source(sowing):
             (row.cell_id, sowing.generation_id, row.quantity)
             for row in sowing.cell_plantings.order_by('cell_id')
         ])
+        # Only once the sowing is declared finished germinating. Before that a
+        # cell with no seedling is a cell that might still produce one, which
+        # is the same reason `_resolve_for_freeze` waits for output to be final.
+        shares = retire_ungerminated(shares, ungerminated_by_cell(sowing))
     elif isinstance(sowing, GardenPlanting) and sowing.tracking == GardenPlanting.Tracking.INDIVIDUAL:
         shares = plant_shares(sowing.specific_plants.values_list('pk', flat=True))
     else:

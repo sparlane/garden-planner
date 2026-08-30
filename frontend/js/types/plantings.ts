@@ -83,6 +83,7 @@ interface ProductionBatchSowing {
   notes: string | null
   cells: Array<ProductionBatchCell>
   plants_observed: number
+  germination: SowingGermination | null
 }
 
 interface ProductionBatchLocation {
@@ -151,11 +152,35 @@ interface GardenSquareDirectPlanting extends Planting {
   planted: string
 }
 
+// What a sowing's germination adds up to, and whether that total is finished.
+// `provisional` is the whole point: an open sowing's count can still rise, so
+// the rate beside it is a floor rather than a result.
+interface SowingGermination {
+  sown_quantity: number
+  observed_count: number
+  ungerminated: number
+  rate: string | null
+  provisional: boolean
+  closed_at: string | null
+  closed_observed_count: number | null
+  closed_ungerminated: number | null
+  loss_cause: CohortLossCause | ''
+  late_germinations: number
+  closure: number | null
+}
+
+interface GerminationClose {
+  closed_at?: string
+  loss_cause?: CohortLossCause
+  reason?: string
+}
+
 interface SeedTrayPlanting extends Planting {
   seed_tray?: number
   location?: string
   planted: string
   cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
+  germination?: SowingGermination
 }
 
 interface GardenSquareTransplanting extends Planting {
@@ -179,6 +204,7 @@ interface SeedTrayPlantingDetails {
   germination_date_early?: string
   germination_date_late?: string
   germinated_count: number
+  germination: SowingGermination
   transplanted_count: number
   cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
 }
@@ -522,6 +548,9 @@ interface SpecificPlantCreate {
   cell_planting: number
   germinated: string
   notes?: string
+  // Required only when the sowing has been declared finished germinating: a
+  // seedling that contradicts that judgement has to say why.
+  reason?: string
 }
 
 interface SowingCorrection {
@@ -1165,6 +1194,8 @@ export {
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
+  SowingGermination,
+  GerminationClose,
   SpecificPlant,
   SpecificPlantCreate,
   SpecificPlantDetail,

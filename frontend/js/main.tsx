@@ -210,7 +210,7 @@ function FrontEndPage() {
             </WorkspaceModeRoute>
           }
         />
-        {(['inventory', 'production', 'orders', 'profitability', 'traceability', 'gst'] as const).map((page) => (
+        {(['inventory', 'production', 'germination', 'orders', 'profitability', 'traceability', 'gst'] as const).map((page) => (
           <Route
             key={page}
             path={`/reports/${page}`}

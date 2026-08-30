@@ -547,16 +547,21 @@ def record_lifecycle_event(plant, user, request):
     return _apply_outcome(plant, user, request)
 
 
-def record_germination_event(plant, user):
+def record_germination_event(plant, user, reason=''):
     """Record the germination that created this plant.
 
     Called from inside the transaction that creates the plant, which already
     holds the locks the fact depends on.
+
+    The reason is empty for the ordinary case. It carries why a seedling was
+    recorded after its sowing had been declared finished germinating, which
+    `plantings.germination` requires and which belongs here rather than on the
+    closure, because it is a fact about this plant.
     """
     return _create_event(
         plant,
         user,
-        OutcomeRequest(EventType.GERMINATED, occurred_at=plant.germinated),
+        OutcomeRequest(EventType.GERMINATED, occurred_at=plant.germinated, reason=reason),
     )
 
 

@@ -29,6 +29,7 @@ from inventory.models import InventoryItem, QuantityCertainty
 from inventory.units import UnitCode
 from plantings.batches import finalize_batch_output
 from plantings.cohorts import observe_cohort, promote_cohort
+from plantings.germination import close_germination, reopen_germination
 from plantings.lifecycle import (
     EventType,
     LifecycleState,
@@ -36,6 +37,7 @@ from plantings.lifecycle import (
     record_lifecycle_event,
 )
 from plantings.models import (
+    CohortOperation,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
     SpecificPlant,
@@ -70,6 +72,7 @@ from .services import (
 
 TargetType = InputApplicationTarget.TargetType
 Trigger = CostAllocationRun.Trigger
+LossCause = CohortOperation.LossCause
 
 
 class DispositionCoverageTests(SimpleTestCase):
@@ -411,6 +414,88 @@ class EmptyCellTests(CostingServiceTestCase):
         reversals = CostAllocation.objects.filter(
             batch=self.batch,
             reversal_of__isnull=False,
+        )
+        self.assertTrue(reversals.exists())
+        for reversal in reversals:
+            self.assertEqual(reversal.amount, reversal.reversal_of.amount)
+
+
+class ClosedGerminationTests(CostingServiceTestCase):
+    """Seed that a closed sowing never turned into a seedling is loss now.
+
+    The distinction `EmptyCellTests` draws — an empty cell is provisional until
+    output is final — is the right one for a sowing nobody has assessed. Once
+    somebody has said the sowing is finished, waiting for batch finalization to
+    call it a loss leaves the batch's cost overstating what its seedlings cost.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.sowing = self.sow([(self.cells[0], 4), (self.cells[1], 4)])
+        self.apply_media(self.cells, '0.08')
+        self.plant = self.germinate(self.sowing, self.cells[0])[0]
+        self.reallocate()
+
+    def close(self):
+        """Declare the sowing finished, which reallocates on its own."""
+        return close_germination(
+            self.sowing, self.user, loss_cause=LossCause.FAILED,
+            reason='The window has passed.',
+        )
+
+    def test_the_seed_that_produced_nothing_becomes_loss_on_close(self):
+        """Three of four in one cell and four of four in the other."""
+        self.close()
+        totals = self.totals_by_target()
+        self.assertEqual(totals[CostAllocation.TargetType.PRODUCTION_LOSS], Decimal('1.7500'))
+
+    def test_the_seedling_keeps_only_the_seed_it_came_from(self):
+        """One cluster of four, plus the media its cell was given."""
+        self.close()
+        self.assertEqual(plant_cost_breakdown(self.plant)['provisional_value'], '0.3300')
+
+    def test_the_media_on_an_empty_cell_stays_provisional(self):
+        """Closing germination says nothing about where the media went."""
+        self.close()
+        totals = self.totals_by_target()
+        self.assertEqual(totals[CostAllocation.TargetType.SEED_TRAY_CELL], Decimal('0.0800'))
+
+    def test_the_batch_still_reconciles_after_the_remainder_moves(self):
+        """Nothing is created or dropped by calling part of the seed a loss."""
+        self.close()
+        breakdown = batch_cost_breakdown(self.batch)
+        self.assertEqual(breakdown['provisional_total'], '2.1600')
+        totals = breakdown['totals']
+        booked = sum(Decimal(totals[bucket]) for bucket in VALUE_BUCKETS)
+        self.assertEqual(booked, Decimal('2.1600'))
+
+    def test_an_open_sowing_retires_nothing(self):
+        """Before the close, a cell with no seedling might still produce one."""
+        totals = self.totals_by_target()
+        self.assertNotIn(CostAllocation.TargetType.PRODUCTION_LOSS, totals)
+
+    def test_a_late_seedling_takes_its_share_back_out_of_loss(self):
+        """The closure stands; the cost follows the plants that exist."""
+        self.close()
+        late = self.germinate(self.sowing, self.cells[1])[0]
+        self.reallocate(Trigger.GERMINATION)
+        totals = self.totals_by_target()
+        self.assertEqual(totals[CostAllocation.TargetType.PRODUCTION_LOSS], Decimal('1.5000'))
+        self.assertEqual(plant_cost_breakdown(late)['provisional_value'], '0.3300')
+
+    def test_reopening_the_close_returns_the_cost_to_the_cells(self):
+        """A close recorded in error leaves no loss behind it."""
+        closure = self.close()
+        reopen_germination(closure, self.user, 'Closed the wrong tray.')
+        totals = self.totals_by_target()
+        self.assertNotIn(CostAllocation.TargetType.PRODUCTION_LOSS, totals)
+        self.assertEqual(totals[CostAllocation.TargetType.SEED_TRAY_CELL], Decimal('1.0800'))
+
+    def test_the_retired_seed_layer_is_reversed_not_edited(self):
+        """The cell's original share stays readable beside what replaced it."""
+        self.close()
+        reversals = CostAllocation.objects.filter(
+            batch=self.batch, reversal_of__isnull=False,
         )
         self.assertTrue(reversals.exists())
         for reversal in reversals:

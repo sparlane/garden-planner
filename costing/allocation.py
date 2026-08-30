@@ -110,6 +110,42 @@ def seed_shares(sowing_quantity, cell_quantities):
     return shares
 
 
+def retire_ungerminated(shares, remainders):
+    """Move a closed cell's ungerminated seed out of the cell and into loss.
+
+    Called only for seed, and only for a sowing somebody has declared finished
+    germinating. Until then a cell holding more seed than it has seedlings is a
+    cell that might still produce one, so its whole share follows the seedlings
+    that do appear; `resolve_cells_to_plants` documents that side of it.
+
+    The weights are the seeds placed in each cell, which is what
+    `seed_shares` built them from, so the split is a count and not a ratio: a
+    cell sown with three that produced two keeps two seeds' worth of cost and
+    gives up one. The retired parts of every cell combine into one production
+    loss layer, the same shape `loss_shares` produces at output finalization,
+    so a report reads one figure however the cost got there.
+
+    `remainders` is derived from the seedlings that exist now rather than from
+    the closure's stored count. A late germination therefore reclaims its share
+    on the next reallocation without anybody correcting a record.
+    """
+    if not remainders:
+        return shares
+    kept = []
+    retired = []
+    for share in shares:
+        remainder = remainders.get(share.cell_id) if share.cell_id else None
+        if not remainder or share.target_type != CostAllocation.TargetType.SEED_TRAY_CELL:
+            kept.append(share)
+            continue
+        lost = min(Decimal(remainder), share.weight)
+        if lost > 0:
+            retired.append(share._replace(weight=lost))
+        if share.weight > lost:
+            kept.append(share._replace(weight=share.weight - lost))
+    return combine(kept + loss_shares(retired))
+
+
 def cell_volume_shares(cell_targets):
     """Split cell-targeted cost the way the application calculated it.
 

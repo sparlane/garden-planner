@@ -1391,6 +1391,128 @@ class CohortEvent(WorkspaceOwnedModel):
         raise ValidationError('Cohort events cannot be deleted.')
 
 
+class SowingGerminationClosure(WorkspaceOwnedModel):
+    """The fact that one tray sowing has finished germinating.
+
+    A count of seedlings against a sown quantity is a running total until
+    something says the sowing is done. Three of ten up on day seven and three
+    that will never become four look identical without this row, which is
+    exactly the ambiguity the re-sow decision cannot afford.
+
+    The fact closes the sowing, not each seed. A failed `SpecificPlant` per
+    ungerminated seed would invent an identity for something that never
+    existed and distort every per-plant figure, so the remainder is a quantity
+    here and nothing else.
+
+    The stored counts are the snapshot taken at the moment of the decision and
+    never change afterwards. What is true now is derived from the plants that
+    exist — `plantings.germination` returns both — because a seedling that
+    comes up after the close is a real event and the operator's judgement at
+    the time is a real record. Neither is allowed to overwrite the other.
+
+    Reopening is for a close recorded in error. A genuinely late seedling is
+    recorded as an ordinary germination with a reason instead, which is the
+    late-germination policy `plantings.germination` documents in full.
+    """
+
+    #: The causes a remainder may be recorded under. Ungerminated seed shares
+    #: the cohort vocabulary so one report can read every loss the same way,
+    #: but it is counted in seeds rather than plants: see `plantings.loss`.
+    LOSS_CAUSE_CHOICES = [
+        (cause, label)
+        for cause, label in CohortOperation.LossCause.choices
+        if cause != CohortOperation.LossCause.UNSPECIFIED
+    ]
+
+    sowing = models.ForeignKey(
+        SeedTrayPlanting,
+        on_delete=models.PROTECT,
+        related_name='germination_closures',
+    )
+    closed_at = models.DateTimeField(default=timezone.now)
+    sown_quantity = models.PositiveIntegerField()
+    observed_count = models.PositiveIntegerField()
+    ungerminated = models.PositiveIntegerField()
+    loss_cause = models.CharField(
+        max_length=16, choices=LOSS_CAUSE_CHOICES, blank=True, default='',
+    )
+    reason = models.TextField(blank=True, default='')
+    reopened_at = models.DateTimeField(null=True, blank=True)
+    reopened_reason = models.TextField(blank=True, default='')
+    reopened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='+',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        editable=False,
+        related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sowing'],
+                condition=models.Q(reopened_at__isnull=True),
+                name='one_open_germination_closure_per_sowing',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(ungerminated=models.F('sown_quantity') - models.F('observed_count')) | models.Q(ungerminated=0, observed_count__gte=models.F('sown_quantity'))),
+                name='germination_closure_remainder_is_the_shortfall',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(ungerminated__gt=0) & ~models.Q(loss_cause='')
+                ) | models.Q(ungerminated=0, loss_cause=''),
+                name='germination_closure_cause_matches_remainder',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(reopened_at__isnull=True, reopened_reason='') | (models.Q(reopened_at__isnull=False) & ~models.Q(reopened_reason=''))),
+                name='germination_closure_reopening_states_why',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Sowing {self.sowing_id} closed at {self.closed_at} with {self.ungerminated} ungerminated'
+
+    def clean(self):
+        """Keep the remainder, its cause, and the reopening consistent."""
+        super().clean()
+        errors = {}
+        shortfall = max(self.sown_quantity - self.observed_count, 0)
+        if self.ungerminated != shortfall:
+            errors['ungerminated'] = 'The remainder is the seed that produced no seedling.'
+        if self.ungerminated and not self.loss_cause:
+            errors['loss_cause'] = 'Ungerminated seed needs a recorded cause.'
+        if not self.ungerminated and self.loss_cause:
+            errors['loss_cause'] = 'A cause describes a remainder, and there is none.'
+        recordable = {cause for cause, _label in self.LOSS_CAUSE_CHOICES}
+        if self.loss_cause and self.loss_cause not in recordable:
+            errors['loss_cause'] = 'Choose a cause a remainder can be recorded under.'
+        if self.sowing_id and self.sowing.workspace_id != self.workspace_id:
+            errors['sowing'] = 'The sowing belongs to a different workspace.'
+        if bool(self.reopened_at) != bool(self.reopened_reason.strip()):
+            errors['reopened_reason'] = 'Reopening a close requires a stated reason.'
+        if errors:
+            raise ValidationError(errors)
+
+    @property
+    def open(self):
+        """Return whether this closure still stands."""
+        return self.reopened_at is None
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Germination closures cannot be deleted.')
+
+
 class NurseryObservation(WorkspaceOwnedModel):
     """An immutable dated nursery fact, optionally replacing one mistake."""
 

@@ -13,6 +13,7 @@ from gp.utils import get_request_data
 from plants.metadata import variety_days
 from plants.models import MaturityBasis
 from workspaces.models import get_current_workspace
+from .germination import germination_json_map
 from .models import GardenPlanting, SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
 
 
@@ -55,6 +56,7 @@ def seedtray_current(request):
         .annotate(total=Sum('quantity'))
         .values_list('original_planting', 'total')
     )
+    germination = germination_json_map(plantings)
     planting_data = []
     for planting in plantings:
         if planting.pk in garden_square_location_counts:
@@ -79,6 +81,9 @@ def seedtray_current(request):
             'germination_date_early': _add_nullable_days(planting.planted, germination_min),
             'germination_date_late': _add_nullable_days(planting.planted, germination_max),
             'germinated_count': germinated_count,
+            # A count on its own cannot say whether it is still climbing, so
+            # the sowing's germination state travels beside it.
+            'germination': germination[planting.pk],
             'transplanted_count': transplanted_count,
             'cell_plantings': [
                 {'pk': cp.pk, 'cell': cp.cell.pk, 'quantity': cp.quantity}

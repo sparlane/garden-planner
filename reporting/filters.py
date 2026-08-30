@@ -108,6 +108,26 @@ class ProductionFilters(BaseReportFilters):  # pylint: disable=abstract-method
         return attrs
 
 
+class GerminationFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Filters for observed germination rate per sowing."""
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+    variety = serializers.IntegerField(required=False, min_value=1)
+    batch = serializers.IntegerField(required=False, min_value=1)
+    seed_tray = serializers.IntegerField(required=False, min_value=1)
+    provisional = ReportBooleanField(required=False)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        date_from, date_to = attrs.get('date_from'), attrs.get('date_to')
+        if date_from and date_to and date_to < date_from:
+            raise serializers.ValidationError({
+                'date_to': 'The end must not be before the start.',
+            })
+        return attrs
+
+
 class TraceFilters(BaseReportFilters):  # pylint: disable=abstract-method
     """Pagination-only schema for one exact traceability identity."""
 
