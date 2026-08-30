@@ -110,9 +110,9 @@ EXCLUSION_MESSAGES = {
     ),
     AWAITING_PAYMENT: (
         'Under the payments and hybrid bases input tax is claimed when the '
-        'supplier is paid. These receipts have no settlement date recorded, so '
-        'they are held back rather than claimed on their receipt date. Record '
-        'the date each supplier was paid on the receiving screen to claim them.'
+        'supplier is paid. These purchases have no payment date recorded, so '
+        'they are held back rather than claimed on their purchase date. Record '
+        'the supplier payment to claim them.'
     ),
 }
 
@@ -456,14 +456,24 @@ def _data_quality(workspace, entries, rows, as_at):  # pylint: disable=too-many-
         findings.append(_finding(
             'non_recoverable_input_tax', len(non_recoverable),
             'Tax on some purchases was not recoverable and is carried in the '
-            'cost of the stock instead of being claimed.',
+            'purchase cost instead of being claimed.',
             kind=PURCHASE,
         ))
 
     receipt_ids = {
         entry.document_id for entry in entries
-        if entry.kind in {PURCHASE, INPUT_TAX_ADJUSTMENT} and entry.document_id
+        if entry.source_type in {'stock_receipt', 'input_tax_adjustment'} and entry.document_id
     }
+    supplier_invoice_ids = {
+        entry.document_id for entry in entries
+        if entry.source_type in {'supplier_invoice', 'supplier_payment'} and entry.document_id
+    }
+    if supplier_invoice_ids:
+        from purchasing.models import SupplierInvoiceLine  # pylint: disable=import-outside-toplevel
+        receipt_ids.update(SupplierInvoiceLine.objects.filter(
+            invoice_id__in=supplier_invoice_ids,
+            receipt_line__isnull=False,
+        ).values_list('receipt_line__receipt_id', flat=True))
     warning_groups = defaultdict(list)
     receipts = StockReceipt.objects.filter(pk__in=receipt_ids).select_related(
         'workspace',

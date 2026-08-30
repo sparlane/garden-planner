@@ -27,6 +27,13 @@ from inventory.models import (
 )
 from inventory.units import UnitCode
 from locations.models import Location
+from purchasing.models import (
+    BusinessExpense,
+    ExpenseCategory,
+    SupplierInvoice,
+    SupplierInvoiceLine,
+)
+from purchasing.services import confirm_expense, confirm_invoice
 from sales.models import Payment, SalesOrder, SalesOrderLine
 from sales.services import create_order
 from tax.models import GstRegistration
@@ -229,6 +236,63 @@ class ReconciliationTests(GstReportTestCase):
         row = self._period('2026-03-01..2026-04-30')
         self.assertEqual(row['taxable_supplies_incl_tax'], '115.0000')
         self.assertEqual(row['output_tax'], '15.0000')
+
+    def test_freight_and_low_cost_assets_are_included_as_purchases(self):
+        """The purchases box covers all costs, not only received stock."""
+        self.register(basis=GstRegistration.Basis.INVOICE)
+        supplier = make_supplier(workspace=self.workspace)
+        invoice = SupplierInvoice.objects.create(
+            workspace=self.workspace,
+            supplier=supplier,
+            external_reference='FREIGHT-1',
+            invoice_date=date(2026, 3, 10),
+            currency_code='NZD',
+            created_by=self.user,
+        )
+        SupplierInvoiceLine.objects.create(
+            invoice=invoice,
+            description='Inbound freight',
+            is_freight=True,
+            subtotal_ex_tax=Decimal('10'),
+            tax_rate=Decimal('15'),
+            tax_total=Decimal('1.5'),
+            total_incl_tax=Decimal('11.5'),
+            tax_treatment='standard',
+            claim_input_tax=True,
+            claimable_percentage=Decimal('100'),
+        )
+        confirm_invoice(invoice, self.user)
+        category = ExpenseCategory.objects.create(
+            workspace=self.workspace,
+            name='Low-cost assets',
+        )
+        expense = BusinessExpense.objects.create(
+            workspace=self.workspace,
+            category=category,
+            supplier=supplier,
+            incurred_on=date(2026, 3, 12),
+            currency_code='NZD',
+            subtotal_ex_tax=Decimal('20'),
+            tax_total=Decimal('3'),
+            total_incl_tax=Decimal('23'),
+            tax_treatment='standard',
+            claim_input_tax=True,
+            claimable_percentage=Decimal('100'),
+            created_by=self.user,
+        )
+        confirm_expense(expense, self.user)
+
+        row = self._period('2026-03-01..2026-04-30')
+        self.assertEqual(row['purchases_incl_tax'], '34.5000')
+        self.assertEqual(row['input_tax'], '4.5000')
+        purchases = [
+            entry for entry in self.entries(period=row['period_label'])['results']
+            if entry['kind'] == 'purchase'
+        ]
+        self.assertEqual(
+            {entry['source_type'] for entry in purchases},
+            {'supplier_invoice', 'business_expense'},
+        )
 
     def test_every_money_column_equals_a_direct_sum_over_the_drill_down(self):
         """This is the claim the whole feature rests on, checked column by column."""

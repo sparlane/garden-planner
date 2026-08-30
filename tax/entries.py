@@ -31,7 +31,12 @@ from django.db import models
 
 from inventory.ledger import quantize_money
 from inventory.models import InputTaxAdjustment, StockReceipt, StockReceiptLine
-from purchasing.models import SupplierInvoice, SupplierInvoiceLine, SupplierPaymentAllocation
+from purchasing.models import (
+    BusinessExpense,
+    SupplierInvoice,
+    SupplierInvoiceLine,
+    SupplierPaymentAllocation,
+)
 from purchasing.services import invoice_net_total, invoice_paid_total
 
 from .facts import workspace_order_facts
@@ -223,6 +228,7 @@ def _period_purchase_entries(workspace, period, claimed):
     here. See `derive_entries` for why a period has to be told.
     """
     entries = _supplier_invoice_purchase_entries(workspace, period)
+    entries.extend(_business_expense_purchase_entries(workspace, period))
     linked_line_ids = SupplierInvoiceLine.objects.filter(
         invoice__workspace=workspace,
         receipt_line__isnull=False,
@@ -251,21 +257,21 @@ def _period_purchase_entries(workspace, period, claimed):
 
 
 def _supplier_invoice_purchase_entries(workspace, period):
-    """Claim receipt evidence through confirmed invoices and allocated payments."""
+    """Claim every confirmed invoice line on its invoice or payment date."""
     if period.basis == INVOICE:
         lines = SupplierInvoiceLine.objects.filter(
             invoice__workspace=workspace,
             invoice__status=SupplierInvoice.Status.CONFIRMED,
             invoice__invoice_date__gte=period.start,
             invoice__invoice_date__lte=period.end,
-            receipt_line__isnull=False,
-            receipt_line__receipt__status=StockReceipt.Status.POSTED,
+        ).filter(
+            models.Q(receipt_line__isnull=True) | models.Q(receipt_line__receipt__status=StockReceipt.Status.POSTED)
         ).select_related('invoice', 'receipt_line__receipt').prefetch_related(
             'invoice__corrections',
         )
         return [
-            _purchase_entry(
-                line.receipt_line, period, period.basis,
+            _invoice_line_purchase_entry(
+                line, period, period.basis,
                 claim_date=line.invoice.invoice_date,
                 source_type='supplier_invoice',
                 source_id=line.invoice_id,
@@ -288,10 +294,10 @@ def _supplier_invoice_purchase_entries(workspace, period):
     for allocation in allocations:
         factor = _payment_claim_factor(allocation)
         for line in allocation.invoice.lines.all():
-            if line.receipt_line_id is None or line.receipt_line.receipt.status != StockReceipt.Status.POSTED:
+            if line.receipt_line_id and line.receipt_line.receipt.status != StockReceipt.Status.POSTED:
                 continue
-            entries.append(_purchase_entry(
-                line.receipt_line, period, period.basis,
+            entries.append(_invoice_line_purchase_entry(
+                line, period, period.basis,
                 claim_date=allocation.payment.paid_on,
                 source_type='supplier_payment',
                 source_id=allocation.payment_id,
@@ -324,8 +330,8 @@ def _awaiting_invoice_payment_entries(workspace, period):
         invoice__status=SupplierInvoice.Status.CONFIRMED,
         invoice__invoice_date__gte=period.start,
         invoice__invoice_date__lte=period.end,
-        receipt_line__isnull=False,
-        receipt_line__receipt__status=StockReceipt.Status.POSTED,
+    ).filter(
+        models.Q(receipt_line__isnull=True) | models.Q(receipt_line__receipt__status=StockReceipt.Status.POSTED)
     ).select_related('invoice', 'receipt_line__receipt').prefetch_related(
         'invoice__corrections', 'invoice__payment_allocations__payment',
     )
@@ -336,14 +342,54 @@ def _awaiting_invoice_payment_entries(workspace, period):
         if net <= 0 or paid >= net:
             continue
         factor = _invoice_claim_factor(line.invoice) * (net - paid) / net
-        entries.append(_with(_purchase_entry(
-            line.receipt_line, None, period.basis,
+        entries.append(_with(_invoice_line_purchase_entry(
+            line, None, period.basis,
             claim_date=line.invoice.invoice_date,
             source_type='supplier_invoice',
             source_id=line.invoice_id,
             document_id=line.invoice_id,
             factor=factor,
         ), exclusion=AWAITING_PAYMENT))
+    return entries
+
+
+def _business_expense_purchase_entries(workspace, period):
+    """Claim confirmed costs which are not represented by a supplier invoice."""
+    expenses = BusinessExpense.objects.filter(
+        workspace=workspace,
+        status=BusinessExpense.Status.CONFIRMED,
+        supplier_invoice__isnull=True,
+    )
+    if period.basis == INVOICE:
+        return [
+            _expense_purchase_entry(expense, period, period.basis)
+            for expense in expenses.filter(
+                incurred_on__gte=period.start,
+                incurred_on__lte=period.end,
+            )
+        ]
+    entries = [
+        _expense_purchase_entry(
+            expense, period, period.basis,
+            claim_date=expense.paid_on,
+            source_type='business_expense_payment',
+        )
+        for expense in expenses.filter(
+            paid_on__gte=period.start,
+            paid_on__lte=period.end,
+        )
+    ]
+    entries.extend(
+        _with(
+            _expense_purchase_entry(expense, None, period.basis),
+            exclusion=AWAITING_PAYMENT,
+        )
+        for expense in expenses.filter(
+            incurred_on__gte=period.start,
+            incurred_on__lte=period.end,
+            paid_on__isnull=True,
+        )
+    )
     return entries
 
 
@@ -459,6 +505,72 @@ def _purchase_entry(
         ),
         input_tax_source=line.input_tax_source,
         proxy=source_type == 'stock_receipt' and not paid and receipt.invoice_date is None,
+    )
+
+
+def _invoice_line_purchase_entry(line, period, basis, **entry_values):
+    """Use stock evidence where linked, otherwise the invoice line snapshots."""
+    if line.receipt_line_id:
+        return _purchase_entry(line.receipt_line, period, basis, **entry_values)
+    factor = entry_values.pop('factor', Decimal('1'))
+    recoverable = quantize_money(line.recoverable_tax * factor)
+    return GstEntry(
+        kind=PURCHASE,
+        supply_date=entry_values['claim_date'],
+        period=period,
+        basis=basis,
+        source_type=entry_values['source_type'],
+        source_id=entry_values['source_id'],
+        document_id=entry_values['document_id'],
+        line_id=line.pk,
+        tax_code=line.tax_treatment,
+        tax_rate=Decimal(line.tax_rate),
+        taxable=quantize_money(line.subtotal_ex_tax * factor),
+        tax=recoverable,
+        non_recoverable_tax=quantize_money(
+            (line.tax_total - line.recoverable_tax) * factor,
+        ),
+        currency_code=line.invoice.currency_code,
+        time_of_supply_source=(
+            SUPPLIER_PAYMENT
+            if entry_values['source_type'] == 'supplier_payment'
+            else SUPPLIER_INVOICE
+        ),
+        input_tax_source=(
+            StockReceiptLine.InputTaxSource.SUPPLIER
+            if recoverable else StockReceiptLine.InputTaxSource.NONE
+        ),
+    )
+
+
+def _expense_purchase_entry(
+        expense, period, basis, *, claim_date=None,
+        source_type='business_expense'):
+    """Turn one confirmed, standalone business expense into a purchase entry."""
+    paid = source_type == 'business_expense_payment'
+    return GstEntry(
+        kind=PURCHASE,
+        supply_date=claim_date or expense.incurred_on,
+        period=period,
+        basis=basis,
+        source_type=source_type,
+        source_id=expense.pk,
+        document_id=expense.pk,
+        line_id=None,
+        tax_code=expense.tax_treatment,
+        tax_rate=(
+            expense.tax_total * Decimal('100') / expense.subtotal_ex_tax
+            if expense.subtotal_ex_tax else ZERO
+        ),
+        taxable=expense.subtotal_ex_tax,
+        tax=expense.recoverable_tax,
+        non_recoverable_tax=expense.tax_total - expense.recoverable_tax,
+        currency_code=expense.currency_code,
+        time_of_supply_source=SUPPLIER_PAYMENT if paid else 'expense_incurred',
+        input_tax_source=(
+            StockReceiptLine.InputTaxSource.SUPPLIER
+            if expense.recoverable_tax else StockReceiptLine.InputTaxSource.NONE
+        ),
     )
 
 
