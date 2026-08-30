@@ -1,3 +1,5 @@
+import { CohortLossCause } from './plantings'
+
 interface ReportQualityFlag {
   code: string
   count: number
@@ -47,16 +49,32 @@ interface ProfitabilityCurrency {
   net_sales: string
   direct_cogs: string
   production_loss: string
+  loss_by_cause: LossByCause<string>
   gross_profit: string | null
   gross_margin: string | null
 }
 
+// Loss totalled the same way for anonymous cohort units and identified plants:
+// units in the production report, money in the profitability one.
+type LossByCause<Value = number> = Record<CohortLossCause, Value>
+
 interface ProfitabilityTotals {
   currencies: Array<ProfitabilityCurrency>
+  lost_units_by_cause: LossByCause
+  lost_units: number
   provisional_rows: number
   unvalued_rows: number
   dimension_unattributed_rows: number
   finalized_margin_available: boolean
 }
 
-export type { DashboardRow, ProfitabilityCurrency, ProfitabilityTotals, ReportEnvelope, ReportQualityFlag }
+interface ProductionTotals {
+  batches: number
+  current_seedlings: number
+  loss_by_cause: LossByCause
+  loss_quantity: number
+  provisional_batches: number
+  unvalued_batches: number
+}
+
+export type { DashboardRow, LossByCause, ProductionTotals, ProfitabilityCurrency, ProfitabilityTotals, ReportEnvelope, ReportQualityFlag }

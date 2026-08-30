@@ -9,13 +9,19 @@ from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from costing.models import CostAllocation
 from plantings.lifecycle import lifecycle_summaries
-from plantings.models import PlantLifecycleEvent, ProductionBatch, SpecificPlantLocation
+from plantings.loss import CAUSE_OF_EVENT, LOSS_CAUSES, LOSS_EVENTS, empty_totals, loss_by_cause
+from plantings.models import (
+    CohortEvent,
+    PlantLifecycleEvent,
+    ProductionBatch,
+    SpecificPlantLocation,
+)
 from sales.commerce import order_commerce_summary
 from sales.models import (
     Fulfillment,
@@ -31,12 +37,6 @@ from .production import production_batches
 
 
 ZERO = Decimal('0')
-LOSS_EVENTS = {
-    PlantLifecycleEvent.EventType.FAILED,
-    PlantLifecycleEvent.EventType.LOST,
-    PlantLifecycleEvent.EventType.CULLED,
-    PlantLifecycleEvent.EventType.DONATED,
-}
 RESTORES_COGS = {
     SalesReturnLine.Outcome.AVAILABLE,
     SalesReturnLine.Outcome.QUARANTINED,
@@ -246,6 +246,7 @@ def _base_financial_row(kind, occurred_at, currency, source_id):
         'plant_id': None,
         'inventory_unit_id': None,
         'lot_id': None,
+        'loss_cause': None,
         'gross_sales': decimal_string(ZERO, 4),
         'discounts': decimal_string(ZERO, 4),
         'refunds': decimal_string(ZERO, 4),
@@ -464,12 +465,14 @@ def _loss_rows(workspace, filters, start, end):
     rows = []
     for layer in layers.order_by('pk'):
         occurred_at = None
+        cause = None
         if layer.target_type == CostAllocation.TargetType.PRODUCTION_LOSS:
             occurred_at = layer.created
         elif layer.specific_plant_id:
             summary = summaries[layer.specific_plant_id]
             if summary.final_outcome in LOSS_EVENTS:
                 occurred_at = summary.final_outcome_at
+                cause = CAUSE_OF_EVENT[summary.final_outcome].value
         if occurred_at is None or not start <= occurred_at < end:
             continue
         if filters.get('location') or filters.get('garden_square'):
@@ -490,12 +493,65 @@ def _loss_rows(workspace, filters, start, end):
             'variety_id': layer.batch.variety_id,
             'batch_id': layer.batch_id,
             'plant_id': layer.specific_plant_id,
+            'loss_cause': cause,
             'production_loss': decimal_string(layer.amount or ZERO, 4),
             'provisional': layer.batch.output_finalized_at is None,
             'unvalued': layer.amount is None,
         })
         rows.append(row)
     return rows
+
+
+def _placed_plant_events(events, filters):
+    """Keep only losses whose plant stood in the filtered place when it happened."""
+    if not filters.get('location') and not filters.get('garden_square'):
+        return events
+    locations = SpecificPlantLocation.objects.filter(
+        specific_plant_id=OuterRef('plant_id'),
+        started__lte=OuterRef('occurred_at'),
+    ).filter(Q(ended__isnull=True) | Q(ended__gte=OuterRef('occurred_at')))
+    if filters.get('location'):
+        locations = locations.filter(location_id=filters['location'])
+    if filters.get('garden_square'):
+        locations = locations.filter(garden_square_id=filters['garden_square'])
+    return events.filter(Exists(locations))
+
+
+def _lost_units(workspace, filters, start, end):
+    """Count the stock lost in the period by cause, anonymous and identified.
+
+    The money beside it only ever covers identified plants: a cohort's cost
+    redistributes across the units the batch has left rather than becoming its
+    own layer, so `production_loss` would report a batch whose whole loss was
+    anonymous as costing nothing. The unit totals are what say how much was
+    lost and why, in the vocabulary `plantings.loss` holds for both.
+    """
+    if any(filters.get(key) for key in ('customer', 'order', 'fulfillment')):
+        return empty_totals()
+    plant_events = PlantLifecycleEvent.objects.filter(
+        workspace=workspace, occurred_at__gte=start, occurred_at__lt=end,
+    )
+    cohort_events = CohortEvent.objects.filter(
+        workspace=workspace,
+        operation__occurred_at__gte=start,
+        operation__occurred_at__lt=end,
+    )
+    if filters.get('variety'):
+        plant_events = plant_events.filter(batch__variety_id=filters['variety'])
+        cohort_events = cohort_events.filter(cohort__batch__variety_id=filters['variety'])
+    if filters.get('batch'):
+        plant_events = plant_events.filter(batch_id=filters['batch'])
+        cohort_events = cohort_events.filter(cohort__batch_id=filters['batch'])
+    if filters.get('location'):
+        cohort_events = cohort_events.filter(location_before_id=filters['location'])
+    if filters.get('garden_square'):
+        # A cohort is placed at a location and never in a garden square, so a
+        # square filter selects no anonymous stock rather than all of it.
+        cohort_events = cohort_events.none()
+    return loss_by_cause(
+        plant_events=_placed_plant_events(plant_events, filters),
+        cohort_events=cohort_events,
+    )
 
 
 def profitability_report(workspace, filters):
@@ -509,17 +565,23 @@ def profitability_report(workspace, filters):
     rows.extend(_return_rows(workspace, filters, start, end))
     rows.extend(_loss_rows(workspace, filters, start, end))
     rows.sort(key=lambda row: (row['occurred_at'], row['kind'], row['source_id']))
+    lost_units = _lost_units(workspace, filters, start, end)
     money_fields = (
         'gross_sales', 'discounts', 'refunds', 'net_sales', 'plant_cogs',
         'tray_cogs', 'packaging_cogs', 'other_cogs', 'production_loss',
     )
     by_currency = defaultdict(lambda: defaultdict(Decimal))
+    loss_by_currency = defaultdict(lambda: defaultdict(Decimal))
     for row in rows:
         for field in money_fields:
             if not row['provisional'] and not row['unvalued']:
                 by_currency[row['currency_code']][field] += Decimal(row[field])
             elif field in {'gross_sales', 'discounts', 'refunds', 'net_sales'}:
                 by_currency[row['currency_code']][field] += Decimal(row[field])
+        if row['loss_cause'] and not row['provisional'] and not row['unvalued']:
+            loss_by_currency[row['currency_code']][row['loss_cause']] += (
+                Decimal(row['production_loss'])
+            )
     provisional = [row for row in rows if row['provisional']]
     unvalued = [row for row in rows if row['unvalued']]
     unattributed = [row for row in rows if row.get('dimension_unattributed')]
@@ -542,6 +604,12 @@ def profitability_report(workspace, filters):
             'currency_code': currency,
             **{field: decimal_string(values[field], 4) for field in money_fields},
             'direct_cogs': decimal_string(direct_cogs, 4),
+            'loss_by_cause': {
+                cause.value: decimal_string(
+                    loss_by_currency[currency][cause.value], 4,
+                )
+                for cause in LOSS_CAUSES
+            },
             'gross_profit': decimal_string(gross_profit, 4),
             'gross_margin': decimal_string(gross_margin, 6),
         })
@@ -569,6 +637,8 @@ def profitability_report(workspace, filters):
         )),
         totals={
             'currencies': summaries,
+            'lost_units_by_cause': lost_units,
+            'lost_units': sum(lost_units.values()),
             'provisional_rows': len(provisional),
             'unvalued_rows': len(unvalued),
             'dimension_unattributed_rows': len(unattributed),
@@ -578,6 +648,13 @@ def profitability_report(workspace, filters):
             'sales_equation': 'gross sales - discounts - refunds = net sales',
             'cost_equation': 'direct COGS = plant + tray + packaging + other COGS',
             'profit_equation': 'gross profit = net sales - direct COGS - production loss',
+            'loss_equation': (
+                'lost units = failed + lost + culled + donated + unspecified, '
+                'counting anonymous cohort units and identified plants in the '
+                'same vocabulary; production loss values the identified half, '
+                'because a cohort loss redistributes its cost over the units '
+                'the batch has left instead of booking its own layer'
+            ),
         },
         data_quality=quality,
     )

@@ -4,9 +4,11 @@ import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { Link, useSearchParams } from 'react-router'
 
 import { getReport, reportExportUrl } from './api/reports'
+import { LOSS_CAUSE_LABELS } from './plantings/loss_causes'
 import { queryKeys } from './query'
-import { DashboardRow, ProfitabilityTotals, ReportEnvelope } from './types/reports'
-import { formatDateTime } from './utils'
+import { DashboardRow, LossByCause, ProductionTotals, ProfitabilityTotals, ReportEnvelope } from './types/reports'
+import { CohortLossCause } from './types/plantings'
+import { formatDateTime, formatMoney } from './utils'
 
 type ReportPage = 'dashboard' | 'inventory' | 'production' | 'orders' | 'profitability' | 'traceability' | 'gst'
 
@@ -180,6 +182,49 @@ function Dashboard({ report }: { report: ReportEnvelope<DashboardRow> }) {
   )
 }
 
+// Anonymous cohort units and identified plants are lost for the same reasons
+// and are counted here under the same names, so the split between them never
+// decides which half of a batch's loss a reader can see.
+function LossByCauseSummary({
+  heading,
+  totals,
+  total,
+  render,
+  note
+}: {
+  heading: string
+  totals: LossByCause<string> | LossByCause
+  total: React.ReactNode
+  render: (value: string | number) => React.ReactNode
+  note?: string
+}) {
+  const causes = Object.keys(LOSS_CAUSE_LABELS) as Array<CohortLossCause>
+  return (
+    <Card body className="mb-3">
+      <h2 className="h5">{heading}</h2>
+      <Row>
+        {causes.map((cause) => (
+          <Col key={cause}>
+            {LOSS_CAUSE_LABELS[cause]}
+            <br />
+            <strong>{render(totals[cause])}</strong>
+          </Col>
+        ))}
+        <Col>
+          Total
+          <br />
+          <strong>{total}</strong>
+        </Col>
+      </Row>
+      {note && <div className="text-muted small mt-2">{note}</div>}
+    </Card>
+  )
+}
+
+function ProductionLossSummary({ totals }: { totals: ProductionTotals }) {
+  return <LossByCauseSummary heading="Units lost by cause" totals={totals.loss_by_cause} total={totals.loss_quantity} render={(value) => value} />
+}
+
 function ProfitabilitySummary({ totals }: { totals: ProfitabilityTotals }) {
   return (
     <Row className="g-3 mb-3">
@@ -220,6 +265,20 @@ function ProfitabilitySummary({ totals }: { totals: ProfitabilityTotals }) {
               </Col>
             </Row>
           </Card>
+        </Col>
+      ))}
+      <Col lg={12}>
+        <LossByCauseSummary heading="Units lost by cause" totals={totals.lost_units_by_cause} total={totals.lost_units} render={(value) => value} />
+      </Col>
+      {totals.currencies.map((currency) => (
+        <Col lg={12} key={`${currency.currency_code}-loss`}>
+          <LossByCauseSummary
+            heading={`${currency.currency_code} production loss by cause`}
+            totals={currency.loss_by_cause}
+            total={formatMoney(currency.production_loss, currency.currency_code, 'Unknown')}
+            render={(value) => formatMoney(String(value), currency.currency_code, 'Unknown')}
+            note="The total also carries cost that never reached a plant, and a cohort loss redistributes its cost over the units the batch has left rather than booking its own, so the causes sum to less than the total."
+          />
         </Col>
       ))}
     </Row>
@@ -334,6 +393,7 @@ function ReportsView({ page }: { page: ReportPage }) {
           <QualityWarnings report={query.data} />
           {page === 'dashboard' ? <Dashboard report={query.data as unknown as ReportEnvelope<DashboardRow>} /> : null}
           {page === 'profitability' ? <ProfitabilitySummary totals={query.data.totals as unknown as ProfitabilityTotals} /> : null}
+          {page === 'production' ? <ProductionLossSummary totals={query.data.totals as unknown as ProductionTotals} /> : null}
           {page !== 'dashboard' && <ResultTable report={query.data} />}
           {page !== 'dashboard' && <Pagination report={query.data} params={params} setParams={setParams} />}
         </>

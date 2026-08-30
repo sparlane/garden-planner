@@ -7,6 +7,7 @@ from django.db.models import Q
 
 from costing.services import batch_cost_breakdown
 from plantings.lifecycle import lifecycle_summaries
+from plantings.loss import LOSS_CAUSES, batch_loss_by_cause
 from plantings.models import (
     CohortOperation,
     GardenRowDirectSowPlanting,
@@ -59,6 +60,7 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
         if state not in {'failed', 'lost', 'culled', 'donated', 'harvested', 'sold', 'discarded'}
     ) + sum(cohort.quantity for cohort in cohorts)
     sown = _sown_quantity(batch)
+    losses = batch_loss_by_cause(batch)
     cost = batch_cost_breakdown(batch)
     total = cost['final_total'] or cost['provisional_total']
     unit_cost = None
@@ -81,6 +83,8 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
         'current_seedlings': current_output,
         'individual_states': dict(sorted(states.items())),
         'cohort_states': dict(sorted(cohort_states.items())),
+        'loss_by_cause': losses,
+        'loss_quantity': sum(losses.values()),
         'production_loss': cost['totals']['production_loss'],
         'plant_inventory_value': cost['totals']['plant_inventory'],
         'cogs_value': cost['totals']['cogs'],
@@ -125,7 +129,19 @@ def production_batches(workspace, filters):
     rows = [_batch_row(batch) for batch in queryset.distinct().order_by('-created', '-pk')]
     provisional = sum(row['provisional'] for row in rows)
     unvalued = sum(row['unvalued'] for row in rows)
+    unspecified = sum(
+        row['loss_by_cause'][CohortOperation.LossCause.UNSPECIFIED.value] for row in rows
+    )
     quality = []
+    if unspecified:
+        quality.append({
+            'code': 'unspecified_loss_cause', 'count': unspecified,
+            'message': (
+                'These units were lost before a cause was recorded, so they are '
+                'totalled apart from the causes rather than guessed at.'
+            ),
+            'drill_down': '/plantings/cohorts/?loss_cause=unspecified',
+        })
     if provisional:
         quality.append({
             'code': 'provisional_production_cost', 'count': provisional,
@@ -144,7 +160,8 @@ def production_batches(workspace, filters):
             'batch_id', 'batch_code', 'variety_id', 'variety_name', 'status',
             'actual_start', 'output_finalized_at', 'sown_quantity',
             'original_output', 'output_rate', 'current_seedlings',
-            'individual_states', 'cohort_states', 'production_loss',
+            'individual_states', 'cohort_states', 'loss_by_cause',
+            'loss_quantity', 'production_loss',
             'plant_inventory_value', 'cogs_value', 'unresolved_value',
             'unattributed_value', 'provisional_total', 'final_total', 'unit_cost',
             'currency_code', 'provisional', 'unvalued', 'input_layers',
@@ -153,6 +170,11 @@ def production_batches(workspace, filters):
         totals={
             'batches': len(rows),
             'current_seedlings': sum(row['current_seedlings'] for row in rows),
+            'loss_by_cause': {
+                cause.value: sum(row['loss_by_cause'][cause.value] for row in rows)
+                for cause in LOSS_CAUSES
+            },
+            'loss_quantity': sum(row['loss_quantity'] for row in rows),
             'provisional_batches': provisional,
             'unvalued_batches': unvalued,
         },
@@ -160,6 +182,11 @@ def production_batches(workspace, filters):
             'cost_equation': (
                 'total = plant inventory + COGS + production loss + unresolved '
                 '+ unattributed + harvested output'
+            ),
+            'loss_equation': (
+                'loss quantity = failed + lost + culled + donated + unspecified, '
+                'counting anonymous cohort units and identified plants in the '
+                'same vocabulary'
             ),
         },
         data_quality=quality,

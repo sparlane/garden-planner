@@ -286,6 +286,7 @@ def _cull_members(workspace, user, action, plants, cohorts):
             workspace, user, cohort_id=cohort.pk,
             expected_revision=cohort.revision,
             action=CohortOperation.Action.LOSS,
+            loss_cause=CohortOperation.LossCause.CULLED,
             idempotency_key=uuid5(action.idempotency_key, f'cohort:{cohort.pk}:cull'),
             occurred_at=action.occurred_at, reason=action.reason,
             quantity=cohort.quantity,

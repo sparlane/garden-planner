@@ -17,7 +17,8 @@ import {
   postCohortAction
 } from '../api/plantings'
 import { queryClient, queryKeys } from '../query'
-import { CohortAction, CohortFilters, CohortLifecycleState, PlantCohort } from '../types/plantings'
+import { CohortAction, CohortFilters, CohortLifecycleState, CohortLossCause, PlantCohort } from '../types/plantings'
+import { LOSS_CAUSE_LABELS, RECORDABLE_LOSS_CAUSES, lossCauseLabel } from './loss_causes'
 
 const STATE_LABELS: Record<CohortLifecycleState, string> = {
   growing: 'Growing',
@@ -139,6 +140,7 @@ function CohortRegisterView() {
   const [readyTo, setReadyTo] = React.useState('')
   const [stageOverdue, setStageOverdue] = React.useState(false)
   const [quarantined, setQuarantined] = React.useState<boolean | undefined>(undefined)
+  const [lossCause, setLossCause] = React.useState<CohortLossCause | ''>('')
   const [page, setPage] = React.useState(1)
   const [selected, setSelected] = React.useState<Array<number>>([])
   const [mergeReason, setMergeReason] = React.useState('')
@@ -152,6 +154,7 @@ function CohortRegisterView() {
     expected_ready_to: readyTo || undefined,
     stage_overdue: stageOverdue || undefined,
     quarantined,
+    loss_cause: lossCause || undefined,
     page,
     page_size: 50
   }
@@ -241,6 +244,16 @@ function CohortRegisterView() {
             <option value="">Any quarantine status</option>
             <option value="true">Quarantined</option>
             <option value="false">Not quarantined</option>
+          </Form.Select>
+        </Col>
+        <Col md={3}>
+          <Form.Select aria-label="Loss cause" value={lossCause} onChange={(event) => setLossCause(event.target.value as CohortLossCause | '')}>
+            <option value="">Any loss cause</option>
+            {(Object.keys(LOSS_CAUSE_LABELS) as Array<CohortLossCause>).map((cause) => (
+              <option key={cause} value={cause}>
+                Lost as {LOSS_CAUSE_LABELS[cause].toLowerCase()}
+              </option>
+            ))}
           </Form.Select>
         </Col>
       </Row>
@@ -352,6 +365,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
   const [actionName, setActionName] = React.useState('adjust')
   const [quantity, setQuantity] = React.useState(cohort.quantity)
   const [reason, setReason] = React.useState('')
+  const [lossCause, setLossCause] = React.useState<CohortLossCause>('failed')
   const [location, setLocation] = React.useState<number | ''>(cohort.location ?? '')
   const [containerCount, setContainerCount] = React.useState<number | ''>('')
   const [message, setMessage] = React.useState('')
@@ -382,6 +396,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
             quantity: needsQuantity ? quantity : undefined,
             container_count: cohort.container !== null && ['split', 'promote'].includes(actionName) && containerCount !== '' ? containerCount : undefined,
             location: actionName === 'move' && location !== '' ? location : undefined,
+            loss_cause: actionName === 'loss' ? lossCause : undefined,
             reason
           })
         }}
@@ -415,6 +430,18 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
                 value={containerCount}
                 onChange={(event) => setContainerCount(event.target.value === '' ? '' : Number(event.target.value))}
               />
+            </Col>
+          )}
+          {actionName === 'loss' && (
+            <Col md={3}>
+              <Form.Label>Loss cause</Form.Label>
+              <Form.Select value={lossCause} onChange={(event) => setLossCause(event.target.value as CohortLossCause)}>
+                {RECORDABLE_LOSS_CAUSES.map((cause) => (
+                  <option key={cause} value={cause}>
+                    {LOSS_CAUSE_LABELS[cause]}
+                  </option>
+                ))}
+              </Form.Select>
             </Col>
           )}
           {actionName === 'move' && (
@@ -518,6 +545,7 @@ function CohortDetailView({ cohortPk }: { cohortPk: number }) {
             <th>Action</th>
             <th>Quantity</th>
             <th>State</th>
+            <th>Loss cause</th>
             <th>Reason</th>
           </tr>
         </thead>
@@ -532,6 +560,7 @@ function CohortDetailView({ cohortPk }: { cohortPk: number }) {
               <td>
                 {STATE_LABELS[event.state_before]} → {STATE_LABELS[event.state_after]}
               </td>
+              <td>{lossCauseLabel(event.loss_cause)}</td>
               <td>{event.reason}</td>
             </tr>
           ))}

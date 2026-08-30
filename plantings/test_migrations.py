@@ -5,6 +5,7 @@ Tests for plantings data migrations
 from datetime import datetime, timezone as datetime_timezone
 from importlib import import_module
 from unittest import mock
+from uuid import uuid4
 
 from django.apps import apps as django_apps
 from django.conf import settings
@@ -18,6 +19,7 @@ from seedtrays.models import SeedTrayCell, SeedTrayModel
 from supplies.models import Supplier
 from tests.factories import (
     make_batch_for_packet,
+    make_production_batch,
     make_garden_row_sowing,
     make_garden_square,
     make_garden_square_sowing,
@@ -29,8 +31,10 @@ from tests.factories import (
 )
 from workspaces.models import Workspace
 
+from .cohorts import change_cohort, observe_cohort
 from .lifecycle import LifecycleState, plant_lifecycle_summary
 from .models import (
+    CohortOperation,
     GardenSquareTransplant,
     PlantLifecycleEvent,
     ProductionBatch,
@@ -633,3 +637,65 @@ class PlantLifecycleBackfillTests(TransactionTestCase):
             event_type='transplanted',
         )
         self.assertEqual(transplanted.occurred_at, plant.germinated)
+
+
+class CohortLossCauseBackfillTests(TransactionTestCase):
+    """Losses taken before a cause was required are recorded, not guessed at."""
+
+    UNCAUSED_STATE = [('plantings', '0044_gardenplantingstatusevent')]
+
+    def _post_teardown(self):
+        """Restore migration seed data removed by transactional test flushing."""
+        super()._post_teardown()
+        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
+            Workspace.objects.create(
+                pk=settings.CURRENT_WORKSPACE_ID,
+                name='My Garden',
+            )
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self._migrate, latest_plantings_state())
+
+    @staticmethod
+    def _migrate(targets):
+        """Move the test database to one explicit migration state."""
+        executor = MigrationExecutor(connection)
+        executor.loader.build_graph()
+        executor.migrate(targets)
+
+    def test_a_loss_recorded_before_the_field_reads_as_unspecified(self):
+        """Its reason text hints at a cause; the backfill refuses to infer one."""
+        workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
+        batch = make_production_batch(workspace=workspace)
+        cohort, _observed = observe_cohort(
+            workspace, None, batch=batch, quantity=8, idempotency_key=uuid4(),
+        )
+        _changed, operation = change_cohort(
+            workspace, None, cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            loss_cause=CohortOperation.LossCause.CULLED,
+            idempotency_key=uuid4(),
+            reason='Could not find them at the stocktake.',
+            quantity=3,
+        )
+
+        self._migrate(self.UNCAUSED_STATE)
+        self._migrate(latest_plantings_state())
+
+        replayed = CohortOperation.objects.get(pk=operation.pk)
+        self.assertEqual(
+            replayed.loss_cause, CohortOperation.LossCause.UNSPECIFIED,
+        )
+        self.assertEqual(
+            replayed.reason, 'Could not find them at the stocktake.',
+        )
+        self.assertEqual(
+            list(
+                CohortOperation.objects
+                .filter(action=CohortOperation.Action.OBSERVE)
+                .values_list('loss_cause', flat=True)
+            ),
+            [''],
+        )

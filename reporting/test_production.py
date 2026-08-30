@@ -3,9 +3,14 @@
 # Test method names carry the contract.
 # pylint: disable=missing-function-docstring
 
+from uuid import uuid4
+
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
+from plantings.cohorts import change_cohort, observe_cohort, promote_cohort
+from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from plantings.models import CohortOperation
 from tests.factories import (
     make_specific_plant,
     make_stock_lot,
@@ -36,6 +41,88 @@ class ProductionReportTests(APITestCase):
         self.assertEqual(row['current_seedlings'], 1)
         self.assertTrue(row['provisional'])
         self.assertEqual(response.data['totals']['provisional_batches'], 1)
+
+    def test_loss_totals_by_cause_span_a_batch_promoted_partway(self):
+        """One batch's anonymous and identified halves answer in one vocabulary."""
+        plant = make_specific_plant(workspace=self.workspace)
+        batch = plant.batch
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user, batch=batch, quantity=10,
+            idempotency_key=uuid4(),
+        )
+        promoted, _promotion = promote_cohort(
+            self.workspace, self.user, cohort_id=cohort.pk,
+            expected_revision=cohort.revision, quantity=2,
+            idempotency_key=uuid4(), reason='Label the best two.',
+        )
+        record_lifecycle_event(
+            promoted[0], self.user,
+            OutcomeRequest(EventType.CULLED, reason='Off type.'),
+        )
+        record_lifecycle_event(
+            promoted[1], self.user,
+            OutcomeRequest(EventType.LOST, reason='Not on the bench.'),
+        )
+        cohort.refresh_from_db()
+        cohort, _loss = change_cohort(
+            self.workspace, self.user, cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            loss_cause=CohortOperation.LossCause.CULLED,
+            idempotency_key=uuid4(), reason='Same grading call.', quantity=3,
+        )
+        cohort.refresh_from_db()
+        change_cohort(
+            self.workspace, self.user, cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            loss_cause=CohortOperation.LossCause.FAILED,
+            idempotency_key=uuid4(), reason='Damped off.', quantity=1,
+        )
+
+        response = self.client.get('/reports/production-batches/', {'batch': batch.pk})
+        self.assertEqual(response.status_code, 200, response.data)
+        row = response.data['results'][0]
+        self.assertEqual(row['loss_by_cause'], {
+            'failed': 1, 'lost': 1, 'culled': 4, 'donated': 0, 'unspecified': 0,
+        })
+        self.assertEqual(row['loss_quantity'], 6)
+        self.assertEqual(
+            response.data['totals']['loss_by_cause'], row['loss_by_cause'],
+        )
+        self.assertEqual(response.data['totals']['loss_quantity'], 6)
+        self.assertNotIn(
+            'unspecified_loss_cause',
+            [flag['code'] for flag in response.data['data_quality']],
+        )
+
+    def test_losses_recorded_before_the_cause_existed_are_counted_apart(self):
+        """A backfilled loss reads as unspecified rather than as a finding."""
+        plant = make_specific_plant(workspace=self.workspace)
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user, batch=plant.batch, quantity=6,
+            idempotency_key=uuid4(),
+        )
+        _changed, operation = change_cohort(
+            self.workspace, self.user, cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            loss_cause=CohortOperation.LossCause.FAILED,
+            idempotency_key=uuid4(), reason='Gone.', quantity=2,
+        )
+        CohortOperation.objects.filter(pk=operation.pk).update(
+            loss_cause=CohortOperation.LossCause.UNSPECIFIED,
+        )
+
+        response = self.client.get('/reports/production-batches/', {
+            'batch': plant.batch_id,
+        })
+        row = response.data['results'][0]
+        self.assertEqual(row['loss_by_cause']['unspecified'], 2)
+        self.assertEqual(row['loss_by_cause']['failed'], 0)
+        flags = {flag['code']: flag for flag in response.data['data_quality']}
+        self.assertIn('unspecified_loss_cause', flags)
+        self.assertEqual(flags['unspecified_loss_cause']['count'], 2)
 
     def test_plant_trace_keeps_cell_batch_seed_and_empty_commerce(self):
         plant = make_specific_plant(workspace=self.workspace)

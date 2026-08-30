@@ -64,6 +64,7 @@ DISPOSITION_OF_STATE = {
     LifecycleState.RETAINED: 'plant_inventory',
     LifecycleState.DONATED: 'production_loss',
     LifecycleState.FAILED: 'production_loss',
+    LifecycleState.LOST: 'production_loss',
     LifecycleState.CULLED: 'production_loss',
     LifecycleState.HARVESTED: 'harvested_output',
     LifecycleState.SOLD: 'cogs',
