@@ -839,12 +839,14 @@ interface HarvestReportFilters {
 }
 
 type CohortLifecycleState = 'growing' | 'available' | 'retained' | 'depleted'
+type CohortLossCause = 'failed' | 'lost' | 'culled' | 'donated' | 'unspecified'
 
 interface CohortEvent {
   pk: number
   action: string
   occurred_at: string
   reason: string
+  loss_cause: CohortLossCause | ''
   quantity_before: number
   quantity_delta: number
   quantity_after: number
@@ -921,6 +923,7 @@ interface CohortFilters {
   expected_ready_from?: string
   expected_ready_to?: string
   stage_overdue?: boolean
+  loss_cause?: CohortLossCause
   page?: number
   page_size?: number
 }
@@ -946,7 +949,7 @@ interface CohortAction {
   quantity?: number
   container_count?: number
   location?: number | null
-  disposition?: 'failed' | 'culled' | 'donated' | 'other'
+  loss_cause?: CohortLossCause
   reason?: string
 }
 
@@ -1175,6 +1178,7 @@ export {
   CohortEvent,
   CohortFilters,
   CohortLifecycleState,
+  CohortLossCause,
   CohortMerge,
   CohortObservation,
   CohortPage,

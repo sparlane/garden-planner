@@ -20,6 +20,7 @@ from seedtrays.models import SeedTray
 from .batches import BatchRequest, batch_lifecycle_counts, batch_seeds_sown, create_batch
 from .growth import current_growth
 from .lifecycle import LifecycleState
+from .loss import LOSS_EVENTS
 from .models import (
     CohortEvent,
     CohortOperation,
@@ -444,11 +445,7 @@ def _batch_actuals(batch):
     ).aggregate(total=Sum('quantity_delta'))['total'] or 0
     plant_losses = PlantLifecycleEvent.objects.filter(
         batch=batch,
-        event_type__in=(
-            PlantLifecycleEvent.EventType.FAILED,
-            PlantLifecycleEvent.EventType.LOST,
-            PlantLifecycleEvent.EventType.CULLED,
-        ),
+        event_type__in=LOSS_EVENTS,
         reversal__isnull=True,
     ).count()
     cohorts = PlantCohort.objects.filter(batch=batch)

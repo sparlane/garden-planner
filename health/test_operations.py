@@ -281,6 +281,7 @@ class HealthOperationTests(HealthOperationTestCase):
                 self.workspace, None, cohort_id=cohort.pk,
                 expected_revision=cohort.revision,
                 action=CohortOperation.Action.LOSS,
+                loss_cause=CohortOperation.LossCause.FAILED,
                 idempotency_key=uuid4(), reason='Attempted partial loss.', quantity=1,
             )
         cohort.refresh_from_db()
@@ -496,6 +497,7 @@ class QuarantineCaseLifecycleTests(HealthOperationTestCase):
             self.workspace, None, cohort_id=cohort.pk,
             expected_revision=cohort.revision,
             action=CohortOperation.Action.LOSS,
+            loss_cause=CohortOperation.LossCause.FAILED,
             idempotency_key=uuid4(), reason='Ordinary loss.', quantity=1,
         )
         self.assertEqual(changed.quantity, 3)
@@ -508,9 +510,9 @@ class QuarantineCaseLifecycleTests(HealthOperationTestCase):
         )
         cohort.refresh_from_db()
         self.assertEqual(cohort.quantity, 0)
-        self.assertEqual(
-            action.results.get().cohort_operation.action, CohortOperation.Action.LOSS,
-        )
+        operation = action.results.get().cohort_operation
+        self.assertEqual(operation.action, CohortOperation.Action.LOSS)
+        self.assertEqual(operation.loss_cause, CohortOperation.LossCause.CULLED)
         self.assertFalse(case_is_active(case))
         self.assertFalse(is_quarantined(cohort))
 

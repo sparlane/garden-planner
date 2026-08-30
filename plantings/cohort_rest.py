@@ -31,6 +31,7 @@ from .cohorts import (
     split_cohort,
 )
 from .growth import current_growth
+from .loss import RECORDABLE_CAUSES
 from .models import CohortEvent, CohortOperation, NurseryObservation, PlantCohort
 from .register import parse_register_filters, register_queryset
 
@@ -56,13 +57,15 @@ class CohortEventSerializer(serializers.ModelSerializer):
     action = serializers.CharField(source='operation.action', read_only=True)
     occurred_at = serializers.DateTimeField(source='operation.occurred_at', read_only=True)
     reason = serializers.CharField(source='operation.reason', read_only=True)
+    loss_cause = serializers.CharField(source='operation.loss_cause', read_only=True)
 
     class Meta:
         model = CohortEvent
         fields = [
-            'pk', 'action', 'occurred_at', 'reason', 'quantity_before',
-            'quantity_delta', 'quantity_after', 'state_before', 'state_after',
-            'location_before', 'location_after', 'source_cohorts', 'created',
+            'pk', 'action', 'occurred_at', 'reason', 'loss_cause',
+            'quantity_before', 'quantity_delta', 'quantity_after',
+            'state_before', 'state_after', 'location_before', 'location_after',
+            'source_cohorts', 'created',
         ]
 
 
@@ -233,10 +236,7 @@ class CohortActionSerializer(
         required=False,
         allow_null=True,
     )
-    disposition = serializers.ChoiceField(
-        choices=('failed', 'culled', 'donated', 'other'),
-        required=False,
-    )
+    loss_cause = serializers.ChoiceField(choices=RECORDABLE_CAUSES, required=False)
     workspace_field_lookups = {'location': 'workspace'}
 
 
@@ -331,6 +331,11 @@ class PlantCohortViewSet(
             queryset = queryset.filter(quantity__gt=0)
         if params.get('quarantined') in {'true', 'false'}:
             queryset = queryset.filter(quarantined=params['quarantined'] == 'true')
+        if params.get('loss_cause'):
+            queryset = queryset.filter(
+                events__operation__action=CohortOperation.Action.LOSS,
+                events__operation__loss_cause=params['loss_cause'],
+            ).distinct()
         if params.get('search'):
             search = params['search'].strip()
             queryset = queryset.filter(batch__code__icontains=search)
@@ -390,14 +395,12 @@ class PlantCohortViewSet(
         serializer = CohortActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
-        disposition = values.pop('disposition', None)
         values.pop('container_count', None)
         try:
             changed, _operation_row = change_cohort(
                 self.get_current_workspace(), request.user,
                 cohort_id=cohort.pk,
                 action=operation_action,
-                payload_extra={'disposition': disposition} if disposition else None,
                 **values,
             )
         except DjangoValidationError as exc:
@@ -435,7 +438,7 @@ class PlantCohortViewSet(
         serializer = CohortActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
-        values.pop('disposition', None)
+        values.pop('loss_cause', None)
         try:
             child, _operation_row = split_cohort(
                 self.get_current_workspace(), request.user,
@@ -452,7 +455,7 @@ class PlantCohortViewSet(
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
         values.pop('location', None)
-        values.pop('disposition', None)
+        values.pop('loss_cause', None)
         try:
             plants, operation = promote_cohort(
                 self.get_current_workspace(), request.user,

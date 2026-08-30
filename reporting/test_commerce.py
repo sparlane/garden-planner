@@ -25,7 +25,10 @@ from sales.models import (
     SalesReturn,
     SalesReturnLine,
 )
-from tests.factories import make_specific_plant
+from plantings.cohorts import change_cohort, observe_cohort
+from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from plantings.models import CohortOperation
+from tests.factories import make_production_batch, make_specific_plant
 from workspaces.models import get_current_workspace
 
 
@@ -253,6 +256,52 @@ class CommerceReportTests(CommerceReportTestCase):
         self.assertEqual(
             dashboard.data['results'][0]['recent_fulfillments'][0]['fulfillment_number'],
             'FUL-PNL',
+        )
+
+
+class ProfitabilityLossCauseTests(CommerceReportTestCase):
+    """The P&L says how much stock the period lost and why, both halves of it."""
+
+    def lose_a_cohort(self, cause, quantity, when):
+        """Take one caused loss off a fresh cohort at a stated instant."""
+        batch = make_production_batch(workspace=self.workspace)
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user, batch=batch, quantity=quantity + 1,
+            idempotency_key=uuid4(),
+        )
+        change_cohort(
+            self.workspace, self.user, cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            loss_cause=cause, idempotency_key=uuid4(),
+            occurred_at=when, reason='Counted off the bench.',
+            quantity=quantity,
+        )
+
+    def test_lost_units_total_by_cause_across_anonymous_and_identified_stock(self):
+        august = timezone.datetime(2026, 8, 15, 12, tzinfo=timezone.UTC)
+        record_lifecycle_event(
+            make_specific_plant(workspace=self.workspace), self.user,
+            OutcomeRequest(EventType.FAILED, occurred_at=august, reason='Damped off.'),
+        )
+        self.lose_a_cohort(CohortOperation.LossCause.FAILED, 4, august)
+        self.lose_a_cohort(CohortOperation.LossCause.CULLED, 2, august)
+
+        totals = self.profitability('2026-08-01', '2026-08-31')['totals']
+        self.assertEqual(totals['lost_units_by_cause'], {
+            'failed': 5, 'lost': 0, 'culled': 2, 'donated': 0, 'unspecified': 0,
+        })
+        self.assertEqual(totals['lost_units'], 7)
+
+    def test_a_loss_outside_the_period_is_not_counted_in_it(self):
+        self.lose_a_cohort(
+            CohortOperation.LossCause.LOST, 3,
+            timezone.datetime(2026, 7, 15, 12, tzinfo=timezone.UTC),
+        )
+        totals = self.profitability('2026-08-01', '2026-08-31')['totals']
+        self.assertEqual(totals['lost_units'], 0)
+        self.assertEqual(
+            self.profitability('2026-07-01', '2026-07-31')['totals']['lost_units'], 3,
         )
 
 

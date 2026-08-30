@@ -1266,10 +1266,28 @@ class CohortOperation(WorkspaceOwnedModel):
         LOSS = 'loss', 'Loss'
         PROMOTE = 'promote', 'Promote'
 
+    class LossCause(models.TextChoices):
+        """Why a `LOSS` removed the quantity, in the plant events' vocabulary.
+
+        `plantings.loss` holds the mapping onto `PlantLifecycleEvent.EventType`
+        and the reason each side has no counterpart for the rest. `UNSPECIFIED`
+        is history only: it is what the backfill recorded for losses taken
+        before a cause was required, and `clean` refuses it on a new one.
+        """
+
+        FAILED = 'failed', 'Failed'
+        LOST = 'lost', 'Lost during stocktake'
+        CULLED = 'culled', 'Culled'
+        DONATED = 'donated', 'Donated'
+        UNSPECIFIED = 'unspecified', 'Unspecified'
+
     idempotency_key = models.UUIDField()
     action = models.CharField(max_length=16, choices=Action.choices)
     occurred_at = models.DateTimeField(default=timezone.now)
     reason = models.TextField(blank=True, default='')
+    loss_cause = models.CharField(
+        max_length=16, choices=LossCause.choices, blank=True, default='',
+    )
     payload = models.JSONField(blank=True, default=dict)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -1287,7 +1305,36 @@ class CohortOperation(WorkspaceOwnedModel):
                 fields=['workspace', 'idempotency_key'],
                 name='cohort_operation_workspace_idempotent',
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(action='loss') & ~models.Q(loss_cause='')
+                ) | (~models.Q(action='loss') & models.Q(loss_cause='')),
+                name='cohort_operation_loss_cause_matches_action',
+            ),
         ]
+
+    def clean(self):
+        """Keep the loss cause structured, required, and only on a loss.
+
+        A cause on anything else would be a second, unreadable meaning for the
+        column, and a loss without one is the free-text-only history this field
+        exists to end. `UNSPECIFIED` is what the backfill wrote for losses taken
+        before the cause was recorded, so it stays storable and unrecordable.
+        """
+        super().clean()
+        errors = {}
+        if self.action == self.Action.LOSS:
+            if not self.loss_cause:
+                errors['loss_cause'] = 'A loss needs a recorded cause.'
+            elif self.loss_cause == self.LossCause.UNSPECIFIED:
+                errors['loss_cause'] = (
+                    'Unspecified only describes losses recorded before a cause '
+                    'was required.'
+                )
+        elif self.loss_cause:
+            errors['loss_cause'] = 'Only a loss carries a cause.'
+        if errors:
+            raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         if self.pk:

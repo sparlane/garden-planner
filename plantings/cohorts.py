@@ -32,21 +32,28 @@ def _require_reason(reason):
         raise ValidationError({'reason': 'A reason is required.'})
 
 
-def _existing(workspace, idempotency_key, action, payload):
+def _existing(workspace, idempotency_key, action, payload, loss_cause=None):
+    """Return the operation this key already recorded, if it is the same work.
+
+    The loss cause is compared against the stored column rather than copied into
+    the payload: it is already an immutable part of the recorded fact, and a
+    replay carrying a different cause is a different loss whatever the payload
+    says.
+    """
     operation = CohortOperation.objects.filter(
         workspace=workspace,
         idempotency_key=idempotency_key,
     ).first()
-    recorded_request = {
-        key: operation.payload.get(key)
-        for key in payload
-    } if operation else None
-    if operation and (operation.action != action or recorded_request != payload):
+    if operation is None:
+        return None
+    recorded_request = {key: operation.payload.get(key) for key in payload}
+    same_cause = loss_cause is None or operation.loss_cause == loss_cause
+    if operation.action != action or recorded_request != payload or not same_cause:
         raise ValidationError({'idempotency_key': 'This key was already used for different work.'})
     return operation
 
 
-def _operation(workspace, user, action, idempotency_key, occurred_at, reason, payload):
+def _operation(workspace, user, action, idempotency_key, occurred_at, reason, payload, loss_cause=''):
     return CohortOperation.objects.create(
         workspace=workspace,
         created_by=_actor(user),
@@ -54,6 +61,7 @@ def _operation(workspace, user, action, idempotency_key, occurred_at, reason, pa
         idempotency_key=idempotency_key,
         occurred_at=occurred_at or timezone.now(),
         reason=reason,
+        loss_cause=loss_cause,
         payload=payload,
     )
 
@@ -192,7 +200,8 @@ def observe_cohort(workspace, user, *, batch, quantity, idempotency_key,
 @transaction.atomic
 def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
                   idempotency_key, occurred_at=None, reason='', quantity=None,
-                  location=None, payload_extra=None, allow_quarantined=False):
+                  location=None, loss_cause=None, payload_extra=None,
+                  allow_quarantined=False):
     """Apply an adjustment, loss, lifecycle change, or whole-cohort move."""
     payload = {
         'cohort': cohort_id,
@@ -201,7 +210,7 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
         'location': location.pk if location else None,
         **(payload_extra or {}),
     }
-    existing = _existing(workspace, idempotency_key, action, payload)
+    existing = _existing(workspace, idempotency_key, action, payload, loss_cause)
     if existing:
         return existing.events.get().cohort, existing
     cohort = _lock(cohort_id, workspace, expected_revision)
@@ -215,6 +224,8 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
         cohort.quantity = quantity
     elif action == CohortOperation.Action.LOSS:
         _require_reason(reason)
+        if not loss_cause:
+            raise ValidationError({'loss_cause': 'A loss needs a recorded cause.'})
         if quantity is None or quantity <= 0 or quantity > cohort.quantity:
             raise ValidationError({'quantity': 'Loss must be within the current quantity.'})
         cohort.quantity -= quantity
@@ -240,7 +251,10 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
     if cohort.quantity == 0:
         cohort.lifecycle_state = PlantCohort.LifecycleState.DEPLETED
     _save(cohort)
-    operation = _operation(workspace, user, action, idempotency_key, occurred_at, reason, payload)
+    operation = _operation(
+        workspace, user, action, idempotency_key, occurred_at, reason, payload,
+        loss_cause or '',
+    )
     _event(operation, cohort, before)
     _reallocate(cohort.batch, user, reason or operation.get_action_display())
     return cohort, operation

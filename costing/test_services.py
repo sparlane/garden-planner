@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.test import SimpleTestCase
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -28,7 +29,12 @@ from inventory.models import InventoryItem, QuantityCertainty
 from inventory.units import UnitCode
 from plantings.batches import finalize_batch_output
 from plantings.cohorts import observe_cohort, promote_cohort
-from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from plantings.lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    record_lifecycle_event,
+)
 from plantings.models import (
     SeedTrayCellPlanting,
     SeedTrayPlanting,
@@ -54,6 +60,8 @@ from workspaces.models import Workspace
 
 from .models import CostAllocation, CostAllocationRun
 from .services import (
+    DISPOSITION_OF_STATE,
+    VALUE_BUCKETS,
     batch_cost_breakdown,
     plant_cost_breakdown,
     reallocate_batch,
@@ -62,6 +70,29 @@ from .services import (
 
 TargetType = InputApplicationTarget.TargetType
 Trigger = CostAllocationRun.Trigger
+
+
+class DispositionCoverageTests(SimpleTestCase):
+    """Every state a plant can reach has a bucket its value goes to.
+
+    `plant_dispositions` subscripts this table, so a state missing from it does
+    not degrade the figures — it raises `KeyError` out of the batch report and
+    every screen built on it. `lost` was absent, which took the production
+    report down for any batch holding a plant that a stocktake could not find.
+    """
+
+    def test_every_lifecycle_state_has_a_value_bucket(self):
+        """A state with no bucket is a crash, not a rounding error."""
+        self.assertEqual(
+            sorted(DISPOSITION_OF_STATE),
+            sorted(LifecycleState.values),
+        )
+
+    def test_every_bucket_named_is_one_a_report_totals(self):
+        """A bucket no report sums would silently drop the value put in it."""
+        self.assertEqual(
+            set(DISPOSITION_OF_STATE.values()) - set(VALUE_BUCKETS), set(),
+        )
 
 
 class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-attributes
