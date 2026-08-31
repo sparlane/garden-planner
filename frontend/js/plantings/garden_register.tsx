@@ -8,9 +8,10 @@ import { getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
 import { getPlants, getPlantVarieties } from '../api/plants'
 import { queryClient, queryKeys } from '../query'
-import { GardenPlantingSource, GardenRegisterFilters } from '../types/plantings'
+import { GardenPlantingSource, GardenRegisterFilters, PlantLifecycleState, PlantOutcomeAction } from '../types/plantings'
 import { formatDate, formatDateRange } from '../utils'
 import { GardenQuickAddButton } from './garden_quick_add'
+import { GARDEN_OUTCOME_ACTIONS, PlantOutcomeButtons, PlantOutcomeDialog } from './lifecycle'
 
 const SOURCES: Array<{ value: GardenPlantingSource; label: string }> = [
   { value: 'direct_seed', label: 'Direct seed' },
@@ -281,6 +282,7 @@ function GardenRegisterView() {
 
 function GardenRegisterDetailView() {
   const { registerKey = '' } = useParams()
+  const [selectedOutcome, setSelectedOutcome] = useState<{ plant: { pk: number; lifecycle_state: PlantLifecycleState }; outcome: PlantOutcomeAction }>()
   const { data, isPending } = useQuery({
     queryKey: queryKeys.plantings.gardenRegisterDetail(registerKey),
     queryFn: ({ signal }) => getGardenRegisterDetail(registerKey, signal),
@@ -298,6 +300,15 @@ function GardenRegisterDetailView() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.plantings.gardenRegisterAll })
     }
   })
+  function refreshOutcomeData(plantPk: number) {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.gardenRegisterAll }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.plantLifecycle(plantPk) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantDetail(plantPk) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares })
+    ])
+  }
   if (isPending || !data) return <main className="container py-3">Loading planting…</main>
   const latestStatus = [...data.history].reverse().find((event) => event.type === 'finished' || event.type === 'failed')
   return (
@@ -324,13 +335,24 @@ function GardenRegisterDetailView() {
         </NavLink>
         {data.links.plant && (
           <NavLink className="btn btn-outline-primary" to={data.links.plant}>
-            Move, fail or correct
+            Open plant record
           </NavLink>
         )}
         <NavLink className="btn btn-outline-secondary" to={data.links.batch || '#'}>
           Advanced planting cycle
         </NavLink>
       </div>
+      {data.record_type === 'individual' && (
+        <div className="mb-3">
+          <h2 className="h5">Record an outcome</h2>
+          <PlantOutcomeButtons
+            plant={{ pk: data.record_id, lifecycle_state: data.state as PlantLifecycleState }}
+            actions={GARDEN_OUTCOME_ACTIONS}
+            disabled={selectedOutcome !== undefined}
+            onOutcome={(plant, outcome) => setSelectedOutcome({ plant, outcome })}
+          />
+        </div>
+      )}
       {data.key.startsWith('aggregate-') && data.state === 'current' && (
         <ButtonGroup className="mb-3">
           <Button disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ type: 'finished', reason: 'Finished from garden register' })}>
@@ -390,6 +412,12 @@ function GardenRegisterDetailView() {
           </Card>
         </Col>
       </Row>
+      <PlantOutcomeDialog
+        plant={selectedOutcome?.plant}
+        outcome={selectedOutcome?.outcome}
+        onClose={() => setSelectedOutcome(undefined)}
+        onRecorded={() => (selectedOutcome === undefined ? undefined : refreshOutcomeData(selectedOutcome.plant.pk))}
+      />
     </main>
   )
 }

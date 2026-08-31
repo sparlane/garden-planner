@@ -217,6 +217,7 @@ interface GardenSquarePlantingLocation extends Omit<GardenSquare, 'area' | 'bed'
 interface GardenSquarePlanting {
   garden_planting_pk?: number
   specific_plant_pk?: number
+  lifecycle_state?: PlantLifecycleState
   transplanting_pk?: number
   transplanted?: string
   planting_pk: number

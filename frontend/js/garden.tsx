@@ -5,11 +5,11 @@ import './garden.css'
 import React, { useMemo, useState } from 'react'
 import { Alert, Button, Modal } from 'react-bootstrap'
 import Select from 'react-select'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router'
 
 import { GardenArea, GardenBed, GardenRow, GardenSquare } from './types/garden'
-import { GardenSquarePlanting } from './types/plantings'
+import { GardenSquarePlanting, PlantLifecycleState, PlantOutcomeAction } from './types/plantings'
 import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
 import { getHarvests, getPlantingGardenSquaresCurrent } from './api/plantings'
 import { HarvestForm, HarvestFormBatch, HarvestFormPlant } from './plantings/harvest_form'
@@ -21,6 +21,7 @@ import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
 import { queryKeys } from './query'
 import { GardenQuickAddButton } from './plantings/garden_quick_add'
+import { GARDEN_OUTCOME_ACTIONS, PlantOutcomeButtons, PlantOutcomeDialog } from './plantings/lifecycle'
 
 interface GardenAreaDisplayProps {
   area: GardenArea
@@ -91,117 +92,149 @@ function SquareHarvests({ squarePk }: { squarePk: number }) {
 }
 
 function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, workspace }: GardenSquareDetailsModalProps) {
+  const queryClient = useQueryClient()
+  const [selectedOutcome, setSelectedOutcome] = useState<{ plant: { pk: number; lifecycle_state: PlantLifecycleState }; outcome: PlantOutcomeAction }>()
+
+  function refreshOutcomeData(plantPk: number) {
+    return Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.plantLifecycle(plantPk) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantDetail(plantPk) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.gardenRegisterAll })
+    ])
+  }
+
   return (
-    <Modal show onHide={onClose} size="lg" aria-labelledby="garden-square-details-title">
-      <Modal.Header closeButton>
-        <Modal.Title id="garden-square-details-title">{square.name}</Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
-        <dl className="row garden-square-metadata">
-          <dt className="col-sm-3">Garden area</dt>
-          <dd className="col-sm-9">{area.name}</dd>
-          <dt className="col-sm-3">Garden bed</dt>
-          <dd className="col-sm-9">{bed?.name ?? 'Unknown bed'}</dd>
-          <dt className="col-sm-3">Position</dt>
-          <dd className="col-sm-9">
-            {square.placement_x}, {square.placement_y}
-          </dd>
-          <dt className="col-sm-3">Size</dt>
-          <dd className="col-sm-9">
-            {square.size_x} × {square.size_y}
-          </dd>
-          <dt className="col-sm-3">Status</dt>
-          <dd className="col-sm-9">{plantings.length > 0 ? 'Planted' : 'Empty'}</dd>
-        </dl>
+    <>
+      <Modal show={selectedOutcome === undefined} onHide={onClose} size="lg" aria-labelledby="garden-square-details-title">
+        <Modal.Header closeButton>
+          <Modal.Title id="garden-square-details-title">{square.name}</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <dl className="row garden-square-metadata">
+            <dt className="col-sm-3">Garden area</dt>
+            <dd className="col-sm-9">{area.name}</dd>
+            <dt className="col-sm-3">Garden bed</dt>
+            <dd className="col-sm-9">{bed?.name ?? 'Unknown bed'}</dd>
+            <dt className="col-sm-3">Position</dt>
+            <dd className="col-sm-9">
+              {square.placement_x}, {square.placement_y}
+            </dd>
+            <dt className="col-sm-3">Size</dt>
+            <dd className="col-sm-9">
+              {square.size_x} × {square.size_y}
+            </dd>
+            <dt className="col-sm-3">Status</dt>
+            <dd className="col-sm-9">{plantings.length > 0 ? 'Planted' : 'Empty'}</dd>
+          </dl>
 
-        {plantings.length === 0 ? (
-          <p>This square has no current plantings.</p>
-        ) : (
-          plantings.map((planting, index) => {
-            const germinationDates = formatDateRange(planting.germination_date_early, planting.germination_date_late)
-            const maturityDates = formatDateRange(planting.maturity_date_early, planting.maturity_date_late)
+          {plantings.length === 0 ? (
+            <p>This square has no current plantings.</p>
+          ) : (
+            plantings.map((planting, index) => {
+              const germinationDates = formatDateRange(planting.germination_date_early, planting.germination_date_late)
+              const maturityDates = formatDateRange(planting.maturity_date_early, planting.maturity_date_late)
 
-            return (
-              <section
-                className="garden-planting-detail"
-                key={`${planting.planting_pk}-${planting.transplanting_pk ?? 'direct'}-${planting.specific_plant_pk ?? 'aggregate'}-${index}`}
-              >
-                <h2 className="h5">{plantingName(planting)}</h2>
-                <dl className="row mb-0">
-                  <dt className="col-sm-3">Quantity</dt>
-                  <dd className="col-sm-9">{planting.quantity}</dd>
-                  <dt className="col-sm-3">Planted</dt>
-                  <dd className="col-sm-9">{planting.planted}</dd>
-                  {planting.transplanted !== undefined && (
-                    <>
-                      <dt className="col-sm-3">Transplanted</dt>
-                      <dd className="col-sm-9">{planting.transplanted}</dd>
-                    </>
+              return (
+                <section
+                  className="garden-planting-detail"
+                  key={`${planting.planting_pk}-${planting.transplanting_pk ?? 'direct'}-${planting.specific_plant_pk ?? 'aggregate'}-${index}`}
+                >
+                  <h2 className="h5">{plantingName(planting)}</h2>
+                  <dl className="row mb-0">
+                    <dt className="col-sm-3">Quantity</dt>
+                    <dd className="col-sm-9">{planting.quantity}</dd>
+                    <dt className="col-sm-3">Planted</dt>
+                    <dd className="col-sm-9">{planting.planted}</dd>
+                    {planting.transplanted !== undefined && (
+                      <>
+                        <dt className="col-sm-3">Transplanted</dt>
+                        <dd className="col-sm-9">{planting.transplanted}</dd>
+                      </>
+                    )}
+                    {germinationDates !== undefined && (
+                      <>
+                        <dt className="col-sm-3">Expected germination</dt>
+                        <dd className="col-sm-9">{germinationDates}</dd>
+                      </>
+                    )}
+                    {maturityDates !== undefined && (
+                      <>
+                        <dt className="col-sm-3">Expected maturity</dt>
+                        <dd className="col-sm-9">{maturityDates}</dd>
+                      </>
+                    )}
+                    {planting.notes && (
+                      <>
+                        <dt className="col-sm-3">Notes</dt>
+                        <dd className="col-sm-9">{planting.notes}</dd>
+                      </>
+                    )}
+                  </dl>
+                  {planting.specific_plant_pk !== undefined && planting.lifecycle_state !== undefined && (
+                    <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
+                      <Link to={`/plantings/plants/${planting.specific_plant_pk}`}>Open plant #{planting.specific_plant_pk}</Link>
+                      <PlantOutcomeButtons
+                        plant={{ pk: planting.specific_plant_pk, lifecycle_state: planting.lifecycle_state }}
+                        actions={GARDEN_OUTCOME_ACTIONS}
+                        disabled={selectedOutcome !== undefined}
+                        onOutcome={(plant, outcome) => setSelectedOutcome({ plant, outcome })}
+                      />
+                    </div>
                   )}
-                  {germinationDates !== undefined && (
-                    <>
-                      <dt className="col-sm-3">Expected germination</dt>
-                      <dd className="col-sm-9">{germinationDates}</dd>
-                    </>
-                  )}
-                  {maturityDates !== undefined && (
-                    <>
-                      <dt className="col-sm-3">Expected maturity</dt>
-                      <dd className="col-sm-9">{maturityDates}</dd>
-                    </>
-                  )}
-                  {planting.notes && (
-                    <>
-                      <dt className="col-sm-3">Notes</dt>
-                      <dd className="col-sm-9">{planting.notes}</dd>
-                    </>
-                  )}
-                </dl>
-              </section>
-            )
-          })
-        )}
+                </section>
+              )
+            })
+          )}
 
-        {workspace.mode === 'garden' && (
-          <div className="my-3">
-            <GardenQuickAddButton initialSquare={square.pk} label="Add a planting here" />
-          </div>
-        )}
+          {workspace.mode === 'garden' && (
+            <div className="my-3">
+              <GardenQuickAddButton initialSquare={square.pk} label="Add a planting here" />
+            </div>
+          )}
 
-        <section className="garden-square-harvest">
-          <h2 className="h5">Record a harvest</h2>
-          <HarvestForm batches={squareBatches(plantings)} plants={squarePlants(plantings)} gardenSquare={square.pk} workspace={workspace} />
-        </section>
+          <section className="garden-square-harvest">
+            <h2 className="h5">Record a harvest</h2>
+            <HarvestForm batches={squareBatches(plantings)} plants={squarePlants(plantings)} gardenSquare={square.pk} workspace={workspace} />
+          </section>
 
-        <section className="garden-square-harvest">
-          <h2 className="h5">Harvests from this square</h2>
-          <SquareHarvests squarePk={square.pk} />
-        </section>
+          <section className="garden-square-harvest">
+            <h2 className="h5">Harvests from this square</h2>
+            <SquareHarvests squarePk={square.pk} />
+          </section>
 
-        <section className="garden-square-harvest">
-          <h2 className="h5">Apply an input here</h2>
-          {!area.geometry_confirmed && <ConfirmGeometryForm area={area} />}
-          <InputApplicationForm
-            targets={[
-              {
-                key: `garden_square:${square.pk}`,
-                target_type: 'garden_square',
-                pk: square.pk,
-                label: square.name,
-                blocked: area.geometry_confirmed ? undefined : `${area.name} has no confirmed length unit`
-              }
-            ]}
-            defaultTargetKeys={[`garden_square:${square.pk}`]}
-            title="Apply an input to this square"
-          />
-        </section>
-      </Modal.Body>
-      <Modal.Footer>
-        <Button variant="secondary" onClick={onClose}>
-          Close
-        </Button>
-      </Modal.Footer>
-    </Modal>
+          <section className="garden-square-harvest">
+            <h2 className="h5">Apply an input here</h2>
+            {!area.geometry_confirmed && <ConfirmGeometryForm area={area} />}
+            <InputApplicationForm
+              targets={[
+                {
+                  key: `garden_square:${square.pk}`,
+                  target_type: 'garden_square',
+                  pk: square.pk,
+                  label: square.name,
+                  blocked: area.geometry_confirmed ? undefined : `${area.name} has no confirmed length unit`
+                }
+              ]}
+              defaultTargetKeys={[`garden_square:${square.pk}`]}
+              title="Apply an input to this square"
+            />
+          </section>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+        </Modal.Footer>
+      </Modal>
+      <PlantOutcomeDialog
+        plant={selectedOutcome?.plant}
+        outcome={selectedOutcome?.outcome}
+        onClose={() => setSelectedOutcome(undefined)}
+        onRecorded={() => (selectedOutcome === undefined ? undefined : refreshOutcomeData(selectedOutcome.plant.pk))}
+      />
+    </>
   )
 }
 
