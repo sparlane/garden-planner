@@ -2,6 +2,9 @@
 Tests for plants
 """
 from tests.api import RESTContractTestCase
+from tests.factories import make_plant_variety
+
+from .models import PlantVariety
 
 
 class PlantRESTContractTests(RESTContractTestCase):
@@ -18,8 +21,30 @@ class PlantRESTContractTests(RESTContractTestCase):
         self.assert_authentication_required(self.LIST_URLS)
 
     def test_list_routes_return_lists(self):
-        """Authenticated plant collections use the common list contract."""
-        self.assert_list_contract(self.LIST_URLS)
+        """Catalog fixtures stay whole while varieties are paginated."""
+        self.assert_list_contract(self.LIST_URLS[:2])
+        self.assert_paginated_list_contract(self.LIST_URLS[2:])
+
+    def test_varieties_expose_a_reachable_second_page(self):
+        """The global page size bounds a growing catalog without hiding rows."""
+        first = make_plant_variety()
+        PlantVariety.objects.bulk_create([
+            PlantVariety(
+                workspace=first.workspace,
+                plant=first.plant,
+                name=f'Variety {index:03d}',
+            )
+            for index in range(100)
+        ])
+
+        first_page = self.client.get('/plants/variety/').data
+        second_page = self.client.get('/plants/variety/', {'page': 2}).data
+
+        self.assertEqual(first_page['count'], 101)
+        self.assertEqual(len(first_page['results']), 100)
+        self.assertIsNotNone(first_page['next'])
+        self.assertEqual(len(second_page['results']), 1)
+        self.assertIsNotNone(second_page['previous'])
 
     def test_resources_round_trip(self):
         """Family, plant, and variety fields survive create and retrieve."""

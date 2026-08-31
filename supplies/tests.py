@@ -16,7 +16,7 @@ class SupplierAPITests(RESTContractTestCase):
 
     def test_list_route_returns_a_list(self):
         """Authenticated supplier collections use the common list contract."""
-        self.assert_list_contract(self.LIST_URLS)
+        self.assert_paginated_list_contract(self.LIST_URLS)
 
     def test_supplier_round_trip(self):
         """An authenticated supplier write round-trips through the API."""

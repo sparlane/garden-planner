@@ -431,7 +431,7 @@ class LedgerRestTests(LedgerRestFixture):
             self.lot_url,
             {'item': self.item.pk, 'identifier': 'LOT-'},
         )
-        self.assertEqual([lot['pk'] for lot in lots.data], [lot_pk])
+        self.assertEqual([lot['pk'] for lot in lots.data['results']], [lot_pk])
         movements = self.client.get(
             self.movement_url,
             {
@@ -441,7 +441,7 @@ class LedgerRestTests(LedgerRestFixture):
             },
         )
         self.assertEqual(
-            [movement['pk'] for movement in movements.data],
+            [movement['pk'] for movement in movements.data['results']],
             [movement_pk],
         )
         self.assertEqual(
@@ -754,11 +754,11 @@ class StockReceiptDraftTests(LedgerRestFixture):
             {'status': 'draft', 'seed_packet': 'false'},
         )
         self.assertEqual(
-            [receipt['pk'] for receipt in listed.data],
+            [receipt['pk'] for receipt in listed.data['results']],
             [created['pk']],
         )
         self.assertEqual(
-            self.client.get(self.receipt_url, {'seed_packet': 'true'}).data,
+            self.client.get(self.receipt_url, {'seed_packet': 'true'}).data['results'],
             [],
         )
         invalid = self.client.get(self.receipt_url, {'seed_packet': 'maybe'})

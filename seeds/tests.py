@@ -55,8 +55,8 @@ class SeedRESTContractTests(RESTContractTestCase):
         self.assert_authentication_required(self.LIST_URLS)
 
     def test_list_routes_return_lists(self):
-        """Authenticated seed collections use the common list contract."""
-        self.assert_list_contract(self.LIST_URLS)
+        """Authenticated seed collections use the paginated list contract."""
+        self.assert_paginated_list_contract(self.LIST_URLS)
 
     def test_resources_round_trip(self):
         """Seed products create inventory identities and packets require receipts."""
@@ -111,11 +111,11 @@ class SeedRESTContractTests(RESTContractTestCase):
         self.assertEqual(current_response.status_code, 200)
         self.assertEqual(all_response.status_code, 200)
         self.assertEqual(
-            {packet['pk'] for packet in current_response.data},
+            {packet['pk'] for packet in current_response.data['results']},
             {self.packet.pk},
         )
         self.assertEqual(
-            {packet['pk'] for packet in all_response.data},
+            {packet['pk'] for packet in all_response.data['results']},
             {self.packet.pk, empty_packet.pk},
         )
 
@@ -440,7 +440,7 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
         listed = self.client.get('/seeds/packets/')
         self.assertEqual(listed.status_code, 200)
         entry = next(
-            candidate for candidate in listed.data
+            candidate for candidate in listed.data['results']
             if candidate['pk'] == packet['pk']
         )
         self.assertEqual(
@@ -462,10 +462,10 @@ class SeedPacketInventoryWorkflowTests(APITestCase):
             '/inventory/receipts/',
             {'seed_packet': 'false'},
         )
-        self.assertNotIn(receipt.pk, [entry['pk'] for entry in hidden.data])
+        self.assertNotIn(receipt.pk, [entry['pk'] for entry in hidden.data['results']])
         listed = self.client.get('/inventory/receipts/', {'seed_packet': 'true'})
-        self.assertEqual([entry['pk'] for entry in listed.data], [receipt.pk])
-        self.assertIs(listed.data[0]['is_seed_packet_draft'], True)
+        self.assertEqual([entry['pk'] for entry in listed.data['results']], [receipt.pk])
+        self.assertIs(listed.data['results'][0]['is_seed_packet_draft'], True)
 
         self.assertEqual(
             self.client.patch(detail, {'notes': 'General edit'}, format='json').status_code,
@@ -621,7 +621,7 @@ class SeedPacketProvenanceTests(APITestCase):
         """Read one packet's provenance off the list the seeds screen uses."""
         listed = self.client.get('/seeds/packets/all/')
         self.assertEqual(listed.status_code, 200, listed.data)
-        rows = [row for row in listed.data if row['pk'] == packet_pk]
+        rows = [row for row in listed.data['results'] if row['pk'] == packet_pk]
         self.assertEqual(len(rows), 1, listed.data)
         return rows[0]['provenance']
 

@@ -57,7 +57,7 @@ class GstRegistrationContractTests(GstRegistrationRestTestCase):
     def test_the_list_is_unpaginated(self):
         """This project serves bare lists; the frontend relies on it."""
         self.register()
-        self.assert_list_contract([URL])
+        self.assert_paginated_list_contract([URL])
 
     def test_an_arrangement_is_created_and_read_back(self):
         """The create path is the settings screen's only way to record one."""
@@ -148,7 +148,7 @@ class GstRegistrationContractTests(GstRegistrationRestTestCase):
             format='json',
         )
         self.assertEqual(response.status_code, 201, response.data)
-        listed = self.client.get(URL).data
+        listed = self.client.get(URL).data['results']
         self.assertEqual(len(listed), 2)
         by_pk = {row['pk']: row for row in listed}
         self.assertTrue(by_pk[wrong.pk]['superseded'])

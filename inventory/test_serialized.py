@@ -262,9 +262,9 @@ class SerializedInventoryTests(SerializedInventoryTestCase):
             {'physical_state': 'available', 'in_use': 'false'},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual([row['pk'] for row in response.data], [unit.pk])
-        self.assertEqual(response.data[0]['asset_code'], unit.asset_code)
-        self.assertFalse(response.data[0]['reconciliation_required'])
+        self.assertEqual([row['pk'] for row in response.data['results']], [unit.pk])
+        self.assertEqual(response.data['results'][0]['asset_code'], unit.asset_code)
+        self.assertFalse(response.data['results'][0]['reconciliation_required'])
 
         response = self.client.post(
             '/inventory/movements/transfer/',

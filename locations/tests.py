@@ -60,7 +60,7 @@ class LocationRestTests(RESTContractTestCase):
             {'active': 'true', 'location_type': 'growing'},
         )
         self.assertEqual(response.status_code, 200)
-        returned = [location['pk'] for location in response.data]
+        returned = [location['pk'] for location in response.data['results']]
         self.assertEqual(returned, [growing.pk])
         self.assertNotIn(retired.pk, returned)
 

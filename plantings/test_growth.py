@@ -92,7 +92,7 @@ class GrowthRestTests(RESTContractTestCase):
         self.workspace.save()
 
     def test_catalogs_and_observation_contract(self):
-        stage = self.client.get('/plantings/growth-stages/').data[0]
+        stage = self.client.get('/plantings/growth-stages/').data['results'][0]
         self.assertIn('target_days', stage)
         plant = make_specific_plant()
         response = self.client.post('/plantings/nursery-observations/', {
@@ -106,9 +106,9 @@ class GrowthRestTests(RESTContractTestCase):
         history = self.client.get(
             f'/plantings/nursery-observations/?plant={plant.pk}',
         )
-        self.assertEqual(len(history.data), 1)
-        self.assertEqual(history.data[0]['stage_name'], stage['name'])
-        self.assertEqual(history.data[0]['photo_url'], 'https://example.test/plant-photo.jpg')
+        self.assertEqual(len(history.data['results']), 1)
+        self.assertEqual(history.data['results'][0]['stage_name'], stage['name'])
+        self.assertEqual(history.data['results'][0]['photo_url'], 'https://example.test/plant-photo.jpg')
 
     def test_catalog_codes_are_stable_after_creation(self):
         response = self.client.post('/plantings/growth-stages/', {

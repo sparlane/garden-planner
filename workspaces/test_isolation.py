@@ -193,7 +193,12 @@ class ResourceIsolationTests(APITestCase):
             with self.subTest(url=url):
                 list_response = self.client.get(url)
                 self.assertEqual(list_response.status_code, 200)
-                self.assertEqual(list_response.data, [])
+                rows = (
+                    list_response.data['results']
+                    if isinstance(list_response.data, dict)
+                    else list_response.data
+                )
+                self.assertEqual(rows, [])
                 detail_response = self.client.get(f'{url}{record_pk}/')
                 self.assertEqual(detail_response.status_code, 404)
 
@@ -310,7 +315,13 @@ class ResourceIsolationTests(APITestCase):
         )
         for url, record_pk in resources:
             with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).data, [])
+                response = self.client.get(url)
+                rows = (
+                    response.data['results']
+                    if isinstance(response.data, dict)
+                    else response.data
+                )
+                self.assertEqual(rows, [])
                 self.assertEqual(
                     self.client.get(f'{url}{record_pk}/').status_code,
                     404,

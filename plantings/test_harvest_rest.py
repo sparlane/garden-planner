@@ -60,7 +60,7 @@ class HarvestContractTests(HarvestRESTTestCase):
     def test_list_route_requires_authentication_and_returns_a_list(self):
         """Harvests follow the common authenticated collection contract."""
         self.assert_authentication_required([self.url, self.report_url])
-        self.assert_list_contract([self.url])
+        self.assert_paginated_list_contract([self.url])
 
     def test_create_and_retrieve_round_trip(self):
         """A created harvest reads back through its detail route."""
@@ -202,7 +202,7 @@ class HarvestWorkspaceScopingTests(HarvestRESTTestCase):
             batch=self._foreign_batch(),
         )
         listed = self.client.get(self.url)
-        self.assertEqual([row['pk'] for row in listed.data], [])
+        self.assertEqual([row['pk'] for row in listed.data['results']], [])
         detail = self.client.get(f'{self.url}{foreign.pk}/')
         self.assertEqual(detail.status_code, 404)
 
@@ -322,7 +322,7 @@ class HarvestReversalRESTTests(HarvestRESTTestCase):
         self.assertEqual(response.data['reverse_reason'], 'Weighed the wrong crate.')
 
         listed = self.client.get(self.url)
-        self.assertEqual([row['pk'] for row in listed.data], [self.harvest_pk])
+        self.assertEqual([row['pk'] for row in listed.data['results']], [self.harvest_pk])
 
         report = self.client.get(self.report_url, {'group_by': 'batch'})
         self.assertEqual(report.data, [])
@@ -356,7 +356,7 @@ class HarvestFilterTests(HarvestRESTTestCase):
         """Return the harvest IDs one filtered list returns."""
         response = self.client.get(self.url, params)
         self.assertEqual(response.status_code, 200, response.data)
-        return [row['pk'] for row in response.data]
+        return [row['pk'] for row in response.data['results']]
 
     def test_filtering_by_batch_variety_and_square(self):
         """Each filter narrows to the harvests that match it."""

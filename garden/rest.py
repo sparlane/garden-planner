@@ -224,6 +224,7 @@ class GardenAreaViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewse
     """
     queryset = GardenArea.objects.prefetch_related('geometry_confirmations')
     serializer_class = GardenAreaSerializer
+    pagination_class = None
 
     @action(detail=True, methods=['post'], url_path='confirm-geometry')
     def confirm_geometry(self, request, pk=None):  # pylint: disable=unused-argument
@@ -267,6 +268,7 @@ class GardenBedViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewset
     """
     queryset = GardenBed.objects.all()
     serializer_class = GardenBedSerializer
+    pagination_class = None
 
 
 class GardenRowViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
@@ -275,6 +277,7 @@ class GardenRowViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewset
     """
     queryset = GardenRow.objects.all()
     serializer_class = GardenRowSerializer
+    pagination_class = None
 
 
 class GardenSquareViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
@@ -283,6 +286,7 @@ class GardenSquareViewSet(GeometryWriteMixin, CurrentWorkspaceViewSetMixin, view
     """
     queryset = GardenSquare.objects.all()
     serializer_class = GardenSquareSerializer
+    pagination_class = None
 
 
 router = routers.DefaultRouter()

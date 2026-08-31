@@ -123,13 +123,13 @@ class InventoryRestTests(APITestCase):
         ).data
 
         response = self.client.get(self.item_url, {'active': 'true'})
-        self.assertEqual([row['pk'] for row in response.data], [active['pk']])
+        self.assertEqual([row['pk'] for row in response.data['results']], [active['pk']])
         response = self.client.get(self.item_url, {'category': 'label'})
-        self.assertEqual([row['pk'] for row in response.data], [inactive['pk']])
+        self.assertEqual([row['pk'] for row in response.data['results']], [inactive['pk']])
         response = self.client.get(self.item_url, {'search': 'propagation'})
-        self.assertEqual([row['pk'] for row in response.data], [active['pk']])
+        self.assertEqual([row['pk'] for row in response.data['results']], [active['pk']])
         response = self.client.get(self.item_url, {'tracking_mode': 'serialized'})
-        self.assertEqual(response.data, [])
+        self.assertEqual(response.data['results'], [])
 
     def test_item_deactivation_survives_and_delete_is_unsupported(self):
         """Historical item identity remains readable after deactivation."""
@@ -190,7 +190,7 @@ class InventoryRestTests(APITestCase):
             self.conversion_url,
             {'item': item['pk'], 'active': 'true'},
         )
-        self.assertEqual([row['pk'] for row in filtered.data], [response.data['pk']])
+        self.assertEqual([row['pk'] for row in filtered.data['results']], [response.data['pk']])
 
         patch = self.client.patch(
             f"{self.conversion_url}{response.data['pk']}/",
@@ -238,8 +238,8 @@ class InventoryRestTests(APITestCase):
             multiplier=Decimal('12'),
         )
 
-        self.assertEqual(self.client.get(self.item_url).data, [])
-        self.assertEqual(self.client.get(self.conversion_url).data, [])
+        self.assertEqual(self.client.get(self.item_url).data['results'], [])
+        self.assertEqual(self.client.get(self.conversion_url).data['results'], [])
         self.assertEqual(
             self.client.get(f'{self.item_url}{foreign_item.pk}/').status_code,
             404,

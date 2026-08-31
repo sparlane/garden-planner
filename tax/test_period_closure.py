@@ -192,7 +192,7 @@ class PeriodClosureRestTests(PeriodClosureTestCase):
     def test_the_list_is_unpaginated(self):
         """This project serves bare lists; the frontend relies on it."""
         self.file_march()
-        self.assert_list_contract([URL])
+        self.assert_paginated_list_contract([URL])
 
     def test_a_period_is_filed_and_read_back(self):
         """The create path is the only way a period becomes filed."""

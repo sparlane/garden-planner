@@ -53,7 +53,7 @@ class ProductionBatchRESTTests(RESTContractTestCase):
     def test_list_route_requires_authentication_and_returns_a_list(self):
         """Batches follow the common authenticated collection contract."""
         self.assert_authentication_required([self.url])
-        self.assert_list_contract([self.url])
+        self.assert_paginated_list_contract([self.url])
 
     def test_create_starts_a_planned_batch_with_its_history(self):
         """A created batch is planned and already carries a transition."""
@@ -305,13 +305,13 @@ class ProductionBatchRESTTests(RESTContractTestCase):
         self._create(code='BATCH-PLANNED')
 
         by_status = self.client.get(self.url, {'status': 'active'})
-        self.assertEqual([row['pk'] for row in by_status.data], [active.pk])
+        self.assertEqual([row['pk'] for row in by_status.data['results']], [active.pk])
 
         by_variety = self.client.get(self.url, {'variety': self.variety.pk})
-        self.assertEqual(len(by_variety.data), 2)
+        self.assertEqual(len(by_variety.data['results']), 2)
 
         needs_repair = self.client.get(self.url, {'needs_repair': 'true'})
-        self.assertEqual([row['pk'] for row in needs_repair.data], [active.pk])
+        self.assertEqual([row['pk'] for row in needs_repair.data['results']], [active.pk])
 
         invalid = self.client.get(self.url, {'status': 'growing'})
         self.assertEqual(invalid.status_code, 400)

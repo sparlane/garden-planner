@@ -45,8 +45,9 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
         self.assert_authentication_required(self.list_urls)
 
     def test_list_routes_return_lists(self):
-        """Authenticated seed-tray collections use the common list contract."""
-        self.assert_list_contract(self.list_urls)
+        """Only the tray-bounded cell fixture remains unpaginated."""
+        self.assert_paginated_list_contract(self.list_urls[:3])
+        self.assert_list_contract(self.list_urls[3:])
 
     def test_resources_round_trip(self):
         """Tray models, trays, and global cells survive create and retrieve."""
@@ -284,7 +285,7 @@ class SeedTrayCellIntegrityTests(TestCase):
             '/seedtrays/seedtrays/',
             {'in_use': 'true'},
         )
-        self.assertIn(tray.pk, [row['pk'] for row in response.data])
+        self.assertIn(tray.pk, [row['pk'] for row in response.data['results']])
 
         response = self.client.post(
             f'/inventory/serialized-units/{unit.pk}/loss/',

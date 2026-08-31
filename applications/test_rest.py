@@ -83,7 +83,7 @@ class ApplicationContractTests(ApplicationRESTTestCase):
 
     def test_the_list_route_returns_a_list(self):
         """The collection uses the common unpaginated list contract."""
-        self.assert_list_contract((URL,))
+        self.assert_paginated_list_contract((URL,))
 
     def test_a_draft_reports_its_calculation(self):
         """Creating a draft returns the suggestion it computed."""
@@ -396,13 +396,13 @@ class ApplicationFilterTests(ApplicationRESTTestCase):
         self.client.post(f'{URL}{posted["pk"]}/post/', {}, format='json')
 
         drafts = self.client.get(URL, {'status': 'draft'})
-        self.assertEqual([row['pk'] for row in drafts.data], [draft['pk']])
+        self.assertEqual([row['pk'] for row in drafts.data['results']], [draft['pk']])
 
         by_item = self.client.get(URL, {'item': self.media.pk})
-        self.assertEqual(len(by_item.data), 2)
+        self.assertEqual(len(by_item.data['results']), 2)
 
         other_item = self.client.get(URL, {'item': make_inventory_item().pk})
-        self.assertEqual(len(other_item.data), 0)
+        self.assertEqual(len(other_item.data['results']), 0)
 
     def test_an_unparseable_filter_is_refused(self):
         """A malformed filter is a client error, not an empty page."""
@@ -438,4 +438,4 @@ class ApplicationIsolationTests(ApplicationRESTTestCase):
         self.create_draft()
 
         response = self.client.get(URL)
-        self.assertEqual(len(response.data), 1)
+        self.assertEqual(len(response.data['results']), 1)
