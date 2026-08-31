@@ -158,6 +158,26 @@ function csrfDelete(url: string): Promise<Response> {
   return csrfRequest('DELETE', url)
 }
 
+interface PaginatedResponse<T> {
+  count: number
+  next: string | null
+  previous: string | null
+  results: T
+}
+
+function unwrapPaginatedResponse<T>(data: T | PaginatedResponse<T>): T {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return data as T
+  }
+
+  const keys = Object.keys(data).sort()
+  const pageKeys = ['count', 'next', 'previous', 'results']
+  if (keys.length === pageKeys.length && keys.every((key, index) => key === pageKeys[index])) {
+    return (data as PaginatedResponse<T>).results
+  }
+  return data as T
+}
+
 async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
   const method = 'GET'
   const response = await fetchResponse(method, url, {
@@ -191,7 +211,7 @@ async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Prom
   }
 
   try {
-    return JSON.parse(body) as T
+    return unwrapPaginatedResponse(JSON.parse(body) as T | PaginatedResponse<T>)
   } catch (error) {
     raiseApiError(
       new ApiError(`${method} ${url} returned malformed JSON (${responseStatus(response)}): ${errorMessage(error)}`, {
