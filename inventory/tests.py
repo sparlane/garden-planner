@@ -219,6 +219,49 @@ class InventoryItemModelTests(TestCase):
             item.save()
         self.assertIn('tracking_mode', context.exception.message_dict)
 
+    def test_lot_may_widen_to_mixed_after_stock_history(self):
+        """Numbering is opt-in later, so an established item is not stranded."""
+        item = self.make_item(base_unit=UnitCode.EACH)
+        item.mark_stock_history_started()
+
+        item.tracking_mode = InventoryItem.TrackingMode.MIXED
+        item.save()
+
+        item.refresh_from_db()
+        self.assertEqual(item.tracking_mode, InventoryItem.TrackingMode.MIXED)
+
+    def test_mixed_is_a_one_way_widening_and_the_rest_stay_locked(self):
+        """Only lot to mixed widens; every other identity change is refused."""
+        refused = (
+            (InventoryItem.TrackingMode.MIXED, InventoryItem.TrackingMode.LOT),
+            (InventoryItem.TrackingMode.MIXED, InventoryItem.TrackingMode.SERIALIZED),
+            (InventoryItem.TrackingMode.SERIALIZED, InventoryItem.TrackingMode.MIXED),
+        )
+        for index, (start, target) in enumerate(refused):
+            with self.subTest(start=start, target=target):
+                item = self.make_item(
+                    name=f'Locked {index}',
+                    sku=f'LOCKED-{index}',
+                    base_unit=UnitCode.EACH,
+                    tracking_mode=start,
+                )
+                item.mark_stock_history_started()
+                item.tracking_mode = target
+                with self.assertRaises(ValidationError) as context:
+                    item.save()
+                self.assertIn('tracking_mode', context.exception.message_dict)
+
+    def test_mixed_items_must_count_in_each(self):
+        """A fraction of a litre cannot be given an asset code."""
+        with self.assertRaises(ValidationError) as context:
+            self.make_item(
+                name='Mixed litres',
+                sku='MIXED-L',
+                base_unit=UnitCode.LITRE,
+                tracking_mode=InventoryItem.TrackingMode.MIXED,
+            )
+        self.assertIn('base_unit', context.exception.message_dict)
+
     def test_items_must_be_deactivated_instead_of_deleted(self):
         """Catalog identity remains available to future historical records."""
         item = self.make_item()

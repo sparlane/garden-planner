@@ -194,6 +194,28 @@ def physical_balance(lot, location):
     )
 
 
+def bulk_balance(lot, location):
+    """Derive how much of a lot is still anonymous bulk at one location.
+
+    Numbering a unit posts nothing to the ledger, so `physical_balance` keeps
+    counting it — correctly, because the pot is still on hand and still cost
+    what it cost. What individualising changes is how much is left to sell or
+    consume *as bulk*, and that is this figure: everything the lot has here,
+    less the units drawn from it that are standing here in their own right.
+
+    The subtraction stays right as stock moves, because units and bulk draw
+    down the same lot. Selling a numbered pot posts a unit `SALE` that lowers
+    `physical_balance` and deactivates the unit, so both sides fall together
+    and the bulk figure does not move.
+    """
+    units = InventoryUnit.objects.filter(
+        source_lot=lot,
+        current_location=location,
+        active=True,
+    ).count()
+    return physical_balance(lot, location) - Decimal(units)
+
+
 def lock_lots(workspace, lot_ids):
     """Lock and return exact workspace lots in deterministic primary-key order."""
     requested = sorted(set(lot_ids))
