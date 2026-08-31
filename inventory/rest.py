@@ -75,10 +75,18 @@ class InventoryItemSerializer(serializers.ModelSerializer):
         if self.instance and self.instance.stock_history_started_at:
             errors = {}
             for field in ('base_unit', 'tracking_mode'):
-                if field in attrs and attrs[field] != getattr(self.instance, field):
-                    errors[field] = (
-                        'Create a new item instead of changing this after stock history exists.'
-                    )
+                if field not in attrs or attrs[field] == getattr(self.instance, field):
+                    continue
+                # The model allows exactly one widening after stock history;
+                # refusing it here would make the API stricter than the rule.
+                widened = InventoryItem.widens_tracking_mode(
+                    self.instance.tracking_mode, attrs[field],
+                )
+                if field == 'tracking_mode' and widened:
+                    continue
+                errors[field] = (
+                    'Create a new item instead of changing this after stock history exists.'
+                )
             if errors:
                 raise ValidationError(errors)
 

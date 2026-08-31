@@ -69,10 +69,25 @@ class InventoryItem(WorkspaceOwnedModel):
         OTHER = 'other', 'Other physical input'
 
     class TrackingMode(models.TextChoices):
-        """Supported stock identity strategies."""
+        """Supported stock identity strategies.
+
+        `MIXED` is lot-controlled stock that can also be individually
+        numbered a few units at a time, for a durable item bought as a box
+        of identical anonymous ones. The bulk remainder stays anonymous and
+        is derived, never stored: see `inventory.ledger.bulk_balance`.
+        """
 
         LOT = 'lot', 'Lot controlled'
         SERIALIZED = 'serialized', 'Serialized'
+        MIXED = 'mixed', 'Lot controlled, individually numberable'
+
+    #: Modes whose stock can carry `InventoryUnit` identities. Serialized
+    #: items are nothing but units; mixed items hold both, so asking this
+    #: rather than comparing against one mode is what keeps the two apart.
+    INDIVIDUALLY_IDENTIFIED = frozenset({
+        TrackingMode.SERIALIZED,
+        TrackingMode.MIXED,
+    })
 
     class UsageBasis(models.TextChoices):
         """Ways input applications may calculate suggested consumption."""
@@ -224,8 +239,11 @@ class InventoryItem(WorkspaceOwnedModel):
             UnitCode.SEED_CLUSTER,
         }:
             errors['base_unit'] = 'Seed items use the seed or seed_cluster unit.'
-        if self.tracking_mode == self.TrackingMode.SERIALIZED and self.base_unit != UnitCode.EACH:
-            errors['base_unit'] = 'Serialized items must use each as their base unit.'
+        # Both identity modes count whole things, so both are held to `each`.
+        # Mixed stock is numbered one unit at a time; a fraction of a litre
+        # cannot be given an asset code.
+        if self.tracking_mode in self.INDIVIDUALLY_IDENTIFIED and self.base_unit != UnitCode.EACH:
+            errors['base_unit'] = 'Individually identified items must use each as their base unit.'
 
     def _validate_usage_configuration(self, errors):
         """Dispatch the selected usage basis to its configuration rules."""
@@ -313,6 +331,23 @@ class InventoryItem(WorkspaceOwnedModel):
                 'Manual usage does not accept a fixed quantity.'
             )
 
+    @classmethod
+    def widens_tracking_mode(cls, previous_mode, new_mode):
+        """Return whether this is the one identity change stock history allows.
+
+        Lot to mixed only adds the ability to number a few units later. Every
+        existing lot, movement and balance keeps the meaning it already had,
+        and the bulk remainder is still the whole lot until something is
+        numbered. Without this an established nursery would have to retire its
+        pot items and re-receive stock to use the feature at all.
+
+        The REST serializer repeats this check, so it lives here rather than
+        in either caller.
+        """
+        was_lot = previous_mode == cls.TrackingMode.LOT
+        now_mixed = new_mode == cls.TrackingMode.MIXED
+        return was_lot and now_mixed
+
     def _identity_lock_errors(self, previous):
         """Return changes forbidden after the first stock movement."""
         locked_fields = {
@@ -322,6 +357,8 @@ class InventoryItem(WorkspaceOwnedModel):
                 self.tracking_mode,
             ),
         }
+        if self.widens_tracking_mode(previous.tracking_mode, self.tracking_mode):
+            del locked_fields['tracking_mode']
         errors = {
             field: 'Create a new item instead of changing this after stock history exists.'
             for field, values in locked_fields.items()
@@ -1047,8 +1084,8 @@ class InventoryUnit(WorkspaceOwnedModel):
         if self.item_id:
             if self.item.workspace_id != self.workspace_id:
                 errors['item'] = 'The item belongs to a different workspace.'
-            if self.item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
-                errors['item'] = 'Inventory units require a serialized item.'
+            if self.item.tracking_mode not in InventoryItem.INDIVIDUALLY_IDENTIFIED:
+                errors['item'] = 'Inventory units require a serialized or mixed item.'
             if self.item.base_unit != UnitCode.EACH:
                 errors['item'] = 'Serialized items must use each as their base unit.'
         if self.source_lot_id:
@@ -1691,6 +1728,9 @@ class StockMovement(WorkspaceOwnedModel):
             if self.unit.source_lot_id != self.lot_id:
                 errors['unit'] = 'The unit does not belong to this stock lot.'
         elif self.lot_id and self.lot.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+            # Deliberately serialized-only, not `INDIVIDUALLY_IDENTIFIED`. A
+            # mixed lot holds both shapes at once: bulk quantity moves with no
+            # unit, and a numbered pot moves with one.
             errors['unit'] = 'Serialized movements require an inventory unit.'
         return errors
 
