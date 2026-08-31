@@ -32,6 +32,18 @@ class RESTContractTestCase(APITestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertIsInstance(response.data, list)
 
+    def assert_paginated_list_contract(self, urls):
+        """Assert every authenticated list route returns a standard page."""
+        for url in urls:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    set(response.data),
+                    {'count', 'next', 'previous', 'results'},
+                )
+                self.assertIsInstance(response.data['results'], list)
+
     def assert_create_retrieve(self, url, payload, expected_fields=None):
         """Create a resource and verify its fields through the detail route."""
         response = self.client.post(url, payload, format='json')

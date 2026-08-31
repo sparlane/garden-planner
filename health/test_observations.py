@@ -205,7 +205,7 @@ class HealthObservationRestTests(RESTContractTestCase):
         self.assertEqual(created.status_code, 201, created.data)
         self.assertEqual(created.data['affected_count'], 1)
         history = self.client.get(f'/health/observations/?plant={plant.pk}')
-        self.assertEqual(len(history.data), 1)
+        self.assertEqual(len(history.data['results']), 1)
         corrected = self.client.post(
             f"/health/observations/{created.data['pk']}/correct/", {
                 'observation_type': observation_type.pk,
@@ -215,7 +215,10 @@ class HealthObservationRestTests(RESTContractTestCase):
         )
         self.assertEqual(corrected.status_code, 201, corrected.data)
         history = self.client.get(f'/health/observations/?plant={plant.pk}')
-        self.assertEqual([row['pk'] for row in history.data], [corrected.data['pk']])
+        self.assertEqual(
+            [row['pk'] for row in history.data['results']],
+            [corrected.data['pk']],
+        )
 
     def test_garden_workspace_is_rejected(self):
         self.workspace.mode = Workspace.Mode.GARDEN

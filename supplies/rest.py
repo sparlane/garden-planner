@@ -54,7 +54,7 @@ class SupplierViewSet(
     """
     ViewSet of Suppliers
     """
-    queryset = Supplier.objects.all()
+    queryset = Supplier.objects.order_by('pk')
     serializer_class = SupplierSerializer
 
 

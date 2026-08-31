@@ -51,6 +51,7 @@ class PlantFamilyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  
     """
     queryset = PlantFamily.objects.all()
     serializer_class = PlantFamilySerializer
+    pagination_class = None
 
 
 class PlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
@@ -59,13 +60,14 @@ class PlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pyli
     """
     queryset = Plant.objects.all()
     serializer_class = PlantSerializer
+    pagination_class = None
 
 
 class PlantVarietyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Varieties
     """
-    queryset = PlantVariety.objects.all()
+    queryset = PlantVariety.objects.order_by('pk')
     serializer_class = PlantVarietySerializer
 
 

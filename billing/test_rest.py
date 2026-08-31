@@ -71,15 +71,15 @@ class DocumentRESTTests(DocumentScenarioMixin, RESTContractTestCase):
 
         listed = self.client.get(DOCUMENTS_URL)
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual([row['pk'] for row in listed.data], [response.data['pk']])
+        self.assertEqual([row['pk'] for row in listed.data['results']], [response.data['pk']])
 
     def test_the_register_can_be_narrowed_to_one_order(self):
         """An order screen asks for its own documents and gets only those."""
         self.issue(positions=(1,))
         matching = self.client.get(f'{DOCUMENTS_URL}?order={self.order.pk}')
-        self.assertEqual(len(matching.data), 1)
+        self.assertEqual(len(matching.data['results']), 1)
         other = self.client.get(f'{DOCUMENTS_URL}?order={self.order.pk + 1000}')
-        self.assertEqual(other.data, [])
+        self.assertEqual(other.data['results'], [])
 
     def test_a_document_cannot_be_edited_or_deleted_over_the_api(self):
         """The surface offers no way to rewrite evidence."""

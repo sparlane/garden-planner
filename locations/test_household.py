@@ -31,7 +31,7 @@ class ContainerLocationTests(RESTContractTestCase):
         Location.objects.create(name='Shed', code='SHED', location_type='storage')
         response = self.client.get('/locations/?location_type=container')
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual([row['code'] for row in response.data], ['PATIO-POTS'])
+        self.assertEqual([row['code'] for row in response.data['results']], ['PATIO-POTS'])
 
 
 class HouseholdDefaultsTests(RESTContractTestCase):

@@ -386,7 +386,7 @@ class SeedsViewSet(
 ):  # pylint: disable=too-many-ancestors
     """Configure seed catalogs and their paired inventory units."""
 
-    queryset = Seeds.objects.select_related('inventory_item')
+    queryset = Seeds.objects.select_related('inventory_item').order_by('pk')
     serializer_class = SeedsSerializer
 
 
@@ -401,7 +401,7 @@ class SeedPacketCurrentViewSet(
         'stock_lot__receipt_line__receipt__supplier',
         'seeds__supplier',
         'storage_location',
-    ).prefetch_related(PACKET_INVOICE_PREFETCH)
+    ).prefetch_related(PACKET_INVOICE_PREFETCH).order_by('pk')
     serializer_class = SeedPacketSerializer
     http_method_names = ['get', 'patch', 'head', 'options', 'post']
 
@@ -460,7 +460,7 @@ class SeedPacketAllViewSet(
         'stock_lot__receipt_line__receipt__supplier',
         'seeds__supplier',
         'storage_location',
-    ).prefetch_related(PACKET_INVOICE_PREFETCH)
+    ).prefetch_related(PACKET_INVOICE_PREFETCH).order_by('pk')
     serializer_class = SeedPacketSerializer
     http_method_names = ['get', 'patch', 'head', 'options']
 

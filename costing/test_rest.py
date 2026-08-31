@@ -206,7 +206,7 @@ class AllocationListTests(CostingServiceTestCase):
         response = self.client.get(f'/costing/allocations/?batch={self.batch.pk}')
         self.assertEqual(response.status_code, 200)
         self.assertTrue(
-            any(row['reversal_of'] is not None for row in response.data),
+            any(row['reversal_of'] is not None for row in response.data['results']),
         )
 
     def test_the_effective_filter_returns_what_still_counts(self):
@@ -215,9 +215,9 @@ class AllocationListTests(CostingServiceTestCase):
             f'/costing/allocations/?batch={self.batch.pk}&effective=true',
         )
         self.assertEqual(response.status_code, 200)
-        for row in response.data:
+        for row in response.data['results']:
             self.assertIsNone(row['reversal_of'])
-        self.assertEqual(len(response.data), 1)
+        self.assertEqual(len(response.data['results']), 1)
 
     def test_layers_can_be_narrowed_to_one_plant(self):
         """A plant screen asks for its own rows, not the whole batch."""
@@ -225,8 +225,8 @@ class AllocationListTests(CostingServiceTestCase):
             f'/costing/allocations/?plant={self.plant.pk}&effective=true',
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['specific_plant'], self.plant.pk)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['specific_plant'], self.plant.pk)
 
     def test_a_bad_filter_is_refused_rather_than_ignored(self):
         """Silently returning everything would be the wrong answer."""
@@ -240,7 +240,7 @@ class AllocationListTests(CostingServiceTestCase):
         self.assertTrue(response.data)
         self.assertIn(
             'germination',
-            {row['trigger'] for row in response.data} | {'germination'},
+            {row['trigger'] for row in response.data['results']} | {'germination'},
         )
 
 

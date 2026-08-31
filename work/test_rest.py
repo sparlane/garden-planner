@@ -85,7 +85,7 @@ class WorkRESTTests(APITestCase):
         self.workspace.save()
         response = self.client.get('/work/rules/')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 7)
-        codes = {row['code'] for row in response.data}
+        self.assertEqual(len(response.data['results']), 7)
+        codes = {row['code'] for row in response.data['results']}
         self.assertIn('health-follow-up', codes)
         self.assertIn('germination-assessment', codes)

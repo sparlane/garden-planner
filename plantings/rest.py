@@ -1022,7 +1022,7 @@ class GardenRowDirectSowPlantingViewSet(
     """
     ViewSet of GardenRowDirectSowPlanting
     """
-    queryset = GardenRowDirectSowPlanting.objects.all()
+    queryset = GardenRowDirectSowPlanting.objects.order_by('pk')
     serializer_class = GardenRowDirectSowPlantingSerializer
 
 
@@ -1035,7 +1035,7 @@ class GardenSquareDirectSowPlantingViewSet(
     """
     ViewSet of GardenSquareDirectSowPlanting
     """
-    queryset = GardenSquareDirectSowPlanting.objects.all()
+    queryset = GardenSquareDirectSowPlanting.objects.order_by('pk')
     serializer_class = GardenSquareDirectSowSerializer
 
 
@@ -1068,7 +1068,7 @@ class SeedTrayPlantingViewSet(
     """
     ViewSet of SeedTrayPlanting
     """
-    queryset = SeedTrayPlanting.objects.all()
+    queryset = SeedTrayPlanting.objects.order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
 
 
@@ -1083,7 +1083,7 @@ class SeedTrayPlantingViewSeedTraySet(
     """
     ViewSet of SeedTrayPlanting filtered by SeedTray
     """
-    queryset = SeedTrayPlanting.objects.all()
+    queryset = SeedTrayPlanting.objects.order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
 
     def get_queryset(self):
@@ -1106,7 +1106,7 @@ class GardenSquareTransplantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadO
 
     New transplant workflows move individual SpecificPlant records instead.
     """
-    queryset = GardenSquareTransplant.objects.all()
+    queryset = GardenSquareTransplant.objects.order_by('pk')
     serializer_class = GardenSquareTransplantSerializer
 
 
@@ -1118,7 +1118,7 @@ class SpecificPlantViewSet(PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixi
         'locations', 'locations__seed_tray_cell', 'locations__garden_square',
         'lifecycle_events', 'image_attachments',
         active_allocation_prefetch(),
-    )
+    ).order_by('pk')
     serializer_class = SpecificPlantSerializer
 
     def get_serializer_class(self):
@@ -1148,7 +1148,7 @@ class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspace
     """
     ViewSet of SpecificPlant filtered by SeedTray
     """
-    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'lifecycle_events')
+    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'lifecycle_events').order_by('pk')
     serializer_class = SpecificPlantSerializer
     generation_lookup = 'cell_planting__seed_tray_planting__generation'
 
@@ -1172,7 +1172,7 @@ class SpecificPlantLocationViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelV
 
     PUT and DELETE are disabled: PATCH edits fields and the end action closes a location.
     """
-    queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
+    queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square').order_by('pk')
     serializer_class = SpecificPlantLocationSerializer
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
     workspace_lookup = 'specific_plant__workspace'
@@ -1205,7 +1205,7 @@ class SpecificPlantLocationByPlantViewSet(CurrentWorkspaceViewSetMixin, viewsets
     """
     ViewSet of SpecificPlantLocation filtered by SpecificPlant
     """
-    queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square')
+    queryset = SpecificPlantLocation.objects.select_related('seed_tray_cell', 'garden_square').order_by('pk')
     serializer_class = SpecificPlantLocationSerializer
     workspace_lookup = 'specific_plant__workspace'
     bind_workspace_on_create = False

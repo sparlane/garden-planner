@@ -68,7 +68,7 @@ class PlantingRESTContractTests(RESTContractTestCase):
 
     def test_list_routes_return_lists(self):
         """Authenticated planting collections use the common list contract."""
-        self.assert_list_contract(self.list_urls)
+        self.assert_paginated_list_contract(self.list_urls)
 
     def test_writable_planting_resources_round_trip(self):
         """Each current aggregate planting resource survives create and retrieve."""
@@ -240,7 +240,7 @@ class PlantingRESTContractTests(RESTContractTestCase):
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(
-                    {resource['pk'] for resource in response.data},
+                    {resource['pk'] for resource in response.data['results']},
                     {expected_pk},
                 )
                 response = self.client.get(f'{url}{expected_pk}/')

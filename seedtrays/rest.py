@@ -194,7 +194,7 @@ class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet)
     """
     ViewSet of SeedTrayModels
     """
-    queryset = SeedTrayModel.objects.all()
+    queryset = SeedTrayModel.objects.order_by('pk')
     serializer_class = SeedTrayModelSerializer
 
     @action(detail=True, methods=['post'])
@@ -257,7 +257,7 @@ class SeedTrayAllViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  
         'inventory_unit__item',
         'inventory_unit__source_lot__receipt_line',
         'inventory_unit__current_location',
-    ).prefetch_related('inventory_unit__movements')
+    ).prefetch_related('inventory_unit__movements').order_by('pk')
     serializer_class = SeedTraySerializer
     http_method_names = ['get', 'patch', 'head', 'options']
 
@@ -313,7 +313,7 @@ class SeedTrayCellViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet): 
     """
     ViewSet of all SeedTrayCells
     """
-    queryset = SeedTrayCell.objects.all()
+    queryset = SeedTrayCell.objects.order_by('pk')
     serializer_class = SeedTrayCellSerializer
     workspace_lookup = 'tray__workspace'
     bind_workspace_on_create = False
@@ -327,6 +327,7 @@ class SeedTrayCellFilteredViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelVi
     serializer_class = NestedSeedTrayCellSerializer
     workspace_lookup = 'tray__workspace'
     bind_workspace_on_create = False
+    pagination_class = None
     _parent_tray = None
 
     def get_parent_tray(self):

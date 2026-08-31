@@ -137,7 +137,7 @@ class AttachmentContractTests(AttachmentTestCase):
             'target_type': 'plant', 'target_id': self.plant.pk,
         })
         self.assertEqual(listed.status_code, 200)
-        self.assertEqual([row['id'] for row in listed.data], [attachment_id])
+        self.assertEqual([row['id'] for row in listed.data['results']], [attachment_id])
 
         content = self.client.get(f'/attachments/{attachment_id}/content/')
         self.assertEqual(content.status_code, 200)
@@ -178,7 +178,7 @@ class AttachmentContractTests(AttachmentTestCase):
         self.assertEqual(
             self.client.get('/attachments/', {
                 'target_type': 'plant', 'target_id': other_plant.pk,
-            }).data,
+            }).data['results'],
             [],
         )
         self.assertEqual(
@@ -228,6 +228,8 @@ class AttachmentContractTests(AttachmentTestCase):
             response = self.client.get(url)
             self.assertEqual(response.status_code, 200, response.data)
             payload = response.data
+            if isinstance(payload, dict) and 'results' in payload:
+                payload = payload['results']
             if isinstance(payload, list):
                 payload = next(row for row in payload if row['pk'] == target.pk)
             with self.subTest(target_type=target_type):

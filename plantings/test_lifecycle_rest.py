@@ -76,7 +76,7 @@ class PlantLifecycleContractTests(PlantLifecycleRESTTestCase):
 
     def test_list_routes_return_lists(self):
         """Authenticated lifecycle collections use the common list contract."""
-        self.assert_list_contract(self.list_urls)
+        self.assert_paginated_list_contract(self.list_urls)
 
     def test_events_cannot_be_written_directly(self):
         """Facts arrive through named actions, never a generic create."""
@@ -112,11 +112,11 @@ class PlantLifecycleContractTests(PlantLifecycleRESTTestCase):
             f'&event_type={EventType.READY}',
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]['plant'], self.plant.pk)
+        self.assertEqual(len(response.data['results']), 1)
+        self.assertEqual(response.data['results'][0]['plant'], self.plant.pk)
 
         response = self.client.get(f'/plantings/lifecycle-events/?plant={other.pk}')
-        self.assertEqual(response.data, [])
+        self.assertEqual(response.data['results'], [])
 
     def test_an_invalid_filter_is_rejected(self):
         """A malformed filter reports a field error instead of ignoring it."""

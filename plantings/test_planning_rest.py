@@ -118,7 +118,7 @@ class NurseryPlanningRESTTests(RESTContractTestCase):
             '/plantings/production-plans/',
         ]
         self.assert_authentication_required(urls)
-        self.assert_list_contract(urls)
+        self.assert_paginated_list_contract(urls)
 
         Workspace.objects.filter(pk=self.workspace.pk).update(mode=Workspace.Mode.GARDEN)
         for url in urls:
