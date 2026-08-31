@@ -1,7 +1,10 @@
 import React from 'react'
-import { Badge, Button, Table } from 'react-bootstrap'
+import { Alert, Badge, Button, Form, Modal, Table } from 'react-bootstrap'
+import { useMutation } from '@tanstack/react-query'
 
-import { formatDateTime } from '../utils'
+import { postSpecificPlantOutcome } from '../api/plantings'
+import { clearApiError } from '../api/errors'
+import { errorsByField, formatDateTime, localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
 import { AvailabilityInterval, PlantLifecycleEvent, PlantLifecycleEventType, PlantLifecycleState, PlantOutcomeAction, SpecificPlant } from '../types/plantings'
 
 // Every derived state and recorded fact the server can report, including the
@@ -69,6 +72,8 @@ const OUTCOME_ACTIONS: Array<{ action: PlantOutcomeAction; label: string; varian
   { action: 'donate', label: 'Donate', variant: 'outline-info' }
 ]
 
+const GARDEN_OUTCOME_ACTIONS: Array<PlantOutcomeAction> = ['retain', 'fail', 'cull', 'donate']
+
 // The backward facts. Each says the situation changed rather than that
 // something was recorded wrongly, and the server refuses one without a reason.
 const REASON_REQUIRED_ACTIONS: Array<PlantOutcomeAction> = ['hold-back', 'end-retention']
@@ -100,18 +105,19 @@ function PlantLifecycleBadge({ plant }: { plant: SpecificPlant }) {
   return <LifecycleStateBadge state={plant.lifecycle_state} />
 }
 
-function availableActions(plant: SpecificPlant): Array<{ action: PlantOutcomeAction; label: string; variant: string }> {
+function availableActions(plant: Pick<SpecificPlant, 'lifecycle_state'>): Array<{ action: PlantOutcomeAction; label: string; variant: string }> {
   return OUTCOME_ACTIONS.filter((entry) => ACTION_STATES[entry.action].includes(plant.lifecycle_state))
 }
 
 interface PlantOutcomeButtonsProps {
-  plant: SpecificPlant
-  onOutcome: (plant: SpecificPlant, outcome: PlantOutcomeAction) => void
+  plant: Pick<SpecificPlant, 'pk' | 'lifecycle_state'>
+  onOutcome: (plant: Pick<SpecificPlant, 'pk' | 'lifecycle_state'>, outcome: PlantOutcomeAction) => void
+  actions?: Array<PlantOutcomeAction>
   disabled?: boolean
 }
 
-function PlantOutcomeButtons({ plant, onOutcome, disabled }: PlantOutcomeButtonsProps) {
-  const actions = availableActions(plant)
+function PlantOutcomeButtons({ plant, onOutcome, actions: includedActions, disabled }: PlantOutcomeButtonsProps) {
+  const actions = availableActions(plant).filter((entry) => includedActions === undefined || includedActions.includes(entry.action))
   if (actions.length === 0) {
     return <span className="text-muted">Resolved</span>
   }
@@ -123,6 +129,84 @@ function PlantOutcomeButtons({ plant, onOutcome, disabled }: PlantOutcomeButtons
         </Button>
       ))}
     </div>
+  )
+}
+
+interface PlantOutcomeDialogProps {
+  plant?: Pick<SpecificPlant, 'pk'>
+  outcome?: PlantOutcomeAction
+  onClose: () => void
+  onRecorded: (event: PlantLifecycleEvent) => void | Promise<unknown>
+}
+
+function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcomeDialogProps) {
+  const [occurredAt, setOccurredAt] = React.useState('')
+  const [reason, setReason] = React.useState('')
+  const mutation = useMutation({
+    mutationFn: ({ plantPk, action, occurredAt: occurred, reason: explanation }: { plantPk: number; action: PlantOutcomeAction; occurredAt: string; reason: string }) =>
+      postSpecificPlantOutcome(plantPk, action, { occurred_at: occurred, reason: explanation }),
+    onSuccess: onRecorded,
+    onError: (error) => {
+      if (Object.keys(errorsByField(error)).length > 0) clearApiError()
+    }
+  })
+  const errors = errorsByField(mutation.error)
+  const actionDetails = OUTCOME_ACTIONS.find((entry) => entry.action === outcome)
+  const reasonRequired = outcome !== undefined && REASON_REQUIRED_ACTIONS.includes(outcome)
+
+  React.useEffect(() => {
+    if (plant !== undefined && outcome !== undefined) {
+      setOccurredAt(localDatetimeInputValue())
+      setReason('')
+      mutation.reset()
+    }
+  }, [plant?.pk, outcome])
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    if (plant === undefined || outcome === undefined) return
+    const parsed = parseLocalDatetimeInput(occurredAt)
+    if (parsed === null) return
+    try {
+      await mutation.mutateAsync({ plantPk: plant.pk, action: outcome, occurredAt: parsed.toISOString(), reason })
+      onClose()
+    } catch {
+      // Field feedback below handles validation; other failures remain in the
+      // global API alert. Keeping the modal open lets the entry be corrected.
+    }
+  }
+
+  return (
+    <Modal show={plant !== undefined && outcome !== undefined} onHide={onClose} aria-labelledby="plant-outcome-dialog-title">
+      <Form onSubmit={submit}>
+        <Modal.Header closeButton>
+          <Modal.Title id="plant-outcome-dialog-title">
+            Record {actionDetails?.label.toLowerCase()} for plant #{plant?.pk}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {(errors.non_field_errors || errors.event_type || errors.detail) && <Alert variant="danger">{errors.non_field_errors || errors.event_type || errors.detail}</Alert>}
+          <Form.Group className="mb-3" controlId="plant-outcome-occurred-at">
+            <Form.Label>When did this happen?</Form.Label>
+            <Form.Control type="datetime-local" value={occurredAt} required isInvalid={'occurred_at' in errors} onChange={(event) => setOccurredAt(event.target.value)} />
+            <Form.Control.Feedback type="invalid">{errors.occurred_at}</Form.Control.Feedback>
+          </Form.Group>
+          <Form.Group controlId="plant-outcome-reason">
+            <Form.Label>Why? {reasonRequired ? '' : '(optional)'}</Form.Label>
+            <Form.Control as="textarea" rows={3} value={reason} required={reasonRequired} isInvalid={'reason' in errors} onChange={(event) => setReason(event.target.value)} />
+            <Form.Control.Feedback type="invalid">{errors.reason}</Form.Control.Feedback>
+          </Form.Group>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>
+            Cancel
+          </Button>
+          <Button type="submit" variant={actionDetails?.variant ?? 'primary'} disabled={mutation.isPending || !occurredAt || (reasonRequired && !reason.trim())}>
+            {mutation.isPending ? 'Recording…' : `Confirm ${actionDetails?.label ?? 'outcome'}`}
+          </Button>
+        </Modal.Footer>
+      </Form>
+    </Modal>
   )
 }
 
@@ -201,6 +285,7 @@ function PlantLifecycleHistory({ events, onReverse }: PlantLifecycleHistoryProps
 
 export {
   EVENT_LABELS,
+  GARDEN_OUTCOME_ACTIONS,
   REASON_PROMPTS,
   REASON_REQUIRED_ACTIONS,
   STATE_LABELS,
@@ -208,5 +293,6 @@ export {
   PlantAvailabilitySpans,
   PlantLifecycleBadge,
   PlantLifecycleHistory,
+  PlantOutcomeDialog,
   PlantOutcomeButtons
 }

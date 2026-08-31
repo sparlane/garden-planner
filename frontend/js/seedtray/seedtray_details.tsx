@@ -36,10 +36,9 @@ import {
   postBulkPlantOperation,
   previewBulkPlantOperation,
   moveSpecificPlant,
-  postSpecificPlantOutcome,
   reverseSpecificPlantEvent
 } from '../api/plantings'
-import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, REASON_PROMPTS, REASON_REQUIRED_ACTIONS } from '../plantings/lifecycle'
+import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog } from '../plantings/lifecycle'
 import { GerminationSummary } from '../plantings/germination'
 import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
 import { CohortLossCause } from '../types/plantings'
@@ -176,7 +175,7 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
         return (
           <div key={plant.pk} style={{ marginTop: 4, fontSize: '0.8em', borderTop: '1px solid #eee', paddingTop: 2 }}>
             <div>
-              Plant #{plant.pk}
+              <a href={`/plantings/plants/${plant.pk}`}>Plant #{plant.pk}</a>
               {loc && <span style={{ color: '#555' }}> — {locationLabel(loc)}</span>}
             </div>
             <div style={{ marginTop: 2 }}>
@@ -219,7 +218,7 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
 type PlantLifecycleRowProps = {
   plant: SpecificPlant
   locationLabel: (loc: SpecificPlantLocation) => string
-  onOutcome: (plant: SpecificPlant, outcome: PlantOutcomeAction) => void
+  onOutcome: (plant: Pick<SpecificPlant, 'pk' | 'lifecycle_state'>, outcome: PlantOutcomeAction) => void
   onReverse: (plant: SpecificPlant, event: PlantLifecycleEvent) => void
   busy: boolean
 }
@@ -236,7 +235,9 @@ const PlantLifecycleRow: React.FC<PlantLifecycleRowProps> = ({ plant, locationLa
   return (
     <>
       <tr>
-        <td>#{plant.pk}</td>
+        <td>
+          <a href={`/plantings/plants/${plant.pk}`}>#{plant.pk}</a>
+        </td>
         <td>
           <PlantLifecycleBadge plant={plant} />
         </td>
@@ -618,6 +619,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const [closingReason, setClosingReason] = React.useState('')
   const [cleaning, setCleaning] = React.useState(false)
   const [applyingFillInput, setApplyingFillInput] = React.useState(false)
+  const [selectedOutcome, setSelectedOutcome] = React.useState<{ plant: Pick<SpecificPlant, 'pk' | 'lifecycle_state'>; outcome: PlantOutcomeAction }>()
   const seedTrayModelsQuery = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
@@ -713,11 +715,6 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
         cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
       ])
-  })
-  const outcomeMutation = useMutation({
-    mutationFn: ({ plantPk, outcome, reason }: { plantPk: number; outcome: PlantOutcomeAction; reason?: string }) =>
-      postSpecificPlantOutcome(plantPk, outcome, reason ? { reason } : {}),
-    onSuccess: (_event, variables) => invalidatePlantLifecycle(variables.plantPk)
   })
   const reverseMutation = useMutation({
     mutationFn: ({ plantPk, event, reason }: { plantPk: number; event: number; reason: string }) => reverseSpecificPlantEvent(plantPk, { event, reason }),
@@ -898,19 +895,6 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
       cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares })
     ])
-  }
-
-  // A backward fact says the situation changed, so the server requires a
-  // reason for it. The correction below asks a deliberately different question:
-  // it claims the fact was never true at all.
-  async function handleRecordOutcome(plant: SpecificPlant, outcome: PlantOutcomeAction) {
-    if (!REASON_REQUIRED_ACTIONS.includes(outcome)) {
-      await outcomeMutation.mutateAsync({ plantPk: plant.pk, outcome })
-      return
-    }
-    const reason = globalThis.prompt(REASON_PROMPTS[outcome])
-    if (!reason || !reason.trim()) return
-    await outcomeMutation.mutateAsync({ plantPk: plant.pk, outcome, reason })
   }
 
   async function handleReverseEvent(plant: SpecificPlant, event: PlantLifecycleEvent) {
@@ -1336,9 +1320,9 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
                     key={plant.pk}
                     plant={plant}
                     locationLabel={locationLabel}
-                    onOutcome={handleRecordOutcome}
+                    onOutcome={(plant, outcome) => setSelectedOutcome({ plant, outcome })}
                     onReverse={handleReverseEvent}
-                    busy={outcomeMutation.isPending || reverseMutation.isPending}
+                    busy={selectedOutcome !== undefined || reverseMutation.isPending}
                   />
                 ))}
               </tbody>
@@ -1359,6 +1343,12 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           onCancel={() => setMoveForm(undefined)}
         />
       )}
+      <PlantOutcomeDialog
+        plant={selectedOutcome?.plant}
+        outcome={selectedOutcome?.outcome}
+        onClose={() => setSelectedOutcome(undefined)}
+        onRecorded={() => (selectedOutcome === undefined ? undefined : invalidatePlantLifecycle(selectedOutcome.plant.pk))}
+      />
     </div>
   )
 }

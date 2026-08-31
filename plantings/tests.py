@@ -107,6 +107,7 @@ class TransplantOwnershipCurrentViewTests(TestCase):
         self.assertEqual(len(garden_plantings), 1)
         self.assertEqual(garden_plantings[0]['specific_plant_pk'], plant.pk)
         self.assertEqual(garden_plantings[0]['transplanting_pk'], location.pk)
+        self.assertEqual(garden_plantings[0]['lifecycle_state'], 'growing')
 
     def test_seed_tray_summary_counts_distinct_multigerm_plants(self):
         """Repeated garden history does not inflate observed plant totals."""

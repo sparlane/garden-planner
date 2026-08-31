@@ -14,6 +14,7 @@ from plants.metadata import variety_days
 from plants.models import MaturityBasis
 from workspaces.models import get_current_workspace
 from .germination import germination_json_map
+from .lifecycle import with_lifecycle_state
 from .models import GardenPlanting, SeedTrayPlanting, GardenSquareDirectSowPlanting, GardenSquareTransplant, SpecificPlant, SpecificPlantLocation
 
 
@@ -250,6 +251,14 @@ def gardensquare_current(request):  # pylint: disable=too-many-locals
         'specific_plant__garden_planting',
         'garden_square__bed__area',
     )
+    lifecycle_states = dict(
+        with_lifecycle_state(
+            SpecificPlant.objects.filter(
+                workspace=workspace,
+                locations__in=specific_plant_locations,
+            )
+        ).values_list('pk', 'lifecycle_state')
+    )
     for location in specific_plant_locations:
         plant = location.specific_plant
         quick_origin = plant.garden_planting
@@ -259,6 +268,7 @@ def gardensquare_current(request):  # pylint: disable=too-many-locals
         planted = quick_origin.recorded_on if quick_origin else planting.planted
         planting_data.append({
             'specific_plant_pk': plant.pk,
+            'lifecycle_state': lifecycle_states[plant.pk],
             'transplanting_pk': location.pk,
             'garden_planting_pk': quick_origin.pk if quick_origin else None,
             'planting_pk': quick_origin.pk if quick_origin else planting.pk,
