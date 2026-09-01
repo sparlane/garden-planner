@@ -10,17 +10,26 @@ from datetime import date
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 
+from labels.models import LabelIdentity
 from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
 
 from .ledger import (
+    IndividualizationRequest,
+    MovementRequest,
     UnitMovementRequest,
     bulk_balance,
+    discard_numbering,
+    individualize_lot_units,
     physical_balance,
+    post_stock_movement,
     post_unit_movement,
+    quantize_money,
 )
 from .models import (
     InventoryItem,
@@ -180,3 +189,183 @@ class MixedBulkBalanceTests(MixedTrackingTestCase):
 
         self.assertEqual(bulk_balance(lot, self.store), Decimal('500'))
         self.assertEqual(bulk_balance(other, self.store), Decimal('7'))
+
+
+class IndividualizationTests(MixedTrackingTestCase):
+    """Numbering part of a lot is deliberate, bounded, and free of movements."""
+
+    def individualize(self, lot, count, location=None):
+        """Number part of a lot through the service."""
+        return individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(
+                lot=lot,
+                location=location or self.store,
+                count=count,
+                reason='Specimen containers',
+            ),
+        )
+
+    def test_numbering_creates_identities_and_posts_no_movements(self):
+        """The units are the whole record; the ledger has nothing to say."""
+        lot = self.receive()
+        before = StockMovement.objects.filter(lot=lot).count()
+
+        units = self.individualize(lot, 6)
+
+        self.assertEqual(len(units), 6)
+        self.assertEqual(len({unit.asset_code for unit in units}), 6)
+        self.assertEqual(StockMovement.objects.filter(lot=lot).count(), before)
+        self.assertEqual(physical_balance(lot, self.store), Decimal('500'))
+        self.assertEqual(bulk_balance(lot, self.store), Decimal('494'))
+
+    def test_numbering_records_who_did_it(self):
+        """Without a movement, the unit itself has to carry the actor."""
+        lot = self.receive()
+
+        units = self.individualize(lot, 1)
+
+        self.assertEqual(units[0].created_by, self.user)
+
+    def test_unit_costs_sum_to_the_bulk_they_replaced(self):
+        """A price that does not divide evenly still loses no cent."""
+        lot = self.receive(quantity='3', cost='1.0000')
+        self.assertIsNotNone(lot.base_unit_cost)
+
+        units = self.individualize(lot, 3)
+
+        total = sum(unit.acquisition_cost for unit in units)
+        self.assertEqual(total, quantize_money(lot.base_unit_cost * 3))
+
+    def test_numbering_cannot_exceed_the_unnumbered_remainder(self):
+        """The bulk figure, not the whole balance, is what is available."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        self.individualize(lot, 8)
+
+        with self.assertRaises(ValidationError) as context:
+            self.individualize(lot, 3)
+        self.assertIn('count', context.exception.message_dict)
+
+        # The two that are left are still numberable.
+        self.assertEqual(len(self.individualize(lot, 2)), 2)
+
+    def test_lot_and_serialized_items_are_refused(self):
+        """Numbering is the mixed mode's privilege, not every item's."""
+        self.item.tracking_mode = InventoryItem.TrackingMode.LOT
+        self.item.save()
+        lot = self.receive()
+
+        with self.assertRaises(ValidationError) as context:
+            self.individualize(lot, 1)
+        self.assertIn('lot', context.exception.message_dict)
+
+
+class IndividualizationBulkOutflowTests(MixedTrackingTestCase):
+    """Bulk stock leaving a mixed lot is held to the bulk figure."""
+
+    def test_a_bulk_sale_cannot_draw_down_numbered_pots(self):
+        """Numbered pots are on hand but are not anonymous stock to sell."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=6),
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            post_stock_movement(
+                self.workspace, self.user,
+                MovementRequest(
+                    lot=lot,
+                    movement_type=StockMovement.MovementType.CONSUMPTION,
+                    quantity=Decimal('5'),
+                    source=self.store,
+                    reason='Potting on',
+                ),
+            )
+        self.assertIn('quantity', context.exception.message_dict)
+
+        # The four that are genuinely anonymous still move.
+        post_stock_movement(
+            self.workspace, self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('4'),
+                source=self.store,
+                reason='Potting on',
+            ),
+        )
+        self.assertEqual(bulk_balance(lot, self.store), Decimal('0'))
+
+
+class DiscardNumberingTests(MixedTrackingTestCase):
+    """A numbering typo is correctable only while the unit is untouched."""
+
+    def number_one(self, lot):
+        """Number a single pot and return it."""
+        return individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=1),
+        )[0]
+
+    def test_an_unused_numbering_can_be_discarded(self):
+        """Nothing was posted, so there is nothing to unwind but the row."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        unit = self.number_one(lot)
+        self.assertEqual(bulk_balance(lot, self.store), Decimal('9'))
+
+        discard_numbering(self.workspace, unit)
+
+        self.assertFalse(InventoryUnit.objects.filter(pk=unit.pk).exists())
+        self.assertEqual(bulk_balance(lot, self.store), Decimal('10'))
+
+    def test_a_unit_with_stock_history_keeps_its_identity(self):
+        """Once a pot has moved, its identity is part of the record."""
+        bench = Location.objects.create(
+            workspace=self.workspace,
+            name='Bench',
+            code='BENCH',
+            location_type=Location.LocationType.GROWING,
+        )
+        lot = self.receive(quantity='10', cost='5.0000')
+        unit = self.number_one(lot)
+        post_unit_movement(
+            self.workspace, self.user,
+            UnitMovementRequest(
+                unit=unit,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                destination=bench,
+                reason='Moved',
+            ),
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            discard_numbering(self.workspace, unit)
+        self.assertIn('unit', context.exception.message_dict)
+        self.assertTrue(InventoryUnit.objects.filter(pk=unit.pk).exists())
+
+    def test_a_labelled_unit_keeps_its_identity(self):
+        """A printed code that resolved to nothing would be worse than a typo."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        unit = self.number_one(lot)
+        # Built directly, because units become a labelable target type in a
+        # later change. The guard reads the identity row either way, so this
+        # keeps working once they do.
+        LabelIdentity.objects.create(
+            workspace=self.workspace,
+            target_content_type=ContentType.objects.get_for_model(InventoryUnit),
+            target_object_id=unit.pk,
+            target_snapshot={'display': unit.asset_code, 'pk': unit.pk},
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            discard_numbering(self.workspace, unit)
+        self.assertIn('unit', context.exception.message_dict)
+
+    def test_ordinary_deletion_is_still_refused(self):
+        """The service is the only door; the model guard stays absolute."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        unit = self.number_one(lot)
+
+        with self.assertRaisesMessage(ValidationError, 'cannot be deleted'):
+            unit.delete()
