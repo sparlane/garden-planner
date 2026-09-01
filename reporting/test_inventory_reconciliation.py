@@ -260,8 +260,8 @@ class InventoryReconciliationTests(APITestCase):
         )
         line = SalesOrderLine.objects.create(**{
             'order': order,
-            'line_type': SalesOrderLine.LineType.TRAY,
-            'tray_item': tray.inventory_unit.item,
+            'line_type': SalesOrderLine.LineType.UNIT,
+            'item': tray.inventory_unit.item,
             'description': 'One reserved tray',
             'quantity': 1,
             'unit_price': Decimal('0'),

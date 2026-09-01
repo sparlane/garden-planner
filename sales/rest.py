@@ -143,7 +143,7 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
     class Meta:
         model = SalesOrderLine
         fields = [
-            'pk', 'order', 'line_type', 'variety', 'tray_item', 'description',
+            'pk', 'order', 'line_type', 'variety', 'item', 'description',
             'quantity', 'unit_price', 'tax_rate', 'tax_treatment',
             'discount_type', 'discount_value',
             'prices_include_tax', 'gross_ex_tax', 'discount_ex_tax',
@@ -158,7 +158,7 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
     workspace_field_lookups = {
         'order': 'workspace',
         'variety': 'workspace',
-        'tray_item': 'workspace',
+        'item': 'workspace',
     }
 
     def validate(self, attrs):
@@ -489,7 +489,7 @@ class SalesOrderLineViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMi
     required_workspace_modes = (Workspace.Mode.NURSERY,)
     workspace_lookup = 'order__workspace'
     bind_workspace_on_create = False
-    queryset = SalesOrderLine.objects.select_related('order', 'variety', 'tray_item').prefetch_related('allocations__events')
+    queryset = SalesOrderLine.objects.select_related('order', 'variety', 'item').prefetch_related('allocations__events')
     serializer_class = SalesOrderLineSerializer
 
     def destroy(self, request, *args, **kwargs):
@@ -531,7 +531,7 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
     def _line(self, order, line_id):
         """Resolve a line only within the action's already-scoped order."""
         try:
-            return order.lines.select_related('order', 'variety', 'tray_item').get(pk=line_id)
+            return order.lines.select_related('order', 'variety', 'item').get(pk=line_id)
         except SalesOrderLine.DoesNotExist as exc:
             raise ValidationError({'line': 'Select a line from this order.'}) from exc
 

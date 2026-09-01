@@ -11,6 +11,7 @@ from django.db import models
 
 from inventory.models import InventoryItem, InventoryUnit, MONEY_DECIMAL_PLACES, MONEY_MAX_DIGITS
 from inventory.models import StockLot, StockMovement
+from inventory.units import UnitCode
 from locations.models import Location
 from plantings.models import PlantLifecycleEvent, SpecificPlant
 from plants.models import PlantVariety
@@ -152,7 +153,10 @@ class SalesOrderLine(models.Model):
         """The exact physical identities this line may allocate."""
 
         SEEDLING = 'seedling', 'Seedling'
-        TRAY = 'tray', 'Serialized tray'
+        # Named for the mechanism rather than for trays: any individually
+        # identified stock is sold this way, and a numbered pot is sold as
+        # itself rather than dissolved back into anonymous stock first.
+        UNIT = 'unit', 'Individually numbered unit'
 
     class DiscountType(models.TextChoices):
         """How the entered discount value is interpreted."""
@@ -180,7 +184,7 @@ class SalesOrderLine(models.Model):
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
     line_type = models.CharField(max_length=16, choices=LineType.choices)
     variety = models.ForeignKey(PlantVariety, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
-    tray_item = models.ForeignKey(InventoryItem, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
+    item = models.ForeignKey(InventoryItem, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
     description = models.CharField(max_length=255)
     quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     unit_price = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO_MONEY)])
@@ -204,7 +208,7 @@ class SalesOrderLine(models.Model):
         ordering = ['pk']
         constraints = [
             models.CheckConstraint(
-                condition=(models.Q(line_type='seedling', variety__isnull=False, tray_item__isnull=True) | models.Q(line_type='tray', variety__isnull=True, tray_item__isnull=False)),
+                condition=(models.Q(line_type='seedling', variety__isnull=False, item__isnull=True) | models.Q(line_type='unit', variety__isnull=True, item__isnull=False)),
                 name='sales_line_target_matches_type',
             ),
             models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_line_quantity_positive'),
@@ -216,24 +220,41 @@ class SalesOrderLine(models.Model):
             ),
         ]
 
+    def _target_errors(self):
+        """Validate the catalog target this kind of line has to name."""
+        if self.line_type == self.LineType.SEEDLING:
+            return self._variety_target_errors()
+        if self.line_type == self.LineType.UNIT:
+            return self._item_target_errors()
+        return {}
+
+    def _variety_target_errors(self):
+        """A seedling line promises a variety and nothing more exact."""
+        if not self.variety_id or self.item_id:
+            return {'variety': 'A seedling line requires one variety.'}
+        if self.variety.workspace_id != self.order.workspace_id:
+            return {'variety': 'The variety belongs to a different workspace.'}
+        return {}
+
+    def _item_target_errors(self):
+        """A unit line promises identified stock: a tray, or a numbered pot."""
+        if not self.item_id or self.variety_id:
+            return {'item': 'A unit line requires one inventory item.'}
+        if self.item.workspace_id != self.order.workspace_id:
+            return {'item': 'The item belongs to a different workspace.'}
+        if self.item.tracking_mode not in InventoryItem.INDIVIDUALLY_IDENTIFIED:
+            return {'item': 'Select an individually identified inventory item.'}
+        if self.item.base_unit != UnitCode.EACH:
+            return {'item': 'Individually sold stock is counted in each.'}
+        return {}
+
     def clean(self):
         super().clean()
         errors = {}
         self._derive_tax_treatment()
         if self.order.status not in EDITABLE_ORDER_STATUSES:
             errors['order'] = 'Confirmed commercial terms are immutable.'
-        if self.line_type == self.LineType.SEEDLING:
-            if not self.variety_id or self.tray_item_id:
-                errors['variety'] = 'A seedling line requires one variety.'
-            elif self.variety.workspace_id != self.order.workspace_id:
-                errors['variety'] = 'The variety belongs to a different workspace.'
-        elif self.line_type == self.LineType.TRAY:
-            if not self.tray_item_id or self.variety_id:
-                errors['tray_item'] = 'A tray line requires one inventory item.'
-            elif self.tray_item.workspace_id != self.order.workspace_id:
-                errors['tray_item'] = 'The tray item belongs to a different workspace.'
-            elif self.tray_item.category != InventoryItem.Category.TRAY or self.tray_item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
-                errors['tray_item'] = 'Select a serialized tray inventory item.'
+        errors.update(self._target_errors())
         entered_gross = Decimal(self.quantity or 0) * Decimal(self.unit_price or 0)
         if self.discount_type == self.DiscountType.NONE and self.discount_value != ZERO_MONEY:
             errors['discount_value'] = 'No-discount lines require a zero value.'
@@ -335,11 +356,11 @@ class SalesOrderAllocation(models.Model):
             elif self.plant.batch.variety_id != self.line.variety_id:
                 errors['plant'] = 'The plant is a different variety from this line.'
         else:
-            if self.line.line_type != SalesOrderLine.LineType.TRAY:
-                errors['inventory_unit'] = 'Units can only be allocated to tray lines.'
+            if self.line.line_type != SalesOrderLine.LineType.UNIT:
+                errors['inventory_unit'] = 'Units can only be allocated to unit lines.'
             elif self.inventory_unit.workspace_id != self.line.order.workspace_id:
                 errors['inventory_unit'] = 'The unit belongs to a different workspace.'
-            elif self.inventory_unit.item_id != self.line.tray_item_id:
+            elif self.inventory_unit.item_id != self.line.item_id:
                 errors['inventory_unit'] = 'The unit is a different item from this line.'
         if errors:
             raise ValidationError(errors)
