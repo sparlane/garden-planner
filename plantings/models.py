@@ -1672,17 +1672,25 @@ class SpecificPlantLocation(models.Model):
 
     A plant in a tray records the cell, not the bench the tray happens to stand
     on: the tray's own placement already says that, and duplicating it here
-    would let the two disagree the moment a tray is moved. `location` is for a
-    plant standing somewhere in its own right, such as a potted plant on a
-    bench.
+    would let the two disagree the moment a tray is moved. `container_unit`
+    works the same way for a numbered pot, which carries its own location.
+    `location` is for a plant standing somewhere in its own right, such as a
+    potted plant on a bench in an anonymous container.
+
+    Several plants may share one place. The only uniqueness here is one active
+    location per plant, so three bulbs in one numbered pot are three rows
+    pointing at one container, exactly as a multigerm cell holds several
+    seedlings.
     """
     SEED_TRAY_CELL = 'seed_tray_cell'
     GARDEN_SQUARE = 'garden_square'
     LOCATION = 'location'
+    CONTAINER_UNIT = 'container_unit'
     LOCATION_TYPE_CHOICES = [
         (SEED_TRAY_CELL, 'Seed Tray Cell'),
         (GARDEN_SQUARE, 'Garden Square'),
         (LOCATION, 'Location'),
+        (CONTAINER_UNIT, 'Numbered Container'),
     ]
 
     #: For each location type, the field that must be set and those that must
@@ -1692,6 +1700,7 @@ class SpecificPlantLocation(models.Model):
         SEED_TRAY_CELL: 'seed_tray_cell',
         GARDEN_SQUARE: 'garden_square',
         LOCATION: 'location',
+        CONTAINER_UNIT: 'container_unit',
     }
 
     specific_plant = models.ForeignKey(SpecificPlant, on_delete=models.CASCADE, related_name='locations')
@@ -1699,6 +1708,10 @@ class SpecificPlantLocation(models.Model):
     seed_tray_cell = models.ForeignKey(SeedTrayCell, on_delete=models.PROTECT, null=True, blank=True)
     garden_square = models.ForeignKey(GardenSquare, on_delete=models.PROTECT, null=True, blank=True)
     location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='standing_plants')
+    container_unit = models.ForeignKey(
+        'inventory.InventoryUnit', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='standing_plants',
+    )
     started = models.DateTimeField(default=timezone.now)
     ended = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
@@ -1716,8 +1729,30 @@ class SpecificPlantLocation(models.Model):
                 if getattr(self, f'{field_name}_id') is not None:
                     raise ValidationError({field_name: f'Must be blank when location_type is {self.location_type}.'})
 
+        if self.container_unit_id is not None:
+            self._validate_container_unit()
+
         if self.ended is not None and self.ended < self.started:
             raise ValidationError({'ended': 'Must be on or after started.'})
+
+    def _validate_container_unit(self):
+        """Keep pot placements pointing at pots, not at trays.
+
+        A tray holds plants through its cells, which say which cell. Letting a
+        tray's unit be named here too would give one plant in one tray two
+        different ways to say where it is.
+        """
+        from inventory.models import InventoryItem  # pylint: disable=import-outside-toplevel
+
+        unit = self.container_unit
+        if unit.item.tracking_mode != InventoryItem.TrackingMode.MIXED:
+            raise ValidationError({
+                'container_unit': 'Choose an individually numbered container.',
+            })
+        if not unit.active:
+            raise ValidationError({
+                'container_unit': 'The container is no longer in stock.',
+            })
 
     class Meta:
         constraints = [

@@ -286,6 +286,7 @@ def _cohort_targets(workspace, location_ids, scope):
 def _plant_location(plant):
     placement = plant.locations.filter(ended__isnull=True).select_related(
         'location', 'seed_tray_cell__tray__inventory_unit__current_location',
+        'container_unit__current_location',
     ).first()
     if placement is None:
         return None
@@ -293,6 +294,8 @@ def _plant_location(plant):
         return placement.location
     if placement.location_type == SpecificPlantLocation.SEED_TRAY_CELL:
         return placement.seed_tray_cell.tray.inventory_unit.current_location
+    if placement.location_type == SpecificPlantLocation.CONTAINER_UNIT:
+        return placement.container_unit.current_location
     return None
 
 
