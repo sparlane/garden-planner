@@ -1014,6 +1014,23 @@ def _check_unit_destination_capacity(unit, destination, reason):
     check_capacity(destination, tray_contribution(riding), reason)
 
 
+def _riders_travel(unit, movement_type):
+    """Return whether this asset's plants leave with it.
+
+    A numbered pot is sold with what is growing in it, so a sale is not a
+    reason to refuse. A tray is lent rather than sold with its contents, and
+    waste or loss is nobody's idea of a plan for a living plant, so both stay
+    refused.
+    """
+    if movement_type != StockMovement.MovementType.SALE:
+        return False
+    try:
+        unit.seed_tray
+    except ObjectDoesNotExist:
+        return True
+    return False
+
+
 @transaction.atomic
 def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-branches
     """Post one physical action against an exact locked serialized unit."""
@@ -1058,9 +1075,9 @@ def post_unit_movement(workspace, user, request):  # pylint: disable=too-many-br
     }:
         if not source:
             raise ValidationError({'unit': 'The unit is not currently on hand.'})
-        if unit_is_in_use(unit):
+        if unit_is_in_use(unit) and not _riders_travel(unit, request.movement_type):
             raise ValidationError({
-                'unit': 'Move or dispose of active plants before removing this tray.',
+                'unit': 'Move or dispose of active plants before removing this asset.',
             })
         destination = None
     elif request.movement_type == StockMovement.MovementType.ADJUSTMENT_GAIN:

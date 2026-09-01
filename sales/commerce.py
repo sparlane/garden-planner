@@ -41,6 +41,7 @@ from .models import (
     FulfillmentLine,
     FulfillmentNumberSequence,
     FulfillmentPackagingLine,
+    FulfillmentRider,
     Payment,
     Refund,
     RefundLine,
@@ -149,19 +150,117 @@ def _plant_cost(plant):
     )
 
 
-def _validate_tray_riders(units, selected_plant_ids):
+def _resolve_riders(units, selected_plant_ids):
+    """Decide, per unit, what happens to the plants it is carrying.
+
+    A tray is a container being lent, so it may not go out holding plants
+    nobody sold: the fulfillment has to name them. A numbered pot is sold with
+    what is growing in it, so its plants come along and are returned as part of
+    the same line rather than needing a second one.
+    """
+    riders = {}
     for unit in units.values():
         try:
             tray = unit.seed_tray
         except ObjectDoesNotExist:
+            riders[unit.pk] = list(SpecificPlantLocation.objects.filter(
+                container_unit=unit, ended__isnull=True,
+            ).select_related('specific_plant__batch'))
             continue
-        riders = set(SpecificPlantLocation.objects.filter(
+        carried = set(SpecificPlantLocation.objects.filter(
             seed_tray_cell__tray=tray, ended__isnull=True,
         ).values_list('specific_plant_id', flat=True))
-        if not riders.issubset(selected_plant_ids):
+        if not carried.issubset(selected_plant_ids):
             raise ValidationError({
                 'allocations': f'Tray {tray.pk} still carries plants not in this fulfillment.',
             })
+        riders[unit.pk] = []
+    return riders
+
+
+def _validate_riders_are_free(riders, order):
+    """Refuse to sell a pot whose plants are already promised elsewhere.
+
+    A potted specimen is sellable exactly once. Without this the same plant
+    could go out on its own seedling line and again inside its container.
+    """
+    plant_ids = [
+        placement.specific_plant_id
+        for placements in riders.values()
+        for placement in placements
+    ]
+    if not plant_ids:
+        return
+    claimed = SalesOrderAllocation.objects.filter(
+        plant_id__in=plant_ids,
+        status__in=(
+            SalesOrderAllocation.Status.RESERVED,
+            SalesOrderAllocation.Status.FULFILLED,
+        ),
+    ).exclude(line__order=order).values_list('plant_id', flat=True)
+    duplicated = sorted(set(claimed))
+    if duplicated:
+        raise ValidationError({
+            'allocations': (
+                f'Plants {duplicated} are promised on another order and cannot '
+                'be sold inside a container.'
+            ),
+        })
+
+
+def _sell_rider(line, placement, user, fulfilled_at, cogs_amount):
+    """Record one plant as sold because the container holding it was.
+
+    The plant's placement ends here rather than following the pot: once the
+    container has left, saying the plant is still standing in it would be a
+    claim about somebody else's greenhouse.
+    """
+    plant = placement.specific_plant
+    event = record_lifecycle_event(
+        plant, user,
+        OutcomeRequest(
+            EventType.SOLD, occurred_at=fulfilled_at,
+            reference=f'fulfillment:{line.fulfillment_id}:container:{line.pk}',
+        ),
+    )
+    SpecificPlantLocation.objects.filter(pk=placement.pk).update(ended=fulfilled_at)
+    return FulfillmentRider.objects.create(
+        fulfillment_line=line,
+        plant=plant,
+        lifecycle_event=event,
+        cogs_amount=cogs_amount,
+    )
+
+
+def _return_riders(line, sales_return, user, *, returned_at, reason, outcome):
+    """Bring a returned container's plants back with it.
+
+    They went out as passengers on this line, so they come back on it too,
+    landing in the pot again unless it is being discarded. Returns the plants
+    needing quarantine, which the caller handles for the whole document at
+    once.
+    """
+    quarantined = []
+    for rider in line.riders.select_related('plant').all():
+        event = record_lifecycle_event(
+            rider.plant, user,
+            OutcomeRequest(
+                _return_event(outcome), occurred_at=returned_at, reason=reason,
+                reference=f'return:{sales_return.pk}:container:{line.pk}',
+            ),
+        )
+        FulfillmentRider.objects.filter(pk=rider.pk).update(return_event=event)
+        if outcome != SalesReturnLine.Outcome.DISCARDED:
+            SpecificPlantLocation.objects.create(
+                specific_plant=rider.plant,
+                location_type=SpecificPlantLocation.CONTAINER_UNIT,
+                container_unit=line.allocation.inventory_unit,
+                started=returned_at,
+                notes=reason,
+            )
+        if outcome == SalesReturnLine.Outcome.QUARANTINED:
+            quarantined.append(rider.plant)
+    return quarantined
 
 
 @transaction.atomic
@@ -207,7 +306,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
     units = lock_units(order.workspace, unit_ids)
     lot_ids = [row['lot'].pk for row in packaging]
     lots = lock_lots(order.workspace, lot_ids)
-    _validate_tray_riders(units, set(plant_ids))
+    riders = _resolve_riders(units, set(plant_ids))
+    _validate_riders_are_free(riders, order)
     positions = _available_positions(order)
     fulfillment = Fulfillment.objects.create(
         workspace=order.workspace, order=order,
@@ -244,7 +344,16 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
                 ),
             )
             cogs_amount, provisional = unit.acquisition_cost, False
-        FulfillmentLine.objects.create(
+        carried = riders.get(allocation.inventory_unit_id, [])
+        rider_costs = [_plant_cost(row.specific_plant) for row in carried]
+        if carried:
+            # The pot's own cost is the small half of what went out the door.
+            # Leaving the plants out would understate cost of sale on exactly
+            # the specimens this line exists to sell.
+            known = [amount for amount, _ in rider_costs if amount is not None]
+            cogs_amount = (cogs_amount or Decimal('0')) + sum(known, Decimal('0'))
+            provisional = provisional or any(flag for _, flag in rider_costs)
+        line = FulfillmentLine.objects.create(
             fulfillment=fulfillment, allocation=allocation,
             commercial_position=position, cogs_amount=cogs_amount,
             cogs_provisional=provisional, currency_code=order.currency_code,
@@ -252,6 +361,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             lifecycle_event=lifecycle_event, stock_movement=stock_movement,
             **amounts,
         )
+        for placement, (rider_cost, _flag) in zip(carried, rider_costs):
+            _sell_rider(line, placement, user, fulfilled_at, rider_cost)
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
             status=SalesOrderAllocation.Status.FULFILLED, updated=timezone.now(),
         )
@@ -402,6 +513,10 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
                     reason=reason, reference=f'return:{sales_return.pk}:line:{line.pk}',
                 ),
             )
+            quarantined_plants.extend(_return_riders(
+                line, sales_return, user,
+                returned_at=returned_at, reason=reason, outcome=outcome,
+            ))
             if outcome == SalesReturnLine.Outcome.DISCARDED:
                 discard_movement = post_unit_movement(
                     order.workspace, user,

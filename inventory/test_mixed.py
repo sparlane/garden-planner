@@ -7,6 +7,7 @@
 # pylint: disable=duplicate-code
 
 from datetime import date
+from uuid import uuid4
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
@@ -19,10 +20,18 @@ from labels.models import LabelCode, LabelIdentity
 from labels.services import ensure_identity
 from locations.models import Location
 from locations.occupancy import location_occupancy
+from plantings.lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    plant_lifecycle_summary,
+    record_lifecycle_event,
+)
 from plantings.models import SpecificPlantLocation
 from reporting.inventory import inventory_balances
-from sales.models import SalesOrderLine
-from sales.services import allocate_targets, create_order
+from sales.commerce import post_fulfillment, post_return
+from sales.models import SalesOrderLine, SalesReturnLine
+from sales.services import allocate_targets, confirm_order, create_order
 from supplies.models import Supplier
 from tests.factories import make_seed_tray, make_specific_plant
 from workspaces.models import Workspace, get_current_workspace
@@ -706,3 +715,137 @@ class NumberedPotSalesLineTests(MixedTrackingTestCase):
 
         self.assertEqual(len(allocations), 1)
         self.assertEqual(allocations[0].inventory_unit_id, pot.pk)
+
+
+class SellingAPottedSpecimenTests(MixedTrackingTestCase):
+    """Selling a numbered pot sells what is growing in it."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.lot = self.receive(quantity='10', cost='5.0000')
+        self.pot = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=self.lot, location=self.store, count=1),
+        )[0]
+
+    def plant_in_pot(self, pot=None):
+        """Stand one ready plant in a numbered container."""
+        plant = make_specific_plant()
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            container_unit=pot or self.pot,
+        )
+        return plant
+
+    def sell_the_pot(self):
+        """Take one numbered pot all the way through a confirmed order."""
+        order = create_order(self.workspace, self.user)
+        line = SalesOrderLine.objects.create(
+            order=order,
+            line_type=SalesOrderLine.LineType.UNIT,
+            item=self.item,
+            description='One specimen in its pot',
+            quantity=1,
+            unit_price=Decimal('40'),
+            tax_rate=Decimal('15'),
+        )
+        allocation = allocate_targets(line, self.user, unit_ids=[self.pot.pk])[0]
+        confirm_order(order, self.user)
+        fulfillment = post_fulfillment(
+            order, self.user, operation_key=uuid4(),
+            allocation_ids=[allocation.pk],
+        )
+        return order, fulfillment.lines.get()
+
+    def test_the_plants_in_a_sold_pot_are_sold_with_it(self):
+        """One line, one pot, and every passenger recorded as gone."""
+        plants = [self.plant_in_pot() for _ in range(3)]
+
+        _order, line = self.sell_the_pot()
+
+        riders = line.riders.all()
+        self.assertEqual(riders.count(), 3)
+        self.assertEqual(
+            {rider.plant_id for rider in riders},
+            {plant.pk for plant in plants},
+        )
+        for plant in plants:
+            self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.SOLD)
+
+    def test_a_sold_pot_stops_holding_its_plants(self):
+        """The pot has left, so nothing is still standing in it here."""
+        self.plant_in_pot()
+
+        self.sell_the_pot()
+
+        self.assertFalse(SpecificPlantLocation.objects.filter(
+            container_unit=self.pot, ended__isnull=True,
+        ).exists())
+
+    def test_cost_of_sale_covers_the_pot_and_its_passengers(self):
+        """The plants are the larger half of what went out of the door."""
+        self.plant_in_pot()
+
+        _order, line = self.sell_the_pot()
+
+        rider_costs = [
+            rider.cogs_amount or Decimal('0') for rider in line.riders.all()
+        ]
+        expected = (self.pot.acquisition_cost or Decimal('0')) + sum(
+            rider_costs, Decimal('0'),
+        )
+        self.assertEqual(line.cogs_amount, expected)
+
+    def test_an_empty_pot_sells_with_no_riders(self):
+        """Nothing growing in it means nothing rides along."""
+        _order, line = self.sell_the_pot()
+
+        self.assertEqual(line.riders.count(), 0)
+        self.assertEqual(line.cogs_amount, self.pot.acquisition_cost)
+
+    def test_a_plant_promised_on_another_order_blocks_the_container_sale(self):
+        """A specimen is sellable once, not once loose and once potted."""
+        plant = self.plant_in_pot()
+        other = create_order(self.workspace, self.user)
+        other_line = SalesOrderLine.objects.create(
+            order=other,
+            line_type=SalesOrderLine.LineType.SEEDLING,
+            variety=plant.batch.variety,
+            description='The same specimen, loose',
+            quantity=1,
+            unit_price=Decimal('30'),
+            tax_rate=Decimal('15'),
+        )
+        allocate_targets(other_line, self.user, plant_ids=[plant.pk])
+        confirm_order(other, self.user)
+
+        with self.assertRaises(ValidationError) as context:
+            self.sell_the_pot()
+        self.assertIn('allocations', context.exception.message_dict)
+
+    def test_returning_the_pot_brings_its_plants_back_into_it(self):
+        """They left as passengers on this line, so they come back on it."""
+        plant = self.plant_in_pot()
+        order, line = self.sell_the_pot()
+
+        post_return(
+            order, self.user, operation_key=uuid4(),
+            items=[{
+                'fulfillment_line': line,
+                'outcome': SalesReturnLine.Outcome.AVAILABLE,
+                'destination': self.store,
+            }],
+            reason='Customer changed their mind',
+        )
+
+        self.assertEqual(
+            plant_lifecycle_summary(plant).state, LifecycleState.AVAILABLE,
+        )
+        self.assertTrue(SpecificPlantLocation.objects.filter(
+            specific_plant=plant, container_unit=self.pot, ended__isnull=True,
+        ).exists())
+        self.assertIsNotNone(line.riders.get().return_event_id)

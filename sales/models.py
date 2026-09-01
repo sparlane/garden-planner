@@ -548,6 +548,47 @@ class FulfillmentLine(models.Model):
         ]
 
 
+class FulfillmentRider(models.Model):
+    """One plant that left inside a sold container.
+
+    `FulfillmentLine.lifecycle_event` is a one-to-one, which is right for a
+    line that sells one plant directly. A pot holding three of them produces
+    three lifecycle events and has one slot, so the passengers get a row each
+    instead — which is also what a return needs, to bring them back one by one.
+    """
+
+    fulfillment_line = models.ForeignKey(
+        FulfillmentLine, on_delete=models.PROTECT, related_name='riders',
+    )
+    plant = models.ForeignKey(
+        SpecificPlant, on_delete=models.PROTECT, related_name='sale_riders',
+    )
+    lifecycle_event = models.OneToOneField(
+        PlantLifecycleEvent, on_delete=models.PROTECT,
+        related_name='fulfillment_rider',
+    )
+    return_event = models.OneToOneField(
+        PlantLifecycleEvent, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='returned_fulfillment_rider',
+    )
+    cogs_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['fulfillment_line', 'plant'],
+                name='sales_fulfillment_rider_unique',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Plant {self.plant_id} in fulfillment line {self.fulfillment_line_id}'
+
+
 class FulfillmentPackagingLine(models.Model):
     """An exact packaging-lot quantity consumed by one fulfillment."""
 
