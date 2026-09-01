@@ -1230,7 +1230,12 @@ def post_stocktake(stocktake, user):
                 {'lines': f'Item {line.lot.item_id} is inactive.'},
             )
         _validate_location(line.location, stocktake.workspace, 'location')
-        expected = quantize_quantity(physical_balance(line.lot, line.location))
+        # A mixed lot's numbered pots are counted as their own identities, so
+        # a loose count is measured against the bulk figure alone.
+        if line.lot.item.tracking_mode == InventoryItem.TrackingMode.MIXED:
+            expected = quantize_quantity(bulk_balance(line.lot, line.location))
+        else:
+            expected = quantize_quantity(physical_balance(line.lot, line.location))
         variance = quantize_quantity(line.counted_base_quantity - expected)
         if variance and not line.reason.strip():
             raise ValidationError(
