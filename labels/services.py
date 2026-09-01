@@ -15,6 +15,7 @@ TARGET_PREFIXES = {
     ('plantings', 'specificplant'): 'PLT',
     ('plantings', 'plantcohort'): 'COH',
     ('seedtrays', 'seedtray'): 'TRY',
+    ('inventory', 'inventoryunit'): 'UNT',
     ('plantings', 'productionbatch'): 'BAT',
     ('locations', 'location'): 'LOC',
     ('garden', 'gardenarea'): 'GAR',
