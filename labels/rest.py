@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 
 from health.availability import active_cases, is_quarantined
 from health.services import preview_observation
+from locations.models import location_full_name
 from plantings.lifecycle import derive_state
 from plantings.growth import current_growth
 from workspaces.models import Workspace, get_current_workspace
@@ -48,6 +49,7 @@ TARGET_ROUTES = {
     ('plantings', 'specificplant'): '/plantings/plants/{pk}',
     ('plantings', 'plantcohort'): '/plantings/cohorts/{pk}',
     ('seedtrays', 'seedtray'): '/seedtrays/{pk}',
+    ('inventory', 'inventoryunit'): '/inventory/serialized-units/{pk}',
     ('plantings', 'productionbatch'): '/plantings/batches/{pk}',
     ('locations', 'location'): '/locations',
     ('garden', 'gardenarea'): '/gardens/{pk}',
@@ -116,6 +118,16 @@ def _target_values(identity, code=None):
             values['batch'] = batches[0] if len(batches) == 1 else ('Mixed' if batches else None)
             values['variety'] = varieties[0] if len(varieties) == 1 else ('Mixed' if varieties else None)
             values['sowing_date'] = dates[0] if len(dates) == 1 else ('Mixed' if dates else None)
+    elif key == ('inventory', 'inventoryunit'):
+        values.update({
+            'display': f'{target.item.name} — {target.asset_code}',
+            'asset_code': target.asset_code,
+            'container': target.item.container_size_label or target.item.name,
+            'location': (
+                location_full_name(target.current_location)
+                if target.current_location_id else None
+            ),
+        })
     elif key == ('locations', 'location'):
         values['display'] = target.name
     elif key == ('garden', 'gardenarea'):
@@ -138,12 +150,18 @@ def _add_growth_values(values, target):
 
 
 def _target_active(identity):
+    from inventory.ledger import unit_physical_state  # pylint: disable=import-outside-toplevel
+
     target = identity.target
     if not identity.active or target is None:
         return False
     key = _key(identity)
     if key == ('locations', 'location'):
         return target.active
+    if key == ('inventory', 'inventoryunit'):
+        # A pot that has been sold, wasted or lost still has a code somebody
+        # may scan; saying so beats resolving to a thing that is not there.
+        return unit_physical_state(target) not in {'lost', 'retired', 'dispatched'}
     if key == ('seedtrays', 'seedtray'):
         return True
     return True
@@ -217,6 +235,7 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
         ('plantings', 'specificplant'),
         ('plantings', 'plantcohort'),
         ('seedtrays', 'seedtray'),
+        ('inventory', 'inventoryunit'),
     }
     stocktake_enabled = all((
         workspace.mode == Workspace.Mode.NURSERY,

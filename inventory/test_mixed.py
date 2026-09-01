@@ -15,11 +15,12 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
-from labels.models import LabelIdentity
+from labels.models import LabelCode, LabelIdentity
+from labels.services import ensure_identity
 from reporting.inventory import inventory_balances
 from locations.models import Location
 from supplies.models import Supplier
-from workspaces.models import get_current_workspace
+from workspaces.models import Workspace, get_current_workspace
 
 from .ledger import (
     IndividualizationRequest,
@@ -488,3 +489,55 @@ class MixedBalanceReportingTests(MixedTrackingTestCase):
         self.assertEqual(row['physical_quantity'], '10.000000000')
         self.assertEqual(row['bulk_quantity'], '6.000000000')
         self.assertEqual(row['numbered_quantity'], '4.000000000')
+
+
+class NumberedPotLabelTests(MixedTrackingTestCase):
+    """A numbered pot carries a code an operator can print and scan."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.lot = self.receive(quantity='10', cost='5.0000')
+        self.unit = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=self.lot, location=self.store, count=1),
+        )[0]
+
+    def resolve(self, code):
+        """Resolve one scanned code the way the scanner does."""
+        response = self.client.get('/labels/resolve/', {'value': code})
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def test_a_numbered_pot_can_be_issued_a_code_and_scanned_back(self):
+        """The pot is the target; the code leads to its own detail route."""
+        identity = ensure_identity(self.unit, user=self.user)
+        code = identity.codes.get(status=LabelCode.Status.ACTIVE)
+
+        resolution = self.resolve(code.code)
+
+        self.assertEqual(resolution['status'], 'active')
+        self.assertTrue(code.code.startswith('UNT-'))
+        self.assertEqual(resolution['target']['object_id'], self.unit.pk)
+        self.assertEqual(resolution['deep_link'], f'/inventory/serialized-units/{self.unit.pk}')
+        self.assertIn(self.unit.asset_code, resolution['target']['display'])
+        self.assertIn('stocktake_count', resolution['capabilities'])
+        self.assertEqual(identity.target_object_id, self.unit.pk)
+
+    def test_a_pot_that_has_left_stock_resolves_as_inactive(self):
+        """Scanning a wasted pot should say so, not point at a live asset."""
+        identity = ensure_identity(self.unit, user=self.user)
+        code = identity.codes.get(status=LabelCode.Status.ACTIVE)
+        post_unit_movement(
+            self.workspace, self.user,
+            UnitMovementRequest(
+                unit=self.unit,
+                movement_type=StockMovement.MovementType.WASTE,
+                reason='Cracked',
+            ),
+        )
+
+        resolution = self.resolve(code.code)
+
+        self.assertEqual(resolution['status'], 'inactive')
