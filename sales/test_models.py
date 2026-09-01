@@ -38,7 +38,7 @@ class SalesOrderArithmeticTests(TestCase):
         """Build an arithmetic-only line with adjustable entered terms."""
         values = {
             'order': order,
-            'line_type': SalesOrderLine.LineType.TRAY,
+            'line_type': SalesOrderLine.LineType.UNIT,
             'description': 'Two propagation trays',
             'quantity': 2,
             'unit_price': Decimal('11.5000'),

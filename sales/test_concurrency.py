@@ -36,14 +36,14 @@ class ReservationConcurrencyTestCase(TransactionTestCase):
         if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
             Workspace.objects.create(pk=settings.CURRENT_WORKSPACE_ID, name='My Garden')
 
-    def _order_with_line(self, line_type, variety=None, tray_item=None):
+    def _order_with_line(self, line_type, variety=None, item=None):
         """Create one draft with a single exact-quantity line."""
         order = create_order(self.workspace, self.user)
         line = SalesOrderLine.objects.create(
             order=order,
             line_type=line_type,
             variety=variety,
-            tray_item=tray_item,
+            item=item,
             description='Concurrent target',
             quantity=1,
             unit_price=Decimal('10'),
@@ -106,7 +106,7 @@ class ConcurrentTrayReservationTests(ReservationConcurrencyTestCase):
         tray = make_seed_tray(workspace=self.workspace)
         self.order_pks = []
         for _index in range(2):
-            order, line = self._order_with_line(SalesOrderLine.LineType.TRAY, tray_item=tray.inventory_unit.item)
+            order, line = self._order_with_line(SalesOrderLine.LineType.UNIT, item=tray.inventory_unit.item)
             allocate_targets(line, self.user, unit_ids=[tray.inventory_unit_id])
             self.order_pks.append(order.pk)
 

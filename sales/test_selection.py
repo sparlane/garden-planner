@@ -170,8 +170,8 @@ class SelectionFixture(RESTContractTestCase):
     def tray_line(self, order, tray, quantity=1):
         """Add a tray line for the inventory item one tray belongs to."""
         return self.add_line(order, {
-            'line_type': 'tray',
-            'tray_item': tray.inventory_unit.item_id,
+            'line_type': 'unit',
+            'item': tray.inventory_unit.item_id,
             'description': 'One tray',
             'quantity': quantity,
         })

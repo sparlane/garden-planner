@@ -49,8 +49,8 @@ class TaxTreatmentTestCase(RESTContractTestCase):
         """Add one tray line to the draft order."""
         values = {
             'order': self.order,
-            'line_type': SalesOrderLine.LineType.TRAY,
-            'tray_item': self.item,
+            'line_type': SalesOrderLine.LineType.UNIT,
+            'item': self.item,
             'description': 'Propagation trays',
             'quantity': 2,
             'unit_price': Decimal('10.0000'),
@@ -105,8 +105,8 @@ class ValidationTests(TaxTreatmentTestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             SalesOrderLine.objects.bulk_create([SalesOrderLine(
                 order=self.order,
-                line_type=SalesOrderLine.LineType.TRAY,
-                tray_item=self.item,
+                line_type=SalesOrderLine.LineType.UNIT,
+                item=self.item,
                 description='Trays',
                 quantity=1,
                 unit_price=Decimal('10.0000'),
@@ -119,8 +119,8 @@ class ValidationTests(TaxTreatmentTestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             SalesOrderLine.objects.bulk_create([SalesOrderLine(
                 order=self.order,
-                line_type=SalesOrderLine.LineType.TRAY,
-                tray_item=self.item,
+                line_type=SalesOrderLine.LineType.UNIT,
+                item=self.item,
                 description='Trays',
                 quantity=1,
                 unit_price=Decimal('10.0000'),

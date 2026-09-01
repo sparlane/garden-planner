@@ -95,8 +95,8 @@ class GstReportTestCase(RESTContractTestCase):
             order.refresh_from_db()
         values = {
             'order': order,
-            'line_type': SalesOrderLine.LineType.TRAY,
-            'tray_item': self.item,
+            'line_type': SalesOrderLine.LineType.UNIT,
+            'item': self.item,
             'description': 'Trays',
             'quantity': 1,
             'unit_price': Decimal(ex_tax),

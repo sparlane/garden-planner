@@ -21,6 +21,8 @@ from locations.models import Location
 from locations.occupancy import location_occupancy
 from plantings.models import SpecificPlantLocation
 from reporting.inventory import inventory_balances
+from sales.models import SalesOrderLine
+from sales.services import allocate_targets, create_order
 from supplies.models import Supplier
 from tests.factories import make_seed_tray, make_specific_plant
 from workspaces.models import Workspace, get_current_workspace
@@ -640,3 +642,67 @@ class PottedPlantPlacementTests(MixedTrackingTestCase):
         with self.assertRaises(ValidationError) as context:
             discard_numbering(self.workspace, self.pot)
         self.assertIn('unit', context.exception.message_dict)
+
+
+class NumberedPotSalesLineTests(MixedTrackingTestCase):
+    """A unit line accepts any individually identified stock, pots included."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.order = create_order(self.workspace, self.user)
+
+    def make_line(self, item):
+        """Build one unit line for an item without saving assumptions."""
+        return SalesOrderLine(
+            order=self.order,
+            line_type=SalesOrderLine.LineType.UNIT,
+            item=item,
+            description='One numbered pot',
+            quantity=1,
+            unit_price=Decimal('20.0000'),
+            tax_rate=Decimal('15'),
+        )
+
+    def test_a_numbered_pot_item_is_a_valid_unit_line(self):
+        """The line type is about identity, not about trays."""
+        line = self.make_line(self.item)
+
+        line.full_clean()
+        line.save()
+
+        self.assertEqual(line.item_id, self.item.pk)
+
+    def test_a_tray_item_is_still_a_valid_unit_line(self):
+        """Widening the type must not cost trays their existing behaviour."""
+        tray = make_seed_tray()
+
+        line = self.make_line(tray.inventory_unit.item)
+        line.full_clean()
+
+        self.assertEqual(line.item_id, tray.inventory_unit.item_id)
+
+    def test_bulk_stock_is_refused_on_a_unit_line(self):
+        """Anonymous stock has no identity for an allocation to point at."""
+        self.item.tracking_mode = InventoryItem.TrackingMode.LOT
+        self.item.save()
+
+        with self.assertRaises(ValidationError) as context:
+            self.make_line(self.item).full_clean()
+        self.assertIn('item', context.exception.message_dict)
+
+    def test_a_numbered_pot_can_be_allocated_to_its_line(self):
+        """The allocation path is the one trays already use, unchanged."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        pot = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=1),
+        )[0]
+        line = self.make_line(self.item)
+        line.save()
+
+        allocations = allocate_targets(line, self.user, unit_ids=[pot.pk])
+
+        self.assertEqual(len(allocations), 1)
+        self.assertEqual(allocations[0].inventory_unit_id, pot.pk)

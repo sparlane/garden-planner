@@ -52,8 +52,8 @@ class InventoryReportTests(APITestCase):
         )
         line = SalesOrderLine.objects.create(
             order=order,
-            line_type=SalesOrderLine.LineType.TRAY,
-            tray_item=unit.item,
+            line_type=SalesOrderLine.LineType.UNIT,
+            item=unit.item,
             description='Tray',
             quantity=1,
             unit_price=Decimal('0'),

@@ -113,8 +113,8 @@ class ReservationExpirySweepTests(CommerceFixtureTestCase):
         self.assertEqual(response.status_code, 201, response.data)
         order = response.data
         response = self.client.post(self.lines_url, {
-            'order': order['pk'], 'line_type': 'tray',
-            'tray_item': tray.inventory_unit.item_id, 'description': 'One tray',
+            'order': order['pk'], 'line_type': 'unit',
+            'item': tray.inventory_unit.item_id, 'description': 'One tray',
             'quantity': 1, 'unit_price': '5.0000', 'tax_rate': '15.0000',
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)

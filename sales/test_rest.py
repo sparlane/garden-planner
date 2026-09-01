@@ -190,8 +190,8 @@ class SalesRESTTests(RESTContractTestCase):
         lines = []
         for order in orders:
             response = self.client.post(self.lines_url, {
-                'order': order['pk'], 'line_type': 'tray',
-                'tray_item': tray.inventory_unit.item_id,
+                'order': order['pk'], 'line_type': 'unit',
+                'item': tray.inventory_unit.item_id,
                 'description': 'Propagation tray', 'quantity': 1,
                 'unit_price': '10.0000', 'tax_rate': '15.0000',
             }, format='json')
@@ -234,8 +234,8 @@ class SalesRESTTests(RESTContractTestCase):
         tray = make_seed_tray(workspace=self.workspace)
         order = self.create_order(prices_include_tax=False)
         response = self.client.post(self.lines_url, {
-            'order': order['pk'], 'line_type': 'tray',
-            'tray_item': tray.inventory_unit.item_id,
+            'order': order['pk'], 'line_type': 'unit',
+            'item': tray.inventory_unit.item_id,
             'description': 'Propagation tray', 'quantity': 1,
             'unit_price': '10.0000', 'tax_rate': '15.0000',
         }, format='json')

@@ -63,8 +63,8 @@ class PeriodClosureTestCase(RESTContractTestCase):
         order = create_order(self.workspace, self.user, status=SalesOrder.Status.DRAFT)
         line = SalesOrderLine.objects.create(
             order=order,
-            line_type=SalesOrderLine.LineType.TRAY,
-            tray_item=self.item,
+            line_type=SalesOrderLine.LineType.UNIT,
+            item=self.item,
             description='Trays',
             quantity=1,
             unit_price=Decimal(ex_tax),

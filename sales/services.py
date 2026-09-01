@@ -115,7 +115,7 @@ def _target_error(line, target):
             status=SalesOrderAllocation.Status.RESERVED,
         ).exclude(line=line).exists()
     else:
-        if target.item_id != line.tray_item_id:
+        if target.item_id != line.item_id:
             return 'wrong_item'
         if unit_physical_state(target) != 'available':
             return 'not_available'
@@ -156,8 +156,8 @@ def preview_targets(line, plant_ids=(), unit_ids=()):
     workspace = line.order.workspace
     if line.line_type == SalesOrderLine.LineType.SEEDLING and unit_ids:
         raise ValidationError({'units': 'A seedling line accepts plants only.'})
-    if line.line_type == SalesOrderLine.LineType.TRAY and plant_ids:
-        raise ValidationError({'plants': 'A tray line accepts serialized units only.'})
+    if line.line_type == SalesOrderLine.LineType.UNIT and plant_ids:
+        raise ValidationError({'plants': 'A unit line accepts numbered units only.'})
     model = SpecificPlant if plant_ids else InventoryUnit
     ids = sorted(set(plant_ids or unit_ids))
     targets = {
@@ -234,7 +234,7 @@ def allocate_targets(line, user, plant_ids=(), unit_ids=(), expires_at=None):
             allocation = SalesOrderAllocation.objects.create(
                 line=line,
                 plant=target if line.line_type == SalesOrderLine.LineType.SEEDLING else None,
-                inventory_unit=target if line.line_type == SalesOrderLine.LineType.TRAY else None,
+                inventory_unit=target if line.line_type == SalesOrderLine.LineType.UNIT else None,
                 status=SalesOrderAllocation.Status.RESERVED if immediate else SalesOrderAllocation.Status.PENDING,
                 expires_at=expires_at,
                 created_by=user,
