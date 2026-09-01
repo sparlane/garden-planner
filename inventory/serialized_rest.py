@@ -19,6 +19,7 @@ from workspaces.scoping import (
 from .ledger import (
     UnitMovementRequest,
     UnitReconciliationRequest,
+    discard_numbering,
     post_unit_movement,
     reconcile_unit_opening,
     unit_is_in_use,
@@ -303,6 +304,16 @@ class InventoryUnitViewSet(
             StockMovement.MovementType.ADJUSTMENT_GAIN,
             require_reason=True,
         )
+
+    @action(detail=True, methods=['delete'])
+    def discard(self, request, pk=None):  # pylint: disable=unused-argument
+        """Undo a numbering that was a typo, before the unit was used."""
+        _run_domain_action(
+            discard_numbering,
+            self.get_current_workspace(),
+            self.get_object(),
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'], url_path='reconcile-opening')
     def reconcile_opening(self, request, pk=None):  # pylint: disable=unused-argument

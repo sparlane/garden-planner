@@ -21,8 +21,10 @@ from workspaces.scoping import (
 )
 
 from .ledger import (
+    IndividualizationRequest,
     MovementRequest,
     OpeningBalanceRequest,
+    individualize_lot_units,
     normalize_quantity,
     post_opening_balance,
     post_receipt,
@@ -619,6 +621,22 @@ class SettlementSerializer(ActionSerializer):  # pylint: disable=abstract-method
     settled_on = serializers.DateField(allow_null=True)
 
 
+class IndividualizationSerializer(
+    CurrentWorkspaceSerializerMixin,
+    ActionSerializer,
+):  # pylint: disable=abstract-method
+    """Validate how many of a mixed lot's pots are being given identities."""
+
+    location = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.all(),
+    )
+    count = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(
+        allow_blank=True, required=False, default='', trim_whitespace=True,
+    )
+    workspace_field_lookups = {'location': 'workspace'}
+
+
 class MovementActionSerializer(
     CurrentWorkspaceSerializerMixin,
     ActionSerializer,
@@ -884,6 +902,32 @@ class StockLotViewSet(
         if expires_before:
             queryset = queryset.filter(expires_on__lte=expires_before)
         return queryset
+
+    @action(detail=True, methods=['post'])
+    def individualize(self, request, pk=None):  # pylint: disable=unused-argument
+        """Give individual identities to part of this lot's bulk stock."""
+        serializer = IndividualizationSerializer(
+            data=request.data, context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        units = _run_domain_action(
+            individualize_lot_units,
+            self.get_current_workspace(),
+            request.user,
+            IndividualizationRequest(
+                lot=self.get_object(),
+                location=values['location'],
+                count=values['count'],
+                reason=values['reason'],
+            ),
+        )
+        from .serialized_rest import InventoryUnitSerializer  # pylint: disable=import-outside-toplevel
+
+        return Response(
+            InventoryUnitSerializer(units, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class StockMovementViewSet(

@@ -1058,6 +1058,18 @@ class InventoryUnit(WorkspaceOwnedModel):
         related_name='serialized_units',
     )
     active = models.BooleanField(default=True)
+    # Numbering part of a mixed lot posts no movement, so without this there
+    # would be no record at all of who gave these pots their identities. A
+    # unit received on a serialized receipt has its receipt to say that, and
+    # leaves this blank.
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='+',
+    )
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 
@@ -1116,6 +1128,13 @@ class InventoryUnit(WorkspaceOwnedModel):
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
+        """Refuse deletion; identities outlive the thing they identified.
+
+        `inventory.ledger.discard_numbering` is the one sanctioned exception,
+        for a unit numbered by mistake and never used for anything. It deletes
+        through the queryset, the same way `_sync_unit_after_movement` already
+        writes through one, so this guard stays absolute for ordinary code.
+        """
         raise ValidationError('Serialized inventory units cannot be deleted.')
 
 

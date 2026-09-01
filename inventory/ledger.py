@@ -46,6 +46,15 @@ class MovementRequest(NamedTuple):
     enforce_source_balance: bool = True
 
 
+class IndividualizationRequest(NamedTuple):
+    """Caller intent for numbering part of a mixed lot at one location."""
+
+    lot: StockLot
+    location: object
+    count: int
+    reason: str = ''
+
+
 class UnitMovementRequest(NamedTuple):
     """Caller intent for one exact serialized-unit movement."""
 
@@ -265,9 +274,23 @@ def balance_is_known(lot):
     return lot.quantity_certainty != QuantityCertainty.UNKNOWN
 
 
-def _validate_source_balance(lot, source, quantity):
-    """Reject an outbound effect that exceeds physical stock at its source."""
-    available = physical_balance(lot, source)
+def _validate_source_balance(lot, source, quantity, unit=None):
+    """Reject an outbound effect that exceeds physical stock at its source.
+
+    Bulk stock leaving a mixed lot is held to the *bulk* figure, not the whole
+    balance. The numbered pots are on hand and count towards `physical_balance`,
+    but they are not available to a sale that ships anonymous ones — without
+    this a sale of fifty could quietly draw down six that are standing on a
+    bench with codes on them.
+
+    A movement carrying a unit is exempt: that unit is itself the thing being
+    removed, and it is by definition present.
+    """
+    mixed = lot.item.tracking_mode == InventoryItem.TrackingMode.MIXED
+    if unit is None and mixed:
+        available = bulk_balance(lot, source)
+    else:
+        available = physical_balance(lot, source)
     if quantity > available:
         raise ValidationError(
             {
@@ -283,7 +306,7 @@ def _create_movement(entry):
     """Create a validated movement after callers acquire the lot lock."""
     quantity = quantize_quantity(entry.quantity)
     if entry.source and entry.enforce_source_balance:
-        _validate_source_balance(entry.lot, entry.source, quantity)
+        _validate_source_balance(entry.lot, entry.source, quantity, entry.unit)
     movement = StockMovement.objects.create(
         workspace=entry.workspace,
         created_by=entry.user,
@@ -504,6 +527,116 @@ def _validate_serialized_receipt_line(line):
         raise ValidationError({
             'lines': f'Serialized line {line.pk} requires a whole quantity.',
         })
+
+
+def _individualized_unit_costs(lot, count):
+    """Split the cost of the pots being numbered across their new identities.
+
+    Deliberately `base_unit_cost * count`, never the lot's acquisition total:
+    most of that total belongs to the bulk still sitting in the box. An
+    unpriced lot yields unpriced units, which is the same answer a receipt
+    with no cost already gives them.
+    """
+    if lot.base_unit_cost is None:
+        return [None] * count
+    total = quantize_money(lot.base_unit_cost * count)
+    return distribute_exactly(total, [Decimal('1')] * count)
+
+
+@transaction.atomic
+def individualize_lot_units(workspace, user, request):
+    """Give individual identities to part of a mixed lot's bulk stock.
+
+    This posts nothing to the ledger. Nothing entered or left the nursery, so
+    `physical_balance` is unchanged and correct; what changes is how much of
+    the lot is still anonymous, and `bulk_balance` derives that from the units
+    themselves. The units are the whole record of the act.
+
+    Numbering is one-way. A numbered pot leaves stock by being sold, wasted or
+    lost, like any other asset, and never dissolves back into the bulk pool.
+    """
+    lot = lock_lots(workspace, [request.lot.pk])[request.lot.pk]
+    count = int(request.count)
+    if count < 1:
+        raise ValidationError({'count': 'Number at least one unit.'})
+    if lot.item.tracking_mode != InventoryItem.TrackingMode.MIXED:
+        raise ValidationError({
+            'lot': 'Only mixed-tracking stock can be individually numbered.',
+        })
+    if not lot.item.active:
+        raise ValidationError({'lot': 'The item is inactive.'})
+    _validate_location(request.location, workspace, 'location')
+    if not balance_is_known(lot):
+        raise ValidationError({
+            'lot': 'Number units only from a lot whose quantity is known.',
+        })
+    available = bulk_balance(lot, request.location)
+    if count > available:
+        raise ValidationError({
+            'count': (
+                f'Only {available:.9f} {lot.item.base_unit} is unnumbered '
+                f'at {request.location.name}.'
+            ),
+        })
+    return [
+        InventoryUnit.objects.create(
+            workspace=workspace,
+            item=lot.item,
+            source_lot=lot,
+            acquisition_cost=cost,
+            currency_code=lot.currency_code,
+            current_location=request.location,
+            created_by=user,
+        )
+        for cost in _individualized_unit_costs(lot, count)
+    ]
+
+
+def _numbering_is_unused(unit):
+    """Return why a numbered unit is not safe to discard, or None."""
+    if unit.movements.exists():
+        return 'The unit has stock history.'
+    # Reached from function bodies so `inventory` keeps depending only on
+    # `locations` and `workspaces` at import time, the same one-way-at-load
+    # pattern `unit_is_in_use` already uses.
+    from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
+    from labels.models import LabelIdentity  # pylint: disable=import-outside-toplevel
+    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
+
+    labelled = LabelIdentity.objects.filter(
+        workspace=unit.workspace,
+        target_content_type=ContentType.objects.get_for_model(InventoryUnit),
+        target_object_id=unit.pk,
+    ).exists()
+    if labelled:
+        return 'The unit has been labelled.'
+    if SalesOrderAllocation.objects.filter(inventory_unit=unit).exists():
+        return 'The unit is promised to an order.'
+    return None
+
+
+@transaction.atomic
+def discard_numbering(workspace, unit):
+    """Undo a numbering that was a typo, returning the pots to the bulk count.
+
+    Numbering is one-way for stock that has been used: a pot that has moved,
+    been labelled or been promised keeps its identity forever. But numbering
+    posts no movement, so a unit that has done none of those things has left
+    no trace to unwind, and `bulk_balance` counts it back the moment the row
+    is gone. Without this, typing sixty instead of six is a write-off rather
+    than a correction.
+    """
+    unit = lock_units(workspace, [unit.pk])[unit.pk]
+    if unit.item.tracking_mode != InventoryItem.TrackingMode.MIXED:
+        raise ValidationError({
+            'unit': 'Only individually numbered mixed stock can be discarded.',
+        })
+    reason = _numbering_is_unused(unit)
+    if reason is not None:
+        raise ValidationError({'unit': reason})
+    # Deliberately through the queryset: `InventoryUnit.delete` refuses, and
+    # this is the one audited path allowed past it.
+    InventoryUnit.objects.filter(pk=unit.pk).delete()
 
 
 @transaction.atomic
