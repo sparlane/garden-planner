@@ -16,6 +16,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from labels.models import LabelIdentity
+from reporting.inventory import inventory_balances
 from locations.models import Location
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
@@ -437,3 +438,53 @@ class MixedStocktakeTests(MixedTrackingTestCase):
 
         self.assertEqual(target.target_type, StocktakeTarget.TargetType.UNIT)
         self.assertEqual(target.target_object_id, unit.pk)
+
+
+class MixedBalanceReportingTests(MixedTrackingTestCase):
+    """Balance surfaces separate what is loose from what has a number."""
+
+    def balance_rows(self, lot):
+        """Return this lot's balance rows keyed by location."""
+        response = self.client.get('/inventory/balances/', {'lot': lot.pk})
+        self.assertEqual(response.status_code, 200, response.data)
+        return {row['location']: row for row in response.data}
+
+    def test_balances_split_bulk_from_numbered_without_changing_the_total(self):
+        """On hand is still on hand; the split says how much can be picked."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=3),
+        )
+
+        row = self.balance_rows(lot)[self.store.pk]
+
+        self.assertEqual(row['physical_quantity'], '10.000000000')
+        self.assertEqual(row['bulk_quantity'], '7.000000000')
+        self.assertEqual(row['numbered_quantity'], '3.000000000')
+
+    def test_a_plain_lot_reports_all_of_itself_as_bulk(self):
+        """Nothing is numbered, so the split is the whole quantity and zero."""
+        self.item.tracking_mode = InventoryItem.TrackingMode.LOT
+        self.item.save()
+        lot = self.receive(quantity='10', cost='5.0000')
+
+        row = self.balance_rows(lot)[self.store.pk]
+
+        self.assertEqual(row['bulk_quantity'], '10.000000000')
+        self.assertEqual(row['numbered_quantity'], '0.000000000')
+
+    def test_the_inventory_report_carries_the_same_split(self):
+        """The report and the endpoint must not disagree about one lot."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=4),
+        )
+
+        report = inventory_balances(self.workspace, {'lot': lot.pk})
+        row = next(row for row in report.rows if row['location_id'] == self.store.pk)
+
+        self.assertEqual(row['physical_quantity'], '10.000000000')
+        self.assertEqual(row['bulk_quantity'], '6.000000000')
+        self.assertEqual(row['numbered_quantity'], '4.000000000')
