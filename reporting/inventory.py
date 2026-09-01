@@ -54,6 +54,18 @@ def inventory_balances(workspace, filters):  # pylint: disable=too-many-locals,t
             balances[(movement['lot_id'], movement['destination_id'])] += movement['quantity']
             location_ids.add(movement['destination_id'])
 
+    # One aggregate rather than a count per row: numbered stock is on hand and
+    # counts towards `physical`, but it is not loose quantity anyone can pick.
+    numbered = defaultdict(int)
+    unit_rows = InventoryUnit.objects.filter(
+        workspace=workspace,
+        source_lot_id__in=lot_ids,
+        current_location__isnull=False,
+        active=True,
+    ).values_list('source_lot_id', 'current_location_id')
+    for lot_id, location_id in unit_rows:
+        numbered[(lot_id, location_id)] += 1
+
     reserved = defaultdict(int)
     reservations = SalesOrderAllocation.objects.filter(
         status=SalesOrderAllocation.Status.RESERVED,
@@ -83,6 +95,8 @@ def inventory_balances(workspace, filters):  # pylint: disable=too-many-locals,t
                 continue
             reserved_quantity = Decimal(reserved[(lot_id, location_id)])
             available = physical - reserved_quantity
+            numbered_quantity = Decimal(numbered[(lot_id, location_id)])
+            bulk_quantity = physical - numbered_quantity
             low_stock = lot.item.reorder_level is not None and (
                 item_available[lot.item_id] <= lot.item.reorder_level
             )
@@ -104,6 +118,8 @@ def inventory_balances(workspace, filters):  # pylint: disable=too-many-locals,t
                 'location_name': locations[location_id].name,
                 'expires_on': lot.expires_on,
                 'physical_quantity': decimal_string(physical, 9),
+                'bulk_quantity': decimal_string(bulk_quantity, 9),
+                'numbered_quantity': decimal_string(numbered_quantity, 9),
                 'reserved_quantity': decimal_string(reserved_quantity, 9),
                 'available_quantity': decimal_string(available, 9),
                 'base_unit': lot.item.base_unit,

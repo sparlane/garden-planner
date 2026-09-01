@@ -11,8 +11,15 @@ from locations.models import Location
 from workspaces.models import get_current_workspace
 
 from .ledger import MONEY_QUANTUM, physical_balance
-from .models import StockLot, StockMovement
+from .models import InventoryUnit, StockLot, StockMovement
 from .rest_query import parse_boolean, parse_date, parse_integer
+
+
+class DerivedBalances(NamedTuple):
+    """The two lookups every row is built against, gathered in one pass."""
+
+    item_totals: dict
+    numbered: dict
 
 
 class BalanceFilters(NamedTuple):
@@ -67,13 +74,35 @@ class BalanceView(APIView):
         result_lots = list(result_lots)
         result_locations = self._history_locations(workspace, result_lots)
         all_locations = self._history_locations(workspace, item_total_lots)
-        item_totals = self._item_totals(item_total_lots, all_locations)
+        derived = DerivedBalances(
+            item_totals=self._item_totals(item_total_lots, all_locations),
+            numbered=self._numbered_counts(workspace, result_lots),
+        )
         return Response(self._rows(
             result_lots,
             result_locations,
-            item_totals,
             filters,
+            derived,
         ))
+
+    @staticmethod
+    def _numbered_counts(workspace, lots):
+        """Count numbered units per lot and location in one query.
+
+        Deliberately not a count per row: this endpoint already costs about
+        two queries per row (see `todo/105`), and a third would make a known
+        problem worse for every item, numbered or not.
+        """
+        counts = defaultdict(int)
+        rows = InventoryUnit.objects.filter(
+            workspace=workspace,
+            source_lot_id__in=[lot.pk for lot in lots],
+            current_location__isnull=False,
+            active=True,
+        ).values_list('source_lot_id', 'current_location_id')
+        for lot_id, location_id in rows:
+            counts[(lot_id, location_id)] += 1
+        return counts
 
     @staticmethod
     def _history_locations(workspace, lots):
@@ -110,17 +139,20 @@ class BalanceView(APIView):
         return totals
 
     @classmethod
-    def _rows(cls, lots, locations, item_totals, filters):
+    def _rows(cls, lots, locations, filters, derived):
         """Build filtered serialized rows from already-derived relationships."""
         rows = []
         for lot in lots:
             for location in locations.get(lot.pk, []):
                 if filters.location is not None and location.pk != filters.location:
                     continue
-                is_low = cls._is_low(lot, item_totals)
+                is_low = cls._is_low(lot, derived.item_totals)
                 if filters.low_stock is not None and is_low != filters.low_stock:
                     continue
-                rows.append(cls._balance_row(lot, location, is_low))
+                rows.append(cls._balance_row(
+                    lot, location, is_low,
+                    derived.numbered[(lot.pk, location.pk)],
+                ))
         return rows
 
     @staticmethod
@@ -130,9 +162,10 @@ class BalanceView(APIView):
         return threshold is not None and item_totals[lot.item_id] <= threshold
 
     @staticmethod
-    def _balance_row(lot, location, is_low):
+    def _balance_row(lot, location, is_low, numbered):
         """Serialize one lot/location quantity and immutable-cost valuation."""
         physical = physical_balance(lot, location)
+        numbered_quantity = Decimal(numbered)
         value = None
         if lot.base_unit_cost is not None:
             value = (physical * lot.base_unit_cost).quantize(
@@ -147,6 +180,8 @@ class BalanceView(APIView):
             'location': location.pk,
             'location_name': location.name,
             'physical_quantity': f'{physical:.9f}',
+            'bulk_quantity': f'{physical - numbered_quantity:.9f}',
+            'numbered_quantity': f'{numbered_quantity:.9f}',
             'reserved_quantity': '0.000000000',
             'available_quantity': f'{physical:.9f}',
             'base_unit': lot.item.base_unit,
