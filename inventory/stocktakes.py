@@ -27,6 +27,7 @@ from seedtrays.models import SeedTray
 from .ledger import (
     MovementRequest,
     UnitMovementRequest,
+    bulk_balance,
     physical_balance,
     post_stock_movement,
     post_unit_movement,
@@ -36,6 +37,7 @@ from .ledger import (
 )
 from .models import (
     InventoryItem,
+    InventoryUnit,
     StockLot,
     StockMovement,
     Stocktake,
@@ -53,10 +55,12 @@ QUANTITY_TARGETS = {
 }
 IDENTITY_TARGETS = {
     StocktakeTarget.TargetType.TRAY,
+    StocktakeTarget.TargetType.UNIT,
     StocktakeTarget.TargetType.PLANT,
 }
 IDENTITY_TARGET_MAPPING = {
     'seedtray': StocktakeTarget.TargetType.TRAY,
+    'inventoryunit': StocktakeTarget.TargetType.UNIT,
     'plantcohort': StocktakeTarget.TargetType.COHORT,
     'specificplant': StocktakeTarget.TargetType.PLANT,
 }
@@ -107,12 +111,28 @@ def _target(target_type, key, instance, display, location, quantity, state, snap
     }
 
 
+def _countable_bulk(lot, location):
+    """Return what a counter should expect to find loose at a location.
+
+    A mixed lot's numbered pots are counted one by one as their own targets,
+    so asking for them again here would tell the operator to find five hundred
+    loose pots when six are on a bench with codes on them, and then post a
+    six-pot variance when they cannot.
+    """
+    if lot.item.tracking_mode == InventoryItem.TrackingMode.MIXED:
+        return bulk_balance(lot, location)
+    return physical_balance(lot, location)
+
+
 def _lot_targets(workspace, location_ids, scope):
     packets = set(SeedPacket.objects.filter(workspace=workspace, stock_lot__isnull=False).values_list('stock_lot_id', flat=True))
     lots = StockLot.objects.filter(
         workspace=workspace,
         item__active=True,
-        item__tracking_mode=InventoryItem.TrackingMode.LOT,
+        item__tracking_mode__in=(
+            InventoryItem.TrackingMode.LOT,
+            InventoryItem.TrackingMode.MIXED,
+        ),
     ).exclude(pk__in=packets).select_related('item')
     if scope.get('item'):
         lots = lots.filter(item_id=scope['item'])
@@ -122,7 +142,7 @@ def _lot_targets(workspace, location_ids, scope):
     rows = []
     for lot in lots:
         for location in locations:
-            quantity = quantize_quantity(physical_balance(lot, location))
+            quantity = quantize_quantity(_countable_bulk(lot, location))
             if quantity <= 0:
                 continue
             snapshot = {
@@ -202,6 +222,41 @@ def _tray_targets(workspace, location_ids, scope):
     return rows
 
 
+def _unit_targets(workspace, location_ids, scope):
+    """Build one count target per numbered pot standing in scope.
+
+    Deliberately excludes trays, which `_tray_targets` already covers with the
+    cultivation facts a tray target carries and a bare unit has no use for.
+    """
+    units = InventoryUnit.objects.filter(
+        workspace=workspace,
+        item__tracking_mode=InventoryItem.TrackingMode.MIXED,
+        current_location_id__in=location_ids,
+        active=True,
+    ).select_related('current_location', 'item')
+    if scope.get('item'):
+        units = units.filter(item_id=scope['item'])
+    if scope.get('category'):
+        units = units.filter(item__category=scope['category'])
+    rows = []
+    for unit in units:
+        state = unit_physical_state(unit)
+        snapshot = {
+            'location': unit.current_location_id, 'state': state,
+            'unit': unit.pk, 'asset_code': unit.asset_code,
+            'label_code': _active_code(unit),
+            'last_movement': unit.movements.order_by('-pk').values_list('pk', flat=True).first(),
+            'acquisition_cost': str(unit.acquisition_cost) if unit.acquisition_cost is not None else None,
+            'currency': unit.currency_code,
+        }
+        rows.append(_target(
+            StocktakeTarget.TargetType.UNIT, f'unit:{unit.pk}', unit,
+            f'{unit.item.name} · {unit.asset_code}', unit.current_location,
+            Decimal('1'), state, snapshot,
+        ))
+    return rows
+
+
 def _cohort_targets(workspace, location_ids, scope):
     cohorts = PlantCohort.objects.filter(
         workspace=workspace, location_id__in=location_ids, quantity__gt=0,
@@ -270,6 +325,7 @@ SOURCE_BUILDERS = {
     StocktakeTarget.TargetType.LOT: _lot_targets,
     StocktakeTarget.TargetType.SEED_PACKET: _packet_targets,
     StocktakeTarget.TargetType.TRAY: _tray_targets,
+    StocktakeTarget.TargetType.UNIT: _unit_targets,
     StocktakeTarget.TargetType.COHORT: _cohort_targets,
     StocktakeTarget.TargetType.PLANT: _plant_targets,
 }
@@ -524,6 +580,7 @@ def resolve_variance(variance, user, *, action, reason, payload=None,
         StocktakeTarget.TargetType.SEED_PACKET: {'adjust', 'no_change'},
         StocktakeTarget.TargetType.COHORT: {'adjust', 'move', 'no_change'},
         StocktakeTarget.TargetType.TRAY: {'move', 'lost', 'state_correct', 'no_change'},
+        StocktakeTarget.TargetType.UNIT: {'move', 'lost', 'state_correct', 'no_change'},
         StocktakeTarget.TargetType.PLANT: {'move', 'lost', 'state_correct', 'no_change'},
     }
     if action not in allowed[variance.target.target_type]:
@@ -587,7 +644,7 @@ def _posting_action(target):
 def _post_lot(stocktake, target, user, reason):
     lot = StockLot.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
     location = target.expected_location
-    before_quantity = quantize_quantity(physical_balance(lot, location))
+    before_quantity = quantize_quantity(_countable_bulk(lot, location))
     counted = target.accepted_count.counted_quantity
     delta = quantize_quantity(counted - before_quantity)
     if not delta:
@@ -661,11 +718,13 @@ def _post_cohort(stocktake, target, user, reason, action, payload):
     )
 
 
-def _post_tray(stocktake, target, user, reason, action, payload):
-    tray = SeedTray.objects.select_related('inventory_unit__current_location').get(
-        pk=target.target_object_id, workspace=stocktake.workspace,
-    )
-    unit = tray.inventory_unit
+def _correct_unit(stocktake, target, user, reason, action, payload, kind):
+    """Post one counter's correction against an exact unit, tray or not.
+
+    Shared by trays and numbered pots: everything below the lookup is about
+    the unit, and a pot has no `SeedTray` row to reach it through.
+    """
+    unit = _locked_unit(stocktake, target, kind)
     before = {'location': unit.current_location_id, 'state': unit_physical_state(unit)}
     if action == 'move':
         movement_type = StockMovement.MovementType.TRANSFER
@@ -681,7 +740,7 @@ def _post_tray(stocktake, target, user, reason, action, payload):
         try:
             movement_type = choices[payload.get('state_action')]
         except KeyError as exc:
-            raise ValidationError({'action': 'Select a valid tray state correction.'}) from exc
+            raise ValidationError({'action': f'Select a valid {kind} state correction.'}) from exc
         destination = Location.objects.filter(
             pk=payload.get('location'), workspace=stocktake.workspace,
         ).first()
@@ -694,9 +753,29 @@ def _post_tray(stocktake, target, user, reason, action, payload):
     )
     unit.refresh_from_db()
     return _result_link(
-        target, movement, user, 'tray', before,
+        target, movement, user, kind, before,
         {'location': unit.current_location_id, 'state': unit_physical_state(unit)},
     )
+
+
+def _locked_unit(stocktake, target, kind):
+    """Resolve a target to its unit, through the tray when there is one."""
+    if kind == 'tray':
+        tray = SeedTray.objects.select_related('inventory_unit__current_location').get(
+            pk=target.target_object_id, workspace=stocktake.workspace,
+        )
+        return tray.inventory_unit
+    return InventoryUnit.objects.select_related('current_location').get(
+        pk=target.target_object_id, workspace=stocktake.workspace,
+    )
+
+
+def _post_tray(stocktake, target, user, reason, action, payload):
+    return _correct_unit(stocktake, target, user, reason, action, payload, 'tray')
+
+
+def _post_unit(stocktake, target, user, reason, action, payload):
+    return _correct_unit(stocktake, target, user, reason, action, payload, 'unit')
 
 
 def _post_plant(stocktake, target, user, reason, action, payload):
@@ -741,6 +820,7 @@ POSTERS = {
     StocktakeTarget.TargetType.SEED_PACKET: _post_packet,
     StocktakeTarget.TargetType.COHORT: _post_cohort,
     StocktakeTarget.TargetType.TRAY: _post_tray,
+    StocktakeTarget.TargetType.UNIT: _post_unit,
     StocktakeTarget.TargetType.PLANT: _post_plant,
 }
 

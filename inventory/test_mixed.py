@@ -13,6 +13,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.test import TestCase
+from django.utils import timezone
 
 from labels.models import LabelIdentity
 from locations.models import Location
@@ -38,7 +39,10 @@ from .models import (
     StockMovement,
     StockReceipt,
     StockReceiptLine,
+    Stocktake,
+    StocktakeTarget,
 )
+from .stocktakes import resolve_identity_target, scope_rows
 from .units import UnitCode
 
 
@@ -369,3 +373,67 @@ class DiscardNumberingTests(MixedTrackingTestCase):
 
         with self.assertRaisesMessage(ValidationError, 'cannot be deleted'):
             unit.delete()
+
+
+class MixedStocktakeTests(MixedTrackingTestCase):
+    """A stocktake counts the loose pots and the numbered ones separately."""
+
+    def scope_rows_here(self):
+        """Build the count sheet for everything standing in the store."""
+        return scope_rows(self.workspace, {'location': self.store.pk})
+
+    def test_bulk_and_numbered_pots_are_counted_as_separate_targets(self):
+        """Neither is invisible, and neither is counted twice."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=3),
+        )
+
+        rows = self.scope_rows_here()
+        lots = [row for row in rows if row['target_type'] == StocktakeTarget.TargetType.LOT]
+        units = [row for row in rows if row['target_type'] == StocktakeTarget.TargetType.UNIT]
+
+        # Seven loose pots to find, and three identities to scan.
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0]['expected_quantity'], Decimal('7.000000000'))
+        self.assertEqual(len(units), 3)
+        self.assertEqual({row['expected_quantity'] for row in units}, {Decimal('1')})
+
+    def test_a_lot_item_is_still_counted_whole(self):
+        """The bulk figure only differs where something has been numbered."""
+        self.item.tracking_mode = InventoryItem.TrackingMode.LOT
+        self.item.save()
+        lot = self.receive(quantity='10', cost='5.0000')
+
+        rows = self.scope_rows_here()
+        lots = [row for row in rows if row['target_type'] == StocktakeTarget.TargetType.LOT]
+
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0]['expected_quantity'], Decimal('10.000000000'))
+        self.assertEqual(lot.item.tracking_mode, InventoryItem.TrackingMode.LOT)
+
+    def test_a_numbered_pot_resolves_when_its_label_is_scanned(self):
+        """Counting by scan needs the unit registered as an identity target."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        unit = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.store, count=1),
+        )[0]
+        stocktake = Stocktake.objects.create(
+            workspace=self.workspace,
+            scope={'location': self.store.pk},
+            counted_at=timezone.now(),
+            created_by=self.user,
+        )
+        identity = LabelIdentity.objects.create(
+            workspace=self.workspace,
+            target_content_type=ContentType.objects.get_for_model(InventoryUnit),
+            target_object_id=unit.pk,
+            target_snapshot={'display': unit.asset_code, 'pk': unit.pk},
+        )
+
+        target = resolve_identity_target(stocktake, identity)
+
+        self.assertEqual(target.target_type, StocktakeTarget.TargetType.UNIT)
+        self.assertEqual(target.target_object_id, unit.pk)

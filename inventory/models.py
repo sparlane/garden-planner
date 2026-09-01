@@ -1294,6 +1294,7 @@ class StocktakeTarget(models.Model):
         LOT = 'lot', 'Consumable lot'
         SEED_PACKET = 'seed_packet', 'Seed packet'
         TRAY = 'tray', 'Serialized tray'
+        UNIT = 'unit', 'Numbered unit'
         COHORT = 'cohort', 'Plant cohort'
         PLANT = 'plant', 'Individual plant'
 
