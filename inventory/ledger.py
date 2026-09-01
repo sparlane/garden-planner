@@ -596,6 +596,8 @@ def _numbering_is_unused(unit):
     """Return why a numbered unit is not safe to discard, or None."""
     if unit.movements.exists():
         return 'The unit has stock history.'
+    if unit_is_in_use(unit):
+        return 'The unit is holding a plant.'
     # Reached from function bodies so `inventory` keeps depending only on
     # `locations` and `workspaces` at import time, the same one-way-at-load
     # pattern `unit_is_in_use` already uses.
@@ -917,12 +919,16 @@ def _reverse_document_movements(
 
 
 def unit_is_in_use(unit):
-    """Return whether cultivation still occupies the linked physical tray."""
+    """Return whether cultivation still occupies this physical asset."""
+    from plantings.models import SeedTrayPlanting, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
+
     try:
         tray = unit.seed_tray
     except ObjectDoesNotExist:
-        return False
-    from plantings.models import SeedTrayPlanting, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
+        return SpecificPlantLocation.objects.filter(
+            container_unit=unit,
+            ended__isnull=True,
+        ).exists()
 
     active_sowing = SeedTrayPlanting.objects.filter(
         seed_tray=tray,
@@ -979,13 +985,27 @@ def _check_unit_destination_capacity(unit, destination, reason):
     An overrun is allowed when the caller gave a reason, which the movement
     already records — that is the audited override, not a separate field.
     """
-    from locations.occupancy import check_capacity, tray_contribution  # pylint: disable=import-outside-toplevel
+    from locations.occupancy import (  # pylint: disable=import-outside-toplevel
+        check_capacity,
+        container_contribution,
+        tray_contribution,
+    )
+    from plantings.models import SpecificPlantLocation  # pylint: disable=import-outside-toplevel
 
     try:
         tray = unit.seed_tray
     except ObjectDoesNotExist:
+        # A numbered pot takes up room too, and so do the plants in it. Before
+        # pots could hold anything this returned here, which would now let any
+        # number of them onto a bench measured in containers.
+        if unit.item.tracking_mode != InventoryItem.TrackingMode.MIXED:
+            return
+        riding = SpecificPlantLocation.objects.filter(
+            container_unit=unit,
+            ended__isnull=True,
+        ).count()
+        check_capacity(destination, container_contribution(riding), reason)
         return
-    from plantings.models import SpecificPlantLocation  # pylint: disable=import-outside-toplevel
 
     riding = SpecificPlantLocation.objects.filter(
         seed_tray_cell__tray=tray,

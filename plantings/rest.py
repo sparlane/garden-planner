@@ -382,7 +382,7 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
     """
     class Meta:
         model = SpecificPlantLocation
-        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'started', 'ended', 'notes', 'override_reason']
+        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit', 'started', 'ended', 'notes', 'override_reason']
         read_only_fields = ['override_reason']
 
     workspace_field_lookups = {
@@ -390,6 +390,7 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
         'seed_tray_cell': 'tray__workspace',
         'garden_square': 'workspace',
         'location': 'workspace',
+        'container_unit': 'workspace',
     }
 
     def _get_effective_history_fields(self, data):
@@ -465,7 +466,7 @@ class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.M
     """
     class Meta:
         model = SpecificPlantLocation
-        fields = ['location_type', 'seed_tray_cell', 'garden_square', 'location', 'started', 'notes', 'override_reason']
+        fields = ['location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit', 'started', 'notes', 'override_reason']
         extra_kwargs = {
             'started': {'required': False},
             'override_reason': {'required': False},
@@ -475,6 +476,7 @@ class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.M
         'seed_tray_cell': 'tray__workspace',
         'garden_square': 'workspace',
         'location': 'workspace',
+        'container_unit': 'workspace',
     }
 
     def validate(self, data):  # pylint: disable=arguments-renamed

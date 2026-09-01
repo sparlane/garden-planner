@@ -17,9 +17,12 @@ from django.utils import timezone
 
 from labels.models import LabelCode, LabelIdentity
 from labels.services import ensure_identity
-from reporting.inventory import inventory_balances
 from locations.models import Location
+from locations.occupancy import location_occupancy
+from plantings.models import SpecificPlantLocation
+from reporting.inventory import inventory_balances
 from supplies.models import Supplier
+from tests.factories import make_seed_tray, make_specific_plant
 from workspaces.models import Workspace, get_current_workspace
 
 from .ledger import (
@@ -44,7 +47,7 @@ from .models import (
     Stocktake,
     StocktakeTarget,
 )
-from .stocktakes import resolve_identity_target, scope_rows
+from .stocktakes import _plant_location, resolve_identity_target, scope_rows
 from .units import UnitCode
 
 
@@ -541,3 +544,99 @@ class NumberedPotLabelTests(MixedTrackingTestCase):
         resolution = self.resolve(code.code)
 
         self.assertEqual(resolution['status'], 'inactive')
+
+
+class PottedPlantPlacementTests(MixedTrackingTestCase):
+    """A numbered pot is a place a plant can stand, and it can hold several."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.lot = self.receive(quantity='10', cost='5.0000')
+        self.pot = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=self.lot, location=self.store, count=1),
+        )[0]
+
+    def stand_in_pot(self, plant, pot=None):
+        """Put one plant into a numbered container."""
+        return SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            container_unit=pot or self.pot,
+        )
+
+    def test_three_plants_can_share_one_pot(self):
+        """Nothing constrains one plant per place, only one place per plant."""
+        plants = [make_specific_plant() for _ in range(3)]
+
+        for plant in plants:
+            self.stand_in_pot(plant)
+
+        held = SpecificPlantLocation.objects.filter(
+            container_unit=self.pot, ended__isnull=True,
+        )
+        self.assertEqual(held.count(), 3)
+
+    def test_a_shared_pot_is_one_container_and_all_of_its_plants(self):
+        """Three bulbs in one pot must not read as three pots on the bench."""
+        for _ in range(3):
+            self.stand_in_pot(make_specific_plant())
+
+        occupancy = location_occupancy(self.store)
+
+        self.assertEqual(occupancy.containers, 1)
+        self.assertEqual(occupancy.plants, 3)
+
+    def test_a_potted_plant_is_found_at_the_bench_its_pot_stands_on(self):
+        """The pot carries the location, exactly as a tray does for its cells."""
+        bench = Location.objects.create(
+            workspace=self.workspace,
+            name='Specimen bench',
+            code='SPEC-BENCH',
+            location_type=Location.LocationType.GROWING,
+        )
+        plant = make_specific_plant()
+        self.stand_in_pot(plant)
+        post_unit_movement(
+            self.workspace, self.user,
+            UnitMovementRequest(
+                unit=self.pot,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                destination=bench,
+                reason='Moved to the specimen bench',
+            ),
+        )
+
+        self.assertEqual(_plant_location(plant), bench)
+
+    def test_a_tray_unit_is_refused_as_a_container(self):
+        """A tray says where its plants are through its cells, not through this."""
+        tray = make_seed_tray()
+        placement = SpecificPlantLocation(
+            specific_plant=make_specific_plant(),
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            container_unit=tray.inventory_unit,
+        )
+
+        with self.assertRaises(ValidationError) as context:
+            placement.full_clean()
+        self.assertIn('container_unit', context.exception.message_dict)
+
+    def test_a_pot_holding_a_plant_cannot_be_wasted_or_discarded(self):
+        """Removing the pot would strand whatever is growing in it."""
+        self.stand_in_pot(make_specific_plant())
+
+        with self.assertRaises(ValidationError):
+            post_unit_movement(
+                self.workspace, self.user,
+                UnitMovementRequest(
+                    unit=self.pot,
+                    movement_type=StockMovement.MovementType.WASTE,
+                    reason='Cracked',
+                ),
+            )
+        with self.assertRaises(ValidationError) as context:
+            discard_numbering(self.workspace, self.pot)
+        self.assertIn('unit', context.exception.message_dict)

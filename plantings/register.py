@@ -34,6 +34,7 @@ LOCATION_TYPES = {
     SpecificPlantLocation.SEED_TRAY_CELL,
     SpecificPlantLocation.GARDEN_SQUARE,
     SpecificPlantLocation.LOCATION,
+    SpecificPlantLocation.CONTAINER_UNIT,
 }
 UNPLACED = 'none'
 ALLOCATION_STATUSES = {'none', 'tentative', 'reserved'}

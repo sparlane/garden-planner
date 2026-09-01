@@ -55,6 +55,16 @@ def tray_contribution(plant_count):
     return Occupancy(trays=1, plants=plant_count, containers=0)
 
 
+def container_contribution(plant_count):
+    """Return what standing one numbered container holding plants adds.
+
+    One pot is one container however many plants ride in it, which is the
+    same shape as `tray_contribution` and the reason three bulbs in one
+    container do not read as three containers on the bench.
+    """
+    return Occupancy(trays=0, plants=plant_count, containers=1)
+
+
 def plant_contribution(plant=None):
     """Return what standing one plant somewhere adds.
 
@@ -119,6 +129,7 @@ def _container_occupancy(plants, cohorts):
 
 def location_occupancy(location, subtree=False):  # pylint: disable=too-many-locals
     """Count what is standing in a location, optionally including its children."""
+    from inventory.models import InventoryItem, InventoryUnit  # pylint: disable=import-outside-toplevel
     from plantings.models import PlantCohort, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
     from seedtrays.models import SeedTray  # pylint: disable=import-outside-toplevel
 
@@ -135,6 +146,17 @@ def location_occupancy(location, subtree=False):  # pylint: disable=too-many-loc
         ended__isnull=True,
         **{f'seed_tray_cell__tray__inventory_unit__current_location__{lookup}': value},
     ).count()
+    # A numbered pot is one container wherever it stands, and the plants in it
+    # are on the bench just as surely as the ones in a tray are.
+    pots = InventoryUnit.objects.filter(
+        item__tracking_mode=InventoryItem.TrackingMode.MIXED,
+        active=True,
+        **{f'current_location__{lookup}': value},
+    ).count()
+    plants_in_pots = SpecificPlantLocation.objects.filter(
+        ended__isnull=True,
+        **{f'container_unit__current_location__{lookup}': value},
+    ).count()
     standing_rows = SpecificPlantLocation.objects.filter(
         ended__isnull=True,
         **{f'location__{lookup}': value},
@@ -149,8 +171,8 @@ def location_occupancy(location, subtree=False):  # pylint: disable=too-many-loc
 
     return Occupancy(
         trays=tray_count,
-        plants=plants_in_trays + len(standing) + cohort_plants,
-        containers=containers,
+        plants=plants_in_trays + plants_in_pots + len(standing) + cohort_plants,
+        containers=containers + pots,
         area=area,
     )
 
