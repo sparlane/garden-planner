@@ -1,7 +1,7 @@
 type UnitCode = 'each' | 'seed' | 'seed_cluster' | 'ml' | 'l' | 'g' | 'kg' | 'm2'
 type UnitDimension = 'count' | 'volume' | 'mass' | 'area'
 type InventoryCategory = 'seed' | 'growing_media' | 'fertilizer_treatment' | 'label' | 'packaging' | 'pot_container' | 'tray' | 'other'
-type InventoryTrackingMode = 'lot' | 'serialized'
+type InventoryTrackingMode = 'lot' | 'serialized' | 'mixed'
 type InventoryUsageBasis = 'cell_volume' | 'surface_area' | 'per_unit' | 'fixed' | 'manual'
 
 interface InventoryUnit {
@@ -121,7 +121,10 @@ interface InventoryBalance {
   item_name: string
   location: number
   location_name: string
+  location_full_name: string
   physical_quantity: string
+  bulk_quantity: string
+  numbered_quantity: string
   reserved_quantity: string
   available_quantity: string
   base_unit: UnitCode
@@ -130,6 +133,12 @@ interface InventoryBalance {
   currency_code: string
   expires_on: string | null
   low_stock: boolean
+}
+
+interface IndividualizationWrite {
+  location: number
+  count: number
+  reason?: string
 }
 
 type QuantityCertainty = 'exact' | 'estimated' | 'unknown'
@@ -342,6 +351,7 @@ interface StocktakeScope {
 }
 
 export {
+  IndividualizationWrite,
   InventoryBalance,
   InventoryCategory,
   InventoryItem,

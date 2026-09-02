@@ -1,4 +1,5 @@
 import {
+  IndividualizationWrite,
   InventoryBalance,
   InventoryItem,
   InventoryItemCreate,
@@ -8,6 +9,7 @@ import {
   InputTaxAdjustmentWrite,
   ItemUnitConversion,
   ItemUnitConversionCreate,
+  SerializedInventoryUnit,
   StockReceipt,
   StockReceiptFilters,
   StockReceiptWrite,
@@ -21,6 +23,7 @@ const CONVERSIONS_URL = '/inventory/conversions/'
 const RECEIPTS_URL = '/inventory/receipts/'
 const INPUT_TAX_ADJUSTMENTS_URL = '/inventory/input-tax-adjustments/'
 const STOCKTAKES_URL = '/inventory/stocktakes/'
+const LOTS_URL = '/inventory/lots/'
 
 function getStocktakes(signal?: AbortSignal): Promise<Array<Stocktake>> {
   return fetchAsJson<Array<Stocktake>>(STOCKTAKES_URL, signal)
@@ -54,6 +57,14 @@ async function resolveStocktakeVariance(pk: number, variance: number, action: st
 
 function getInventoryBalances(item: number, signal?: AbortSignal): Promise<Array<InventoryBalance>> {
   return fetchAsJson<Array<InventoryBalance>>(`/inventory/balances/?item=${item}`, signal)
+}
+
+// Numbering posts no stock movement, so nothing about the lot's own history
+// changes: what moves is how much of it is still anonymous, which the balance
+// rows carry. Returns the new units so a caller can show their asset codes.
+async function individualizeLotUnits(lot: number, values: IndividualizationWrite): Promise<Array<SerializedInventoryUnit>> {
+  const response = await csrfPost(`${LOTS_URL}${lot}/individualize/`, values)
+  return response.json() as Promise<Array<SerializedInventoryUnit>>
 }
 
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
@@ -155,6 +166,7 @@ export {
   deleteStockReceipt,
   getInventoryBalances,
   getInventoryItems,
+  individualizeLotUnits,
   getInventoryUnits,
   getInputTaxAdjustments,
   getItemUnitConversions,
