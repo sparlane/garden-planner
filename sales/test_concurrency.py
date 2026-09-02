@@ -14,14 +14,18 @@ from django.db import close_old_connections
 from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
+from inventory.ledger import IndividualizationRequest, individualize_lot_units
+from inventory.models import InventoryItem, InventoryUnit, StockLot
+from inventory.units import UnitCode
+from locations.models import Location
 from plantings.lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
-from tests.factories import make_seed_tray, make_specific_plant
+from tests.factories import make_seed_tray, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace
 
 from .commerce import post_fulfillment
 from .expiry import expire_due_reservations
 from .models import ReservationEvent, SalesOrder, SalesOrderAllocation, SalesOrderLine
-from .services import allocate_targets, confirm_order, create_order
+from .services import LotRequest, allocate_targets, confirm_order, create_order
 
 
 class ReservationConcurrencyTestCase(TransactionTestCase):
@@ -208,3 +212,100 @@ class ConcurrentReservationExpiryTests(ReservationConcurrencyTestCase):
             ).count(),
             1,
         )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentCountedDrawTests(ReservationConcurrencyTestCase):
+    """Two counted draws cannot both take the last of one anonymous pool."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='counted-draw-racer')
+        self.store = Location.objects.create(
+            workspace=self.workspace,
+            name='Pot store',
+            code='RACE-POT-STORE',
+            location_type=Location.LocationType.STORAGE,
+        )
+        self.item = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='P9 pot',
+            category=InventoryItem.Category.POT_CONTAINER,
+            base_unit=UnitCode.EACH,
+            tracking_mode=InventoryItem.TrackingMode.MIXED,
+        )
+        self.lot = make_stock_lot(
+            item=self.item,
+            location=self.store,
+            quantity=Decimal('10'),
+            base_unit_cost=Decimal('0.5000'),
+            acquisition_total=Decimal('5.0000'),
+        )
+        self.order_pks = []
+        for _index in range(2):
+            order, line = self._counted_order(quantity=8)
+            allocate_targets(line, self.user, lot_requests=[
+                LotRequest(self.lot.pk, self.store.pk, 8),
+            ])
+            self.order_pks.append(order.pk)
+
+    def _counted_order(self, quantity):
+        """Create one draft whose single line is filled by the count."""
+        order = create_order(self.workspace, self.user)
+        line = SalesOrderLine.objects.create(
+            order=order,
+            line_type=SalesOrderLine.LineType.LOT_QUANTITY,
+            item=self.item,
+            description='Loose pots',
+            quantity=quantity,
+            unit_price=Decimal('0.8000'),
+            tax_rate=Decimal('15'),
+        )
+        return order, line
+
+    def test_exactly_one_order_wins_the_remaining_pots(self):
+        """Eight and eight out of ten, so the lot lock has to reject one."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(pool.map(self._confirm, self.order_pks))
+
+        self.assertEqual(results, ['confirmed', 'rejected'])
+        self.assertEqual(
+            SalesOrderAllocation.objects.filter(status='reserved').count(), 1,
+        )
+
+    def test_a_draw_and_a_numbering_cannot_both_take_the_last_pots(self):
+        """They share one pool, so they have to serialise against each other."""
+        def number():
+            """Number eight pots from an independent database connection."""
+            close_old_connections()
+            user = get_user_model().objects.get(pk=self.user.pk)
+            try:
+                individualize_lot_units(
+                    self.workspace, user,
+                    IndividualizationRequest(
+                        lot=StockLot.objects.get(pk=self.lot.pk),
+                        location=Location.objects.get(pk=self.store.pk),
+                        count=8,
+                    ),
+                )
+            except ValidationError:
+                result = 'rejected'
+            else:
+                result = 'numbered'
+            close_old_connections()
+            return result
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            confirmation = pool.submit(self._confirm, self.order_pks[0])
+            numbering = pool.submit(number)
+            results = sorted([confirmation.result(), numbering.result()])
+
+        # Whichever won, the pool is never oversold: eight reserved and eight
+        # numbered out of ten would put six pots in two places at once.
+        self.assertIn(results, [['confirmed', 'rejected'], ['numbered', 'rejected']])
+        reserved = SalesOrderAllocation.objects.filter(status='reserved').count()
+        numbered = InventoryUnit.objects.filter(source_lot=self.lot, active=True).count()
+        self.assertLessEqual(reserved * 8 + numbered, 10)

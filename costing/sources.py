@@ -20,6 +20,7 @@ from typing import NamedTuple
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
+from inventory.ledger import distribute_exactly, quantize_money
 from inventory.models import InventoryItem
 from plantings.germination import ungerminated_by_cell
 from plantings.models import (
@@ -78,10 +79,16 @@ class SourceInput(NamedTuple):
     unit_cost: object
     currency_code: str
     shares: tuple
+    #: Set only where this batch's part of the cost cannot be recovered from
+    #: its part of the quantity: one pot divided between two batches' plants
+    #: has to be split once, whole, or the two halves lose a cent between them.
+    exact_amount: object = None
 
     @property
     def amount(self):
         """Return this batch's part of the source cost, when it is known."""
+        if self.exact_amount is not None:
+            return self.exact_amount
         if self.unit_cost is None:
             return None
         return self.base_quantity * Decimal(self.unit_cost)
@@ -499,7 +506,11 @@ def application_sources(batch, generation_ids, cell_weights):
     }
     sources = []
     for line in lines:
-        if line.item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+        # A tray is lent to a crop and comes back, so it is genuinely not a
+        # seedling's input. Anything else that happens to carry an identity —
+        # a numbered pot, say — was still consumed, and skipping it on the
+        # strength of its tracking mode would silently leave it out.
+        if line.item.category == InventoryItem.Category.TRAY:
             continue
         reach = _line_reach(batch, line, context)
         if reach is None or reach.fraction <= 0:
@@ -554,6 +565,93 @@ def residual_sources(batch, generation_ids):
     return sources
 
 
+# --------------------------------------------------------------------------
+# Containers sold with their plants
+# --------------------------------------------------------------------------
+
+
+def _sold_containers(batch):
+    """Return each effective sale of a pot still holding a plant of this batch.
+
+    Only riders that actually left and stayed gone: a reversed fulfillment
+    never happened, and a returned plant came back inside the pot it went out
+    in, so neither leaves a container cost behind. Because the layers are
+    derived rather than appended, a later return takes this cost off the plant
+    on the next reallocation without anything having to remember to.
+    """
+    from sales.models import FulfillmentRider  # pylint: disable=import-outside-toplevel
+
+    effective = FulfillmentRider.objects.filter(
+        fulfillment_line__fulfillment__reversal_of__isnull=True,
+        fulfillment_line__fulfillment__reversal__isnull=True,
+        return_event__isnull=True,
+        fulfillment_line__allocation__inventory_unit__isnull=False,
+    )
+    # The lines this batch appears on are found first, and only then are their
+    # passengers read in full. Reading every rider in the workspace and sorting
+    # them here would make one batch's recalculation cost what every sale ever
+    # made costs, and this runs on any event that touches a batch.
+    lines = set(effective.filter(plant__batch=batch).values_list(
+        'fulfillment_line_id', flat=True,
+    ))
+    riders = effective.filter(fulfillment_line_id__in=lines).select_related(
+        'plant',
+        'fulfillment_line__allocation__inventory_unit__item',
+        'fulfillment_line__stock_movement',
+    ).order_by('fulfillment_line_id', 'pk')
+    by_line = {}
+    for rider in riders:
+        by_line.setdefault(rider.fulfillment_line, []).append(rider)
+    return list(by_line.items())
+
+
+def _container_share_of_cost(unit, carried, mine):
+    """Return this batch's part of one pot's cost, split whole and once.
+
+    The pot is divided across every plant that rode in it before any batch
+    takes its part, so three specimens divide five dollars into 1.6667, 1.6667
+    and 1.6666 whether they are siblings or came from three different sowings.
+    Splitting each batch's proportion separately would round each one up and
+    charge a cent that was never spent.
+    """
+    if unit.acquisition_cost is None:
+        return None
+    slices = distribute_exactly(
+        quantize_money(unit.acquisition_cost),
+        [Decimal('1')] * len(carried),
+    )
+    return sum(
+        (part for rider, part in zip(carried, slices) if rider in mine),
+        Decimal('0'),
+    )
+
+
+def container_sources(batch):
+    """Return the pots this batch's sold plants left inside, valued per plant.
+
+    A pot holding three specimens is one cost divided three ways, and within
+    one batch the division is `distribute_exactly` inside
+    `costing.allocation.value_shares`, so the shares add back to what the pot
+    cost.
+    """
+    sources = []
+    for line, carried in _sold_containers(batch):
+        unit = line.allocation.inventory_unit
+        mine = [rider for rider in carried if rider.plant.batch_id == batch.pk]
+        sources.append(SourceInput(
+            source_type=SourceType.CONTAINER_UNIT,
+            source=unit,
+            movement=line.stock_movement,
+            base_quantity=Decimal(len(mine)) / Decimal(len(carried)),
+            base_unit=unit.item.base_unit,
+            unit_cost=unit.acquisition_cost,
+            currency_code=unit.currency_code,
+            shares=tuple(plant_shares([rider.plant_id for rider in mine])),
+            exact_amount=_container_share_of_cost(unit, carried, mine),
+        ))
+    return sources
+
+
 def batch_sources(batch):
     """Return every posted input this batch drew on, resolved to its targets.
 
@@ -566,6 +664,7 @@ def batch_sources(batch):
     sources += garden_purchase_sources(batch)
     sources += application_sources(batch, generation_ids, cell_weights)
     sources += residual_sources(batch, generation_ids)
+    sources += container_sources(batch)
     observed = plants_by_cell(batch)
     outputs = cohort_outputs(batch)
     resolved = []

@@ -9,7 +9,7 @@ import json
 from decimal import Decimal
 from uuid import uuid5
 
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
@@ -36,12 +36,20 @@ from plantings.lifecycle import (
 from plantings.models import SpecificPlant, SpecificPlantLocation
 
 from .calculations import line_position_amounts, money, proportional_refund
+from .containers import (
+    recost_container_plants,
+    resolve_riders,
+    return_event,
+    return_riders,
+    riders_of,
+    sell_rider,
+    validate_riders_are_free,
+)
 from .models import (
     Fulfillment,
     FulfillmentLine,
     FulfillmentNumberSequence,
     FulfillmentPackagingLine,
-    FulfillmentRider,
     Payment,
     Refund,
     RefundLine,
@@ -202,119 +210,6 @@ def _plant_cost(plant):
     )
 
 
-def _resolve_riders(units, selected_plant_ids):
-    """Decide, per unit, what happens to the plants it is carrying.
-
-    A tray is a container being lent, so it may not go out holding plants
-    nobody sold: the fulfillment has to name them. A numbered pot is sold with
-    what is growing in it, so its plants come along and are returned as part of
-    the same line rather than needing a second one.
-    """
-    riders = {}
-    for unit in units.values():
-        try:
-            tray = unit.seed_tray
-        except ObjectDoesNotExist:
-            riders[unit.pk] = list(SpecificPlantLocation.objects.filter(
-                container_unit=unit, ended__isnull=True,
-            ).select_related('specific_plant__batch'))
-            continue
-        carried = set(SpecificPlantLocation.objects.filter(
-            seed_tray_cell__tray=tray, ended__isnull=True,
-        ).values_list('specific_plant_id', flat=True))
-        if not carried.issubset(selected_plant_ids):
-            raise ValidationError({
-                'allocations': f'Tray {tray.pk} still carries plants not in this fulfillment.',
-            })
-        riders[unit.pk] = []
-    return riders
-
-
-def _validate_riders_are_free(riders, order):
-    """Refuse to sell a pot whose plants are already promised elsewhere.
-
-    A potted specimen is sellable exactly once. Without this the same plant
-    could go out on its own seedling line and again inside its container.
-    """
-    plant_ids = [
-        placement.specific_plant_id
-        for placements in riders.values()
-        for placement in placements
-    ]
-    if not plant_ids:
-        return
-    claimed = SalesOrderAllocation.objects.filter(
-        plant_id__in=plant_ids,
-        status__in=(
-            SalesOrderAllocation.Status.RESERVED,
-            SalesOrderAllocation.Status.FULFILLED,
-        ),
-    ).exclude(line__order=order).values_list('plant_id', flat=True)
-    duplicated = sorted(set(claimed))
-    if duplicated:
-        raise ValidationError({
-            'allocations': (
-                f'Plants {duplicated} are promised on another order and cannot '
-                'be sold inside a container.'
-            ),
-        })
-
-
-def _sell_rider(line, placement, user, fulfilled_at, cogs_amount):
-    """Record one plant as sold because the container holding it was.
-
-    The plant's placement ends here rather than following the pot: once the
-    container has left, saying the plant is still standing in it would be a
-    claim about somebody else's greenhouse.
-    """
-    plant = placement.specific_plant
-    event = record_lifecycle_event(
-        plant, user,
-        OutcomeRequest(
-            EventType.SOLD, occurred_at=fulfilled_at,
-            reference=f'fulfillment:{line.fulfillment_id}:container:{line.pk}',
-        ),
-    )
-    SpecificPlantLocation.objects.filter(pk=placement.pk).update(ended=fulfilled_at)
-    return FulfillmentRider.objects.create(
-        fulfillment_line=line,
-        plant=plant,
-        lifecycle_event=event,
-        cogs_amount=cogs_amount,
-    )
-
-
-def _return_riders(line, sales_return, user, *, returned_at, reason, outcome):
-    """Bring a returned container's plants back with it.
-
-    They went out as passengers on this line, so they come back on it too,
-    landing in the pot again unless it is being discarded. Returns the plants
-    needing quarantine, which the caller handles for the whole document at
-    once.
-    """
-    quarantined = []
-    for rider in line.riders.select_related('plant').all():
-        event = record_lifecycle_event(
-            rider.plant, user,
-            OutcomeRequest(
-                _return_event(outcome), occurred_at=returned_at, reason=reason,
-                reference=f'return:{sales_return.pk}:container:{line.pk}',
-            ),
-        )
-        FulfillmentRider.objects.filter(pk=rider.pk).update(return_event=event)
-        if outcome != SalesReturnLine.Outcome.DISCARDED:
-            SpecificPlantLocation.objects.create(
-                specific_plant=rider.plant,
-                location_type=SpecificPlantLocation.CONTAINER_UNIT,
-                container_unit=line.allocation.inventory_unit,
-                started=returned_at,
-                notes=reason,
-            )
-        if outcome == SalesReturnLine.Outcome.QUARANTINED:
-            quarantined.append(rider.plant)
-    return quarantined
-
-
 def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfilled_at):
     """Ship anonymous stock by the count and value it from its own lot.
 
@@ -385,9 +280,10 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
     lot_ids = [row['lot'].pk for row in packaging]
     lot_ids += [row.stock_lot_id for row in allocations if row.stock_lot_id]
     lots = lock_lots(order.workspace, lot_ids)
-    riders = _resolve_riders(units, set(plant_ids))
-    _validate_riders_are_free(riders, order)
+    riders = resolve_riders(units, set(plant_ids))
+    validate_riders_are_free(riders, order)
     positions = _available_positions(order)
+    passengers = []
     fulfillment = Fulfillment.objects.create(
         workspace=order.workspace, order=order,
         fulfillment_number=_number(order.workspace), fulfilled_at=fulfilled_at,
@@ -447,7 +343,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             **amounts,
         )
         for placement, (rider_cost, _flag) in zip(carried, rider_costs):
-            _sell_rider(line, placement, user, fulfilled_at, rider_cost)
+            sell_rider(line, placement, user, fulfilled_at, rider_cost)
+            passengers.append(placement.specific_plant)
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
             status=SalesOrderAllocation.Status.FULFILLED, updated=timezone.now(),
         )
@@ -477,6 +374,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             unit_cost=lot.base_unit_cost, cogs_amount=cost,
             currency_code=lot.currency_code, stock_movement=movement,
         )
+    recost_container_plants(passengers, user, 'Sold inside its container.')
     recompute_order_status(order)
     return fulfillment
 
@@ -506,14 +404,6 @@ def record_payment(order, user, *, operation_key, paid_on, amount, method,
         operation_key=operation_key, request_fingerprint=fingerprint,
         created_by=_actor(user),
     )
-
-
-def _return_event(outcome):
-    return {
-        SalesReturnLine.Outcome.AVAILABLE: EventType.RETURNED_AVAILABLE,
-        SalesReturnLine.Outcome.QUARANTINED: EventType.RETURNED_QUARANTINED,
-        SalesReturnLine.Outcome.DISCARDED: EventType.RETURNED_DISCARDED,
-    }[outcome]
 
 
 def _validate_whole_allocation_returns(items, lines):
@@ -615,6 +505,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
     if already:
         raise ValidationError({'items': 'One or more items were already returned.'})
     quarantined_plants = []
+    returned_riders = []
     sales_return = SalesReturn.objects.create(
         workspace=order.workspace, order=order, returned_at=returned_at,
         reason=reason.strip(), notes=notes.strip(), operation_key=operation_key,
@@ -640,7 +531,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
             lifecycle_event = record_lifecycle_event(
                 allocation.plant, user,
                 OutcomeRequest(
-                    _return_event(outcome), occurred_at=returned_at, reason=reason,
+                    return_event(outcome), occurred_at=returned_at, reason=reason,
                     reference=f'return:{sales_return.pk}:line:{line.pk}',
                 ),
             )
@@ -668,10 +559,12 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
                     reason=reason, reference=f'return:{sales_return.pk}:line:{line.pk}',
                 ),
             )
-            quarantined_plants.extend(_return_riders(
-                line, sales_return, user,
-                returned_at=returned_at, reason=reason, outcome=outcome,
-            ))
+            returned_riders.extend(
+                rider.plant for rider in line.riders.select_related('plant')
+            )
+            quarantined_plants.extend(
+                return_riders(line, sales_return, user, outcome),
+            )
             if outcome == SalesReturnLine.Outcome.DISCARDED:
                 discard_movement = post_unit_movement(
                     order.workspace, user,
@@ -709,6 +602,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         )
         sales_return.health_observation = observation
         sales_return.quarantine_case = case
+    recost_container_plants(returned_riders, user, 'Returned in its container.')
     recompute_order_status(order)
     return sales_return
 
@@ -793,11 +687,11 @@ def _refund_line(refund, share):
 
 def order_commerce_summary(order):
     """Return separate physical, revenue, refund, and cash totals."""
-    fulfilled = _effective_fulfillment_lines(order)
+    fulfilled = list(_effective_fulfillment_lines(order))
     returned_ids = _effective_return_line_ids(order)
     refunds = _effective(order.refunds.all())
     payments = _effective(order.payments.all())
-    fulfilled_total = fulfilled.aggregate(total=Sum('total_incl_tax'))['total'] or 0
+    fulfilled_total = sum((row.total_incl_tax for row in fulfilled), Decimal('0'))
     refunded_total = refunds.aggregate(total=Sum('amount'))['total'] or 0
     paid_total = payments.aggregate(total=Sum('amount'))['total'] or 0
     net_order = money(order.total_incl_tax - refunded_total)
@@ -814,11 +708,22 @@ def order_commerce_summary(order):
         payment_status = 'overpaid'
     return {
         'requested_quantity': sum(order.lines.values_list('quantity', flat=True)),
-        'reserved_quantity': order.lines.filter(
-            allocations__status=SalesOrderAllocation.Status.RESERVED,
-        ).count(),
-        'fulfilled_quantity': fulfilled.count(),
-        'returned_quantity': len(returned_ids),
+        # All four are counted in units, so they can be read against each
+        # other: one counted allocation can promise fifty pots, and reporting
+        # it as a single reservation beside a requested fifty would say the
+        # order was barely started when it is completely covered.
+        'reserved_quantity': sum(
+            dispatched_quantity(row) for row in SalesOrderAllocation.objects.filter(
+                line__order=order, status=SalesOrderAllocation.Status.RESERVED,
+            )
+        ),
+        'fulfilled_quantity': sum(
+            dispatched_quantity(row.allocation) for row in fulfilled
+        ),
+        'returned_quantity': sum(
+            dispatched_quantity(row.allocation)
+            for row in fulfilled if row.pk in returned_ids
+        ),
         'fulfilled_total_incl_tax': f'{money(fulfilled_total):f}',
         'refunded_total_incl_tax': f'{money(refunded_total):f}',
         'paid_total': f'{money(paid_total):f}',
@@ -880,6 +785,9 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
         )
     for packaging in original.packaging_lines.all():
         reverse_movement(packaging.stock_movement, user, reason, occurred_at)
+    recost_container_plants(
+        [rider.plant for rider in riders_of(original)], user, reason,
+    )
     recompute_order_status(original.order)
     return reversal
 
@@ -994,5 +902,10 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
             action_name='release', idempotency_key=uuid5(operation_key, 'release'),
             reason=reason, occurred_at=occurred_at,
         )
+    recost_container_plants([
+        rider.plant
+        for line in original.lines.all()
+        for rider in line.fulfillment_line.riders.select_related('plant')
+    ], user, reason)
     recompute_order_status(original.order)
     return reversal

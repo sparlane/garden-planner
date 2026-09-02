@@ -14,6 +14,8 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
+from costing.models import CostAllocation
+from costing.services import plant_cost_breakdown
 from inventory.ledger import (
     IndividualizationRequest,
     bulk_balance,
@@ -23,10 +25,18 @@ from inventory.ledger import (
 from inventory.models import InventoryItem, StockLot, StockMovement
 from inventory.units import UnitCode
 from locations.models import Location
-from tests.factories import make_stock_lot
+from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from plantings.models import SpecificPlantLocation
+from tax.facts import order_facts
+from tests.factories import make_seed_tray, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace, get_current_workspace
 
-from .commerce import post_fulfillment, post_return, reverse_fulfillment
+from .commerce import (
+    order_commerce_summary,
+    post_fulfillment,
+    post_return,
+    reverse_fulfillment,
+)
 from .models import (
     FulfillmentLine,
     SalesOrder,
@@ -645,3 +655,328 @@ class CountedReturnTests(CountedStockTestCase):
 
         self.line.order.refresh_from_db()
         self.assertEqual(self.line.order.status, SalesOrder.Status.CONFIRMED)
+
+
+class SoldContainerCostTests(CountedStockTestCase):
+    """A sold specimen's pot appears beside the media and seed that raised it."""
+
+    def setUp(self):
+        super().setUp()
+        self.lot = self.receive(quantity='10', unit_cost='5.0000')
+        self.pot = self.number(self.lot, 1)[0]
+
+    def plant_in(self, pot):
+        """Stand one ready plant in a numbered container."""
+        plant = make_specific_plant()
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        SpecificPlantLocation.objects.create(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            container_unit=pot,
+        )
+        return plant
+
+    def sell(self, pot=None):
+        """Take one numbered pot through a confirmed order to dispatch."""
+        pot = pot or self.pot
+        order = create_order(self.workspace, self.user)
+        line = SalesOrderLine.objects.create(
+            order=order,
+            line_type=SalesOrderLine.LineType.UNIT,
+            item=self.item,
+            description='One specimen in its pot',
+            quantity=1,
+            unit_price=Decimal('40'),
+            tax_rate=Decimal('15'),
+        )
+        allocation = allocate_targets(line, self.user, unit_ids=[pot.pk])[0]
+        confirm_order(order, self.user)
+        return post_fulfillment(
+            order, self.user, operation_key=uuid4(),
+            allocation_ids=[allocation.pk],
+        )
+
+    def container_layers(self, plant):
+        """Return the container layers a plant's cost breakdown reports."""
+        return [
+            layer for layer in plant_cost_breakdown(plant)['layers']
+            if layer['source_type'] == CostAllocation.SourceType.CONTAINER_UNIT
+        ]
+
+    def test_a_sold_specimen_carries_its_pot_in_the_breakdown(self):
+        """The itemised trail names the container, not only the total."""
+        plant = self.plant_in(self.pot)
+
+        self.sell()
+
+        layers = self.container_layers(plant)
+        self.assertEqual(len(layers), 1)
+        self.assertEqual(layers[0]['amount'], '5.0000')
+        self.assertEqual(layers[0]['container_unit'], self.pot.pk)
+
+    def test_three_plants_in_one_pot_divide_it_exactly(self):
+        """Nothing is dropped to rounding and nothing is absorbed twice."""
+        plants = [self.plant_in(self.pot) for _ in range(3)]
+
+        self.sell()
+
+        amounts = [
+            Decimal(self.container_layers(plant)[0]['amount'])
+            for plant in plants
+        ]
+        self.assertEqual(sum(amounts), Decimal('5.0000'))
+        self.assertEqual(sorted(amounts), [
+            Decimal('1.6666'), Decimal('1.6667'), Decimal('1.6667'),
+        ])
+
+    def test_a_plant_sold_loose_has_no_container_layer(self):
+        """Only a container that actually left with a plant is its input."""
+        self.plant_in(self.pot)
+        other = make_specific_plant()
+        record_lifecycle_event(other, self.user, OutcomeRequest(EventType.READY))
+
+        self.sell()
+
+        self.assertEqual(self.container_layers(other), [])
+
+    def test_an_unsold_pot_is_an_asset_rather_than_an_input(self):
+        """A pot merely holding a plant has not been consumed by it."""
+        plant = self.plant_in(self.pot)
+
+        self.assertEqual(self.container_layers(plant), [])
+
+    def test_returning_the_pot_takes_its_cost_back_off_the_plant(self):
+        """The container came back, so it is no longer a consumed input."""
+        plant = self.plant_in(self.pot)
+        fulfillment = self.sell()
+        shipped = fulfillment.lines.get()
+
+        post_return(
+            shipped.fulfillment.order, self.user, operation_key=uuid4(),
+            items=[{
+                'fulfillment_line': shipped,
+                'outcome': SalesReturnLine.Outcome.AVAILABLE,
+                'destination': self.store,
+            }],
+            reason='Customer changed their mind.',
+        )
+
+        self.assertEqual(self.container_layers(plant), [])
+
+    def test_reversing_the_sale_takes_the_container_cost_with_it(self):
+        """A fulfillment that never happened left no container behind."""
+        plant = self.plant_in(self.pot)
+        fulfillment = self.sell()
+
+        reverse_fulfillment(
+            fulfillment, self.user, operation_key=uuid4(),
+            reason='Wrong customer.',
+        )
+
+        self.assertEqual(self.container_layers(plant), [])
+
+    def test_the_line_cost_of_sale_counts_the_pot_exactly_once(self):
+        """The layer and the line agree instead of double-counting the pot."""
+        plant = self.plant_in(self.pot)
+
+        fulfillment = self.sell()
+
+        line = fulfillment.lines.get()
+        breakdown = plant_cost_breakdown(plant)
+        plant_value = Decimal(
+            breakdown['provisional_value'] or breakdown['final_value']
+        )
+        container = Decimal(self.container_layers(plant)[0]['amount'])
+        self.assertEqual(
+            line.cogs_amount,
+            Decimal(self.pot.acquisition_cost) + plant_value - container,
+        )
+
+    def test_a_tray_contributes_nothing_to_a_seedling_s_cost(self):
+        """A tray is lent to a crop and comes back, so it is not an input."""
+        tray = make_seed_tray(workspace=self.workspace)
+        plant = self.plant_in(tray.inventory_unit)
+
+        self.assertEqual(self.container_layers(plant), [])
+
+
+class CountedCommerceSummaryTests(CountedStockTestCase):
+    """The order's physical figures are counted in units, not in rows."""
+
+    def test_a_counted_order_reads_as_covered_rather_than_barely_started(self):
+        """One allocation promising fifty is fifty reserved, not one."""
+        lot = self.receive()
+        line = self.counted_line(quantity=50)
+        allocation = allocate_targets(line, self.user, lot_requests=[
+            LotRequest(lot.pk, self.store.pk, 50),
+        ])[0]
+        confirm_order(line.order, self.user)
+
+        summary = order_commerce_summary(line.order)
+        self.assertEqual(summary['requested_quantity'], 50)
+        self.assertEqual(summary['reserved_quantity'], 50)
+
+        post_fulfillment(
+            line.order, self.user, operation_key=uuid4(),
+            allocation_ids=[allocation.pk],
+        )
+
+        summary = order_commerce_summary(line.order)
+        self.assertEqual(summary['fulfilled_quantity'], 50)
+        self.assertEqual(summary['returned_quantity'], 0)
+
+
+class CountedLineTaxTests(CountedStockTestCase):
+    """A counted supply falls due exactly as an identity supply does."""
+
+    def test_the_gst_facts_read_a_counted_dispatch_like_any_other(self):
+        """One line type more must not become one supply the return misses."""
+        lot = self.receive()
+        line = self.counted_line(quantity=50)
+        allocation = allocate_targets(line, self.user, lot_requests=[
+            LotRequest(lot.pk, self.store.pk, 50),
+        ])[0]
+        confirm_order(line.order, self.user)
+        fulfillment = post_fulfillment(
+            line.order, self.user, operation_key=uuid4(),
+            allocation_ids=[allocation.pk],
+        )
+
+        facts = order_facts(line.order)
+
+        self.assertEqual(
+            [fact.tax_code for fact in facts.lines],
+            [SalesOrderLine.TaxTreatment.STANDARD],
+        )
+        self.assertEqual(len(facts.fulfillments), 1)
+        self.assertEqual(
+            facts.fulfillments[0].line_grosses,
+            {line.pk: line.total_incl_tax},
+        )
+        self.assertEqual(
+            fulfillment.lines.get().tax_treatment,
+            SalesOrderLine.TaxTreatment.STANDARD,
+        )
+
+
+class CountedLineRESTContractTests(CountedStockTestCase):
+    """The payload shapes the sales screens read, checked from the API out.
+
+    This repository has no JavaScript test runner, so the contract between the
+    counted-draw editor and the endpoints it calls is held here: a field
+    quietly renamed or dropped would otherwise only show up in a browser.
+    """
+
+    orders_url = '/sales/orders/'
+
+    def setUp(self):
+        super().setUp()
+        self.lot = self.receive()
+
+    def counted_order(self, quantity=50):
+        """Create one order carrying a single counted line."""
+        line = self.counted_line(quantity=quantity)
+        return line.order, line
+
+    def preview(self, order, line, quantity):
+        """Ask the preview endpoint what one counted draw would resolve to."""
+        return self.client.post(
+            f'{self.orders_url}{order.pk}/allocation-preview/',
+            {
+                'line': line.pk,
+                'lot_requests': [{
+                    'lot': self.lot.pk,
+                    'location': self.store.pk,
+                    'quantity': quantity,
+                }],
+            },
+            content_type='application/json',
+        )
+
+    def test_a_counted_preview_carries_the_fields_the_editor_reads(self):
+        """The draw and the figure it was measured against, both named."""
+        order, line = self.counted_order()
+
+        response = self.preview(order, line, 50)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(sorted(response.data['selected'][0]), [
+            'available', 'id', 'location', 'quantity',
+        ])
+        self.assertEqual(response.data['selected'][0]['available'], '500.000000000')
+
+    def test_a_refused_draw_reports_the_pool_it_was_measured_against(self):
+        """An operator sees how short the pool was, not only that it was."""
+        order, line = self.counted_order(quantity=600)
+
+        response = self.preview(order, line, 600)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['selected'], [])
+        self.assertEqual(response.data['conflicts'][0]['reason'], 'insufficient_stock')
+        self.assertEqual(response.data['conflicts'][0]['available'], '500.000000000')
+
+    def test_allocating_a_counted_draw_returns_what_it_promises(self):
+        """Nothing to point at, so the allocation says how many, and whence."""
+        order, line = self.counted_order()
+
+        response = self.client.post(
+            f'{self.orders_url}{order.pk}/allocate/',
+            {
+                'line': line.pk,
+                'lot_requests': [{
+                    'lot': self.lot.pk,
+                    'location': self.store.pk,
+                    'quantity': 50,
+                }],
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        allocation = response.data[0]
+        self.assertEqual(allocation['stock_lot'], self.lot.pk)
+        self.assertEqual(allocation['source_location'], self.store.pk)
+        self.assertEqual(allocation['quantity'], 50)
+        self.assertIsNone(allocation['plant'])
+        self.assertIsNone(allocation['inventory_unit'])
+
+    def test_a_selection_still_names_exactly_one_source(self):
+        """Ambiguity between identities and counts is refused, not ranked."""
+        order, line = self.counted_order()
+
+        response = self.client.post(
+            f'{self.orders_url}{order.pk}/allocation-preview/',
+            {
+                'line': line.pk,
+                'plant_ids': [1],
+                'lot_requests': [{
+                    'lot': self.lot.pk,
+                    'location': self.store.pk,
+                    'quantity': 1,
+                }],
+            },
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+
+    def test_the_balance_row_names_what_a_counted_line_may_draw_on(self):
+        """The editor picks a lot and a place from exactly this figure."""
+        order, line = self.counted_order()
+        allocate_targets(line, self.user, lot_requests=[
+            LotRequest(self.lot.pk, self.store.pk, 50),
+        ])
+        confirm_order(order, self.user)
+        self.number(self.lot, 6)
+
+        response = self.client.get(f'/inventory/balances/?item={self.item.pk}')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(entry for entry in response.data if entry['lot'] == self.lot.pk)
+        self.assertEqual(row['physical_quantity'], '500.000000000')
+        self.assertEqual(row['numbered_quantity'], '6.000000000')
+        self.assertEqual(row['bulk_quantity'], '494.000000000')
+        self.assertEqual(row['reserved_quantity'], '50.000000000')
+        self.assertEqual(row['unpromised_quantity'], '444.000000000')
+        self.assertEqual(row['available_quantity'], '450.000000000')

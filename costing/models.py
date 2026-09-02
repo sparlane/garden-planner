@@ -49,6 +49,7 @@ from inventory.models import (
     MONEY_MAX_DIGITS,
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
+    InventoryUnit,
     StockMovement,
 )
 from inventory.units import UnitCode
@@ -61,7 +62,7 @@ from workspaces.models import WorkspaceOwnedModel
 #: the ``source_type`` value selecting it, which lets the identity constraint be
 #: generated rather than written out once per source. It is kept in step with
 #: `CostAllocation.SourceType` by a test.
-SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting')
+SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting', 'container_unit')
 
 #: Columns that can hold the thing a layer is allocated to. Same naming trick as
 #: `SOURCE_FIELDS`, and kept in step with `CostAllocation.TargetType` by a test.
@@ -96,6 +97,7 @@ class CostAllocationRun(WorkspaceOwnedModel):
         GERMINATION_CLOSED = 'germination_closed', 'Germination closed'
         GENERATION_CLOSED = 'generation_closed', 'Tray generation cleaned'
         OUTPUT_FINALIZED = 'output_finalized', 'Batch output finalized'
+        CONTAINER_SOLD = 'container_sold', 'Container sold with its plants'
         MANUAL_RECALCULATE = 'manual_recalculate', 'Recalculated by an operator'
 
     batch = models.ForeignKey(
@@ -165,6 +167,12 @@ class CostAllocation(WorkspaceOwnedModel):
         SOWING_POSTING = 'sowing_posting', 'Sowing stock posting'
         GENERATION_RESIDUAL = 'generation_residual', 'Tray generation residual'
         GARDEN_PLANTING = 'garden_planting', 'Garden planting purchase'
+        # A numbered pot that went out holding a plant. It is an asset while it
+        # merely holds one and becomes a consumed input when it leaves with it,
+        # which is why the layer is posted at sale rather than at potting:
+        # allocating earlier would also double-count a plant moved from one
+        # numbered pot into another.
+        CONTAINER_UNIT = 'container_unit', 'Container sold with the plant'
 
     class TargetType(models.TextChoices):
         """What the cost was allocated to.
@@ -224,6 +232,13 @@ class CostAllocation(WorkspaceOwnedModel):
     )
     garden_planting = models.ForeignKey(
         GardenPlanting,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='cost_allocations',
+    )
+    container_unit = models.ForeignKey(
+        InventoryUnit,
         on_delete=models.PROTECT,
         null=True,
         blank=True,
