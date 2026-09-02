@@ -4,6 +4,7 @@ from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
 from typing import NamedTuple
 
+from django.db.models import Sum
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -24,6 +25,7 @@ class DerivedBalances(NamedTuple):
 
     item_totals: dict
     numbered: dict
+    promised: dict
     names: dict
 
 
@@ -82,6 +84,7 @@ class BalanceView(APIView):
         derived = DerivedBalances(
             item_totals=self._item_totals(item_total_lots, all_locations),
             numbered=self._numbered_counts(workspace, result_lots),
+            promised=self._promised_counts(workspace, result_lots),
             names=dict(
                 Location.objects.filter(workspace=workspace).values_list('pk', 'name'),
             ),
@@ -111,6 +114,26 @@ class BalanceView(APIView):
         for lot_id, location_id in rows:
             counts[(lot_id, location_id)] += 1
         return counts
+
+    @staticmethod
+    def _promised_counts(workspace, lots):
+        """Total the counted sales reservations held per lot and location.
+
+        Gathered in one query for the reason `_numbered_counts` gathers its
+        own that way. Only reserved draws count: a pending one is a selection
+        somebody is still drafting, which warns rather than holds.
+        """
+        from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
+
+        promised = defaultdict(Decimal)
+        rows = SalesOrderAllocation.objects.filter(
+            stock_lot__workspace=workspace,
+            stock_lot_id__in=[lot.pk for lot in lots],
+            status=SalesOrderAllocation.Status.RESERVED,
+        ).values('stock_lot_id', 'source_location_id').annotate(total=Sum('quantity'))
+        for row in rows:
+            promised[(row['stock_lot_id'], row['source_location_id'])] = Decimal(row['total'])
+        return promised
 
     @staticmethod
     def _history_locations(workspace, lots):
@@ -160,6 +183,7 @@ class BalanceView(APIView):
                 rows.append(cls._balance_row(
                     lot, location, is_low,
                     derived.numbered[(lot.pk, location.pk)],
+                    derived.promised[(lot.pk, location.pk)],
                     derived.names,
                 ))
         return rows
@@ -171,10 +195,11 @@ class BalanceView(APIView):
         return threshold is not None and item_totals[lot.item_id] <= threshold
 
     @staticmethod
-    def _balance_row(lot, location, is_low, numbered, names):
+    def _balance_row(lot, location, is_low, numbered, promised, names):  # pylint: disable=too-many-arguments,too-many-positional-arguments
         """Serialize one lot/location quantity and immutable-cost valuation."""
         physical = physical_balance(lot, location)
         numbered_quantity = Decimal(numbered)
+        bulk = physical - numbered_quantity
         value = None
         if lot.base_unit_cost is not None:
             value = (physical * lot.base_unit_cost).quantize(
@@ -190,10 +215,14 @@ class BalanceView(APIView):
             'location_name': location.name,
             'location_full_name': location_full_name(location, names),
             'physical_quantity': f'{physical:.9f}',
-            'bulk_quantity': f'{physical - numbered_quantity:.9f}',
+            'bulk_quantity': f'{bulk:.9f}',
             'numbered_quantity': f'{numbered_quantity:.9f}',
-            'reserved_quantity': '0.000000000',
-            'available_quantity': f'{physical:.9f}',
+            'reserved_quantity': f'{promised:.9f}',
+            # What a counted sale may still draw on: loose stock that nothing
+            # has already been promised out of. A numbered pot is standing here
+            # in its own right and is sold as itself, so it is not part of it.
+            'unpromised_quantity': f'{bulk - promised:.9f}',
+            'available_quantity': f'{physical - promised:.9f}',
             'base_unit': lot.item.base_unit,
             'base_unit_cost': (
                 f'{lot.base_unit_cost:.12f}'

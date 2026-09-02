@@ -418,18 +418,29 @@ def _bucket_of(row, dispositions):
     return 'unresolved'
 
 
+def _source_lot(row):
+    """Return the stock lot one layer's input came out of, when there is one.
+
+    A sold container reaches its lot through the unit rather than through a
+    consumption line, and a manually entered garden purchase has no lot at all.
+    """
+    if row.application_line is not None:
+        return row.application_line.lot
+    if row.sowing_posting is not None:
+        return row.sowing_posting.movement.lot
+    if row.generation_residual is not None:
+        return row.generation_residual.lot
+    if row.container_unit is not None:
+        return row.container_unit.source_lot
+    return None
+
+
 def _source_reference(row):
     """Return the identifiers that tie one layer back to its origin."""
     line = row.application_line
     posting = row.sowing_posting
     residual = row.generation_residual
-    lot = None
-    if line is not None:
-        lot = line.lot
-    elif posting is not None:
-        lot = posting.movement.lot
-    elif residual is not None:
-        lot = residual.lot
+    lot = _source_lot(row)
     return {
         'source_type': row.source_type,
         'source': row.source_id,
@@ -437,6 +448,7 @@ def _source_reference(row):
         'application_line': line.pk if line is not None else None,
         'sowing_posting': posting.pk if posting is not None else None,
         'generation_residual': residual.pk if residual is not None else None,
+        'container_unit': row.container_unit_id,
         'movement': row.movement_id,
         'lot': lot.pk if lot is not None else None,
         'item': lot.item_id if lot is not None else None,
@@ -473,6 +485,7 @@ def _loaded_allocations(batch):
             'application_line__lot__item',
             'sowing_posting__movement__lot__item',
             'generation_residual__lot__item',
+            'container_unit__source_lot__item',
         )
         .order_by('pk')
     )
@@ -557,6 +570,7 @@ def plant_cost_breakdown(plant):
             'application_line__lot__item',
             'sowing_posting__movement__lot__item',
             'generation_residual__lot__item',
+            'container_unit__source_lot__item',
         )
         .order_by('pk')
     )
