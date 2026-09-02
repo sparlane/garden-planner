@@ -10,7 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from locations.models import Location
+from locations.models import Location, location_full_name
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
@@ -95,6 +95,7 @@ class InventoryUnitSerializer(serializers.ModelSerializer):
         source='source_lot.receipt_line_id',
         read_only=True,
     )
+    current_location_full_name = serializers.SerializerMethodField()
     physical_state = serializers.SerializerMethodField()
     in_use = serializers.SerializerMethodField()
     reconciliation_required = serializers.SerializerMethodField()
@@ -112,6 +113,7 @@ class InventoryUnitSerializer(serializers.ModelSerializer):
             'acquisition_cost',
             'currency_code',
             'current_location',
+            'current_location_full_name',
             'physical_state',
             'in_use',
             'reconciliation_required',
@@ -121,6 +123,12 @@ class InventoryUnitSerializer(serializers.ModelSerializer):
             'updated',
         ]
         read_only_fields = fields
+
+    def get_current_location_full_name(self, unit):
+        """Name the place in full; a bare `Bay 2` names three greenhouses."""
+        if not unit.current_location_id:
+            return None
+        return location_full_name(unit.current_location)
 
     def get_physical_state(self, unit):
         """Return the unit's movement-derived physical state."""

@@ -24,6 +24,7 @@ interface SerializedInventoryUnit {
   acquisition_cost: string | null
   currency_code: string
   current_location: number | null
+  current_location_full_name: string | null
   physical_state: SerializedPhysicalState
   in_use: boolean
   reconciliation_required: boolean
