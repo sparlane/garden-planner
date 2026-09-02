@@ -214,6 +214,20 @@ def _commerce_queryset(workspace, filters, start, end):
     return queryset.order_by('fulfillment__fulfilled_at', 'pk')
 
 
+def _cogs_bucket(allocation):
+    """Return which cost-of-sale column one dispatched promise belongs in.
+
+    Anonymous stock sold by the count is neither a plant nor a lent tray, so
+    it lands in the general bucket rather than being reported as a tray whose
+    generations and occupancy it does not have.
+    """
+    if allocation.plant_id:
+        return 'plant_cogs'
+    if allocation.inventory_unit_id:
+        return 'tray_cogs'
+    return 'other_cogs'
+
+
 def _matches_place(line, filters, occurred_at):
     if not filters.get('location') and not filters.get('garden_square'):
         return True
@@ -285,6 +299,7 @@ def _fulfillment_rows(lines, filters):
             ),
             'plant_id': line.allocation.plant_id,
             'inventory_unit_id': line.allocation.inventory_unit_id,
+            'lot_id': line.allocation.stock_lot_id,
             'gross_sales': decimal_string(line.gross_ex_tax, 4),
             'discounts': decimal_string(line.discount_ex_tax, 4),
             'net_sales': decimal_string(line.subtotal_ex_tax, 4),
@@ -292,8 +307,7 @@ def _fulfillment_rows(lines, filters):
             'unvalued': line.cogs_amount is None,
         })
         if line.cogs_amount is not None:
-            key = 'plant_cogs' if line.allocation.plant_id else 'tray_cogs'
-            row[key] = decimal_string(line.cogs_amount, 4)
+            row[_cogs_bucket(line.allocation)] = decimal_string(line.cogs_amount, 4)
         rows.append(row)
         included_fulfillments[line.fulfillment_id] = line.fulfillment
     return rows, included_fulfillments
@@ -378,6 +392,7 @@ def _refund_rows(workspace, filters, start, end):
             'batch_id': line.allocation.plant.batch_id if line.allocation.plant_id else None,
             'plant_id': line.allocation.plant_id,
             'inventory_unit_id': line.allocation.inventory_unit_id,
+            'lot_id': line.allocation.stock_lot_id,
             'refunds': decimal_string(refund_line.subtotal_ex_tax, 4),
             'net_sales': decimal_string(-refund_line.subtotal_ex_tax, 4),
         })
@@ -438,12 +453,12 @@ def _return_rows(workspace, filters, start, end):
             'batch_id': line.allocation.plant.batch_id if line.allocation.plant_id else None,
             'plant_id': line.allocation.plant_id,
             'inventory_unit_id': line.allocation.inventory_unit_id,
+            'lot_id': line.allocation.stock_lot_id,
             'provisional': line.cogs_provisional,
             'unvalued': line.cogs_amount is None,
         })
         if line.cogs_amount is not None:
-            key = 'plant_cogs' if line.allocation.plant_id else 'tray_cogs'
-            row[key] = decimal_string(-line.cogs_amount, 4)
+            row[_cogs_bucket(line.allocation)] = decimal_string(-line.cogs_amount, 4)
         rows.append(row)
     return rows
 

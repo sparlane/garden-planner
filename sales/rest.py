@@ -48,6 +48,7 @@ from .models import (
     SalesReturnLine,
 )
 from .services import (
+    LotRequest,
     allocate_targets,
     cancel_order,
     close_reservations,
@@ -74,6 +75,14 @@ def _run(function, *args, **kwargs):
         raise ValidationError(_model_errors(exc)) from exc
 
 
+def _lot_requests(data):
+    """Return the validated counted draws as the service's own request type."""
+    return [
+        LotRequest(row['lot'], row['location'], row['quantity'])
+        for row in data['lot_requests']
+    ]
+
+
 class CustomerSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Editable customer details without exposing workspace ownership."""
 
@@ -93,7 +102,7 @@ class ReservationEventSerializer(serializers.ModelSerializer):
 
 
 class AllocationSerializer(serializers.ModelSerializer):
-    """One exact pending or historical allocation."""
+    """One pending or historical promise: an identity, or a count on a lot."""
 
     events = ReservationEventSerializer(many=True, read_only=True)
     asset_code = serializers.CharField(source='inventory_unit.asset_code', read_only=True, allow_null=True)
@@ -101,16 +110,19 @@ class AllocationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrderAllocation
-        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
+        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'stock_lot', 'source_location', 'quantity', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
         read_only_fields = fields
 
     def get_competing_claims(self, allocation):
-        """Name other open orders promising this allocation's exact target."""
-        identity = (
-            {'plant_id': allocation.plant_id}
-            if allocation.plant_id
-            else {'inventory_unit_id': allocation.inventory_unit_id}
-        )
+        """Name other open orders promising this allocation's exact target.
+
+        A counted draw competes over a pool rather than over a thing, so the
+        orders holding parts of the same lot are all legitimate; naming them
+        is context for an operator, never a conflict.
+        """
+        identity = {f'{allocation.target_kind}_id': getattr(allocation, f'{allocation.target_kind}_id')}
+        if allocation.stock_lot_id:
+            identity['source_location_id'] = allocation.source_location_id
         claims = (
             SalesOrderAllocation.objects
             .filter(
@@ -129,6 +141,7 @@ class AllocationSerializer(serializers.ModelSerializer):
                 'order': claim.line.order_id,
                 'order_number': claim.line.order.order_number,
                 'status': claim.status,
+                'quantity': claim.quantity,
             }
             for claim in claims
         ]
@@ -241,19 +254,40 @@ class ActionSerializer(serializers.Serializer):
         raise NotImplementedError
 
 
+class LotRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """One counted draw on a lot standing at one place."""
+
+    lot = serializers.IntegerField(min_value=1)
+    location = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1)
+
+
+#: The three ways a selection can name stock. Listed once so the preview and
+#: the allocation request cannot drift on which sources they accept.
+SELECTION_SOURCES = ('plant_ids', 'unit_ids', 'lot_requests')
+
+
+def _selection_fields():
+    """Return the selection sources as serializer fields."""
+    return {
+        'plant_ids': serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list),
+        'unit_ids': serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list),
+        'lot_requests': LotRequestSerializer(many=True, required=False, default=list),
+    }
+
+
 class TargetSelectionSerializer(ActionSerializer):  # pylint: disable=abstract-method
-    """Exact IDs or register filters for a selection preview."""
+    """Exact IDs, counted draws, or register filters for a selection preview."""
 
     line = serializers.IntegerField(min_value=1)
-    plant_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list)
-    unit_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list)
+    plant_ids, unit_ids, lot_requests = _selection_fields().values()
     filters = serializers.DictField(required=False, default=dict)
 
     def validate(self, attrs):
         """Require one unambiguous selection source."""
-        sources = sum(bool(attrs[name]) for name in ('plant_ids', 'unit_ids', 'filters'))
+        sources = sum(bool(attrs[name]) for name in SELECTION_SOURCES + ('filters',))
         if sources != 1:
-            raise ValidationError('Select exactly one of plant_ids, unit_ids, or filters.')
+            raise ValidationError('Select exactly one of plant_ids, unit_ids, lot_requests, or filters.')
         return attrs
 
 
@@ -261,14 +295,13 @@ class AllocationRequestSerializer(ActionSerializer):  # pylint: disable=abstract
     """Concrete targets to attach to one order line."""
 
     line = serializers.IntegerField(min_value=1)
-    plant_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list)
-    unit_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list)
+    plant_ids, unit_ids, lot_requests = _selection_fields().values()
     expires_at = serializers.DateTimeField(required=False, allow_null=True)
 
     def validate(self, attrs):
-        """Require plants or units, never a mixture."""
-        if bool(attrs['plant_ids']) == bool(attrs['unit_ids']):
-            raise ValidationError('Select plants or serialized units.')
+        """Require exactly one kind of target, never a mixture."""
+        if sum(bool(attrs[name]) for name in SELECTION_SOURCES) != 1:
+            raise ValidationError('Select plants, serialized units, or lot quantities.')
         return attrs
 
 
@@ -410,7 +443,15 @@ class PaymentWriteSerializer(ActionSerializer):
     notes = serializers.CharField(required=False, allow_blank=True, default='')
 
 
-class ReturnItemWriteSerializer(serializers.Serializer):
+class ReturnItemWriteSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """One dispatched item coming back, with what physically happens to it.
+
+    `quantity` is optional and exists to be checked rather than obeyed: a
+    counted dispatch returns whole or not at all, so naming a smaller figure
+    earns a refusal that says how many actually shipped instead of a silent
+    return of the lot.
+    """
+
     fulfillment_line = serializers.PrimaryKeyRelatedField(
         queryset=FulfillmentLine.objects.all(),
     )
@@ -418,6 +459,7 @@ class ReturnItemWriteSerializer(serializers.Serializer):
     destination = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(), required=False, allow_null=True,
     )
+    quantity = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
 
 class ReturnWriteSerializer(ActionSerializer):
@@ -560,7 +602,10 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
             if len(plant_ids) > 5000:
                 raise ValidationError({'filters': 'Narrow the selection to 5000 plants or fewer.'})
             data['plant_ids'] = plant_ids
-        result = _run(preview_targets, line, data['plant_ids'], data['unit_ids'])
+        result = _run(
+            preview_targets, line, data['plant_ids'], data['unit_ids'],
+            _lot_requests(data),
+        )
         return Response(result)
 
     @action(detail=True, methods=['post'])
@@ -576,6 +621,7 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
             request.user,
             data['plant_ids'],
             data['unit_ids'],
+            _lot_requests(data),
             data.get('expires_at'),
         )
         return Response(AllocationSerializer(allocations, many=True).data, status=status.HTTP_201_CREATED)

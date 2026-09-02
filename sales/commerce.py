@@ -106,13 +106,27 @@ def _effective_return_line_ids(order):
     ).values_list('fulfillment_line_id', flat=True))
 
 
+def dispatched_quantity(allocation):
+    """Return how many of a line's units one allocation ships.
+
+    An identity is exactly one, which is why `quantity` is null on it rather
+    than stored as a one nothing may contradict. Deriving it here rather than
+    snapshotting a column on `FulfillmentLine` keeps the promise and the
+    dispatch the same figure.
+    """
+    return 1 if allocation.quantity is None else allocation.quantity
+
+
 def recompute_order_status(order):
     """Derive fulfillment status from effective dispatch and return facts."""
     order = SalesOrder.objects.select_for_update(of=('self',)).get(pk=order.pk)
     if order.status == SalesOrder.Status.CANCELLED:
         return order
     returned = _effective_return_line_ids(order)
-    fulfilled = _effective_fulfillment_lines(order).exclude(pk__in=returned).count()
+    fulfilled = sum(
+        dispatched_quantity(row.allocation)
+        for row in _effective_fulfillment_lines(order).exclude(pk__in=returned)
+    )
     requested = sum(order.lines.values_list('quantity', flat=True))
     if fulfilled == 0:
         next_status = SalesOrder.Status.CONFIRMED
@@ -127,17 +141,55 @@ def recompute_order_status(order):
     return order
 
 
+def _occupied_positions(row):
+    """Return every commercial position one dispatched line already holds.
+
+    A counted dispatch takes a contiguous run rather than a single slot, so
+    the run is derived from where it started and how many it shipped.
+    """
+    start = row.commercial_position
+    return set(range(start, start + dispatched_quantity(row.allocation)))
+
+
 def _available_positions(order):
     returned = _effective_return_line_ids(order)
     occupied = {}
     for row in _effective_fulfillment_lines(order).exclude(pk__in=returned):
-        occupied.setdefault(row.allocation.line_id, set()).add(row.commercial_position)
+        occupied.setdefault(row.allocation.line_id, set()).update(
+            _occupied_positions(row),
+        )
     return {
         line.pk: [
             position for position in range(1, line.quantity + 1)
             if position not in occupied.get(line.pk, set())
         ]
         for line in order.lines.all()
+    }
+
+
+def _take_positions(available, needed):
+    """Remove and return a contiguous run of free positions, or None.
+
+    Contiguous because the run is stored as its first position plus a count.
+    Scanning rather than always taking the front matters once something has
+    been returned: a whole-allocation return frees the exact block it shipped,
+    which can leave a hole a later dispatch of the right size still fits.
+    """
+    for index in range(len(available) - needed + 1):
+        block = available[index:index + needed]
+        if block[-1] - block[0] == needed - 1:
+            del available[index:index + needed]
+            return block
+    return None
+
+
+def _position_amounts(line, positions):
+    """Add up the commercial amounts of every position one dispatch covers."""
+    per_position = line_position_amounts(line)
+    fields = ('gross_ex_tax', 'discount_ex_tax', 'subtotal_ex_tax', 'tax_total', 'total_incl_tax')
+    return {
+        field: money(sum(per_position[position][field] for position in positions))
+        for field in fields
     }
 
 
@@ -263,6 +315,29 @@ def _return_riders(line, sales_return, user, *, returned_at, reason, outcome):
     return quarantined
 
 
+def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfilled_at):
+    """Ship anonymous stock by the count and value it from its own lot.
+
+    One `SALE` movement for the whole allocation, not one per pot: the stock
+    left as a stack and the ledger says so. An unpriced lot yields an unknown
+    cost rather than a zero, and marks the line provisional so the figure is
+    read as one still waiting for a price.
+    """
+    movement = post_stock_movement(
+        order.workspace, user,
+        MovementRequest(
+            lot=lot, movement_type=StockMovement.MovementType.SALE,
+            quantity=Decimal(allocation.quantity),
+            source=allocation.source_location,
+            occurred_at=fulfilled_at, reason='Order fulfillment',
+            reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
+        ),
+    )
+    if lot.base_unit_cost is None:
+        return movement, None, True
+    return movement, money(Decimal(allocation.quantity) * lot.base_unit_cost), False
+
+
 @transaction.atomic
 def post_fulfillment(order, user, *, operation_key, allocation_ids,
                      packaging=(), fulfilled_at=None, notes=''):
@@ -291,7 +366,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
     if not wanted:
         raise ValidationError({'allocations': 'Select at least one reserved allocation.'})
     allocations = list(SalesOrderAllocation.objects.select_for_update(of=('self',)).select_related(
-        'line', 'plant__batch', 'inventory_unit__item',
+        'line', 'plant__batch', 'inventory_unit__item', 'stock_lot__item',
+        'source_location',
     ).filter(line__order=order, pk__in=wanted).order_by('pk'))
     if len(allocations) != len(wanted) or any(
             row.status != SalesOrderAllocation.Status.RESERVED for row in allocations):
@@ -304,7 +380,10 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         .order_by('pk')
     }
     units = lock_units(order.workspace, unit_ids)
+    # One lock covering both the packaging drawn down and the counted stock
+    # dispatched, so a fulfillment cannot deadlock against its own two halves.
     lot_ids = [row['lot'].pk for row in packaging]
+    lot_ids += [row.stock_lot_id for row in allocations if row.stock_lot_id]
     lots = lock_lots(order.workspace, lot_ids)
     riders = _resolve_riders(units, set(plant_ids))
     _validate_riders_are_free(riders, order)
@@ -316,11 +395,12 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         request_fingerprint=fingerprint, created_by=_actor(user),
     )
     for allocation in allocations:
-        available = positions[allocation.line_id]
-        if not available:
+        needed = dispatched_quantity(allocation)
+        taken = _take_positions(positions[allocation.line_id], needed)
+        if taken is None:
             raise ValidationError({'allocations': 'A line has no remaining quantity to fulfill.'})
-        position = available.pop(0)
-        amounts = line_position_amounts(allocation.line)[position]
+        amounts = _position_amounts(allocation.line, taken)
+        position = taken[0]
         lifecycle_event = None
         stock_movement = None
         if allocation.plant_id:
@@ -333,6 +413,11 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
                 ),
             )
             cogs_amount, provisional = _plant_cost(plant)
+        elif allocation.stock_lot_id:
+            stock_movement, cogs_amount, provisional = _dispatch_counted_stock(
+                order, user, allocation, lots[allocation.stock_lot_id],
+                fulfillment=fulfillment, fulfilled_at=fulfilled_at,
+            )
         else:
             unit = units[allocation.inventory_unit_id]
             stock_movement = post_unit_movement(
@@ -431,6 +516,64 @@ def _return_event(outcome):
     }[outcome]
 
 
+def _validate_whole_allocation_returns(items, lines):
+    """Refuse a part-return of a counted dispatch, naming what it must be.
+
+    A partial return would have to split one fulfillment line's recognised
+    money and its cost of sale, which is precisely the rewrite task 114 exists
+    to do; inventing it here would put a migration over posted money inside a
+    feature. Refusing with the number in hand beats silently returning the lot.
+    """
+    for item in items:
+        line = lines[item['fulfillment_line'].pk]
+        wanted = item.get('quantity')
+        shipped = dispatched_quantity(line.allocation)
+        if wanted is not None and wanted != shipped:
+            raise ValidationError({
+                'items': (
+                    f'Fulfillment line {line.pk} shipped {shipped} and can only '
+                    'be returned whole.'
+                ),
+            })
+
+
+def _return_counted_stock(order, user, line, sales_return, *, returned_at,
+                          reason, outcome, destination):
+    """Bring back a whole counted dispatch, and write off what is unsaleable.
+
+    The stock comes back to where it was shipped from unless the operator
+    named somewhere else, which is how a returned numbered unit behaves too. A
+    discarded return lands first and is then wasted, so the ledger records both
+    facts rather than quietly never taking the stock back.
+    """
+    allocation = line.allocation
+    quantity = Decimal(allocation.quantity)
+    lot = allocation.stock_lot
+    return_movement = post_stock_movement(
+        order.workspace, user,
+        MovementRequest(
+            lot=lot, movement_type=StockMovement.MovementType.CUSTOMER_RETURN,
+            quantity=quantity,
+            destination=destination or line.stock_movement.source,
+            occurred_at=returned_at, reason=reason,
+            reference=f'return:{sales_return.pk}:line:{line.pk}',
+        ),
+    )
+    discard_movement = None
+    if outcome == SalesReturnLine.Outcome.DISCARDED:
+        discard_movement = post_stock_movement(
+            order.workspace, user,
+            MovementRequest(
+                lot=lot, movement_type=StockMovement.MovementType.WASTE,
+                quantity=quantity,
+                source=destination or line.stock_movement.source,
+                occurred_at=returned_at, reason=reason,
+                reference=f'return:{sales_return.pk}:discard:{line.pk}',
+            ),
+        )
+    return return_movement, discard_movement
+
+
 @transaction.atomic
 def post_return(order, user, *, operation_key, items, reason, returned_at=None,
                 notes='', observation_type=None, severity=None,
@@ -454,12 +597,18 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
     line_ids = [row['fulfillment_line'].pk for row in items]
     lines = {
         row.pk: row for row in FulfillmentLine.objects.select_for_update(of=('self',))
-        .select_related('allocation__plant', 'allocation__inventory_unit')
+        .select_related('allocation__plant', 'allocation__inventory_unit',
+                        'allocation__stock_lot__item', 'allocation__source_location')
         .filter(fulfillment__order=order, fulfillment__reversal__isnull=True,
                 pk__in=line_ids).order_by('pk')
     }
     if len(lines) != len(set(line_ids)):
         raise ValidationError({'items': 'One or more fulfillment lines are unavailable.'})
+    _validate_whole_allocation_returns(items, lines)
+    lock_lots(order.workspace, [
+        row.allocation.stock_lot_id for row in lines.values()
+        if row.allocation.stock_lot_id
+    ])
     already = _effective(SalesReturn.objects.filter(order=order)).filter(
         lines__fulfillment_line_id__in=line_ids,
     ).exists()
@@ -481,7 +630,13 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         lifecycle_event = None
         return_movement = None
         discard_movement = None
-        if allocation.plant_id:
+        if allocation.stock_lot_id:
+            return_movement, discard_movement = _return_counted_stock(
+                order, user, line, sales_return,
+                returned_at=returned_at, reason=reason, outcome=outcome,
+                destination=destination,
+            )
+        elif allocation.plant_id:
             lifecycle_event = record_lifecycle_event(
                 allocation.plant, user,
                 OutcomeRequest(

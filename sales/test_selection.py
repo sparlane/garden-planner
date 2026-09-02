@@ -45,6 +45,11 @@ SEEDLING_REASONS = (
 #: only the two it decides for itself are listed.
 TRAY_REASONS = ('wrong_item', 'not_available')
 
+#: Why a counted line can refuse a draw on a lot. It shares `wrong_item` with
+#: a tray line and `unknown` with both, and adds the two only a pool can have:
+#: a place that is not one of ours, and not enough loose stock standing there.
+LOT_REASONS = ('unknown_location', 'insufficient_stock')
+
 
 def declared_conflict_reasons():
     """Return every reason the selection code can attach to a target.
@@ -52,19 +57,17 @@ def declared_conflict_reasons():
     The reasons are bare strings rather than a choices class, so there is
     nothing to enumerate at runtime. They are read out of the module instead,
     which keeps the table below answerable to the code rather than to whoever
-    last remembered to update it.
+    last remembered to update it. Every refusal lands in a function whose name
+    ends in `_error` or in a conflict dict, so both are swept rather than a
+    named handful that a split would quietly leave behind.
     """
     tree = ast.parse(Path(services.__file__).read_text(encoding='utf-8'))
-    functions = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-    }
     reasons = set()
-    for node in ast.walk(functions['_target_error']):
-        if isinstance(node, ast.Return) and node.value is not None:
-            reasons.update(_strings_in(node.value))
-    for node in ast.walk(functions['preview_targets']):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name.endswith('_error'):
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Return) and inner.value is not None:
+                    reasons.update(_strings_in(inner.value))
         if isinstance(node, ast.Dict):
             reasons.update(_reason_values(node))
     return reasons
@@ -251,7 +254,7 @@ class SeedlingSelectionTests(SelectionFixture):
     def test_the_declared_reasons_are_the_ones_the_code_can_produce(self):
         """A reason added without a case here would go unexercised."""
         self.assertEqual(
-            set(SEEDLING_REASONS) | set(TRAY_REASONS),
+            set(SEEDLING_REASONS) | set(TRAY_REASONS) | set(LOT_REASONS),
             declared_conflict_reasons(),
         )
 
