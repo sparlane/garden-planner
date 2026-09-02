@@ -2,7 +2,9 @@
 
 # pylint: disable=duplicate-code,too-many-lines
 
+import operator
 from decimal import Decimal
+from functools import reduce
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -22,6 +24,44 @@ from .calculations import calculate_line, refresh_order_totals
 
 ZERO_MONEY = Decimal('0.0000')
 EDITABLE_ORDER_STATUSES = ('quote', 'draft')
+
+#: Tracking modes that keep an anonymous pool a counted line can draw on. A
+#: serialized item has none: every one of its units is somebody's identity.
+LOT_BACKED_TRACKING_MODES = frozenset({
+    InventoryItem.TrackingMode.LOT,
+    InventoryItem.TrackingMode.MIXED,
+})
+
+#: The columns that can hold what a `SalesOrderAllocation` promises. Exactly
+#: one is filled, which is what the generated identity constraint says.
+ALLOCATION_TARGET_FIELDS = ('plant', 'inventory_unit', 'stock_lot')
+
+#: The columns only a counted draw on a lot uses. An identity is one thing
+#: standing somewhere known, so naming a place and a count for it would be two
+#: ways to say the same figure, and they would be free to disagree.
+COUNTED_ALLOCATION_FIELDS = ('source_location', 'quantity')
+
+
+def _allocation_identity_condition():
+    """Generate 'exactly one target, counted only when it is a lot'.
+
+    Written out by hand this is one four-hundred-character line, and adding a
+    fourth target later would mean editing every disjunct. Generating it from
+    the column names keeps the database's rule and the model's fields the same
+    statement, the way `costing.models.CostAllocation` does.
+    """
+    shapes = []
+    for chosen in ALLOCATION_TARGET_FIELDS:
+        nulls = {
+            f'{field}__isnull': field != chosen
+            for field in ALLOCATION_TARGET_FIELDS
+        }
+        nulls.update({
+            f'{field}__isnull': chosen != 'stock_lot'
+            for field in COUNTED_ALLOCATION_FIELDS
+        })
+        shapes.append(models.Q(**nulls))
+    return reduce(operator.or_, shapes)
 
 
 class Customer(WorkspaceOwnedModel):
@@ -157,6 +197,10 @@ class SalesOrderLine(models.Model):
         # identified stock is sold this way, and a numbered pot is sold as
         # itself rather than dissolved back into anonymous stock first.
         UNIT = 'unit', 'Individually numbered unit'
+        # Named for the mechanism rather than for pots: anything counted in
+        # `each` and sold by the count rather than by identity goes out this
+        # way, so a crate follows a pot without a third line type.
+        LOT_QUANTITY = 'lot_quantity', 'Counted stock from a lot'
 
     class DiscountType(models.TextChoices):
         """How the entered discount value is interpreted."""
@@ -208,7 +252,7 @@ class SalesOrderLine(models.Model):
         ordering = ['pk']
         constraints = [
             models.CheckConstraint(
-                condition=(models.Q(line_type='seedling', variety__isnull=False, item__isnull=True) | models.Q(line_type='unit', variety__isnull=True, item__isnull=False)),
+                condition=(models.Q(line_type='seedling', variety__isnull=False, item__isnull=True) | models.Q(line_type__in=('unit', 'lot_quantity'), variety__isnull=True, item__isnull=False)),
                 name='sales_line_target_matches_type',
             ),
             models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_line_quantity_positive'),
@@ -226,6 +270,8 @@ class SalesOrderLine(models.Model):
             return self._variety_target_errors()
         if self.line_type == self.LineType.UNIT:
             return self._item_target_errors()
+        if self.line_type == self.LineType.LOT_QUANTITY:
+            return self._lot_item_target_errors()
         return {}
 
     def _variety_target_errors(self):
@@ -246,6 +292,23 @@ class SalesOrderLine(models.Model):
             return {'item': 'Select an individually identified inventory item.'}
         if self.item.base_unit != UnitCode.EACH:
             return {'item': 'Individually sold stock is counted in each.'}
+        return {}
+
+    def _lot_item_target_errors(self):
+        """A counted line promises an item by the count, not by identity.
+
+        Anonymous stock is only countable if the item is lot-controlled, and
+        only sellable a whole one at a time if it is counted in `each`. A
+        purely serialized item has no anonymous pool to draw from at all.
+        """
+        if not self.item_id or self.variety_id:
+            return {'item': 'A counted line requires one inventory item.'}
+        if self.item.workspace_id != self.order.workspace_id:
+            return {'item': 'The item belongs to a different workspace.'}
+        if self.item.tracking_mode not in LOT_BACKED_TRACKING_MODES:
+            return {'item': 'Select a lot-tracked or mixed inventory item.'}
+        if self.item.base_unit != UnitCode.EACH:
+            return {'item': 'Counted stock is sold in each.'}
         return {}
 
     def clean(self):
@@ -311,7 +374,15 @@ class SalesOrderLine(models.Model):
 
 
 class SalesOrderAllocation(models.Model):
-    """One concrete plant or serialized tray selected for a line."""
+    """One promise of stock: an identity, or a count drawn from one lot.
+
+    A plant and a numbered unit are each exactly one thing, so for them the
+    allocation *is* the quantity and `quantity` stays null. Anonymous stock
+    has no identity to point at, so a lot allocation names the lot, the place
+    it is standing, and how many — and its availability is arithmetic over
+    `inventory.ledger.bulk_balance` rather than a unique index, because many
+    orders may legitimately hold parts of one lot at once.
+    """
 
     class Status(models.TextChoices):
         """Reservation state, including task 45's future fulfillment state."""
@@ -326,6 +397,11 @@ class SalesOrderAllocation(models.Model):
     line = models.ForeignKey(SalesOrderLine, on_delete=models.PROTECT, related_name='allocations')
     plant = models.ForeignKey(SpecificPlant, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
     inventory_unit = models.ForeignKey(InventoryUnit, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
+    stock_lot = models.ForeignKey(StockLot, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
+    source_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
+    # Null for an identity target, whose quantity is always exactly one. Task
+    # 114 widens this to a decimal rather than inventing a column.
+    quantity = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, editable=False)
     expires_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
@@ -336,39 +412,92 @@ class SalesOrderAllocation(models.Model):
         ordering = ['pk']
         constraints = [
             models.CheckConstraint(
-                condition=(models.Q(plant__isnull=False, inventory_unit__isnull=True) | models.Q(plant__isnull=True, inventory_unit__isnull=False)),
+                condition=_allocation_identity_condition(),
                 name='sales_allocation_exactly_one_target',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(quantity__isnull=True) | models.Q(quantity__gte=1)),
+                name='sales_allocation_quantity_positive',
             ),
             models.UniqueConstraint(fields=['plant'], condition=models.Q(status='reserved'), name='sales_one_active_plant_reservation'),
             models.UniqueConstraint(fields=['inventory_unit'], condition=models.Q(status='reserved'), name='sales_one_active_unit_reservation'),
         ]
 
+    @property
+    def target_kind(self):
+        """Return which of the three targets this allocation names."""
+        if self.plant_id:
+            return 'plant'
+        if self.inventory_unit_id:
+            return 'inventory_unit'
+        if self.stock_lot_id:
+            return 'stock_lot'
+        return None
+
     def clean(self):
         super().clean()
-        errors = {}
-        if (self.plant_id is None) == (self.inventory_unit_id is None):
-            errors['plant'] = 'Select exactly one plant or serialized unit.'
-        elif self.plant_id:
-            if self.line.line_type != SalesOrderLine.LineType.SEEDLING:
-                errors['plant'] = 'Plants can only be allocated to seedling lines.'
-            elif self.plant.workspace_id != self.line.order.workspace_id:
-                errors['plant'] = 'The plant belongs to a different workspace.'
-            elif self.plant.batch.variety_id != self.line.variety_id:
-                errors['plant'] = 'The plant is a different variety from this line.'
-        else:
-            if self.line.line_type != SalesOrderLine.LineType.UNIT:
-                errors['inventory_unit'] = 'Units can only be allocated to unit lines.'
-            elif self.inventory_unit.workspace_id != self.line.order.workspace_id:
-                errors['inventory_unit'] = 'The unit belongs to a different workspace.'
-            elif self.inventory_unit.item_id != self.line.item_id:
-                errors['inventory_unit'] = 'The unit is a different item from this line.'
+        named = [
+            bool(self.plant_id),
+            bool(self.inventory_unit_id),
+            bool(self.stock_lot_id),
+        ]
+        if sum(named) != 1:
+            raise ValidationError(
+                {'plant': 'Select exactly one plant, serialized unit, or lot.'},
+            )
+        errors = {
+            'plant': self._plant_errors,
+            'inventory_unit': self._unit_errors,
+            'stock_lot': self._lot_errors,
+        }[self.target_kind]()
         if errors:
             raise ValidationError(errors)
+
+    def _plant_errors(self):
+        """Require a sellable plant of this seedling line's own variety."""
+        if self.line.line_type != SalesOrderLine.LineType.SEEDLING:
+            return {'plant': 'Plants can only be allocated to seedling lines.'}
+        if self.plant.workspace_id != self.line.order.workspace_id:
+            return {'plant': 'The plant belongs to a different workspace.'}
+        if self.plant.batch.variety_id != self.line.variety_id:
+            return {'plant': 'The plant is a different variety from this line.'}
+        return {}
+
+    def _unit_errors(self):
+        """Require a numbered unit of this unit line's own item."""
+        if self.line.line_type != SalesOrderLine.LineType.UNIT:
+            return {'inventory_unit': 'Units can only be allocated to unit lines.'}
+        if self.inventory_unit.workspace_id != self.line.order.workspace_id:
+            return {'inventory_unit': 'The unit belongs to a different workspace.'}
+        if self.inventory_unit.item_id != self.line.item_id:
+            return {'inventory_unit': 'The unit is a different item from this line.'}
+        return {}
+
+    def _lot_errors(self):
+        """Require a counted draw on one lot of this line's own item."""
+        if self.line.line_type != SalesOrderLine.LineType.LOT_QUANTITY:
+            return {'stock_lot': 'Lots can only be allocated to counted lines.'}
+        if self.stock_lot.workspace_id != self.line.order.workspace_id:
+            return {'stock_lot': 'The lot belongs to a different workspace.'}
+        if self.stock_lot.item_id != self.line.item_id:
+            return {'stock_lot': 'The lot is a different item from this line.'}
+        return self._counted_draw_errors()
+
+    def _counted_draw_errors(self):
+        """Require the place a count is drawn from, and the count itself."""
+        if self.source_location_id is None:
+            return {'source_location': 'A counted allocation requires the place it draws from.'}
+        if self.source_location.workspace_id != self.line.order.workspace_id:
+            return {'source_location': 'The location belongs to a different workspace.'}
+        if not self.quantity:
+            return {'quantity': 'A counted allocation requires a quantity of at least one.'}
+        return {}
 
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.get(pk=self.pk)
-            if previous.line_id != self.line_id or previous.plant_id != self.plant_id or previous.inventory_unit_id != self.inventory_unit_id:
+            identity = ('line_id', 'plant_id', 'inventory_unit_id', 'stock_lot_id', 'source_location_id', 'quantity')
+            if any(getattr(previous, name) != getattr(self, name) for name in identity):
                 raise ValidationError('Allocation identities are immutable.')
         self.full_clean()
         super().save(*args, **kwargs)
