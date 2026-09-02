@@ -34,9 +34,21 @@ import { getLocations } from './api/locations'
 import { getHealthObservationTypes } from './api/health'
 import { getPlantVarieties } from './api/plants'
 import { queryClient, queryKeys } from './query'
-import { AllocationPreview, Customer, SalesDiscountType, SalesLineType, SalesOrder, SalesOrderLine, SalesTaxTreatment } from './types/sales'
+import {
+  AllocationPreview,
+  Customer,
+  LotDraw,
+  LotDrawPreview,
+  SalesAllocation,
+  SalesDiscountType,
+  SalesLineType,
+  SalesOrder,
+  SalesOrderLine,
+  SalesTaxTreatment
+} from './types/sales'
+import { InventoryItem } from './types/inventory'
 import { Workspace } from './types/workspace'
-import { formatDate, formatDateTime, formatHoldRemaining, formatMoney, localDatetimeInputValue } from './utils'
+import { formatDate, formatDateTime, formatHoldRemaining, formatMoney, formatQuantity, localDatetimeInputValue } from './utils'
 
 // 'Not yet classified' is shown as its own state rather than folded into
 // zero-rated: a GST return reports zero-rated supplies in their own box, and
@@ -47,6 +59,31 @@ const TAX_TREATMENT_LABELS: Record<SalesTaxTreatment, string> = {
   exempt: 'exempt',
   out_of_scope: 'outside GST',
   unclassified: 'not yet classified'
+}
+
+// Named for the mechanism, because that is what decides how the line is
+// filled: an identity is chosen one at a time, a count is drawn from a pool.
+const LINE_TYPE_LABELS: Record<SalesLineType, string> = {
+  seedling: 'Seedling',
+  unit: 'Numbered unit',
+  lot_quantity: 'Counted stock'
+}
+
+// What each kind of line names in the catalog. A seedling line promises a
+// variety and nothing more exact; the other two name an inventory item and
+// differ only in whether the stock they draw has identities.
+const LINE_TARGET_LABELS: Record<SalesLineType, string> = {
+  seedling: 'Variety',
+  unit: 'Numbered item',
+  lot_quantity: 'Counted item'
+}
+
+// A unit line sells anything individually identified — a tray or a numbered
+// pot. A counted line sells anonymous stock, which only a lot-backed item
+// counted in whole units has any of.
+function itemsForLineType(items: Array<InventoryItem>, lineType: SalesLineType): Array<InventoryItem> {
+  if (lineType === 'unit') return items.filter((item) => item.tracking_mode !== 'lot' && item.base_unit === 'each')
+  return items.filter((item) => item.tracking_mode !== 'serialized' && item.base_unit === 'each')
 }
 
 function invalidateSales(orderPk?: number) {
@@ -193,9 +230,9 @@ function SalesOrderListView() {
 
 function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspace }) {
   const varieties = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
-  const trayItems = useQuery({
-    queryKey: ['inventory', 'sales-trays'],
-    queryFn: ({ signal }) => getInventoryItems({ category: 'tray', tracking_mode: 'serialized', active: true }, signal)
+  const items = useQuery({
+    queryKey: ['inventory', 'sales-items'],
+    queryFn: ({ signal }) => getInventoryItems({ active: true }, signal)
   })
   const [lineType, setLineType] = React.useState<SalesLineType>('seedling')
   const [target, setTarget] = React.useState<number | ''>('')
@@ -215,7 +252,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
         order: order.pk,
         line_type: lineType,
         variety: lineType === 'seedling' ? Number(target) : null,
-        tray_item: lineType === 'tray' ? Number(target) : null,
+        item: lineType === 'seedling' ? null : Number(target),
         description,
         quantity,
         unit_price: unitPrice,
@@ -226,7 +263,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
       }),
     onSuccess: () => invalidateSales(order.pk)
   })
-  const targets = lineType === 'seedling' ? (varieties.data ?? []) : (trayItems.data ?? [])
+  const targets = lineType === 'seedling' ? (varieties.data ?? []) : itemsForLineType(items.data ?? [], lineType)
   return (
     <Card body className="mb-3">
       <Card.Title>Add line</Card.Title>
@@ -240,12 +277,15 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
               setTarget('')
             }}
           >
-            <option value="seedling">Seedling</option>
-            <option value="tray">Serialized tray</option>
+            {(Object.keys(LINE_TYPE_LABELS) as Array<SalesLineType>).map((value) => (
+              <option key={value} value={value}>
+                {LINE_TYPE_LABELS[value]}
+              </option>
+            ))}
           </Form.Select>
         </Col>
         <Col md={2}>
-          <Form.Label>{lineType === 'seedling' ? 'Variety' : 'Tray item'}</Form.Label>
+          <Form.Label>{LINE_TARGET_LABELS[lineType]}</Form.Label>
           <Form.Select value={target} onChange={(event) => setTarget(event.target.value === '' ? '' : Number(event.target.value))}>
             <option value="">Select…</option>
             {targets.map((entry) => (
@@ -311,6 +351,32 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
   )
 }
 
+// Counted draws are previewed and allocated as whole rows rather than as ids,
+// because a lot on its own is not a promise: how many, and standing where,
+// are what the availability arithmetic is answered against.
+// A counted allocation has no identity to name, so it says what it promises
+// instead: how many, out of which lot, standing where.
+function allocationTarget(allocation: SalesAllocation): string {
+  if (allocation.plant) return `Plant #${allocation.plant}`
+  if (allocation.stock_lot) return `${allocation.quantity ?? 0} from lot #${allocation.stock_lot}`
+  return allocation.asset_code ?? 'Unknown'
+}
+
+function selectedLotDraws(preview: AllocationPreview | undefined): Array<LotDraw> {
+  return ((preview?.selected ?? []) as Array<LotDrawPreview>).map((row) => ({
+    lot: row.id,
+    location: row.location,
+    quantity: row.quantity
+  }))
+}
+
+// How much of the line one preview would fill. An identity selection is one
+// per entry; a counted one is whatever each draw asked for, so counting rows
+// would let a draw of fifty look like a single pot against the line quantity.
+function previewedQuantity(preview: AllocationPreview): number {
+  return preview.selected.reduce<number>((total, entry) => total + (typeof entry === 'number' ? 1 : entry.quantity), 0)
+}
+
 function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderLine }) {
   const [plantIds, setPlantIds] = React.useState('')
   const [batch, setBatch] = React.useState('')
@@ -318,20 +384,35 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   const [location, setLocation] = React.useState('')
   const [readyTo, setReadyTo] = React.useState('')
   const [selectedUnits, setSelectedUnits] = React.useState<Array<number>>([])
+  const [draw, setDraw] = React.useState<{ balance: string; quantity: number }>({ balance: '', quantity: 1 })
   const [expiresAt, setExpiresAt] = React.useState('')
   const [preview, setPreview] = React.useState<AllocationPreview>()
   const units = useQuery({
-    queryKey: queryKeys.sales.availableUnits(line.tray_item ?? 0),
-    queryFn: ({ signal }) => getAvailableSerializedUnits(line.tray_item as number, signal),
-    enabled: line.line_type === 'tray'
+    queryKey: queryKeys.sales.availableUnits(line.item ?? 0),
+    queryFn: ({ signal }) => getAvailableSerializedUnits(line.item as number, signal),
+    enabled: line.line_type === 'unit'
   })
+  // The counted line draws on a pool, so the choice is which lot at which
+  // place — pots from two deliveries cost different amounts, and the balance
+  // rows are the only thing that knows how much of each is still loose.
+  const balances = useQuery({
+    queryKey: queryKeys.inventory.balances(line.item ?? 0),
+    queryFn: ({ signal }) => getInventoryBalances(line.item as number, signal),
+    enabled: line.line_type === 'lot_quantity'
+  })
+  const drawRows = (balances.data ?? []).filter((row) => Number(row.unpromised_quantity) > 0)
   const previewMutation = useMutation({
     mutationFn: () => {
       const ids = plantIds
         .split(',')
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isInteger(value) && value > 0)
-      if (line.line_type === 'tray') return previewAllocation(order.pk, { line: line.pk, unit_ids: selectedUnits })
+      if (line.line_type === 'unit') return previewAllocation(order.pk, { line: line.pk, unit_ids: selectedUnits })
+      if (line.line_type === 'lot_quantity') {
+        const row = drawRows.find((entry) => `${entry.lot}:${entry.location}` === draw.balance)
+        const lotRequests = row ? [{ lot: row.lot, location: row.location, quantity: draw.quantity }] : []
+        return previewAllocation(order.pk, { line: line.pk, lot_requests: lotRequests })
+      }
       if (ids.length) return previewAllocation(order.pk, { line: line.pk, plant_ids: ids })
       return previewAllocation(order.pk, {
         line: line.pk,
@@ -353,8 +434,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
       allocateOrderLine(
         order.pk,
         line.pk,
-        line.line_type === 'seedling' ? (preview?.selected ?? []) : [],
-        line.line_type === 'tray' ? (preview?.selected ?? []) : [],
+        {
+          plantIds: line.line_type === 'seedling' ? ((preview?.selected ?? []) as Array<number>) : [],
+          unitIds: line.line_type === 'unit' ? ((preview?.selected ?? []) as Array<number>) : [],
+          lotDraws: line.line_type === 'lot_quantity' ? selectedLotDraws(preview) : []
+        },
         expiresAt ? new Date(expiresAt).toISOString() : null
       ),
     onSuccess: () => {
@@ -367,7 +451,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
       closeAllocations(order.pk, action, [allocation], `${action === 'release' ? 'Released' : 'Expired'} by operator.`),
     onSuccess: () => invalidateSales(order.pk)
   })
-  const active = line.allocations.filter((allocation) => allocation.status === 'pending' || allocation.status === 'reserved').length
+  // Counted in units rather than in rows: one counted allocation can promise
+  // fifty pots, and a line showing 1/50 would read as barely started.
+  const active = line.allocations
+    .filter((allocation) => allocation.status === 'pending' || allocation.status === 'reserved')
+    .reduce((total, allocation) => total + (allocation.quantity ?? 1), 0)
   return (
     <Card body className="mt-2">
       <div className="d-flex justify-content-between">
@@ -379,7 +467,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
       <ul className="mb-2">
         {line.allocations.map((allocation) => (
           <li key={allocation.pk}>
-            {allocation.plant ? `Plant #${allocation.plant}` : allocation.asset_code} · {allocation.status}
+            {allocationTarget(allocation)} · {allocation.status}
             {allocation.status === 'reserved' && ` · hold ${formatHoldRemaining(allocation.expires_at)}`}
             {allocation.expires_at && ` · expiry ${formatDateTime(allocation.expires_at)}`}
             {allocation.status === 'reserved' && (
@@ -397,7 +485,8 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
             )}
             {allocation.competing_claims.map((claim) => (
               <div className="text-warning" key={`${claim.order}:${claim.status}`}>
-                Also {claim.status === 'pending' ? 'claimed' : 'reserved'} by <Link to={`/sales/orders/${claim.order}`}>{claim.order_number}</Link>
+                {claim.quantity ? `${claim.quantity} also` : 'Also'} {claim.status === 'pending' ? 'claimed' : 'reserved'} by{' '}
+                <Link to={`/sales/orders/${claim.order}`}>{claim.order_number}</Link>
               </div>
             ))}
           </li>
@@ -421,6 +510,31 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
               </Col>
               <Col md={3}>
                 <Form.Control type="date" title="Expected ready by" value={readyTo} onChange={(event) => setReadyTo(event.target.value)} />
+              </Col>
+            </Row>
+          ) : line.line_type === 'lot_quantity' ? (
+            <Row className="g-2 align-items-end">
+              <Col md={8}>
+                <Form.Label>Draw from</Form.Label>
+                <Form.Select value={draw.balance} onChange={(event) => setDraw({ ...draw, balance: event.target.value })}>
+                  <option value="">Select…</option>
+                  {drawRows.map((row) => (
+                    <option key={`${row.lot}:${row.location}`} value={`${row.lot}:${row.location}`}>
+                      {row.lot_identifier} · {row.location_full_name} · {formatQuantity(row.unpromised_quantity)} loose and unpromised
+                    </option>
+                  ))}
+                </Form.Select>
+                {drawRows.length === 0 && !balances.isPending && <Form.Text>No loose stock of this item is unpromised anywhere.</Form.Text>}
+              </Col>
+              <Col md={4}>
+                <Form.Label>How many</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={1}
+                  max={line.quantity - active}
+                  value={draw.quantity}
+                  onChange={(event) => setDraw({ ...draw, quantity: Number(event.target.value) })}
+                />
               </Col>
             </Row>
           ) : (
@@ -449,10 +563,13 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
           </Row>
           {preview && (
             <Alert variant={preview.conflicts.length || preview.warnings.length ? 'warning' : 'success'} className="mt-2">
-              {preview.selected.length} eligible. {preview.conflicts.length} conflicts. {preview.warnings.length} warnings.
+              {previewedQuantity(preview)} eligible. {preview.conflicts.length} conflicts. {preview.warnings.length} warnings.
               {preview.conflicts.map((conflict) => (
                 <div key={`${conflict.id}:${conflict.reason}`}>
                   #{conflict.id}: {conflict.reason.replaceAll('_', ' ')}
+                  {/* The figure the refusal was measured against, so an operator
+                      can see how short the pool was rather than only that it was. */}
+                  {conflict.available != null && ` · ${formatQuantity(conflict.available)} unpromised`}
                   {conflict.order_number && (
                     <>
                       {' '}
@@ -466,7 +583,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                   #{warning.id}: tentatively claimed by <Link to={`/sales/orders/${warning.order}`}>{warning.order_number}</Link>; allocation is still allowed.
                 </div>
               ))}
-              <Button className="mt-2" disabled={preview.selected.length === 0 || active + preview.selected.length > line.quantity} onClick={() => allocate.mutate()}>
+              <Button className="mt-2" disabled={previewedQuantity(preview) === 0 || active + previewedQuantity(preview) > line.quantity} onClick={() => allocate.mutate()}>
                 Allocate eligible stock
               </Button>
             </Alert>

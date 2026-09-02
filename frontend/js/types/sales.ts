@@ -12,7 +12,10 @@ type Customer = {
 }
 
 type SalesOrderStatus = 'quote' | 'draft' | 'confirmed' | 'partially_fulfilled' | 'fulfilled' | 'cancelled'
-type SalesLineType = 'seedling' | 'tray'
+// Named for the mechanism rather than for what happens to be sold: 'unit' is
+// anything individually numbered, a tray or a pot alike, and 'lot_quantity' is
+// anonymous stock sold by the count out of one lot.
+type SalesLineType = 'seedling' | 'unit' | 'lot_quantity'
 // What kind of supply a line is for GST. A rate of zero is three different
 // things — a zero-rated export, an exempt supply, and something outside GST —
 // and a return reports the first separately from the other two.
@@ -38,6 +41,10 @@ interface SalesAllocation {
   plant: number | null
   inventory_unit: number | null
   asset_code: string | null
+  stock_lot: number | null
+  source_location: number | null
+  // Null for a plant or a numbered unit, each of which is exactly one thing.
+  quantity: number | null
   status: SalesAllocationStatus
   expires_at: string | null
   created_by: number | null
@@ -51,6 +58,7 @@ interface AllocationOrderReference {
   order: number
   order_number: string
   status: 'pending' | 'reserved'
+  quantity?: number | null
 }
 
 interface SalesOrderLine {
@@ -58,7 +66,7 @@ interface SalesOrderLine {
   order: number
   line_type: SalesLineType
   variety: number | null
-  tray_item: number | null
+  item: number | null
   description: string
   quantity: number
   unit_price: string
@@ -231,7 +239,7 @@ interface SalesOrderLineWrite {
   order: number
   line_type: SalesLineType
   variety: number | null
-  tray_item: number | null
+  item: number | null
   description: string
   quantity: number
   unit_price: string
@@ -244,15 +252,35 @@ interface SalesOrderLineWrite {
   discount_value: string
 }
 
+// One counted draw on a lot standing somewhere, as the allocation surface
+// takes it and as the preview answers for it.
+interface LotDraw {
+  lot: number
+  location: number
+  quantity: number
+}
+
+// What a counted preview says can be had. `id` is the lot, and `available` is
+// the figure the refusal would have been measured against, so an operator sees
+// why a draw fits rather than only that it does.
+interface LotDrawPreview {
+  id: number
+  location: number
+  quantity: number
+  available: string | null
+}
+
 interface AllocationPreview {
-  selected: Array<number>
-  conflicts: Array<{ id: number; reason: string; order?: number; order_number?: string; status?: SalesAllocationStatus }>
+  selected: Array<number> | Array<LotDrawPreview>
+  conflicts: Array<{ id: number; reason: string; location?: number; available?: string | null; order?: number; order_number?: string; status?: SalesAllocationStatus }>
   warnings: Array<{ id: number; reason: 'tentatively_claimed' } & AllocationOrderReference>
 }
 
 export {
   AllocationPreview,
   Customer,
+  LotDraw,
+  LotDrawPreview,
   Fulfillment,
   FulfillmentLine,
   FulfillmentPackagingLine,

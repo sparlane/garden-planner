@@ -2,6 +2,7 @@ import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 import {
   AllocationPreview,
   Customer,
+  LotDraw,
   Fulfillment,
   SalesAllocation,
   SalesOrder,
@@ -64,8 +65,22 @@ async function previewAllocation(pk: number, data: object): Promise<AllocationPr
   return response.json() as Promise<AllocationPreview>
 }
 
-async function allocateOrderLine(pk: number, line: number, plantIds: Array<number>, unitIds: Array<number>, expiresAt: string | null): Promise<Array<SalesAllocation>> {
-  const response = await csrfPost(`${ORDERS_URL}${pk}/allocate/`, { line, plant_ids: plantIds, unit_ids: unitIds, expires_at: expiresAt })
+// The three selections are separate rather than one bag, because the server
+// refuses a plant offered to a unit line before it takes any lock, and losing
+// that would turn a clear rejection into a mysterious one.
+async function allocateOrderLine(
+  pk: number,
+  line: number,
+  selection: { plantIds?: Array<number>; unitIds?: Array<number>; lotDraws?: Array<LotDraw> },
+  expiresAt: string | null
+): Promise<Array<SalesAllocation>> {
+  const response = await csrfPost(`${ORDERS_URL}${pk}/allocate/`, {
+    line,
+    plant_ids: selection.plantIds ?? [],
+    unit_ids: selection.unitIds ?? [],
+    lot_requests: selection.lotDraws ?? [],
+    expires_at: expiresAt
+  })
   return response.json() as Promise<Array<SalesAllocation>>
 }
 

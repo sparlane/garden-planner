@@ -127,6 +127,10 @@ interface InventoryBalance {
   bulk_quantity: string
   numbered_quantity: string
   reserved_quantity: string
+  // Loose stock nothing has already been promised out of: what a counted
+  // sales line may still draw on. A numbered pot stands here in its own right
+  // and is sold as itself, so it is not part of this figure.
+  unpromised_quantity: string
   available_quantity: string
   base_unit: UnitCode
   base_unit_cost: string | null
