@@ -11,6 +11,7 @@ import { PlantCostBreakdown } from '../types/costing'
 import { SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
 import { formatDate, formatDateTime, formatMoney } from '../utils'
+import { costSourceLabel } from './cost_sources'
 import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
 
 function locationLabel(location: SpecificPlantLocation): string {
@@ -67,6 +68,7 @@ function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
         <Table size="sm" className="mb-0">
           <thead>
             <tr>
+              <th>Input</th>
               <th>Item</th>
               <th>Lot</th>
               <th>Amount</th>
@@ -75,6 +77,7 @@ function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
           <tbody>
             {breakdown.layers.map((layer) => (
               <tr key={layer.allocation}>
+                <td>{costSourceLabel(layer)}</td>
                 <td>{layer.item === null ? '—' : `#${layer.item}`}</td>
                 <td>{layer.lot === null ? '—' : `#${layer.lot}`}</td>
                 <td>{formatMoney(layer.amount, layer.currency_code, 'Unknown')}</td>

@@ -4,8 +4,9 @@ import { Alert, Badge, Button, Card, Form, Table } from 'react-bootstrap'
 
 import { getBatchCostBreakdown, recalculateBatchCosts } from '../api/costing'
 import { queryKeys } from '../query'
-import { BatchCostBreakdown, CostBasis, CostBucket, CostLayer, CostSourceType, CostTargetType } from '../types/costing'
+import { BatchCostBreakdown, CostBasis, CostBucket, CostLayer, CostTargetType } from '../types/costing'
 import { formatDateTime, formatMeasure, formatMoney } from '../utils'
+import { costSourceLabel } from './cost_sources'
 import { STATE_LABELS } from './lifecycle'
 
 const BUCKET_LABELS: Record<CostBucket, string> = {
@@ -20,12 +21,6 @@ const BUCKET_LABELS: Record<CostBucket, string> = {
 // Ordered so the value that is still yours reads first and the value that is
 // gone reads last, rather than alphabetically.
 const BUCKET_ORDER: Array<CostBucket> = ['plant_inventory', 'cogs', 'harvested_output', 'unresolved', 'unattributed', 'production_loss']
-
-const SOURCE_LABELS: Record<CostSourceType, string> = {
-  sowing_posting: 'Seed drawn by a sowing',
-  application_line: 'Input applied',
-  generation_residual: 'Discarded when the tray was cleaned'
-}
 
 const TARGET_LABELS: Record<CostTargetType, string> = {
   specific_plant: 'Plant',
@@ -119,7 +114,7 @@ function LayerTable({ breakdown }: { breakdown: BatchCostBreakdown }) {
       <tbody>
         {breakdown.layers.map((layer) => (
           <tr key={layer.allocation}>
-            <td>{SOURCE_LABELS[layer.source_type]}</td>
+            <td>{costSourceLabel(layer)}</td>
             <td>{layer.lot === null ? '—' : `#${layer.lot}`}</td>
             <td>{layer.movement === null ? '—' : `#${layer.movement}`}</td>
             <td>{BASIS_LABELS[layer.basis]}</td>

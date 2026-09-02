@@ -2,7 +2,7 @@ import { PlantLifecycleState, ProductionBatchStatus } from './plantings'
 
 // Where a layer's cost came from. Each value is also the name of the column
 // holding it on the server, so a layer can be walked back to its document.
-type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual'
+type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual' | 'garden_planting' | 'container_unit'
 
 // What the cost was allocated to. The last three name no individual thing: a
 // pool has not reached one yet, a loss never will, and unattributed cost never
@@ -29,6 +29,9 @@ interface CostLayer {
   application_line: number | null
   sowing_posting: number | null
   generation_residual: number | null
+  // The numbered pot a sold specimen left inside. It is an asset while it
+  // merely holds a plant and becomes one of its inputs when it leaves with it.
+  container_unit: number | null
   movement: number | null
   lot: number | null
   item: number | null

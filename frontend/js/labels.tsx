@@ -267,8 +267,10 @@ function ScannerView() {
       allocateOrderLine(
         chosenOrder?.pk as number,
         chosenLine?.pk as number,
-        chosenLine?.line_type === 'seedling' ? orderScanned.map((entry) => entry.id) : [],
-        chosenLine?.line_type === 'tray' ? orderScanned.map((entry) => entry.id) : [],
+        {
+          plantIds: chosenLine?.line_type === 'seedling' ? orderScanned.map((entry) => entry.id) : [],
+          unitIds: chosenLine?.line_type === 'unit' ? orderScanned.map((entry) => entry.id) : []
+        },
         null
       ),
     onSuccess: () => {
@@ -484,17 +486,22 @@ function ScannerView() {
                 }}
               >
                 <option value="">Choose a line before scanning</option>
-                {(chosenOrder?.lines ?? []).map((line) => (
-                  <option key={line.pk} value={line.pk}>
-                    {line.description} ({line.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length}/{line.quantity})
-                  </option>
-                ))}
+                {/* A counted line promises no identities, so there is nothing on
+                    it a scanned label could be matched against. It is filled
+                    from the order screen, against a lot and a place. */}
+                {(chosenOrder?.lines ?? [])
+                  .filter((line) => line.line_type !== 'lot_quantity')
+                  .map((line) => (
+                    <option key={line.pk} value={line.pk}>
+                      {line.description} ({line.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length}/{line.quantity})
+                    </option>
+                  ))}
               </Form.Select>
             </Col>
           </Row>
           {orderConflict && <Alert variant="warning">Scan not added: {orderConflict}</Alert>}
           {orderMode === 'allocate' && chosenLine && (
-            <p className="text-muted">Scan {chosenLine.line_type === 'seedling' ? 'plant' : 'tray'} labels to validate them against this line.</p>
+            <p className="text-muted">Scan {chosenLine.line_type === 'seedling' ? 'plant' : 'numbered unit'} labels to validate them against this line.</p>
           )}
           {orderMode === 'fulfill' && chosenOrder && (
             <p className="text-muted">Scans stage reserved plants or trays from this order. Posting happens only when you confirm below.</p>
