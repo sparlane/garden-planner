@@ -67,6 +67,10 @@ async function individualizeLotUnits(lot: number, values: IndividualizationWrite
   return response.json() as Promise<Array<SerializedInventoryUnit>>
 }
 
+function getSerializedUnit(pk: number, signal?: AbortSignal): Promise<SerializedInventoryUnit> {
+  return fetchAsJson<SerializedInventoryUnit>(`/inventory/serialized-units/${pk}/`, signal)
+}
+
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
   return fetchAsJson<Array<InventoryUnit>>('/inventory/units/', signal)
 }
@@ -169,6 +173,7 @@ export {
   individualizeLotUnits,
   getInventoryUnits,
   getInputTaxAdjustments,
+  getSerializedUnit,
   getItemUnitConversions,
   getStockReceipts,
   getStocktake,

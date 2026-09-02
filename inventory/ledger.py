@@ -602,16 +602,20 @@ def _numbering_is_unused(unit):
     # `locations` and `workspaces` at import time, the same one-way-at-load
     # pattern `unit_is_in_use` already uses.
     from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
-    from labels.models import LabelIdentity  # pylint: disable=import-outside-toplevel
+    from labels.models import LabelPrintItem  # pylint: disable=import-outside-toplevel
     from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
-    labelled = LabelIdentity.objects.filter(
-        workspace=unit.workspace,
-        target_content_type=ContentType.objects.get_for_model(InventoryUnit),
-        target_object_id=unit.pk,
+    # Every numbered unit is issued an identity the moment it exists, so the
+    # question is not whether it has a code but whether that code has been put
+    # on anything. A printed label loose in the nursery would resolve to a pot
+    # that no longer exists.
+    printed = LabelPrintItem.objects.filter(
+        identity__workspace=unit.workspace,
+        identity__target_content_type=ContentType.objects.get_for_model(InventoryUnit),
+        identity__target_object_id=unit.pk,
     ).exists()
-    if labelled:
-        return 'The unit has been labelled.'
+    if printed:
+        return 'A label for the unit has already been printed.'
     if SalesOrderAllocation.objects.filter(inventory_unit=unit).exists():
         return 'The unit is promised to an order.'
     return None

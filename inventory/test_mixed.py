@@ -16,8 +16,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
-from labels.models import LabelCode, LabelIdentity
-from labels.services import ensure_identity
+from labels.models import LabelCode, LabelIdentity, LabelPrintItem, LabelPrintJob
 from locations.models import Location
 from locations.occupancy import location_occupancy
 from plantings.lifecycle import (
@@ -364,18 +363,34 @@ class DiscardNumberingTests(MixedTrackingTestCase):
         self.assertIn('unit', context.exception.message_dict)
         self.assertTrue(InventoryUnit.objects.filter(pk=unit.pk).exists())
 
-    def test_a_labelled_unit_keeps_its_identity(self):
-        """A printed code that resolved to nothing would be worse than a typo."""
+    def test_holding_an_unprinted_code_does_not_block_the_undo(self):
+        """Every numbered pot is issued a code, so a code cannot be the test."""
         lot = self.receive(quantity='10', cost='5.0000')
         unit = self.number_one(lot)
-        # Built directly, because units become a labelable target type in a
-        # later change. The guard reads the identity row either way, so this
-        # keeps working once they do.
-        LabelIdentity.objects.create(
-            workspace=self.workspace,
+        self.assertTrue(LabelIdentity.objects.filter(
             target_content_type=ContentType.objects.get_for_model(InventoryUnit),
             target_object_id=unit.pk,
-            target_snapshot={'display': unit.asset_code, 'pk': unit.pk},
+        ).exists())
+
+        discard_numbering(self.workspace, unit)
+
+        self.assertFalse(InventoryUnit.objects.filter(pk=unit.pk).exists())
+
+    def test_a_printed_label_keeps_the_unit(self):
+        """A label loose in the nursery must still resolve to a real pot."""
+        lot = self.receive(quantity='10', cost='5.0000')
+        unit = self.number_one(lot)
+        identity = LabelIdentity.objects.get(
+            target_content_type=ContentType.objects.get_for_model(InventoryUnit),
+            target_object_id=unit.pk,
+        )
+        job = LabelPrintJob.objects.create(workspace=self.workspace)
+        LabelPrintItem.objects.create(
+            job=job,
+            identity=identity,
+            code=identity.codes.get(status=LabelCode.Status.ACTIVE),
+            position=1,
+            payload=unit.asset_code,
         )
 
         with self.assertRaises(ValidationError) as context:
@@ -442,11 +457,9 @@ class MixedStocktakeTests(MixedTrackingTestCase):
             counted_at=timezone.now(),
             created_by=self.user,
         )
-        identity = LabelIdentity.objects.create(
-            workspace=self.workspace,
+        identity = LabelIdentity.objects.get(
             target_content_type=ContentType.objects.get_for_model(InventoryUnit),
             target_object_id=unit.pk,
-            target_snapshot={'display': unit.asset_code, 'pk': unit.pk},
         )
 
         target = resolve_identity_target(stocktake, identity)
@@ -545,6 +558,13 @@ class NumberedPotLabelTests(MixedTrackingTestCase):
             IndividualizationRequest(lot=self.lot, location=self.store, count=1),
         )[0]
 
+    def unit_identity(self):
+        """Return the identity numbering issued for this pot."""
+        return LabelIdentity.objects.get(
+            target_content_type=ContentType.objects.get_for_model(InventoryUnit),
+            target_object_id=self.unit.pk,
+        )
+
     def resolve(self, code):
         """Resolve one scanned code the way the scanner does."""
         response = self.client.get('/labels/resolve/', {'value': code})
@@ -553,7 +573,7 @@ class NumberedPotLabelTests(MixedTrackingTestCase):
 
     def test_a_numbered_pot_can_be_issued_a_code_and_scanned_back(self):
         """The pot is the target; the code leads to its own detail route."""
-        identity = ensure_identity(self.unit, user=self.user)
+        identity = self.unit_identity()
         code = identity.codes.get(status=LabelCode.Status.ACTIVE)
 
         resolution = self.resolve(code.code)
@@ -568,8 +588,7 @@ class NumberedPotLabelTests(MixedTrackingTestCase):
 
     def test_a_pot_that_has_left_stock_resolves_as_inactive(self):
         """Scanning a wasted pot should say so, not point at a live asset."""
-        identity = ensure_identity(self.unit, user=self.user)
-        code = identity.codes.get(status=LabelCode.Status.ACTIVE)
+        code = self.unit_identity().codes.get(status=LabelCode.Status.ACTIVE)
         post_unit_movement(
             self.workspace, self.user,
             UnitMovementRequest(

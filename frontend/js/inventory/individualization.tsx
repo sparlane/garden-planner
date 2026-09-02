@@ -2,6 +2,8 @@ import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 
+import { Link } from 'react-router'
+
 import { getInventoryBalances, individualizeLotUnits } from '../api/inventory'
 import { queryKeys } from '../query'
 import { InventoryBalance, InventoryItem } from '../types/inventory'
@@ -29,7 +31,7 @@ function NumberedUnitsPanel({ item }: NumberedUnitsPanelProps) {
   const [count, setCount] = React.useState('')
   const [reason, setReason] = React.useState('')
   const [error, setError] = React.useState<string>()
-  const [numbered, setNumbered] = React.useState<Array<string>>([])
+  const [numbered, setNumbered] = React.useState<Array<{ pk: number; asset_code: string }>>([])
   const { data: balances = [] } = useQuery({
     queryKey: queryKeys.inventory.balances(item.pk),
     queryFn: ({ signal }) => getInventoryBalances(item.pk, signal)
@@ -37,7 +39,7 @@ function NumberedUnitsPanel({ item }: NumberedUnitsPanelProps) {
   const mutation = useMutation({
     mutationFn: ({ lot, location }: { lot: number; location: number }) => individualizeLotUnits(lot, { location, count: Number(count), reason }),
     onSuccess: async (units) => {
-      setNumbered(units.map((unit) => unit.asset_code))
+      setNumbered(units.map((unit) => ({ pk: unit.pk, asset_code: unit.asset_code })))
       setCount('')
       setReason('')
       setError(undefined)
@@ -130,7 +132,13 @@ function NumberedUnitsPanel({ item }: NumberedUnitsPanelProps) {
         )}
         {numbered.length > 0 && (
           <Alert className="mt-2 mb-0" variant="success">
-            Numbered {numbered.length}: {numbered.join(', ')}
+            Numbered {numbered.length}. Each one now has a code to print:{' '}
+            {numbered.map((unit, index) => (
+              <React.Fragment key={unit.pk}>
+                {index > 0 && ', '}
+                <Link to={`/inventory/serialized-units/${unit.pk}`}>{unit.asset_code}</Link>
+              </React.Fragment>
+            ))}
           </Alert>
         )}
       </Card.Body>

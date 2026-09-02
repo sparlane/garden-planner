@@ -23,6 +23,7 @@ import { InventoryCatalog } from './inventory.js'
 import { LocationsCatalog } from './locations.js'
 import { InventoryReceiptsView } from './inventory/receipts.js'
 import { StocktakeDetailView, StocktakeListView } from './inventory/stocktakes.js'
+import { NumberedUnitDetails } from './inventory/unit_details.js'
 import { InputApplicationsView } from './applications/applications.js'
 import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
 import { HarvestsView, YieldReportView } from './plantings/harvests.js'
@@ -40,6 +41,17 @@ import { SupplyDocumentListView, SupplyDocumentPrintView } from './billing/docum
 import { ReportsView } from './reports.js'
 import { PurchasingView } from './purchasing.js'
 import { BookkeepingView } from './bookkeeping.js'
+
+function NumberedUnitDetailsRoute() {
+  const { unitId } = useParams()
+  const unitPk = Number(unitId)
+
+  if (!unitId || !Number.isInteger(unitPk) || unitPk <= 0) {
+    return <div>Container not found.</div>
+  }
+
+  return <NumberedUnitDetails key={unitPk} unitPk={unitPk} />
+}
 
 function SeedTrayDetailsRoute() {
   const { trayId } = useParams()
@@ -192,6 +204,7 @@ function FrontEndPage() {
         <Route path="/inventory/receipts" element={<InventoryReceiptsView />} />
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
+        <Route path="/inventory/serialized-units/:unitId" element={<NumberedUnitDetailsRoute />} />
         <Route path="/purchasing" element={<PurchasingView workspace={workspace} />} />
         <Route
           path="/bookkeeping"
