@@ -489,6 +489,33 @@ class MixedBalanceReportingTests(MixedTrackingTestCase):
         self.assertEqual(row['bulk_quantity'], '10.000000000')
         self.assertEqual(row['numbered_quantity'], '0.000000000')
 
+    def test_a_balance_row_names_its_location_in_full(self):
+        """The numbering picker chooses between places, so bare names will not do."""
+        bay = Location.objects.create(
+            workspace=self.workspace,
+            name='Bay 2',
+            code='BAY-2',
+            location_type=Location.LocationType.STORAGE,
+            parent=self.store,
+        )
+        lot = self.receive(quantity='10', cost='5.0000')
+        post_stock_movement(
+            self.workspace, self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                quantity=Decimal('4'),
+                source=self.store,
+                destination=bay,
+                reason='Split across bays',
+            ),
+        )
+
+        row = self.balance_rows(lot)[bay.pk]
+
+        self.assertEqual(row['location_name'], 'Bay 2')
+        self.assertEqual(row['location_full_name'], 'Pot store / Bay 2')
+
     def test_the_inventory_report_carries_the_same_split(self):
         """The report and the endpoint must not disagree about one lot."""
         lot = self.receive(quantity='10', cost='5.0000')

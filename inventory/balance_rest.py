@@ -7,7 +7,7 @@ from typing import NamedTuple
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from locations.models import Location
+from locations.models import Location, location_full_name
 from workspaces.models import get_current_workspace
 
 from .ledger import MONEY_QUANTUM, physical_balance
@@ -16,10 +16,15 @@ from .rest_query import parse_boolean, parse_date, parse_integer
 
 
 class DerivedBalances(NamedTuple):
-    """The two lookups every row is built against, gathered in one pass."""
+    """The lookups every row is built against, gathered in one pass each.
+
+    `names` is the whole catalog's pk-to-name map, which is what lets a row
+    name its location in full without a query per ancestor.
+    """
 
     item_totals: dict
     numbered: dict
+    names: dict
 
 
 class BalanceFilters(NamedTuple):
@@ -77,6 +82,9 @@ class BalanceView(APIView):
         derived = DerivedBalances(
             item_totals=self._item_totals(item_total_lots, all_locations),
             numbered=self._numbered_counts(workspace, result_lots),
+            names=dict(
+                Location.objects.filter(workspace=workspace).values_list('pk', 'name'),
+            ),
         )
         return Response(self._rows(
             result_lots,
@@ -152,6 +160,7 @@ class BalanceView(APIView):
                 rows.append(cls._balance_row(
                     lot, location, is_low,
                     derived.numbered[(lot.pk, location.pk)],
+                    derived.names,
                 ))
         return rows
 
@@ -162,7 +171,7 @@ class BalanceView(APIView):
         return threshold is not None and item_totals[lot.item_id] <= threshold
 
     @staticmethod
-    def _balance_row(lot, location, is_low, numbered):
+    def _balance_row(lot, location, is_low, numbered, names):
         """Serialize one lot/location quantity and immutable-cost valuation."""
         physical = physical_balance(lot, location)
         numbered_quantity = Decimal(numbered)
@@ -179,6 +188,7 @@ class BalanceView(APIView):
             'item_name': lot.item.name,
             'location': location.pk,
             'location_name': location.name,
+            'location_full_name': location_full_name(location, names),
             'physical_quantity': f'{physical:.9f}',
             'bulk_quantity': f'{physical - numbered_quantity:.9f}',
             'numbered_quantity': f'{numbered_quantity:.9f}',

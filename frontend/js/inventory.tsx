@@ -11,6 +11,7 @@ import {
   setInventoryItemActive,
   setItemUnitConversionActive
 } from './api/inventory'
+import { NumberedUnitsPanel } from './inventory/individualization'
 import { queryKeys } from './query'
 import {
   InventoryCategory,
@@ -38,7 +39,8 @@ const CATEGORY_LABELS: Record<InventoryCategory, string> = {
 
 const TRACKING_LABELS: Record<InventoryTrackingMode, string> = {
   lot: 'Lot controlled',
-  serialized: 'Serialized'
+  serialized: 'Serialized',
+  mixed: 'Lot controlled, numberable'
 }
 
 const USAGE_LABELS: Record<InventoryUsageBasis, string> = {
@@ -520,6 +522,7 @@ function InventoryCatalog() {
         </Card.Body>
       </Card>
       {selectedItem && <ConversionPanel item={selectedItem} />}
+      {selectedItem?.tracking_mode === 'mixed' && <NumberedUnitsPanel item={selectedItem} />}
     </main>
   )
 }
