@@ -225,6 +225,41 @@ def bulk_balance(lot, location):
     return physical_balance(lot, location) - Decimal(units)
 
 
+def promised_bulk(lot, location):
+    """Return how much anonymous stock a live sales reservation holds here.
+
+    Numbering units and selling by the count draw on the very same pots, so
+    neither may keep its own notion of what is free. Sales is built on the
+    ledger rather than the other way round, so the import is deferred exactly
+    as `unit_is_in_use` defers its reach into plantings.
+
+    Only a reserved allocation counts. A pending one is a tentative selection
+    somebody is still drafting, which warns rather than blocks, the same way it
+    does for a plant.
+    """
+    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
+
+    total = SalesOrderAllocation.objects.filter(
+        stock_lot=lot,
+        source_location=location,
+        status=SalesOrderAllocation.Status.RESERVED,
+    ).aggregate(total=Sum('quantity'))['total']
+    return Decimal(total or 0)
+
+
+def unpromised_bulk(lot, location):
+    """Return anonymous stock on hand that nothing has been promised out of.
+
+    This, not `bulk_balance`, is what a new claim on the pool is measured
+    against, and it is only trustworthy while the caller holds the lot lock
+    `lock_lots` takes. Dispatching stock is deliberately *not* held to it: a
+    fulfillment consumes the reservation it is drawing on, so measuring it
+    against a figure that already excludes that reservation would have it
+    refuse its own promise.
+    """
+    return bulk_balance(lot, location) - promised_bulk(lot, location)
+
+
 def lock_lots(workspace, lot_ids):
     """Lock and return exact workspace lots in deterministic primary-key order."""
     requested = sorted(set(lot_ids))
@@ -570,12 +605,12 @@ def individualize_lot_units(workspace, user, request):
         raise ValidationError({
             'lot': 'Number units only from a lot whose quantity is known.',
         })
-    available = bulk_balance(lot, request.location)
+    available = unpromised_bulk(lot, request.location)
     if count > available:
         raise ValidationError({
             'count': (
                 f'Only {available:.9f} {lot.item.base_unit} is unnumbered '
-                f'at {request.location.name}.'
+                f'and unpromised at {request.location.name}.'
             ),
         })
     return [

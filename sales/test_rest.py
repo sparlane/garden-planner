@@ -159,6 +159,7 @@ class SalesRESTTests(RESTContractTestCase):
             'order': second['pk'],
             'order_number': second['order_number'],
             'status': SalesOrderAllocation.Status.PENDING,
+            'quantity': None,
         }])
         register = self.client.get('/plantings/register/', {'allocation_status': 'tentative'})
         self.assertEqual(register.data['count'], 1)
