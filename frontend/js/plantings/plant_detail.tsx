@@ -12,14 +12,8 @@ import { SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
 import { formatDate, formatDateTime, formatMoney } from '../utils'
 import { costSourceLabel } from './cost_sources'
+import { placementLabel } from './placements'
 import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
-
-function locationLabel(location: SpecificPlantLocation): string {
-  if (location.location_type === 'seed_tray_cell') {
-    return `Seed tray cell #${location.seed_tray_cell}`
-  }
-  return `Garden square #${location.garden_square}`
-}
 
 // Physical history in the order it happened, which is separate from the
 // lifecycle history beside it: where a plant has been and what became of it
@@ -40,7 +34,7 @@ function LocationHistory({ locations }: { locations: Array<SpecificPlantLocation
       <tbody>
         {locations.map((location) => (
           <tr key={location.pk}>
-            <td>{locationLabel(location)}</td>
+            <td>{placementLabel(location)}</td>
             <td>{formatDateTime(location.started)}</td>
             <td>{location.ended === undefined || location.ended === null ? <span className="text-success">Still there</span> : formatDateTime(location.ended)}</td>
           </tr>

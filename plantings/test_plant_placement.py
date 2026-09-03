@@ -14,6 +14,7 @@ from locations.models import Location
 from tests.factories import (
     make_garden_square,
     make_location,
+    make_numbered_container,
     make_specific_plant,
     make_specific_plant_location,
 )
@@ -22,8 +23,8 @@ from workspaces.models import Workspace
 from .models import PlantLifecycleEvent, SpecificPlantLocation
 
 
-class PlantPlacementTests(TestCase):
-    """A plant can be moved onto a bench without being planted out."""
+class PlantPlacementTestCase(TestCase):
+    """One plant in a tray, and the bench it can be moved onto."""
 
     def setUp(self):
         super().setUp()
@@ -51,6 +52,10 @@ class PlantPlacementTests(TestCase):
             specific_plant=self.plant,
             ended__isnull=True,
         )
+
+
+class PlantPlacementTests(PlantPlacementTestCase):
+    """A plant can be moved onto a bench without being planted out."""
 
     def test_a_plant_can_stand_at_a_location(self):
         """A potted plant on a bench is somewhere in its own right."""
@@ -135,3 +140,49 @@ class PlantPlacementTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn('location', response.json())
+
+
+class PottedPlacementNamingTests(PlantPlacementTestCase):
+    """A plant in a numbered pot is named by the code printed on the pot.
+
+    Every other kind of place is drawn on a screen and found by the row it
+    came from, so the primary key is enough to name it. A pot is found in the
+    nursery by reading it, which is why the placement carries its asset code.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.pot = make_numbered_container(location=self.bench)
+
+    def test_a_plant_can_be_moved_into_a_numbered_pot(self):
+        """The fourth kind of place is reachable through the same move."""
+        response = self.move(
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            container_unit=self.pot.pk,
+        )
+
+        self.assertEqual(response.status_code, 201, response.json())
+        active = self.active()
+        self.assertEqual(active.location_type, SpecificPlantLocation.CONTAINER_UNIT)
+        self.assertEqual(active.container_unit, self.pot)
+        self.assertIsNone(active.seed_tray_cell)
+
+    def test_the_placement_carries_the_code_printed_on_the_pot(self):
+        """A bare container id names nothing an operator can go and find."""
+        response = self.move(
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            container_unit=self.pot.pk,
+        )
+
+        body = response.json()
+        self.assertEqual(body['container_unit'], self.pot.pk)
+        self.assertEqual(body['container_unit_code'], self.pot.asset_code)
+
+    def test_a_placement_that_is_not_a_pot_carries_no_code(self):
+        """The field is null rather than absent, so one shape reads them all."""
+        response = self.move(
+            location_type=SpecificPlantLocation.LOCATION,
+            location=self.bench.pk,
+        )
+
+        self.assertIsNone(response.json()['container_unit_code'])

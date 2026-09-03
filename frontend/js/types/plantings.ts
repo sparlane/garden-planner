@@ -92,6 +92,7 @@ interface ProductionBatchLocation {
   seed_tray_cell: number | null
   garden_square: number | null
   location: number | null
+  container_unit: number | null
   started: string
   label: string
 }
@@ -374,8 +375,9 @@ interface GardenRegisterDetail extends GardenRegisterRow {
 }
 
 // Where a plant is. A plant in a tray records the cell rather than the bench
-// the tray stands on, because the tray's own placement already says that.
-type PlantPlacementType = 'seed_tray_cell' | 'garden_square' | 'location'
+// the tray stands on, because the tray's own placement already says that, and
+// a plant in a numbered pot records the pot for the same reason.
+type PlantPlacementType = 'seed_tray_cell' | 'garden_square' | 'location' | 'container_unit'
 
 interface SpecificPlantLocation {
   pk: number
@@ -384,6 +386,10 @@ interface SpecificPlantLocation {
   seed_tray_cell?: number
   garden_square?: number
   location?: number
+  container_unit?: number
+  // The code printed on the pot, which is how a container is identified in
+  // the nursery. Null for every other kind of place.
+  container_unit_code?: string | null
   started: string
   ended?: string
   notes?: string
@@ -396,6 +402,7 @@ interface SpecificPlantLocationCreate {
   seed_tray_cell?: number
   garden_square?: number
   location?: number
+  container_unit?: number
   started: string
   notes?: string
 }
@@ -405,6 +412,7 @@ interface SpecificPlantMove {
   seed_tray_cell?: number
   garden_square?: number
   location?: number
+  container_unit?: number
   started?: string
   notes?: string
   override_reason?: string
@@ -593,6 +601,9 @@ interface NurseryRegisterRow {
   seed_tray_cell: number | null
   garden_square: number | null
   location: number | null
+  // The numbered pot the plant stands in, which is not the same fact as
+  // container below: that one is the potting observation's catalog item.
+  container_unit: number | null
   // Where the plant is physically standing. For a plant in a tray that is
   // wherever the tray has been wheeled, which is why it differs from location.
   standing_at: number | null

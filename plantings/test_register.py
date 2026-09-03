@@ -28,6 +28,7 @@ from tests.factories import (
     make_seed_tray_generation,
     make_seed_tray_model,
     make_seed_tray_planting,
+    make_numbered_container,
     make_specific_plant,
     make_specific_plant_location,
 )
@@ -158,6 +159,7 @@ class RegisterContractTests(RegisterTestCase):
             'container_count',
             'container_name',
             'container_size',
+            'container_unit',
             'cost',
             'currency_code',
             'expected_ready',
@@ -422,6 +424,38 @@ class RegisterFilterTests(RegisterTestCase):
         payload = self.assert_filter_agrees(location=bench.pk)
         self.assertEqual(self.row_ids(payload), [in_tray.pk])
         self.assertEqual(payload['results'][0]['standing_at'], bench.pk)
+
+    def test_a_potted_plant_is_named_by_its_pot_and_found_under_its_bench(self):
+        """A numbered pot carries its own location, exactly as a tray does.
+
+        The two facts are different and both have to be right: the plant is in
+        pot A, and pot A is on this bench. Somebody walking the greenhouse
+        needs the second to find the first.
+        """
+        bench = make_location(location_type=Location.LocationType.BENCH)
+        pot = make_numbered_container(location=bench)
+        potted = self.make_plant()
+        make_specific_plant_location(
+            specific_plant=potted,
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+            seed_tray_cell=None,
+            container_unit=pot,
+            started=self.start,
+        )
+        self.make_plant()
+
+        payload = self.assert_filter_agrees(
+            location_type=SpecificPlantLocation.CONTAINER_UNIT,
+        )
+        self.assertEqual(self.row_ids(payload), [potted.pk])
+        row = payload['results'][0]
+        self.assertEqual(row['container_unit'], pot.pk)
+        self.assertEqual(row['location_label'], pot.asset_code)
+        self.assertEqual(row['standing_at'], bench.pk)
+        self.assertEqual(row['standing_at_label'], bench.name)
+
+        on_bench = self.assert_filter_agrees(location=bench.pk)
+        self.assertEqual(self.row_ids(on_bench), [potted.pk])
 
     def test_a_greenhouse_answers_for_the_bays_inside_it(self):
         """Someone in the doorway does not think of its own bays as elsewhere."""

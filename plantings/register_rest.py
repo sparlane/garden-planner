@@ -118,6 +118,14 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
         read_only=True,
         allow_null=True,
     )
+    #: The numbered pot the plant is standing in, which is a different fact
+    #: from `container`: that one is the potting observation's catalog item,
+    #: recorded whether or not the pot it names was ever given an identity.
+    container_unit = serializers.IntegerField(
+        source='current_container_unit',
+        read_only=True,
+        allow_null=True,
+    )
     standing_at = serializers.IntegerField(read_only=True, allow_null=True)
     standing_at_label = serializers.CharField(read_only=True)
     located_since = serializers.DateTimeField(read_only=True, allow_null=True)

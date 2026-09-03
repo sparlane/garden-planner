@@ -62,6 +62,10 @@ _BATCH = 'batch'
 #: stand there with it.
 _TRAY_LOCATION = 'seed_tray_cell__tray__inventory_unit__current_location'
 
+#: A numbered pot carries its own location for the same reason, so a potted
+#: specimen is standing wherever its pot was last put down.
+_CONTAINER_LOCATION = 'container_unit__current_location'
+
 
 class RegisterFilters(NamedTuple):
     """One validated set of register filters, shared by rows and totals."""
@@ -255,6 +259,8 @@ def register_projection(workspace):
         current_seed_tray_label=_current_location('seed_tray_cell__tray__model__identifier'),
         current_garden_square=_current_location('garden_square'),
         current_garden_square_label=_current_location('garden_square__name'),
+        current_container_unit=_current_location('container_unit'),
+        current_container_unit_label=_current_location('container_unit__asset_code'),
         located_since=_current_location('started'),
         cost=_plant_cost(),
         label_code=Subquery(active_label),
@@ -264,6 +270,9 @@ def register_projection(workspace):
         tray_location=_current_location(_TRAY_LOCATION),
         tray_location_name=_current_location(f'{_TRAY_LOCATION}__name'),
         tray_location_path=_current_location(f'{_TRAY_LOCATION}__path'),
+        container_location=_current_location(_CONTAINER_LOCATION),
+        container_location_name=_current_location(f'{_CONTAINER_LOCATION}__name'),
+        container_location_path=_current_location(f'{_CONTAINER_LOCATION}__path'),
         current_stage=_current_observation('stage_id', IntegerField()),
         current_stage_name=_current_observation('stage__name', TextField()),
         current_stage_target_days=_current_observation('stage__target_days', IntegerField(), 'stage'),
@@ -280,23 +289,29 @@ def register_projection(workspace):
             'current_garden_square_label',
             'current_seed_tray_label',
             'direct_location_name',
+            'current_container_unit_label',
             Value(''),
             output_field=TextField(),
         ),
         # Where the plant is physically standing, which for a plant in a tray
-        # is wherever the tray has been wheeled. The tray's placement is the
-        # only record of that, so it is resolved here rather than copied onto
-        # every plant it carries.
-        standing_at=Coalesce('direct_location', 'tray_location'),
+        # is wherever the tray has been wheeled and for a potted specimen is
+        # wherever its pot was last put down. Both assets carry that placement
+        # themselves, so it is resolved here rather than copied onto every
+        # plant they carry.
+        standing_at=Coalesce(
+            'direct_location', 'tray_location', 'container_location',
+        ),
         standing_at_label=Coalesce(
             'direct_location_name',
             'tray_location_name',
+            'container_location_name',
             Value(''),
             output_field=TextField(),
         ),
         standing_at_path=Coalesce(
             'direct_location_path',
             'tray_location_path',
+            'container_location_path',
             Value(''),
             output_field=TextField(),
         ),
