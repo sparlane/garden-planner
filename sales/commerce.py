@@ -117,12 +117,12 @@ def _effective_return_line_ids(order):
 def dispatched_quantity(allocation):
     """Return how many of a line's units one allocation ships.
 
-    An identity is exactly one, which is why `quantity` is null on it rather
-    than stored as a one nothing may contradict. Deriving it here rather than
-    snapshotting a column on `FulfillmentLine` keeps the promise and the
-    dispatch the same figure.
+    Deriving it from the allocation rather than snapshotting a column on
+    `FulfillmentLine` keeps the promise and the dispatch the same figure —
+    which is why this is `promised_units` read from the dispatch side rather
+    than a second count of its own.
     """
-    return 1 if allocation.quantity is None else allocation.quantity
+    return allocation.promised_units
 
 
 def recompute_order_status(order):

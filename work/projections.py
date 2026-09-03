@@ -547,14 +547,25 @@ def _allocation_variety(allocation):
 
 
 def _held_target(allocation):
-    """Link the exact plant or tray one hold is keeping off the floor."""
+    """Link the exact stock one hold is keeping off the floor.
+
+    A counted hold has no identity to name — anonymous stock has none — so it
+    links the lot the pots are standing in and says how many. Falling through
+    to the unit branch instead built a link to nothing, and acknowledging the
+    task then failed on a target that had no content type.
+    """
     if allocation.plant_id:
         return TargetLink(
             allocation.plant, f'Plant {allocation.plant_id}',
             f'/plantings/plants/{allocation.plant_id}',
         )
+    if allocation.inventory_unit_id:
+        return TargetLink(
+            allocation.inventory_unit, f'Unit {allocation.inventory_unit_id}',
+        )
     return TargetLink(
-        allocation.inventory_unit, f'Unit {allocation.inventory_unit_id}',
+        allocation.stock_lot,
+        f'{allocation.promised_units} × {allocation.stock_lot.item.name}',
     )
 
 
@@ -571,6 +582,7 @@ def _reservation_allocations(rule, status):
         expires_at__isnull=False,
     ).select_related(
         'line__order', 'plant__batch__variety__plant', 'inventory_unit',
+        'stock_lot__item',
     ).order_by('expires_at', 'pk')
     grouped = {}
     for allocation in rows:
@@ -602,7 +614,11 @@ def _reservation_expiry_tasks(rule):
             {
                 'order': order.pk,
                 'expires_at': allocations[0].expires_at.isoformat(),
-                'held_count': len(allocations),
+                # Counted in units rather than in rows: one counted hold can
+                # keep fifty pots off the floor, and a one here would put the
+                # smallest possible number in front of the person deciding
+                # whether to extend it.
+                'held_count': sum(row.promised_units for row in allocations),
             },
         ))
     for order, allocations in _reservation_allocations(
@@ -622,7 +638,7 @@ def _reservation_expiry_tasks(rule):
             {
                 'order': order.pk,
                 'expires_at': lapsed[-1].expires_at.isoformat(),
-                'lapsed_count': len(lapsed),
+                'lapsed_count': sum(row.promised_units for row in lapsed),
             },
         ))
     return [task for task in tasks if task]
@@ -632,12 +648,15 @@ def _short_lines(order):
     """Return the order's lines still owed stock, by identifier.
 
     A line whose remaining allocations already cover its quantity has been
-    dealt with, however its earlier holds ended.
+    dealt with, however its earlier holds ended. Coverage is counted in units,
+    because one counted allocation promising fifty pots covers a line of fifty
+    — counting rows left such a line owed forty-nine it already had, and it
+    projected as short for as long as the order stayed open.
     """
     lines = {}
     for line in order.lines.prefetch_related('allocations'):
         held = sum(
-            1 for allocation in line.allocations.all()
+            allocation.promised_units for allocation in line.allocations.all()
             if allocation.status in {
                 SalesOrderAllocation.Status.PENDING,
                 SalesOrderAllocation.Status.RESERVED,

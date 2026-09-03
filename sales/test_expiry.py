@@ -10,13 +10,20 @@ from django.utils import timezone
 
 from plantings.register import RegisterFilters, register_queryset
 from tests.factories import make_seed_tray
-from work.models import WorkTaskRule, WorkTaskType
+from work.models import WorkTaskLink, WorkTaskRule, WorkTaskType
 from work.projections import projected_tasks
+from work.services import acknowledge_projection
 
 from .expiry import SWEEP_REASON, due_reservations, expire_due_reservations
-from .models import ReservationEvent, SalesOrder, SalesOrderAllocation
-from .services import allocate_targets, preview_targets
+from .models import (
+    ReservationEvent,
+    SalesOrder,
+    SalesOrderAllocation,
+    SalesOrderLine,
+)
+from .services import LotRequest, allocate_targets, confirm_order, preview_targets
 from .test_commerce import CommerceFixtureTestCase
+from .test_counted_lines import CountedStockTestCase
 
 
 class ReservationExpirySweepTests(CommerceFixtureTestCase):
@@ -135,7 +142,6 @@ class ReservationExpirySweepTests(CommerceFixtureTestCase):
         expired = expire_due_reservations(self.workspace)
 
         self.assertEqual(len(expired), 1)
-        from .models import SalesOrderLine  # pylint: disable=import-outside-toplevel
 
         line = SalesOrderLine.objects.get(pk=line_pk)
         self.assertEqual(
@@ -261,3 +267,92 @@ class ReservationExpiryProjectionTests(CommerceFixtureTestCase):
         allocate_targets(line, self.user, plant_ids=[replacement.pk])
 
         self.assertEqual(self.keys(), [])
+
+
+class CountedReservationProjectionTests(CountedStockTestCase):
+    """A counted hold reaches the queue as pots, not as one anonymous row.
+
+    Nothing about a lapse is identity-specific, so the projection has to read
+    a counted hold as readily as it reads a plant. It did not: it counted
+    rows, and it built its target by falling through to the numbered-unit
+    branch, which for anonymous stock points at nothing at all.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.rule = WorkTaskRule.objects.create(
+            workspace=self.workspace, code='reservation-expiry',
+            name='Sales reservations lapsing',
+            task_type=WorkTaskType.RESERVATION,
+            trigger=WorkTaskRule.Trigger.RESERVATION_EXPIRY,
+            due_start_offset_days=-2,
+        )
+
+    def held_pots(self, quantity=50, expires_in=timedelta(days=1)):
+        """Confirm one order holding a counted draw until the given offset."""
+        lot = self.receive()
+        line = self.counted_line(quantity=quantity)
+        allocation = allocate_targets(line, self.user, lot_requests=[
+            LotRequest(lot.pk, self.store.pk, quantity),
+        ])[0]
+        confirm_order(line.order, self.user)
+        SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
+            expires_at=timezone.now() + expires_in,
+        )
+        return line, lot
+
+    def reservation_task(self, line):
+        """Return the warning projected for one order's live counted hold."""
+        return next(
+            row for row in projected_tasks(self.workspace)
+            if row.key == f'rule:{self.rule.pk}:reservation:{line.order.pk}'
+        )
+
+    def test_a_counted_hold_is_reported_as_the_pots_it_keeps_back(self):
+        """Fifty pots held is fifty, not the one row that recorded them."""
+        line, _ = self.held_pots(quantity=50)
+
+        task = self.reservation_task(line)
+
+        self.assertEqual(task.source_snapshot['held_count'], 50)
+
+    def test_a_counted_hold_names_the_lot_it_is_standing_in(self):
+        """Anonymous stock has no identity, so the lot is what to point at."""
+        line, lot = self.held_pots(quantity=50)
+
+        task = self.reservation_task(line)
+
+        self.assertIn(lot, [link.target for link in task.targets])
+        self.assertIn(
+            f'50 × {self.item.name}', [link.label for link in task.targets],
+        )
+
+    def test_a_counted_warning_can_be_acknowledged(self):
+        """A target with no content type failed the moment anyone took it on."""
+        line, _ = self.held_pots(quantity=50)
+
+        task = acknowledge_projection(
+            self.workspace, self.user, self.reservation_task(line).key,
+        )
+
+        self.assertEqual(
+            task.links.filter(role=WorkTaskLink.Role.TARGET).count(), 2,
+        )
+
+    def test_a_covered_counted_line_is_not_owed_more_stock(self):
+        """One allocation of fifty covers a line of fifty, so nothing lapsed.
+
+        Counting rows read this as one held against fifty requested, and the
+        order projected a reallocation it did not need for as long as it
+        stayed open.
+        """
+        line, _ = self.held_pots(quantity=50, expires_in=-timedelta(hours=1))
+        expire_due_reservations(self.workspace)
+        replacement = self.receive()
+        allocate_targets(line, self.user, lot_requests=[
+            LotRequest(replacement.pk, self.store.pk, 50),
+        ])
+
+        self.assertEqual(
+            [row.key for row in projected_tasks(self.workspace)], [],
+        )

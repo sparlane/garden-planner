@@ -434,6 +434,18 @@ class SalesOrderAllocation(models.Model):
             return 'stock_lot'
         return None
 
+    @property
+    def promised_units(self):
+        """Return how many of its line's units this one allocation covers.
+
+        An identity is exactly one, which is why `quantity` is null on it
+        rather than stored as a one nothing may contradict. It lives here
+        because every reader of an allocation needs the same answer: a row is
+        not a unit once one allocation can promise fifty pots, and a screen or
+        a projection counting rows would call a covered line barely started.
+        """
+        return 1 if self.quantity is None else self.quantity
+
     def clean(self):
         super().clean()
         named = [
