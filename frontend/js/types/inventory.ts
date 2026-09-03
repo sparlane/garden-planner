@@ -97,6 +97,18 @@ interface InventoryItemFilters {
   active?: boolean
 }
 
+// What the serialized-unit list can be narrowed by. `physical_state` is
+// derived from movements rather than stored, so asking for `available` is the
+// only honest way to list the pots still on hand.
+interface SerializedUnitFilters {
+  item?: number
+  location?: number
+  active?: boolean
+  in_use?: boolean
+  physical_state?: SerializedPhysicalState
+  asset_code?: string
+}
+
 interface ItemUnitConversion {
   pk: number
   item: number
@@ -376,6 +388,7 @@ export {
   ReceiptDocumentType,
   SerializedInventoryUnit,
   SerializedPhysicalState,
+  SerializedUnitFilters,
   SerializedStockMovement,
   StockReceipt,
   StockReceiptFilters,

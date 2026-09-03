@@ -18,6 +18,7 @@ from tests.api import RESTContractTestCase
 from tests.factories import (
     make_location,
     make_inventory_item,
+    make_numbered_container,
     make_stock_lot,
     make_seed_tray_cell,
     make_seed_tray_cell_planting,
@@ -239,6 +240,45 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
                 ended__isnull=True,
             ).count(),
             1,
+        )
+
+    def test_a_selection_can_be_moved_into_one_numbered_pot(self):
+        """Three bulbs in one pot are three placements naming one container.
+
+        Nothing constrains one plant per place, only one place per plant, so a
+        shared pot is the same review as a shared bench — with no capacity to
+        allocate, because the pot itself is what occupies the bench.
+        """
+        pot = make_numbered_container()
+        payload = self.payload(
+            BulkPlantOperation.Action.MOVE,
+            action_payload={
+                'location_type': SpecificPlantLocation.CONTAINER_UNIT,
+                'container_unit': pot.pk,
+            },
+        )
+        preview = self.client.post(
+            '/plantings/bulk-operations/preview/',
+            payload,
+            format='json',
+        )
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['eligible'], 3)
+        self.assertEqual(
+            preview.data['plants'][0]['after']['location_type'],
+            SpecificPlantLocation.CONTAINER_UNIT,
+        )
+
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            SpecificPlantLocation.objects.filter(
+                specific_plant__in=self.plants,
+                container_unit=pot,
+                ended__isnull=True,
+            ).count(),
+            3,
         )
 
     def test_bulk_germination_creates_independent_plants_and_facts(self):
