@@ -64,6 +64,24 @@ def _model_errors(error):
     return error.messages
 
 
+def _validate_serialized_receipt_quantity(item, certainty, base_quantity):
+    """Keep general serialized receiving limited to exact mapped trays."""
+    if item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
+        return
+    if not hasattr(item, 'seed_tray_model'):
+        raise ValidationError({
+            'item': 'Only mapped seed trays can use general receiving.',
+        })
+    if certainty != QuantityCertainty.EXACT:
+        raise ValidationError({
+            'quantity_certainty': 'Seed trays require an exact quantity.',
+        })
+    if base_quantity != base_quantity.to_integral_value():
+        raise ValidationError({
+            'quantity': 'Seed trays require a whole normalized quantity.',
+        })
+
+
 def _run_domain_action(function, *args):
     """Invoke a ledger service with field-friendly API errors."""
     try:
@@ -152,10 +170,6 @@ class StockReceiptLineSerializer(
             raise ValidationError({
                 'item': 'Receive seed packets through the seed receipt API.',
             })
-        if item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
-            raise ValidationError({
-                'item': 'Receive serialized items through their own workflow.',
-            })
         if conversion and not conversion.active:
             raise ValidationError(
                 {'unit_conversion': 'The conversion is inactive.'},
@@ -187,6 +201,11 @@ class StockReceiptLineSerializer(
                 )
             except DjangoValidationError as exc:
                 raise ValidationError(_model_errors(exc)) from exc
+        _validate_serialized_receipt_quantity(
+            item,
+            certainty,
+            attrs['base_quantity'],
+        )
         return attrs
 
 

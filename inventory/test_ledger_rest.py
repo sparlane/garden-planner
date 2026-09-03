@@ -706,8 +706,8 @@ class StockReceiptDraftTests(LedgerRestFixture):
             StockReceipt.Status.REVERSED,
         )
 
-    def test_general_receipt_lines_reject_seed_and_serialized_items(self):
-        """Seeds and serialized assets keep their own receiving workflows."""
+    def test_general_receipt_rejects_seed_and_unmapped_serialized_items(self):
+        """Seeds and unrelated serialized assets keep their own workflows."""
         seed = InventoryItem.objects.create(
             workspace=self.workspace,
             name='API carrot seed',
@@ -722,7 +722,7 @@ class StockReceiptDraftTests(LedgerRestFixture):
             base_unit=UnitCode.EACH,
         )
         draft = self.create_draft()
-        for label, item in (('seed', seed), ('serialized', tray)):
+        for label, item in (('seed', seed), ('unmapped serialized', tray)):
             line = self.line_payload(
                 item=item.pk,
                 unit_code=item.base_unit,
