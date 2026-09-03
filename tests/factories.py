@@ -556,6 +556,38 @@ def make_specific_plant_location(**overrides):
     return SpecificPlantLocation.objects.create(**defaults)
 
 
+def make_numbered_container(**overrides):
+    """Create one individually numbered pot standing at a location.
+
+    Numbering posts no movement of its own — the unit is the whole record of
+    the act — so this creates the unit directly, exactly as
+    `inventory.ledger.individualize_lot_units` does. The lot it comes out of
+    holds the rest of the box, which is what gives the pot its cost.
+    """
+    location = overrides.pop('location', None)
+    item = overrides.pop('item', None) or make_inventory_item(
+        category=InventoryItem.Category.POT_CONTAINER,
+        base_unit=UnitCode.EACH,
+        tracking_mode=InventoryItem.TrackingMode.MIXED,
+    )
+    workspace = item.workspace
+    if location is None:
+        location = make_location(workspace=workspace)
+    lot = overrides.pop('lot', None) or make_stock_lot(
+        item=item, quantity=Decimal('10'), location=location,
+    )
+    values = {
+        'workspace': workspace,
+        'item': item,
+        'source_lot': lot,
+        'acquisition_cost': Decimal('5.0000'),
+        'currency_code': workspace.currency_code,
+        'current_location': location,
+    }
+    values.update(overrides)
+    return InventoryUnit.objects.create(**values)
+
+
 def make_plant_at_location(location, **overrides):
     """Create one specific plant standing directly at a physical location.
 

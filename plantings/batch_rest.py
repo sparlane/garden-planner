@@ -197,7 +197,9 @@ def _current_locations(batch):
     locations = SpecificPlantLocation.objects.filter(
         specific_plant__batch=batch,
         ended__isnull=True,
-    ).select_related('seed_tray_cell', 'garden_square', 'location').order_by('pk')
+    ).select_related(
+        'seed_tray_cell', 'garden_square', 'location', 'container_unit',
+    ).order_by('pk')
     return [
         {
             'specific_plant': location.specific_plant_id,
@@ -205,8 +207,12 @@ def _current_locations(batch):
             'seed_tray_cell': location.seed_tray_cell_id,
             'garden_square': location.garden_square_id,
             'location': location.location_id,
+            'container_unit': location.container_unit_id,
             'started': location.started,
-            'label': str(location.seed_tray_cell or location.garden_square or location.location),
+            # Every kind of place names itself, and exactly one of them is set.
+            # A numbered pot resolves to its asset code, which is what is
+            # printed on the pot the operator is holding.
+            'label': str(location.seed_tray_cell or location.garden_square or location.location or location.container_unit),
         }
         for location in locations
     ]

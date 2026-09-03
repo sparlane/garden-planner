@@ -5,6 +5,7 @@ import { NavLink } from 'react-router'
 import { formatDate, formatDateTime, formatHoldRemaining, formatMoney } from '../utils'
 import { NurseryRegisterRow } from '../types/plantings'
 import { LifecycleStateBadge } from './lifecycle'
+import { PLACEMENT_LABELS } from './placements'
 
 // A selection is either the plants an operator ticked, or the filter itself.
 // Storing the filter rather than the IDs it currently matches means a bulk
@@ -32,21 +33,19 @@ function toggleSelected(selection: RegisterSelection, plantPk: number): Register
 
 // A tray is named by its number first and its model second. The model alone
 // names every tray of that kind at once, which is no help to somebody trying
-// to find the one plant they are looking at.
+// to find the one plant they are looking at. A numbered pot is named by the
+// code printed on it, which is exactly what somebody in the nursery can read
+// but says nothing about what kind of place it is, so the kind goes under it.
 function LocationCell({ row }: { row: NurseryRegisterRow }) {
   if (row.location_type === null) {
     return <span className="text-muted">Not placed</span>
   }
+  const heading = row.location_type === 'seed_tray_cell' ? `Tray #${row.seed_tray}` : row.location_label
+  const detail = row.location_type === 'seed_tray_cell' ? row.location_label : row.location_type === 'container_unit' ? PLACEMENT_LABELS.container_unit : null
   return (
     <>
-      {row.location_type === 'seed_tray_cell' ? (
-        <>
-          Tray #{row.seed_tray}
-          <div className="text-muted small">{row.location_label}</div>
-        </>
-      ) : (
-        row.location_label
-      )}
+      {heading}
+      {detail !== null && <div className="text-muted small">{detail}</div>}
       {row.located_since !== null && <div className="text-muted small">since {formatDate(row.located_since)}</div>}
     </>
   )

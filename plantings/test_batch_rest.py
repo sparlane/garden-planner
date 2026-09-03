@@ -8,6 +8,7 @@ from tests.factories import (
     make_batch_for_packet,
     make_garden_square_sowing,
     make_harvest,
+    make_numbered_container,
     make_plant_variety,
     make_seed_packet,
     make_seed_tray_cell_planting,
@@ -276,6 +277,32 @@ class ProductionBatchRESTTests(RESTContractTestCase):
         self.assertEqual(len(response.data['current_locations']), 1)
         self.assertEqual(response.data['sowings'][0]['plants_observed'], 3)
         self.assertEqual(response.data['sowings'][0]['cells'][0]['quantity'], 2)
+
+    def test_a_potted_plant_is_named_by_the_code_on_its_pot(self):
+        """Every kind of place names itself on this screen, pots included.
+
+        A container is the one place whose primary key names nothing an
+        operator can read, so the label is the asset code printed on the pot
+        rather than the row it came from.
+        """
+        batch = make_batch_for_packet(self.packet)
+        sowing = make_seed_tray_planting(seeds_used=self.packet, batch=batch)
+        cell_planting = make_seed_tray_cell_planting(seed_tray_planting=sowing)
+        potted = make_specific_plant(cell_planting=cell_planting)
+        pot = make_numbered_container()
+        make_specific_plant_location(
+            specific_plant=potted,
+            location_type='container_unit',
+            seed_tray_cell=None,
+            container_unit=pot,
+        )
+
+        response = self.client.get(f'{self.url}{batch.pk}/')
+
+        placement = response.data['current_locations'][0]
+        self.assertEqual(placement['location_type'], 'container_unit')
+        self.assertEqual(placement['container_unit'], pot.pk)
+        self.assertEqual(placement['label'], pot.asset_code)
 
     def test_batch_detail_reports_yield_beside_its_lineage_counts(self):
         """The batch screen shows what came out without a second request."""
