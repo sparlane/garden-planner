@@ -10,6 +10,7 @@ import {
   ItemUnitConversion,
   ItemUnitConversionCreate,
   SerializedInventoryUnit,
+  SerializedUnitFilters,
   StockReceipt,
   StockReceiptFilters,
   StockReceiptWrite,
@@ -24,6 +25,10 @@ const RECEIPTS_URL = '/inventory/receipts/'
 const INPUT_TAX_ADJUSTMENTS_URL = '/inventory/input-tax-adjustments/'
 const STOCKTAKES_URL = '/inventory/stocktakes/'
 const LOTS_URL = '/inventory/lots/'
+// Individually numbered stock. Not `/inventory/units/`, which is the unit of
+// measure registry — the two read alike and answer entirely different
+// questions.
+const SERIALIZED_UNITS_URL = '/inventory/serialized-units/'
 
 function getStocktakes(signal?: AbortSignal): Promise<Array<Stocktake>> {
   return fetchAsJson<Array<Stocktake>>(STOCKTAKES_URL, signal)
@@ -68,7 +73,19 @@ async function individualizeLotUnits(lot: number, values: IndividualizationWrite
 }
 
 function getSerializedUnit(pk: number, signal?: AbortSignal): Promise<SerializedInventoryUnit> {
-  return fetchAsJson<SerializedInventoryUnit>(`/inventory/serialized-units/${pk}/`, signal)
+  return fetchAsJson<SerializedInventoryUnit>(`${SERIALIZED_UNITS_URL}${pk}/`, signal)
+}
+
+function getSerializedUnits(filters: SerializedUnitFilters = {}, signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
+  const params = new URLSearchParams()
+  if (filters.item !== undefined) params.set('item', String(filters.item))
+  if (filters.location !== undefined) params.set('location', String(filters.location))
+  if (filters.active !== undefined) params.set('active', String(filters.active))
+  if (filters.in_use !== undefined) params.set('in_use', String(filters.in_use))
+  if (filters.physical_state) params.set('physical_state', filters.physical_state)
+  if (filters.asset_code) params.set('asset_code', filters.asset_code)
+  const query = params.size ? `?${params.toString()}` : ''
+  return fetchAsJson<Array<SerializedInventoryUnit>>(`${SERIALIZED_UNITS_URL}${query}`, signal)
 }
 
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
@@ -174,6 +191,7 @@ export {
   getInventoryUnits,
   getInputTaxAdjustments,
   getSerializedUnit,
+  getSerializedUnits,
   getItemUnitConversions,
   getStockReceipts,
   getStocktake,

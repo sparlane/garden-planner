@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { getGardenSquares } from '../api/garden'
-import { getInventoryItems } from '../api/inventory'
+import { getInventoryItems, getSerializedUnits } from '../api/inventory'
 import { getGrowthStages, getNurseryRegisterSelection, getPlantGrades, postBulkPlantOperation, previewBulkPlantOperation } from '../api/plantings'
 import { getSeedTrayCells, getSeedTrays } from '../api/seedtrays'
 import { queryKeys } from '../query'
@@ -11,6 +11,7 @@ import { Location } from '../types/locations'
 import { BulkPlantAction, BulkPlantAtomicity, BulkPlantOperationRequest, BulkPlantPreview, NurseryRegisterFilters } from '../types/plantings'
 import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
 import { STATE_LABELS } from './lifecycle'
+import { PLACEMENT_LABELS } from './placements'
 import { EMPTY_SELECTION, RegisterSelection } from './register_list'
 
 const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
@@ -28,7 +29,11 @@ const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
   { value: 'finish_harvest', label: 'Finish harvest' }
 ]
 
-type DestinationType = 'location' | 'garden_square' | 'seed_tray_cell'
+// The places a plant can be put. A numbered pot is reached through the item it
+// came from, the way a cell is reached through its tray: the pots of one
+// catalog item are what an operator is choosing between, and listing every
+// numbered container in the nursery at once would not be.
+type DestinationType = 'location' | 'garden_square' | 'seed_tray_cell' | 'container_unit'
 
 interface BulkOperationPanelProps {
   selection: RegisterSelection
@@ -47,6 +52,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   const [destinationType, setDestinationType] = React.useState<DestinationType>('location')
   const [destination, setDestination] = React.useState<number | ''>('')
   const [tray, setTray] = React.useState<number | ''>('')
+  const [containerItem, setContainerItem] = React.useState<number | ''>('')
   const [overrideReason, setOverrideReason] = React.useState('')
   const [stage, setStage] = React.useState<number | ''>('')
   const [grade, setGrade] = React.useState<number | ''>('')
@@ -70,6 +76,18 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
     queryKey: ['inventory', 'pot-containers'],
     queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container', active: true }, signal)
   })
+  // Only pots still on hand can be stood in. A sold or wasted one keeps its
+  // identity forever, so filtering on `active` alone would offer containers
+  // that have left the nursery.
+  const containerUnitsQuery = useQuery({
+    queryKey: queryKeys.inventory.serializedUnits(containerItem, 'available'),
+    queryFn: ({ signal }) => getSerializedUnits({ item: containerItem as number, active: true, physical_state: 'available' }, signal),
+    enabled: destinationType === 'container_unit' && containerItem !== ''
+  })
+  // A pot has to be numbered before a plant can be recorded as standing in it,
+  // which is what mixed tracking means; the rest of the pot catalog is bought
+  // and consumed by the boxful.
+  const numberableContainers = (containersQuery.data ?? []).filter((entry) => entry.tracking_mode === 'mixed')
 
   function invalidateReview() {
     setPreview(undefined)
@@ -99,6 +117,9 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
     }
     if (destinationType === 'garden_square') {
       return { location_type: destinationType, garden_square: destination }
+    }
+    if (destinationType === 'container_unit') {
+      return { location_type: destinationType, container_unit: destination }
     }
     return { location_type: destinationType, seed_tray_cell: destination }
   }
@@ -202,12 +223,14 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                   setDestinationType(event.target.value as DestinationType)
                   setDestination('')
                   setTray('')
+                  setContainerItem('')
                   invalidateReview()
                 }}
               >
-                <option value="location">Nursery location</option>
-                <option value="garden_square">Garden square</option>
-                <option value="seed_tray_cell">Seed tray cell</option>
+                <option value="location">{PLACEMENT_LABELS.location}</option>
+                <option value="garden_square">{PLACEMENT_LABELS.garden_square}</option>
+                <option value="seed_tray_cell">{PLACEMENT_LABELS.seed_tray_cell}</option>
+                <option value="container_unit">{PLACEMENT_LABELS.container_unit}</option>
               </Form.Select>
             </Col>
             {destinationType === 'seed_tray_cell' && (
@@ -225,6 +248,26 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                   {(traysQuery.data ?? []).map((entry) => (
                     <option key={entry.pk} value={entry.pk}>
                       Tray #{entry.pk}
+                    </option>
+                  ))}
+                </Form.Select>
+              </Col>
+            )}
+            {destinationType === 'container_unit' && (
+              <Col md={3}>
+                <Form.Label>Container item</Form.Label>
+                <Form.Select
+                  value={containerItem}
+                  onChange={(event) => {
+                    setContainerItem(event.target.value ? Number(event.target.value) : '')
+                    setDestination('')
+                    invalidateReview()
+                  }}
+                >
+                  <option value="">Select container item</option>
+                  {numberableContainers.map((entry) => (
+                    <option key={entry.pk} value={entry.pk}>
+                      {entry.name}
                     </option>
                   ))}
                 </Form.Select>
@@ -256,6 +299,14 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                   (cellsQuery.data ?? []).map((entry) => (
                     <option key={entry.pk} value={entry.pk}>
                       ({entry.x_position},{entry.y_position})
+                    </option>
+                  ))}
+                {destinationType === 'container_unit' &&
+                  (containerUnitsQuery.data ?? []).map((entry) => (
+                    <option key={entry.pk} value={entry.pk}>
+                      {entry.asset_code}
+                      {entry.current_location_full_name ? ` — ${entry.current_location_full_name}` : ''}
+                      {entry.in_use ? ' (already holding a plant)' : ''}
                     </option>
                   ))}
               </Form.Select>
@@ -414,7 +465,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                       <td>{STATE_LABELS[row.before.lifecycle_state]}</td>
                       <td>
                         {STATE_LABELS[row.after.lifecycle_state]}
-                        {row.after.location_type ? ` at ${row.after.location_type.replaceAll('_', ' ')}` : ''}
+                        {row.after.location_type ? ` at ${PLACEMENT_LABELS[row.after.location_type].toLowerCase()}` : ''}
                       </td>
                       <td>{row.eligible ? 'Eligible' : row.conflicts.join(' ')}</td>
                     </tr>

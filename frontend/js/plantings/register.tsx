@@ -33,6 +33,7 @@ const LOCATION_OPTIONS: Array<{ value: NonNullable<NurseryRegisterFilters['locat
   { value: 'seed_tray_cell', label: 'In a seed tray' },
   { value: 'garden_square', label: 'Planted out' },
   { value: 'location', label: 'Standing on its own' },
+  { value: 'container_unit', label: 'In a numbered pot' },
   { value: 'none', label: 'Not placed anywhere' }
 ]
 
