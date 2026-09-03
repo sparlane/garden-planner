@@ -127,8 +127,8 @@ function receivableLocations(locations: Array<Location>) {
   return locations.filter((location) => location.location_type !== 'seed_packet' && location.code !== 'SYSTEM-TRAY-UNKNOWN')
 }
 
-function receivableItems(items: Array<InventoryItem>) {
-  return items.filter((item) => item.category !== 'seed' && item.tracking_mode !== 'serialized')
+function receivableItems(items: Array<InventoryItem>, seedTrayItemIds: Set<number>) {
+  return items.filter((item) => item.category !== 'seed' && (item.tracking_mode !== 'serialized' || seedTrayItemIds.has(item.pk)))
 }
 
 interface LineRowProps {
@@ -145,6 +145,7 @@ interface LineRowProps {
 
 function LineRow({ line, index, items, locations, units, errors, removable, onChange, onRemove }: LineRowProps) {
   const chosenItem = items.find((item) => item.pk === line.item)
+  const serializedTray = chosenItem?.tracking_mode === 'serialized'
   const { data: conversions = [] } = useQuery({
     queryKey: queryKeys.inventory.conversions(Number(line.item)),
     queryFn: ({ signal }) => getItemUnitConversions(Number(line.item), signal),
@@ -165,7 +166,18 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
           size="sm"
           value={line.item}
           isInvalid={errors.item !== undefined}
-          onChange={(event) => onChange(line.key, { item: event.target.value === '' ? '' : Number(event.target.value), unitChoice: '' }, true)}
+          onChange={(event) => {
+            const item = items.find((entry) => entry.pk === Number(event.target.value))
+            onChange(
+              line.key,
+              {
+                item: item?.pk ?? '',
+                quantityCertainty: item?.tracking_mode === 'serialized' ? 'exact' : line.quantityCertainty,
+                unitChoice: item?.tracking_mode === 'serialized' ? 'unit:each' : ''
+              },
+              true
+            )
+          }}
         >
           <option value="">Select an item</option>
           {items.map((item) => (
@@ -177,11 +189,18 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
         {errors.item && <Form.Text className="text-danger">{errors.item}</Form.Text>}
       </td>
       <td>
-        <Form.Select size="sm" value={line.quantityCertainty} onChange={(event) => onChange(line.key, { quantityCertainty: event.target.value as QuantityCertainty }, true)}>
+        <Form.Select
+          size="sm"
+          value={line.quantityCertainty}
+          disabled={serializedTray}
+          isInvalid={errors.quantity_certainty !== undefined}
+          onChange={(event) => onChange(line.key, { quantityCertainty: event.target.value as QuantityCertainty }, true)}
+        >
           <option value="exact">Exact</option>
           <option value="estimated">Estimated</option>
           <option value="unknown">Unknown</option>
         </Form.Select>
+        {errors.quantity_certainty && <Form.Text className="text-danger">{errors.quantity_certainty}</Form.Text>}
         <Form.Control
           size="sm"
           className="mt-1"
@@ -193,6 +212,7 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
           onChange={(event) => onChange(line.key, { quantity: event.target.value }, true)}
         />
         {errors.quantity && <Form.Text className="text-danger">{errors.quantity}</Form.Text>}
+        {serializedTray && <Form.Text muted>Posting creates one numbered tray asset per whole each.</Form.Text>}
       </td>
       <td>
         <Form.Select
@@ -372,13 +392,14 @@ interface ReceiptEditorProps {
   locations: Array<Location>
   suppliers: Array<Supplier>
   units: Array<InventoryUnit>
+  seedTrayItemIds: Set<number>
   onClosed: () => void
 }
 
 // The parent mounts this with a key derived from which draft is open, so
 // switching drafts re-initialises every field instead of syncing props in an
 // effect.
-function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }: ReceiptEditorProps) {
+function ReceiptEditor({ receipt, items, locations, suppliers, units, seedTrayItemIds, onClosed }: ReceiptEditorProps) {
   const queryClient = useQueryClient()
   const nextKey = React.useRef(0)
 
@@ -406,7 +427,7 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, onClosed }
   const [saved, setSaved] = React.useState(false)
   const [taxWarnings, setTaxWarnings] = React.useState(receipt?.tax_warnings ?? [])
 
-  const selectableItems = receivableItems(items)
+  const selectableItems = receivableItems(items, seedTrayItemIds)
   const selectableLocations = receivableLocations(locations)
 
   // Any edit that could change the arithmetic clears the normalization it was

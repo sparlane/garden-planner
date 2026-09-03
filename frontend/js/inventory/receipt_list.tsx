@@ -26,10 +26,14 @@ const STATUS_LABELS: Record<string, string> = {
 // creates a lot and a movement, and the first post of an item also stamps its
 // stock_history_started_at, which the catalog renders. Applications go too,
 // because their cached preview carries an availability digest that a stock
-// change invalidates. Seeds and seed trays deliberately do not: the receipt
-// API now refuses their items outright, so neither cache can have moved.
+// change invalidates. Seed trays are included because a mixed receipt can mint
+// their physical identities and complete cell grids when it posts.
 function invalidateReceipts(queryClient: ReturnType<typeof useQueryClient>) {
-  return Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all }), queryClient.invalidateQueries({ queryKey: queryKeys.applications.all })])
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.applications.all }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.all })
+  ])
 }
 
 // Document-level failures come back as {"lines": "Add at least one receipt
