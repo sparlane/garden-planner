@@ -21,8 +21,10 @@ from workspaces.scoping import (
     CurrentWorkspaceViewSetMixin,
     RequireWorkspaceModeMixin,
 )
+from costing.models import CostAllocation
 from health.availability import with_quarantine
 
+from . import cohort_availability
 from .cohorts import (
     change_cohort,
     merge_cohorts,
@@ -90,6 +92,8 @@ class PlantCohortSerializer(serializers.ModelSerializer):
     container_count = serializers.SerializerMethodField()
     expected_ready = serializers.SerializerMethodField()
     quarantined = serializers.BooleanField(read_only=True)
+    reserved_quantity = serializers.SerializerMethodField()
+    available_quantity = serializers.SerializerMethodField()
 
     class Meta:
         model = PlantCohort
@@ -100,12 +104,29 @@ class PlantCohortSerializer(serializers.ModelSerializer):
             'cost', 'currency_code',
             'stage', 'stage_name', 'grade', 'grade_name', 'container',
             'container_name', 'container_size', 'container_count', 'expected_ready',
-            'quarantined',
+            'quarantined', 'reserved_quantity', 'available_quantity',
             'created', 'updated',
         ]
         read_only_fields = [
             'quantity', 'lifecycle_state', 'observed_at', 'revision', 'created', 'updated',
         ]
+
+    def get_reserved_quantity(self, cohort):
+        """Return how much of the count a live sales reservation holds.
+
+        Read from the register's own annotation where there is one, so a page
+        of fifty rows costs one subquery rather than fifty; a cohort handed
+        straight back by a domain command carries none, and answers for itself.
+        """
+        if hasattr(cohort, 'reserved_quantity'):
+            return cohort.reserved_quantity
+        return cohort_availability.reserved_quantity(cohort)
+
+    def get_available_quantity(self, cohort):
+        """Return the part of the count nothing has been promised out of."""
+        if hasattr(cohort, 'available_quantity'):
+            return cohort.available_quantity
+        return cohort_availability.available_quantity(cohort)
 
     def get_label_code(self, cohort):
         """Return the active physical identity issued for this cohort."""
@@ -114,8 +135,14 @@ class PlantCohortSerializer(serializers.ModelSerializer):
         return ensure_identity(cohort).codes.get(status='active').code
 
     def get_cost(self, cohort):
-        """Sum effective cohort layers while preserving unknown as unknown."""
+        """Sum what the stock still standing here cost, unknown preserved.
+
+        Layers for quantities already sold out of the block share this column
+        and are left out: they are cost of sale, and adding them would say the
+        plants on the bench are worth what the ones that left cost too.
+        """
         rows = cohort.cost_allocations.filter(
+            target_type=CostAllocation.TargetType.PLANT_COHORT,
             reversal_of__isnull=True,
             reversal__isnull=True,
         )
@@ -279,7 +306,9 @@ class PlantCohortViewSet(
         return CohortDetailSerializer if self.action == 'retrieve' else PlantCohortSerializer
 
     def get_queryset(self):
-        queryset = with_quarantine(super().get_queryset(), 'cohort').annotate(
+        queryset = cohort_availability.with_availability(
+            with_quarantine(super().get_queryset(), 'cohort'),
+        ).annotate(
             current_stage=self._observation('stage_id', IntegerField()),
             current_stage_name=self._observation('stage__name', TextField()),
             current_stage_days=self._observation('stage__target_days', IntegerField(), 'stage'),
@@ -370,9 +399,16 @@ class PlantCohortViewSet(
             self.get_current_workspace(), parse_register_filters(params),
         )
         cohort_quantity = cohorts.aggregate(total=Sum('quantity'))['total'] or 0
+        cohort_reserved = cohorts.aggregate(total=Sum('reserved_quantity'))['total'] or 0
         individual_count = individuals.count()
         return Response({
             'cohort_quantity': cohort_quantity,
+            # What is left once live reservations are taken off. Reported
+            # beside the gross figure rather than instead of it: a grower
+            # counting benches wants the stock that is standing there, and a
+            # salesperson quoting wants the part of it still free to promise.
+            'cohort_reserved_quantity': cohort_reserved,
+            'cohort_unpromised_quantity': cohort_quantity - cohort_reserved,
             'individual_count': individual_count,
             'combined_total': cohort_quantity + individual_count,
         })

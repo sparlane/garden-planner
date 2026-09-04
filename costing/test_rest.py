@@ -123,6 +123,7 @@ class BatchCostBreakdownTests(CostingServiceTestCase):
                 'item',
                 'lot',
                 'movement',
+                'plant_cohort',
                 'receipt_line',
                 'run',
                 'seed_tray_cell',

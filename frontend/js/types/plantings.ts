@@ -927,6 +927,11 @@ interface PlantCohort {
   container_size: string | null
   container_count: number | null
   expected_ready: string | null
+  // How much of the count a live sales reservation holds, and what is left.
+  // A block can be promised to several orders at once, so the free figure is
+  // arithmetic rather than a flag on the stock.
+  reserved_quantity: number
+  available_quantity: number
   created: string
   updated: string
   events?: Array<CohortEvent>
@@ -971,6 +976,8 @@ interface CohortFilters {
 
 interface CohortAvailability {
   cohort_quantity: number
+  cohort_reserved_quantity: number
+  cohort_unpromised_quantity: number
   individual_count: number
   combined_total: number
 }

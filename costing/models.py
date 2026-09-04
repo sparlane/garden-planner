@@ -64,9 +64,24 @@ from workspaces.models import WorkspaceOwnedModel
 #: `CostAllocation.SourceType` by a test.
 SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting', 'container_unit')
 
-#: Columns that can hold the thing a layer is allocated to. Same naming trick as
-#: `SOURCE_FIELDS`, and kept in step with `CostAllocation.TargetType` by a test.
-TARGET_FIELDS = ('seed_tray_cell', 'specific_plant', 'plant_cohort')
+#: The same names as a type-to-column mapping, so the identity check can be one
+#: routine over both sides even though only the target side needs the indirection.
+SOURCE_COLUMNS = {name: name for name in SOURCE_FIELDS}
+
+#: The column each individual target type names. Most types are their own
+#: column, the same naming trick `SOURCE_FIELDS` uses. `cohort_sale` is the
+#: exception: it names the cohort a quantity was sold out of, so it shares the
+#: `plant_cohort` column with the stock still standing there and is told apart
+#: by the type. Kept in step with `CostAllocation.TargetType` by a test.
+TARGET_COLUMNS = {
+    'seed_tray_cell': 'seed_tray_cell',
+    'specific_plant': 'specific_plant',
+    'plant_cohort': 'plant_cohort',
+    'cohort_sale': 'plant_cohort',
+}
+
+#: Every column a target type can populate, once each and in a stable order.
+TARGET_FIELDS = tuple(dict.fromkeys(TARGET_COLUMNS.values()))
 
 #: Target types that name no individual thing. A batch pool is cost that has not
 #: reached a cell or a plant yet; production loss is cost that never will; and
@@ -177,13 +192,19 @@ class CostAllocation(WorkspaceOwnedModel):
     class TargetType(models.TextChoices):
         """What the cost was allocated to.
 
-        The first two are also column names, for the reason `SourceType`
-        explains. The last two name no individual thing.
+        The first three are also column names, for the reason `SourceType`
+        explains; `TARGET_COLUMNS` maps the fourth onto the column it shares.
+        The last three name no individual thing.
         """
 
         SEED_TRAY_CELL = 'seed_tray_cell', 'Tray cell'
         SPECIFIC_PLANT = 'specific_plant', 'Plant'
         PLANT_COHORT = 'plant_cohort', 'Plant cohort'
+        # Cost that left with anonymous stock somebody bought. A sold plant
+        # keeps its identity and carries its own layer into cost of sale; a
+        # sold quantity has no identity to keep, so without this its cost
+        # would silently re-divide over the units that never moved.
+        COHORT_SALE = 'cohort_sale', 'Cohort sale'
         BATCH_POOL = 'batch_pool', 'Unresolved batch pool'
         PRODUCTION_LOSS = 'production_loss', 'Production loss'
         UNATTRIBUTED = 'unattributed', 'Not attributable to a plant'
@@ -352,11 +373,11 @@ class CostAllocation(WorkspaceOwnedModel):
                         models.Q(
                             target_type=chosen,
                             **{
-                                f'{field}__isnull': field != chosen
+                                f'{field}__isnull': field != column
                                 for field in TARGET_FIELDS
                             },
                         )
-                        for chosen in TARGET_FIELDS
+                        for chosen, column in TARGET_COLUMNS.items()
                     ),
                 ) | models.Q(
                     target_type__in=POOL_TARGET_TYPES,
@@ -404,34 +425,36 @@ class CostAllocation(WorkspaceOwnedModel):
     @property
     def target(self):
         """Return the one thing this layer is allocated to, when there is one."""
-        return getattr(self, self.target_type, None)
+        column = TARGET_COLUMNS.get(self.target_type)
+        return None if column is None else getattr(self, column)
 
     @property
     def target_id(self):
         """Return the primary key of the target, or None for a pool."""
-        return getattr(self, f'{self.target_type}_id', None)
+        column = TARGET_COLUMNS.get(self.target_type)
+        return None if column is None else getattr(self, f'{column}_id')
 
     def clean(self):
         """Require one coherent source, one coherent target, and one workspace."""
         super().clean()
         errors = {}
-        self._add_identity_errors(errors, SOURCE_FIELDS, 'source_type', required=True)
-        self._add_identity_errors(errors, TARGET_FIELDS, 'target_type', required=False)
+        self._add_identity_errors(errors, SOURCE_COLUMNS, 'source_type', required=True)
+        self._add_identity_errors(errors, TARGET_COLUMNS, 'target_type', required=False)
         self._add_workspace_errors(errors)
         self._add_generation_errors(errors)
         self._add_reversal_errors(errors)
         if errors:
             raise ValidationError(errors)
 
-    def _add_identity_errors(self, errors, fields, type_field, required):
+    def _add_identity_errors(self, errors, columns, type_field, required):
         """Require the populated column to be the one the type field declares."""
         declared = getattr(self, type_field)
         populated = [
-            field for field in fields
+            field for field in dict.fromkeys(columns.values())
             if getattr(self, f'{field}_id', None) is not None
         ]
-        if declared in fields:
-            if populated != [declared]:
+        if declared in columns:
+            if populated != [columns[declared]]:
                 errors[type_field] = 'The declared type does not match the populated column.'
         elif required:
             errors[type_field] = f'Select a supported {type_field.replace("_", " ")}.'

@@ -5,6 +5,7 @@
 from datetime import date
 from decimal import Decimal
 from itertools import count
+from uuid import uuid4
 
 from django.utils import timezone
 
@@ -47,6 +48,7 @@ from seedtrays.models import (
     SeedTrayModel,
 )
 from supplies.models import Supplier
+from workspaces.models import Workspace, get_current_workspace
 
 
 _SEQUENCE = count(1)
@@ -54,6 +56,52 @@ _SEQUENCE = count(1)
 
 def _next_name(prefix):
     return f'{prefix} {next(_SEQUENCE)}'
+
+
+def make_nursery_workspace(**overrides):
+    """Put the current workspace into the Nursery profile with a currency.
+
+    Nursery routes and commercial records are gated on the profile, so nearly
+    every sales, cohort, and health test opens by switching it. Shared here so
+    the switch reads the same everywhere and a test that forgets the currency
+    does not fail three layers down in a money field.
+    """
+    workspace = get_current_workspace()
+    workspace.mode = Workspace.Mode.NURSERY
+    workspace.currency_code = 'NZD'
+    for field, value in overrides.items():
+        setattr(workspace, field, value)
+    workspace.save()
+    return workspace
+
+
+def quarantine_stock(workspace, user, scopes, reason='Prevent spread while reviewed.'):
+    """Open a quarantine case over exactly the reviewed plants or cohorts.
+
+    Health is the gate several other apps have to prove they respect, and
+    closing it takes an observation, the digest of the stock somebody reviewed,
+    and then the case, in that order. Shared here so a test showing that
+    quarantined stock cannot be sold does not carry its own copy of the health
+    workflow — and so a change to that workflow surfaces in one place.
+    """
+    from health.models import HealthObservation, HealthObservationType  # pylint: disable=import-outside-toplevel
+    from health.operations import quarantine_observation  # pylint: disable=import-outside-toplevel
+    from health.services import preview_observation, record_observation  # pylint: disable=import-outside-toplevel
+
+    preview = preview_observation(workspace, scopes)
+    observation = record_observation(
+        workspace, user, scopes=scopes, reviewed_digest=preview['digest'],
+        observation_type=HealthObservationType.objects.get(
+            workspace=workspace, code='pest-signs',
+        ),
+        severity=HealthObservation.Severity.HIGH,
+        notes='Evidence confirmed.',
+    )
+    case, _action = quarantine_observation(
+        workspace, user, observation,
+        idempotency_key=uuid4(), reason=reason,
+    )
+    return case
 
 
 def make_supplier(**overrides):

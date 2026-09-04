@@ -259,12 +259,23 @@ def resolve_cells_to_plants(shares, plants_by_cell):
     return combine(resolved)
 
 
+#: The layer each kind of nursery output earns. A sold quantity keeps its
+#: place among the outputs so its cost stays with the stock that left, exactly
+#: as a sold plant keeps its identity and its own layer.
+OUTPUT_TARGET_TYPES = {
+    'plant': CostAllocation.TargetType.SPECIFIC_PLANT,
+    'cohort': CostAllocation.TargetType.PLANT_COHORT,
+    'cohort_sale': CostAllocation.TargetType.COHORT_SALE,
+}
+
+
 def resolve_unidentified_to_cohorts(shares, outputs):
     """Move unresolved nursery cost to cohort stock and promoted plant IDs.
 
-    `outputs` contains one unit weight for every currently anonymous plant and
-    every concrete plant promoted from the batch's cohorts. Recalculation then
-    transfers value instead of layering a second cost on promotion.
+    `outputs` contains one unit weight for every currently anonymous plant,
+    every unit sold out of a cohort, and every concrete plant promoted from the
+    batch's cohorts. Recalculation then transfers value instead of layering a
+    second cost on promotion or on a sale.
     """
     if not outputs:
         return shares
@@ -277,23 +288,17 @@ def resolve_unidentified_to_cohorts(shares, outputs):
             resolved.append(share)
             continue
         for kind, target_id, weight in outputs:
-            portion = share.weight * Decimal(weight) / total
-            if kind == 'cohort':
-                resolved.append(Share(
-                    key=('cohort', target_id),
-                    target_type=CostAllocation.TargetType.PLANT_COHORT,
-                    weight=portion,
-                    basis=CostAllocation.Basis.PER_PLANT,
-                    cohort_id=target_id,
-                ))
-            else:
-                resolved.append(Share(
-                    key=('plant', target_id),
-                    target_type=CostAllocation.TargetType.SPECIFIC_PLANT,
-                    weight=portion,
-                    basis=CostAllocation.Basis.PER_PLANT,
-                    plant_id=target_id,
-                ))
+            identity = (
+                {'plant_id': target_id} if kind == 'plant'
+                else {'cohort_id': target_id}
+            )
+            resolved.append(Share(
+                key=(kind, target_id),
+                target_type=OUTPUT_TARGET_TYPES[kind],
+                weight=share.weight * Decimal(weight) / total,
+                basis=CostAllocation.Basis.PER_PLANT,
+                **identity,
+            ))
     return combine(resolved)
 
 

@@ -27,6 +27,7 @@ from inventory.ledger import (
     reverse_movement,
 )
 from inventory.models import InventoryItem, StockMovement
+from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import (
     EventType,
     OutcomeRequest,
@@ -36,6 +37,13 @@ from plantings.lifecycle import (
 from plantings.models import SpecificPlant, SpecificPlantLocation
 
 from .calculations import line_position_amounts, money, proportional_refund
+from .cohort_stock import (
+    dispatch_cohort_stock,
+    recost_cohort_batches,
+    restore_cohort_stock,
+    return_cohort_stock,
+    withdraw_returned_cohort,
+)
 from .containers import (
     recost_container_plants,
     resolve_riders,
@@ -262,7 +270,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         raise ValidationError({'allocations': 'Select at least one reserved allocation.'})
     allocations = list(SalesOrderAllocation.objects.select_for_update(of=('self',)).select_related(
         'line', 'plant__batch', 'inventory_unit__item', 'stock_lot__item',
-        'source_location',
+        'plant_cohort__batch', 'source_location',
     ).filter(line__order=order, pk__in=wanted).order_by('pk'))
     if len(allocations) != len(wanted) or any(
             row.status != SalesOrderAllocation.Status.RESERVED for row in allocations):
@@ -280,6 +288,10 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
     lot_ids = [row['lot'].pk for row in packaging]
     lot_ids += [row.stock_lot_id for row in allocations if row.stock_lot_id]
     lots = lock_lots(order.workspace, lot_ids)
+    cohorts = lock_cohorts(
+        order.workspace,
+        [row.plant_cohort_id for row in allocations if row.plant_cohort_id],
+    )
     riders = resolve_riders(units, set(plant_ids))
     validate_riders_are_free(riders, order)
     positions = _available_positions(order)
@@ -299,6 +311,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         position = taken[0]
         lifecycle_event = None
         stock_movement = None
+        cohort_event = None
         if allocation.plant_id:
             plant = plants[allocation.plant_id]
             lifecycle_event = record_lifecycle_event(
@@ -312,6 +325,11 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         elif allocation.stock_lot_id:
             stock_movement, cogs_amount, provisional = _dispatch_counted_stock(
                 order, user, allocation, lots[allocation.stock_lot_id],
+                fulfillment=fulfillment, fulfilled_at=fulfilled_at,
+            )
+        elif allocation.plant_cohort_id:
+            cohort_event, cogs_amount, provisional = dispatch_cohort_stock(
+                order, user, allocation, cohorts[allocation.plant_cohort_id],
                 fulfillment=fulfillment, fulfilled_at=fulfilled_at,
             )
         else:
@@ -340,6 +358,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             cogs_provisional=provisional, currency_code=order.currency_code,
             tax_treatment=allocation.line.tax_treatment,
             lifecycle_event=lifecycle_event, stock_movement=stock_movement,
+            cohort_event=cohort_event,
             **amounts,
         )
         for placement, (rider_cost, _flag) in zip(carried, rider_costs):
@@ -375,6 +394,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             currency_code=lot.currency_code, stock_movement=movement,
         )
     recost_container_plants(passengers, user, 'Sold inside its container.')
+    recost_cohort_batches(cohorts.values(), user, 'Anonymous stock dispatched.')
     recompute_order_status(order)
     return fulfillment
 
@@ -488,7 +508,8 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
     lines = {
         row.pk: row for row in FulfillmentLine.objects.select_for_update(of=('self',))
         .select_related('allocation__plant', 'allocation__inventory_unit',
-                        'allocation__stock_lot__item', 'allocation__source_location')
+                        'allocation__stock_lot__item', 'allocation__source_location',
+                        'allocation__plant_cohort__batch')
         .filter(fulfillment__order=order, fulfillment__reversal__isnull=True,
                 pk__in=line_ids).order_by('pk')
     }
@@ -499,12 +520,18 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         row.allocation.stock_lot_id for row in lines.values()
         if row.allocation.stock_lot_id
     ])
+    lock_cohorts(order.workspace, [
+        row.allocation.plant_cohort_id for row in lines.values()
+        if row.allocation.plant_cohort_id
+    ])
     already = _effective(SalesReturn.objects.filter(order=order)).filter(
         lines__fulfillment_line_id__in=line_ids,
     ).exists()
     if already:
         raise ValidationError({'items': 'One or more items were already returned.'})
     quarantined_plants = []
+    quarantined_cohorts = []
+    returned_cohorts = []
     returned_riders = []
     sales_return = SalesReturn.objects.create(
         workspace=order.workspace, order=order, returned_at=returned_at,
@@ -521,7 +548,17 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         lifecycle_event = None
         return_movement = None
         discard_movement = None
-        if allocation.stock_lot_id:
+        cohort_event = None
+        if allocation.plant_cohort_id:
+            cohort_event = return_cohort_stock(
+                order, user, line, sales_return,
+                returned_at=returned_at, reason=reason, outcome=outcome,
+                destination=destination,
+            )
+            returned_cohorts.append(cohort_event.cohort)
+            if outcome == SalesReturnLine.Outcome.QUARANTINED:
+                quarantined_cohorts.append(cohort_event.cohort)
+        elif allocation.stock_lot_id:
             return_movement, discard_movement = _return_counted_stock(
                 order, user, line, sales_return,
                 returned_at=returned_at, reason=reason, outcome=outcome,
@@ -577,15 +614,17 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         SalesReturnLine.objects.create(
             sales_return=sales_return, fulfillment_line=line, outcome=outcome,
             destination=destination, lifecycle_event=lifecycle_event,
+            cohort_event=cohort_event,
             return_movement=return_movement, discard_movement=discard_movement,
         )
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
             status=SalesOrderAllocation.Status.RETURNED, updated=timezone.now(),
         )
-    if quarantined_plants:
+    if quarantined_plants or quarantined_cohorts:
         if observation_type is None or severity is None:
             raise ValidationError({'health': 'Quarantined plants need an observation type and severity.'})
         scopes = [{'type': 'plant', 'id': plant.pk} for plant in quarantined_plants]
+        scopes += [{'type': 'cohort', 'id': cohort.pk} for cohort in quarantined_cohorts]
         preview = preview_observation(order.workspace, scopes)
         observation = record_observation(
             order.workspace, user, scopes=scopes, reviewed_digest=preview['digest'],
@@ -603,6 +642,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         sales_return.health_observation = observation
         sales_return.quarantine_case = case
     recost_container_plants(returned_riders, user, 'Returned in its container.')
+    recost_cohort_batches(returned_cohorts, user, 'Anonymous stock returned.')
     recompute_order_status(order)
     return sales_return
 
@@ -769,17 +809,26 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
     if _effective(Refund.objects.filter(
             lines__fulfillment_line__fulfillment=original)).exists():
         raise ValidationError({'fulfillment': 'Reverse linked refunds first.'})
+    lock_cohorts(original.workspace, [
+        line.allocation.plant_cohort_id for line in original.lines.all()
+        if line.allocation.plant_cohort_id
+    ])
     reversal = Fulfillment.objects.create(
         workspace=original.workspace, order=original.order,
         fulfillment_number=_number(original.workspace), fulfilled_at=occurred_at,
         notes=reason.strip(), reversal_of=original, operation_key=operation_key,
         request_fingerprint=fingerprint, created_by=_actor(user),
     )
+    restored = []
     for line in original.lines.all():
         if line.lifecycle_event_id:
             reverse_lifecycle_event(line.lifecycle_event, user, reason, occurred_at)
         if line.stock_movement_id:
             reverse_movement(line.stock_movement, user, reason, occurred_at)
+        if line.cohort_event_id:
+            restored.append(restore_cohort_stock(
+                user, line, reversal, occurred_at=occurred_at, reason=reason,
+            ))
         SalesOrderAllocation.objects.filter(pk=line.allocation_id).update(
             status=SalesOrderAllocation.Status.RESERVED, updated=timezone.now(),
         )
@@ -788,6 +837,7 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
     recost_container_plants(
         [rider.plant for rider in riders_of(original)], user, reason,
     )
+    recost_cohort_batches(restored, user, reason)
     recompute_order_status(original.order)
     return reversal
 
@@ -856,19 +906,15 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
     _refuse_reversed(original, 'sales_return', 'return')
     if _effective(original.refunds.all()).exists():
         raise ValidationError({'sales_return': 'Reverse linked refunds first.'})
-    targets = []
-    for line in original.lines.all():
-        allocation = line.fulfillment_line.allocation
-        target_filter = {'plant_id': allocation.plant_id} if allocation.plant_id else {
-            'inventory_unit_id': allocation.inventory_unit_id,
-        }
-        moved_on = SalesOrderAllocation.objects.filter(
-            **target_filter,
-            status__in=[SalesOrderAllocation.Status.RESERVED,
-                        SalesOrderAllocation.Status.FULFILLED],
-        ).exclude(pk=allocation.pk).exists()
-        if moved_on:
-            targets.append(allocation.pk)
+    lock_cohorts(original.workspace, [
+        line.fulfillment_line.allocation.plant_cohort_id
+        for line in original.lines.all()
+        if line.fulfillment_line.allocation.plant_cohort_id
+    ])
+    targets = [
+        line.fulfillment_line.allocation.pk for line in original.lines.all()
+        if _returned_stock_moved_on(line)
+    ]
     if targets:
         raise ValidationError({'sales_return': 'Returned stock has already been reallocated.'})
     reversal = SalesReturn.objects.create(
@@ -877,11 +923,16 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         operation_key=operation_key, request_fingerprint=fingerprint,
         created_by=_actor(user),
     )
+    withdrawn = []
     for line in original.lines.all():
         if line.discard_movement_id:
             reverse_movement(line.discard_movement, user, reason, occurred_at)
         if line.return_movement_id:
             reverse_movement(line.return_movement, user, reason, occurred_at)
+        if line.cohort_event_id:
+            withdrawn.append(withdraw_returned_cohort(
+                user, line, reversal, occurred_at=occurred_at, reason=reason,
+            ))
         if line.lifecycle_event_id:
             SpecificPlantLocation.objects.filter(
                 specific_plant=line.fulfillment_line.allocation.plant,
@@ -907,5 +958,31 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         for line in original.lines.all()
         for rider in line.fulfillment_line.riders.select_related('plant')
     ], user, reason)
+    recost_cohort_batches(withdrawn, user, reason)
     recompute_order_status(original.order)
     return reversal
+
+
+def _returned_stock_moved_on(line):
+    """Return whether one returned promise's stock has been claimed since.
+
+    An identity can be in only one place, so another live promise naming it is
+    proof the return cannot be undone. A lot has no identity to claim: taking
+    the quantity back out again is measured by the ledger, which refuses to
+    drive a lot negative, so there is nothing useful to say here. A returned
+    cohort is a block of its own, and what has to hold is that it still holds
+    what came back — a split, a promotion, a write-off or a second sale out of
+    it all leave nothing to take away again.
+    """
+    allocation = line.fulfillment_line.allocation
+    kind = allocation.target_kind
+    if kind in ('plant', 'inventory_unit'):
+        return SalesOrderAllocation.objects.filter(
+            **{f'{kind}_id': getattr(allocation, f'{kind}_id')},
+            status__in=[SalesOrderAllocation.Status.RESERVED,
+                        SalesOrderAllocation.Status.FULFILLED],
+        ).exclude(pk=allocation.pk).exists()
+    if kind == 'plant_cohort':
+        returned = line.cohort_event
+        return returned is None or returned.cohort.quantity < returned.quantity_delta
+    return False

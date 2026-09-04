@@ -25,6 +25,11 @@ const BUCKET_ORDER: Array<CostBucket> = ['plant_inventory', 'cogs', 'harvested_o
 const TARGET_LABELS: Record<CostTargetType, string> = {
   specific_plant: 'Plant',
   seed_tray_cell: 'Cell',
+  plant_cohort: 'Cohort',
+  // Cost that left with anonymous stock somebody bought. Named for where it
+  // went rather than for the block it came out of, because the block is still
+  // there holding what did not sell.
+  cohort_sale: 'Sold from cohort',
   batch_pool: 'Unclaimed',
   production_loss: 'Loss',
   unattributed: 'Unattributed'
@@ -43,6 +48,7 @@ function targetLabel(layer: CostLayer): string {
   const kind = TARGET_LABELS[layer.target_type]
   if (layer.specific_plant !== null) return `${kind} #${layer.specific_plant}`
   if (layer.seed_tray_cell !== null) return `${kind} #${layer.seed_tray_cell}`
+  if (layer.plant_cohort !== null) return `${kind} #${layer.plant_cohort}`
   return kind
 }
 

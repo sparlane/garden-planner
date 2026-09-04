@@ -542,15 +542,24 @@ def _health_follow_up_tasks(rule):
 
 
 def _allocation_variety(allocation):
-    """Return the variety a hold is on, or None for a serialized tray unit."""
-    return allocation.plant.batch.variety if allocation.plant_id else None
+    """Return the crop a hold is on, or None where the stock names no variety.
+
+    A cohort reaches its variety through its batch, exactly as a plant does, so
+    a rule scoped to one crop sees the anonymous half of it too. Inventory
+    stock — a tray, a box of pots — is not a crop and has none.
+    """
+    if allocation.plant_id:
+        return allocation.plant.batch.variety
+    if allocation.plant_cohort_id:
+        return allocation.plant_cohort.batch.variety
+    return None
 
 
 def _held_target(allocation):
     """Link the exact stock one hold is keeping off the floor.
 
     A counted hold has no identity to name — anonymous stock has none — so it
-    links the lot the pots are standing in and says how many. Falling through
+    links the pool the stock is standing in and says how many. Falling through
     to the unit branch instead built a link to nothing, and acknowledging the
     task then failed on a target that had no content type.
     """
@@ -562,6 +571,12 @@ def _held_target(allocation):
     if allocation.inventory_unit_id:
         return TargetLink(
             allocation.inventory_unit, f'Unit {allocation.inventory_unit_id}',
+        )
+    if allocation.plant_cohort_id:
+        return TargetLink(
+            allocation.plant_cohort,
+            f'{allocation.promised_units} × {allocation.plant_cohort.batch.variety.name}',
+            f'/plantings/cohorts/{allocation.plant_cohort_id}',
         )
     return TargetLink(
         allocation.stock_lot,
@@ -582,7 +597,7 @@ def _reservation_allocations(rule, status):
         expires_at__isnull=False,
     ).select_related(
         'line__order', 'plant__batch__variety__plant', 'inventory_unit',
-        'stock_lot__item',
+        'stock_lot__item', 'plant_cohort__batch__variety__plant',
     ).order_by('expires_at', 'pk')
     grouped = {}
     for allocation in rows:

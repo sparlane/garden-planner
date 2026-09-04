@@ -4,17 +4,20 @@ import { PlantLifecycleState, ProductionBatchStatus } from './plantings'
 // holding it on the server, so a layer can be walked back to its document.
 type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual' | 'garden_planting' | 'container_unit'
 
-// What the cost was allocated to. The last three name no individual thing: a
-// pool has not reached one yet, a loss never will, and unattributed cost never
-// could — a direct-sown row produces a crop rather than a set of seedlings.
-type CostTargetType = 'seed_tray_cell' | 'specific_plant' | 'batch_pool' | 'production_loss' | 'unattributed'
+// What the cost was allocated to. `cohort_sale` names the block a quantity was
+// sold out of: anonymous stock keeps no identity to carry its cost away with,
+// so the units that left stay an output of their batch under their own type.
+// The last three name no individual thing: a pool has not reached one yet, a
+// loss never will, and unattributed cost never could — a direct-sown row
+// produces a crop rather than a set of seedlings.
+type CostTargetType = 'seed_tray_cell' | 'specific_plant' | 'plant_cohort' | 'cohort_sale' | 'batch_pool' | 'production_loss' | 'unattributed'
 
 // How a layer's share of its source was arrived at.
 type CostBasis = 'seeds_sown' | 'cell_volume' | 'per_plant' | 'area' | 'equal_share' | 'direct'
 
-// The buckets a batch's value sits in. `cogs` stays at zero until orders exist;
-// it is reported anyway so a screen never has to guess whether a missing figure
-// means zero or means unsupported.
+// The buckets a batch's value sits in. Every one is reported even when it is
+// zero, so a screen never has to guess whether a missing figure means zero or
+// means unsupported.
 type CostBucket = 'plant_inventory' | 'cogs' | 'harvested_output' | 'production_loss' | 'unresolved' | 'unattributed'
 
 // One immutable layer of cost. `amount` is null when the lot it came from has
@@ -40,6 +43,7 @@ interface CostLayer {
   seed_tray_cell: number | null
   seed_tray_generation: number | null
   specific_plant: number | null
+  plant_cohort: number | null
   basis: CostBasis
   basis_weight: string
   base_quantity: string

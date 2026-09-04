@@ -5,9 +5,6 @@ from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
-from health.models import HealthObservation, HealthObservationType
-from health.operations import quarantine_observation
-from health.services import preview_observation, record_observation
 from inventory.models import InventoryUnit
 from plantings.lifecycle import (
     EventType,
@@ -15,12 +12,15 @@ from plantings.lifecycle import (
     record_germination_event,
     record_lifecycle_event,
 )
-from plantings.models import SpecificPlant
+from plantings.cohorts import change_cohort, observe_cohort
+from plantings.models import CohortOperation, PlantCohort, SpecificPlant
 from tests.api import RESTContractTestCase
 from tests.factories import (
+    make_production_batch,
     make_seed_tray,
     make_seed_tray_cell_planting,
     make_specific_plant,
+    quarantine_stock,
 )
 from workspaces.models import Workspace, get_current_workspace
 
@@ -49,6 +49,21 @@ TRAY_REASONS = ('wrong_item', 'not_available')
 #: a tray line and `unknown` with both, and adds the two only a pool can have:
 #: a place that is not one of ours, and not enough loose stock standing there.
 LOT_REASONS = ('unknown_location', 'insufficient_stock')
+
+#: Why a cohort line can refuse a draw on a block. It shares `wrong_variety`,
+#: `not_sellable`, `quarantined`, `wrong_workspace` and `unknown` with a
+#: seedling line and `insufficient_stock` with a lot draw, and adds the one
+#: only an anonymous block has: it has changed since the count was chosen
+#: against the figure on screen.
+COHORT_REASONS = ('stale_revision',)
+
+#: The refusals a cohort draw borrows from the other two kinds of selection.
+#: Listed so the reachability walk covers every reason a cohort draw can carry
+#: without claiming any of them as its own.
+SHARED_COHORT_REASONS = (
+    'wrong_variety', 'not_sellable', 'quarantined', 'wrong_workspace',
+    'insufficient_stock', 'unknown',
+)
 
 
 def declared_conflict_reasons():
@@ -129,27 +144,9 @@ class SelectionFixture(RESTContractTestCase):
 
     def quarantine(self, plant):
         """Open a quarantine case over one plant without changing its state."""
-        scopes = [{'type': 'plant', 'id': plant.pk}]
-        preview = preview_observation(self.workspace, scopes)
-        observation = record_observation(
-            self.workspace,
-            self.user,
-            scopes=scopes,
-            reviewed_digest=preview['digest'],
-            observation_type=HealthObservationType.objects.get(
-                workspace=self.workspace,
-                code='pest-signs',
-            ),
-            severity=HealthObservation.Severity.HIGH,
-            notes='Evidence confirmed.',
+        return quarantine_stock(
+            self.workspace, self.user, [{'type': 'plant', 'id': plant.pk}],
         )
-        return quarantine_observation(
-            self.workspace,
-            self.user,
-            observation,
-            idempotency_key=uuid4(),
-            reason='Prevent spread while reviewed.',
-        )[0]
 
     def create_order(self, status=SalesOrder.Status.DRAFT):
         """Create one order through its public endpoint."""
@@ -254,7 +251,7 @@ class SeedlingSelectionTests(SelectionFixture):
     def test_the_declared_reasons_are_the_ones_the_code_can_produce(self):
         """A reason added without a case here would go unexercised."""
         self.assertEqual(
-            set(SEEDLING_REASONS) | set(TRAY_REASONS) | set(LOT_REASONS),
+            set(SEEDLING_REASONS) | set(TRAY_REASONS) | set(LOT_REASONS) | set(COHORT_REASONS),
             declared_conflict_reasons(),
         )
 
@@ -454,3 +451,119 @@ class RegisterFilterSelectionTests(SelectionFixture):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertIn('sellable', response.data)
+
+
+class CohortSelectionTests(SelectionFixture):
+    """Every refusal a cohort draw can carry is reachable and honoured."""
+
+    def setUp(self):
+        """Offer one block of anonymous seedlings for sale."""
+        super().setUp()
+        self.batch = make_production_batch()
+        self.cohort = self.ready_cohort()
+
+    def ready_cohort(self, quantity=100, batch=None):
+        """Observe one block and put it on sale, as the register screen does."""
+        cohort, _observed = observe_cohort(
+            get_current_workspace(), self.user,
+            batch=batch or self.batch, quantity=quantity,
+            idempotency_key=uuid4(),
+        )
+        cohort, _ready = change_cohort(
+            get_current_workspace(), self.user,
+            cohort_id=cohort.pk, expected_revision=cohort.revision,
+            action=CohortOperation.Action.READY, idempotency_key=uuid4(),
+        )
+        return cohort
+
+    def cohort_line(self, order, quantity=10):
+        """Add a cohort line for the fixture block's own variety."""
+        return self.add_line(order, {
+            'line_type': 'cohort_quantity',
+            'variety': self.batch.variety_id,
+            'description': 'Anonymous seedlings',
+            'quantity': quantity,
+        })
+
+    def draw(self, cohort, revision=None, quantity=10):
+        """Return the request body one draw on one block is posted as."""
+        return {
+            'cohort': cohort.pk,
+            'quantity': quantity,
+            'expected_revision': cohort.revision if revision is None else revision,
+        }
+
+    def growing_cohort(self):
+        """Observe a block nobody has offered for sale yet."""
+        cohort, _observed = observe_cohort(
+            get_current_workspace(), self.user,
+            batch=self.batch, quantity=10, idempotency_key=uuid4(),
+        )
+        return cohort
+
+    def foreign_cohort(self):
+        """Move one block into another workspace without rebuilding its graph."""
+        cohort = self.ready_cohort()
+        PlantCohort.objects.filter(pk=cohort.pk).update(
+            workspace=Workspace.objects.create(name='Other nursery'),
+        )
+        return cohort
+
+    def quarantined_cohort(self):
+        """Offer a block for sale and then hold it back on health grounds."""
+        cohort = self.ready_cohort()
+        quarantine_stock(
+            self.workspace, self.user, [{'type': 'cohort', 'id': cohort.pk}],
+        )
+        return cohort
+
+    def conflicted_draw(self, reason):
+        """Return a draw the preview should refuse for exactly one reason."""
+        builders = {
+            'wrong_variety': lambda: self.draw(self.ready_cohort(batch=make_production_batch())),
+            'not_sellable': lambda: self.draw(self.growing_cohort()),
+            'quarantined': lambda: self.draw(self.quarantined_cohort()),
+            'stale_revision': lambda: self.draw(self.cohort, revision=self.cohort.revision + 1),
+            'insufficient_stock': lambda: self.draw(self.ready_cohort(quantity=4)),
+            'wrong_workspace': lambda: self.draw(self.foreign_cohort()),
+            'unknown': lambda: {
+                'cohort': self.cohort.pk + 10_000, 'quantity': 10, 'expected_revision': 1,
+            },
+        }
+        return builders[reason]()
+
+    def test_every_refusal_is_reachable_and_allocate_refuses_it_too(self):
+        """The preview is only worth reading if allocation agrees with it."""
+        for reason in COHORT_REASONS + SHARED_COHORT_REASONS:
+            with self.subTest(reason=reason):
+                order = self.create_order()
+                line = self.cohort_line(order)
+                refused = self.conflicted_draw(reason)
+
+                preview = self.preview(order, line, cohort_requests=[refused])
+                self.assertEqual(preview.status_code, 200, preview.data)
+                self.assertEqual(preview.data['selected'], [])
+                self.assertEqual(preview.data['conflicts'][0]['reason'], reason)
+
+                allocated = self.allocate(order, line, cohort_requests=[refused])
+                self.assertEqual(allocated.status_code, 400, allocated.data)
+
+    def test_a_draw_that_fits_is_previewed_and_then_promised(self):
+        """The revision travels with the draw, so the block cannot move under it."""
+        order = self.create_order()
+        line = self.cohort_line(order)
+        draw = self.draw(self.cohort)
+
+        preview = self.preview(order, line, cohort_requests=[draw])
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['selected'], [{
+            'id': self.cohort.pk,
+            'quantity': 10,
+            'expected_revision': self.cohort.revision,
+            'available': '100',
+        }])
+
+        allocated = self.allocate(order, line, cohort_requests=[draw])
+        self.assertEqual(allocated.status_code, 201, allocated.data)
+        self.assertEqual(allocated.data[0]['plant_cohort'], self.cohort.pk)
+        self.assertEqual(allocated.data[0]['quantity'], 10)

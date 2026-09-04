@@ -13,9 +13,11 @@ type Customer = {
 
 type SalesOrderStatus = 'quote' | 'draft' | 'confirmed' | 'partially_fulfilled' | 'fulfilled' | 'cancelled'
 // Named for the mechanism rather than for what happens to be sold: 'unit' is
-// anything individually numbered, a tray or a pot alike, and 'lot_quantity' is
-// anonymous stock sold by the count out of one lot.
-type SalesLineType = 'seedling' | 'unit' | 'lot_quantity'
+// anything individually numbered, a tray or a pot alike, 'lot_quantity' is
+// anonymous stock sold by the count out of one lot, and 'cohort_quantity' is
+// nursery plants sold by the count out of a block that was never given
+// identities. The last two are both counted draws; what differs is the pool.
+type SalesLineType = 'seedling' | 'unit' | 'lot_quantity' | 'cohort_quantity'
 // What kind of supply a line is for GST. A rate of zero is three different
 // things — a zero-rated export, an exempt supply, and something outside GST —
 // and a return reports the first separately from the other two.
@@ -42,6 +44,7 @@ interface SalesAllocation {
   inventory_unit: number | null
   asset_code: string | null
   stock_lot: number | null
+  plant_cohort: number | null
   source_location: number | null
   // Null for a plant or a numbered unit, each of which is exactly one thing.
   quantity: number | null
@@ -270,14 +273,35 @@ interface LotDrawPreview {
   available: string | null
 }
 
+interface CohortDraw {
+  cohort: number
+  quantity: number
+  // The revision the count was chosen against. A block that has been split,
+  // moved or written down since the screen loaded is not the one the operator
+  // read the figure from, so the server refuses rather than guessing.
+  expected_revision: number
+}
+
+// What a cohort preview says can be had. `id` is the cohort, and `available`
+// is what is standing unpromised in it, as a string like every other counted
+// availability figure so one helper renders them all.
+interface CohortDrawPreview {
+  id: number
+  quantity: number
+  expected_revision: number
+  available: string | null
+}
+
 interface AllocationPreview {
-  selected: Array<number> | Array<LotDrawPreview>
+  selected: Array<number> | Array<LotDrawPreview> | Array<CohortDrawPreview>
   conflicts: Array<{ id: number; reason: string; location?: number; available?: string | null; order?: number; order_number?: string; status?: SalesAllocationStatus }>
   warnings: Array<{ id: number; reason: 'tentatively_claimed' } & AllocationOrderReference>
 }
 
 export {
   AllocationPreview,
+  CohortDraw,
+  CohortDrawPreview,
   Customer,
   LotDraw,
   LotDrawPreview,
