@@ -11,18 +11,21 @@ from rest_framework.views import APIView
 from locations.models import Location, location_full_name
 from workspaces.models import get_current_workspace
 
-from .ledger import MONEY_QUANTUM, physical_balance
-from .models import InventoryUnit, StockLot, StockMovement
+from .ledger import MONEY_QUANTUM, physical_balances
+from .models import InventoryUnit, StockLot
 from .rest_query import parse_boolean, parse_date, parse_integer
 
 
 class DerivedBalances(NamedTuple):
     """The lookups every row is built against, gathered in one pass each.
 
-    `names` is the whole catalog's pk-to-name map, which is what lets a row
-    name its location in full without a query per ancestor.
+    `physical` is the whole request's balances, keyed by lot and location, so
+    that a row costs a dictionary read rather than an aggregate. `names` is
+    the whole catalog's pk-to-name map, which is what lets a row name its
+    location in full without a query per ancestor.
     """
 
+    physical: dict
     item_totals: dict
     numbered: dict
     promised: dict
@@ -79,30 +82,29 @@ class BalanceView(APIView):
                 expires_on__lte=filters.expires_before,
             )
         result_lots = list(result_lots)
-        result_locations = self._history_locations(workspace, result_lots)
-        all_locations = self._history_locations(workspace, item_total_lots)
+        # Balanced across every lot the item totals need, which is a superset
+        # of the rows the filters keep, so one grouped query serves both and
+        # each row's quantity is derived exactly once per request.
+        balances = physical_balances(item_total_lots)
+        locations = self._history_locations(workspace, balances)
         derived = DerivedBalances(
-            item_totals=self._item_totals(item_total_lots, all_locations),
+            physical=balances,
+            item_totals=self._item_totals(item_total_lots, locations, balances),
             numbered=self._numbered_counts(workspace, result_lots),
             promised=self._promised_counts(workspace, result_lots),
             names=dict(
                 Location.objects.filter(workspace=workspace).values_list('pk', 'name'),
             ),
         )
-        return Response(self._rows(
-            result_lots,
-            result_locations,
-            filters,
-            derived,
-        ))
+        return Response(self._rows(result_lots, locations, filters, derived))
 
     @staticmethod
     def _numbered_counts(workspace, lots):
         """Count numbered units per lot and location in one query.
 
-        Deliberately not a count per row: this endpoint already costs about
-        two queries per row (see `todo/105`), and a third would make a known
-        problem worse for every item, numbered or not.
+        Deliberately not a count per row: this endpoint answers in a fixed
+        number of queries however many rows it returns, and a count per row
+        would put that back for every item, numbered or not.
         """
         counts = defaultdict(int)
         rows = InventoryUnit.objects.filter(
@@ -136,18 +138,17 @@ class BalanceView(APIView):
         return promised
 
     @staticmethod
-    def _history_locations(workspace, lots):
-        """Return each lot's distinct locations across its complete history."""
-        lot_ids = [lot.pk for lot in lots]
+    def _history_locations(workspace, balances):
+        """Return each lot's distinct locations across its complete history.
+
+        Read off the balances rather than the ledger a second time: a lot has
+        a balance at exactly the places its movements touched, so the keys
+        already are the history, and asking again would re-read every
+        movement row to learn what the first pass knew.
+        """
         location_ids = defaultdict(set)
-        for movement in StockMovement.objects.filter(
-            workspace=workspace,
-            lot_id__in=lot_ids,
-        ).values('lot_id', 'source_id', 'destination_id'):
-            if movement['source_id']:
-                location_ids[movement['lot_id']].add(movement['source_id'])
-            if movement['destination_id']:
-                location_ids[movement['lot_id']].add(movement['destination_id'])
+        for lot_id, location_id in balances:
+            location_ids[lot_id].add(location_id)
         locations = {
             location.pk: location
             for location in Location.objects.filter(
@@ -161,12 +162,12 @@ class BalanceView(APIView):
         }
 
     @staticmethod
-    def _item_totals(lots, locations):
+    def _item_totals(lots, locations, balances):
         """Aggregate availability across every lot/location for low-stock state."""
         totals = defaultdict(Decimal)
         for lot in lots:
             for location in locations.get(lot.pk, []):
-                totals[lot.item_id] += physical_balance(lot, location)
+                totals[lot.item_id] += balances[(lot.pk, location.pk)]
         return totals
 
     @classmethod
@@ -180,12 +181,7 @@ class BalanceView(APIView):
                 is_low = cls._is_low(lot, derived.item_totals)
                 if filters.low_stock is not None and is_low != filters.low_stock:
                     continue
-                rows.append(cls._balance_row(
-                    lot, location, is_low,
-                    derived.numbered[(lot.pk, location.pk)],
-                    derived.promised[(lot.pk, location.pk)],
-                    derived.names,
-                ))
+                rows.append(cls._balance_row(lot, location, is_low, derived))
         return rows
 
     @staticmethod
@@ -195,10 +191,11 @@ class BalanceView(APIView):
         return threshold is not None and item_totals[lot.item_id] <= threshold
 
     @staticmethod
-    def _balance_row(lot, location, is_low, numbered, promised, names):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def _balance_row(lot, location, is_low, derived):
         """Serialize one lot/location quantity and immutable-cost valuation."""
-        physical = physical_balance(lot, location)
-        numbered_quantity = Decimal(numbered)
+        physical = derived.physical[(lot.pk, location.pk)]
+        promised = derived.promised[(lot.pk, location.pk)]
+        numbered_quantity = Decimal(derived.numbered[(lot.pk, location.pk)])
         bulk = physical - numbered_quantity
         value = None
         if lot.base_unit_cost is not None:
@@ -213,7 +210,7 @@ class BalanceView(APIView):
             'item_name': lot.item.name,
             'location': location.pk,
             'location_name': location.name,
-            'location_full_name': location_full_name(location, names),
+            'location_full_name': location_full_name(location, derived.names),
             'physical_quantity': f'{physical:.9f}',
             'bulk_quantity': f'{bulk:.9f}',
             'numbered_quantity': f'{numbered_quantity:.9f}',

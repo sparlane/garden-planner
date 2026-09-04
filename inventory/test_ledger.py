@@ -16,6 +16,7 @@ from .ledger import (
     MovementRequest,
     OpeningBalanceRequest,
     physical_balance,
+    physical_balances,
     post_opening_balance,
     post_receipt,
     post_stock_movement,
@@ -330,6 +331,85 @@ class LedgerServiceTests(LedgerFixtureTestCase):
                         ),
                     )
                 self.assertIn('reason', context.exception.message_dict)
+
+
+class BatchedBalanceTests(LedgerFixtureTestCase):
+    """The batched balances agree with the single-lot figure, in one query."""
+
+    def test_one_query_answers_for_every_lot_and_place_at_once(self):
+        """A caller serving a page of rows must not pay an aggregate per row."""
+        first, _opening = self.make_opening(Decimal('100'))
+        second, _second_opening = self.make_opening(Decimal('40'))
+        post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=first,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                quantity=Decimal('30'),
+                source=self.store,
+                destination=self.growing,
+            ),
+        )
+        post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=second,
+                movement_type=StockMovement.MovementType.CONSUMPTION,
+                quantity=Decimal('10'),
+                source=self.store,
+                reference='Potting run',
+            ),
+        )
+
+        with self.assertNumQueries(1):
+            balances = physical_balances([first, second])
+
+        self.assertEqual(balances, {
+            (first.pk, self.store.pk): Decimal('70'),
+            (first.pk, self.growing.pk): Decimal('30'),
+            (second.pk, self.store.pk): Decimal('30'),
+        })
+        for lot in (first, second):
+            for location in (self.store, self.growing):
+                with self.subTest(lot=lot.pk, location=location.pk):
+                    self.assertEqual(
+                        balances[(lot.pk, location.pk)],
+                        physical_balance(lot, location),
+                    )
+
+    def test_a_place_the_stock_has_left_keeps_a_zero_entry(self):
+        """The balance screen reports an emptied place rather than dropping it."""
+        lot, _opening = self.make_opening(Decimal('100'))
+        post_stock_movement(
+            self.workspace,
+            self.user,
+            MovementRequest(
+                lot=lot,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                quantity=Decimal('100'),
+                source=self.store,
+                destination=self.growing,
+            ),
+        )
+
+        balances = physical_balances([lot])
+
+        # Membership first: reading a missing key would create it.
+        self.assertIn((lot.pk, self.store.pk), balances)
+        self.assertEqual(balances[(lot.pk, self.store.pk)], Decimal('0'))
+        self.assertEqual(balances[(lot.pk, self.growing.pk)], Decimal('100'))
+
+    def test_a_pair_the_ledger_never_touched_reads_zero(self):
+        """Callers index the mapping by row, so a gap must not be a KeyError."""
+        lot, _opening = self.make_opening(Decimal('100'))
+
+        balances = physical_balances([lot])
+
+        self.assertEqual(balances[(lot.pk, self.growing.pk)], Decimal('0'))
+        with self.assertNumQueries(0):
+            self.assertEqual(physical_balances([]), {})
 
 
 class ReversalChainTests(LedgerFixtureTestCase):

@@ -3,6 +3,10 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
+
 from .ledger import MovementRequest, post_stock_movement
 from .models import StockLot, StockMovement
 from .test_ledger_rest import LedgerRestFixture
@@ -299,3 +303,94 @@ class InventoryQueryFilterTests(LedgerRestFixture):
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(len(self.client.get(self.balance_url).data), 1)
+
+
+class BalanceQueryBudgetTests(LedgerRestFixture):
+    """The stock screen's cost must not grow with the size of its answer."""
+
+    def rows_of(self, response):
+        """Return the rows of one balance response, asserting it succeeded."""
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def stock_two_places(self, lots):
+        """Add lots that each hold stock in the store and the growing house."""
+        created = StockLot.objects.bulk_create([
+            StockLot(
+                workspace=self.workspace,
+                item=self.item,
+                origin=StockLot.Origin.OPENING,
+                received_on=date(2026, 8, 1),
+                initial_base_quantity=Decimal('100'),
+                acquisition_total=Decimal('25'),
+                base_unit_cost=Decimal('0.25'),
+                currency_code=self.workspace.currency_code,
+            )
+            for _index in range(lots)
+        ])
+        occurred_at = timezone.now()
+        StockMovement.objects.bulk_create([
+            StockMovement(
+                workspace=self.workspace,
+                lot=lot,
+                occurred_at=occurred_at,
+                movement_type=StockMovement.MovementType.OPENING,
+                quantity=Decimal('100'),
+                destination=self.store,
+            )
+            for lot in created
+        ])
+        StockMovement.objects.bulk_create([
+            StockMovement(
+                workspace=self.workspace,
+                lot=lot,
+                occurred_at=occurred_at,
+                movement_type=StockMovement.MovementType.TRANSFER,
+                quantity=Decimal('40'),
+                source=self.store,
+                destination=self.growing,
+            )
+            for lot in created
+        ])
+
+    def test_a_request_costs_the_same_number_of_queries_at_any_volume(self):
+        """A screen that queried per row could not serve a working nursery."""
+        self.stock_two_places(2)
+        with CaptureQueriesContext(connection) as small_queries:
+            small = self.client.get(self.balance_url)
+        self.stock_two_places(10)
+        with CaptureQueriesContext(connection) as medium_queries:
+            medium = self.client.get(self.balance_url)
+        self.stock_two_places(108)
+        with CaptureQueriesContext(connection) as large_queries:
+            large = self.client.get(self.balance_url)
+
+        self.assertEqual(
+            [len(small.data), len(medium.data), len(large.data)],
+            [4, 24, 240],
+        )
+        self.assertEqual(len(medium_queries), len(small_queries))
+        self.assertEqual(len(large_queries), len(small_queries))
+        self.assertLessEqual(len(small_queries), 10, small_queries.captured_queries)
+
+    def test_the_rows_are_the_same_however_many_lots_share_the_request(self):
+        """Batching one query for the page must not blur one lot into another."""
+        self.stock_two_places(4)
+        rows = {
+            (row['lot'], row['location']): row
+            for row in self.rows_of(self.client.get(self.balance_url))
+        }
+
+        self.assertEqual(len(rows), 8)
+        for (lot_pk, location_pk), row in rows.items():
+            with self.subTest(lot=lot_pk, location=location_pk):
+                alone = self.rows_of(
+                    self.client.get(self.balance_url, {'lot': lot_pk}),
+                )
+                self.assertEqual(
+                    row,
+                    next(
+                        single for single in alone
+                        if single['location'] == location_pk
+                    ),
+                )

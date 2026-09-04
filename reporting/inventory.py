@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from django.db.models import Q
 
+from inventory.ledger import physical_balances
 from inventory.models import (
     InventoryItem,
     InventoryUnit,
@@ -41,18 +42,13 @@ def inventory_balances(workspace, filters):  # pylint: disable=too-many-locals,t
     lot_ids = [lot.pk for lot in lots]
     lots_by_id = {lot.pk: lot for lot in lots}
 
-    balances = defaultdict(Decimal)
-    location_ids = set()
-    movements = StockMovement.objects.filter(
-        workspace=workspace, lot_id__in=lot_ids,
-    ).values('lot_id', 'source_id', 'destination_id', 'quantity')
-    for movement in movements:
-        if movement['source_id']:
-            balances[(movement['lot_id'], movement['source_id'])] -= movement['quantity']
-            location_ids.add(movement['source_id'])
-        if movement['destination_id']:
-            balances[(movement['lot_id'], movement['destination_id'])] += movement['quantity']
-            location_ids.add(movement['destination_id'])
+    # One grouped aggregate for the whole report, shared with the balance
+    # endpoint, rather than an aggregate per lot and place.
+    balances = physical_balances(lots)
+    lot_locations = defaultdict(set)
+    for lot_id, location_id in balances:
+        lot_locations[lot_id].add(location_id)
+    location_ids = {location_id for _lot_id, location_id in balances}
 
     # One aggregate rather than a count per row: numbered stock is on hand and
     # counts towards `physical`, but it is not loose quantity anyone can pick.
@@ -82,20 +78,21 @@ def inventory_balances(workspace, filters):  # pylint: disable=too-many-locals,t
     }
 
     item_available = defaultdict(Decimal)
-    for (lot_id, _location_id), physical in balances.items():
+    for (lot_id, location_id), physical in balances.items():
         lot = lots_by_id[lot_id]
-        item_available[lot.item_id] += physical - reserved[(lot_id, _location_id)]
+        item_available[lot.item_id] += physical - reserved[(lot_id, location_id)]
 
     rows = []
     for lot in lots:
-        for (lot_id, location_id), physical in balances.items():
-            if lot_id != lot.pk or physical == 0:
+        for location_id in sorted(lot_locations[lot.pk]):
+            physical = balances[(lot.pk, location_id)]
+            if physical == 0:
                 continue
             if filters.get('location') and location_id != filters['location']:
                 continue
-            reserved_quantity = Decimal(reserved[(lot_id, location_id)])
+            reserved_quantity = Decimal(reserved[(lot.pk, location_id)])
             available = physical - reserved_quantity
-            numbered_quantity = Decimal(numbered[(lot_id, location_id)])
+            numbered_quantity = Decimal(numbered[(lot.pk, location_id)])
             bulk_quantity = physical - numbered_quantity
             low_stock = lot.item.reorder_level is not None and (
                 item_available[lot.item_id] <= lot.item.reorder_level
