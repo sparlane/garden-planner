@@ -20,6 +20,7 @@ import {
   getRequisitions,
   getSupplierInvoices,
   matchPurchaseReceipt,
+  replaceSupplierInvoiceDraft,
   reviewRequisition
 } from './api/purchasing'
 import { getInventoryItems, getStockReceipts } from './api/inventory'
@@ -56,6 +57,29 @@ function receiptLineLabel(receipt: StockReceipt, line: StockReceiptLine, items: 
 interface ReceiptChoice {
   receipt: StockReceipt
   line: StockReceiptLine
+}
+
+// One row of an invoice being built. A supplier document charges for received
+// stock, its freight, and non-stock costs in whatever mixture the supplier
+// chose, and `SupplierInvoiceLine.clean` lets each line carry exactly one of
+// those targets -- so the kind is what the row is for, not what the invoice is.
+type InvoiceLineKind = 'receipt' | 'freight' | 'expense'
+
+interface DraftInvoiceLine {
+  key: string
+  kind: InvoiceLineKind
+  receiptLine: number | null
+  expenseCategory: number | ''
+  description: string
+  subtotal: string
+  taxRate: string
+  tax: string
+}
+
+const LINE_KIND_LABELS: Record<InvoiceLineKind, string> = {
+  receipt: 'Received stock',
+  freight: 'Freight',
+  expense: 'Other charge'
 }
 
 function Dashboard({ workspace }: { workspace: Workspace }) {
@@ -228,27 +252,76 @@ function Invoices({
 }) {
   const queryClient = useQueryClient()
   const { data: invoices = [] } = useQuery({ queryKey: queryKeys.purchasing.invoices, queryFn: ({ signal }) => getSupplierInvoices(signal) })
-  const [linePk, setLinePk] = React.useState<number | ''>('')
+  const { data: categories = [] } = useQuery({ queryKey: queryKeys.purchasing.categories, queryFn: ({ signal }) => getExpenseCategories(signal) })
   const [supplier, setSupplier] = React.useState<number | ''>('')
   const [reference, setReference] = React.useState('')
   const [invoiceDate, setInvoiceDate] = React.useState(localToday())
   const [dueDate, setDueDate] = React.useState('')
-  const [description, setDescription] = React.useState('')
-  const [subtotal, setSubtotal] = React.useState('0')
-  const [taxRate, setTaxRate] = React.useState(workspace.default_tax_rate)
-  const [tax, setTax] = React.useState('0')
-  const [total, setTotal] = React.useState('0')
   const [attachmentUrl, setAttachmentUrl] = React.useState('')
+  const [lines, setLines] = React.useState<Array<DraftInvoiceLine>>([])
   const [correcting, setCorrecting] = React.useState<SupplierInvoice | null>(null)
-  const invoicedReceiptLines = new Set(invoices.flatMap((invoice) => invoice.lines.map((line) => line.receipt_line).filter((pk): pk is number => pk !== null)))
-  const choices: Array<ReceiptChoice> = receipts.flatMap((receipt) => receipt.lines.map((line) => ({ receipt, line }))).filter(({ line }) => !invoicedReceiptLines.has(line.pk))
+  const nextKey = React.useRef(0)
+  // An invoice is created as a draft and then confirmed, and only the confirm
+  // step can discover that a line was claimed by someone else in between. The
+  // draft it leaves behind already holds the invoice number, so a retry has to
+  // replace that draft rather than post a second one against a taken reference.
+  const draftPk = React.useRef<number | null>(null)
+  // A receipt line stays claimable until an invoice that has not been cancelled
+  // holds it: `confirm_invoice` refuses a second confirmed claim on one line,
+  // and a draft is on its way to becoming that claim.
+  const claimed = new Set(
+    invoices
+      .filter((invoice) => invoice.status !== 'cancelled')
+      .flatMap((invoice) => invoice.lines.map((line) => line.receipt_line))
+      .filter((pk): pk is number => pk !== null)
+  )
+  const drafted = new Set(lines.map((line) => line.receiptLine).filter((pk): pk is number => pk !== null))
+  const choices: Array<ReceiptChoice> = receipts
+    .flatMap((receipt) => receipt.lines.map((line) => ({ receipt, line })))
+    .filter(({ receipt, line }) => receipt.supplier === supplier && !claimed.has(line.pk) && !drafted.has(line.pk))
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })
     await queryClient.invalidateQueries({ queryKey: queryKeys.inventory.receiptsAll })
   }
-  const mutation = useMutation({
+  function addLine(line: Omit<DraftInvoiceLine, 'key'>) {
+    nextKey.current += 1
+    setLines((current) => [...current, { ...line, key: `line-${nextKey.current}` }])
+  }
+  function updateLine(key: string, changes: Partial<DraftInvoiceLine>) {
+    setLines((current) => current.map((line) => (line.key === key ? { ...line, ...changes } : line)))
+  }
+  function removeLine(key: string) {
+    setLines((current) => current.filter((line) => line.key !== key))
+  }
+  // The amounts a receipt already recorded are the ones the supplier document is
+  // most likely to repeat, so a stock line arrives filled in and is corrected
+  // only where the invoice actually disagrees with what was received.
+  function addReceiptLine(value: string) {
+    const choice = choices.find(({ line }) => line.pk === Number(value))
+    if (!choice) return
+    addLine({
+      kind: 'receipt',
+      receiptLine: choice.line.pk,
+      expenseCategory: '',
+      description: itemName(choice.line.item, items),
+      subtotal: choice.line.line_cost_ex_tax,
+      taxRate: choice.line.tax_rate,
+      tax: choice.line.input_tax_amount
+    })
+  }
+  function chooseSupplier(value: string) {
+    const pk = value ? Number(value) : ''
+    setSupplier(pk)
+    // A receipt line can only be invoiced by the supplier it was received from,
+    // so lines staged against the previous choice cannot survive the change.
+    setLines((current) => current.filter((line) => line.kind !== 'receipt'))
+  }
+  const subtotalTotal = sumMoney(lines.map((line) => line.subtotal))
+  const taxTotal = sumMoney(lines.map((line) => line.tax))
+  const invoiceTotal = sumMoney([subtotalTotal, taxTotal])
+  const create = useMutation({
     mutationFn: async () => {
-      const draft = await createSupplierInvoice({
+      const payload = {
         supplier,
         external_reference: reference,
         invoice_date: invoiceDate,
@@ -256,60 +329,47 @@ function Invoices({
         currency_code: workspace.currency_code,
         attachment_url: attachmentUrl,
         notes: '',
-        lines: [
-          {
-            description,
-            receipt_line: linePk,
-            purchase_order_line: null,
-            expense_category: null,
-            is_freight: false,
-            subtotal_ex_tax: subtotal,
-            tax_rate: taxRate,
-            tax_total: tax,
-            total_incl_tax: total
-          }
-        ]
-      })
-      return confirmSupplierInvoice(draft.pk)
+        lines: lines.map((line) => ({
+          description: line.description,
+          receipt_line: line.receiptLine,
+          purchase_order_line: null,
+          expense_category: line.kind === 'expense' ? line.expenseCategory : null,
+          is_freight: line.kind === 'freight',
+          subtotal_ex_tax: line.subtotal,
+          tax_rate: line.taxRate,
+          tax_total: line.tax,
+          total_incl_tax: sumMoney([line.subtotal, line.tax])
+        }))
+      }
+      const draft = draftPk.current === null ? await createSupplierInvoice(payload) : await replaceSupplierInvoiceDraft(draftPk.current, payload)
+      draftPk.current = draft.pk
+      const confirmed = await confirmSupplierInvoice(draft.pk)
+      draftPk.current = null
+      return confirmed
     },
     onSuccess: async () => {
-      setLinePk('')
+      setLines([])
       setReference('')
+      setDueDate('')
+      setAttachmentUrl('')
       await refresh()
     }
   })
-  function chooseLine(value: string) {
-    const pk = value ? Number(value) : ''
-    setLinePk(pk)
-    const choice = choices.find(({ line }) => line.pk === pk)
-    if (!choice) return
-    setSupplier(choice.receipt.supplier)
-    setDescription(itemName(choice.line.item, items))
-    setSubtotal(choice.line.line_cost_ex_tax)
-    setTaxRate(choice.line.tax_rate)
-    setTax(choice.line.input_tax_amount)
-    setTotal(choice.line.supplier_cost_incl_tax)
-  }
+  const fieldErrors = errorsByField(create.error)
+  const unclassified = lines.some((line) => line.kind === 'expense' && !line.expenseCategory)
+  const incomplete = !supplier || !reference || !invoiceDate || lines.length === 0 || unclassified
   return (
     <>
       <Card body className="mb-3">
-        <h2 className="h5">Create supplier invoice for received stock</h2>
-        <p className="text-muted">Choose any posted receipt line, including a seed packet. Confirming the invoice links the liability without changing the posted lot cost.</p>
+        <h2 className="h5">Create supplier invoice</h2>
+        <p className="text-muted">
+          One supplier document, however many lines it has. Add every posted receipt line it covers — seed packets included — alongside its freight and any non-stock charge.
+          Confirming the invoice records the liability without changing the cost any posted lot was valued at.
+        </p>
         <Row className="g-2">
-          <Col md={6}>
-            <Form.Label>Received item</Form.Label>
-            <Form.Select value={linePk} onChange={(event) => chooseLine(event.target.value)}>
-              <option value="">Select a posted receipt…</option>
-              {choices.map(({ receipt, line }) => (
-                <option key={line.pk} value={line.pk}>
-                  {receiptLineLabel(receipt, line, items)}
-                </option>
-              ))}
-            </Form.Select>
-          </Col>
           <Col md={3}>
             <Form.Label>Supplier</Form.Label>
-            <Form.Select value={supplier} onChange={(event) => setSupplier(Number(event.target.value))}>
+            <Form.Select value={supplier} onChange={(event) => chooseSupplier(event.target.value)} isInvalid={'supplier' in fieldErrors}>
               <option value="">Select…</option>
               {suppliers.map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
@@ -320,7 +380,8 @@ function Invoices({
           </Col>
           <Col md={3}>
             <Form.Label>Invoice number</Form.Label>
-            <Form.Control value={reference} onChange={(event) => setReference(event.target.value)} />
+            <Form.Control value={reference} onChange={(event) => setReference(event.target.value)} isInvalid={'external_reference' in fieldErrors} />
+            {fieldErrors.external_reference && <Form.Control.Feedback type="invalid">{fieldErrors.external_reference}</Form.Control.Feedback>}
           </Col>
           <Col md={2}>
             <Form.Label>Invoice date</Form.Label>
@@ -328,33 +389,137 @@ function Invoices({
           </Col>
           <Col md={2}>
             <Form.Label>Due date</Form.Label>
-            <Form.Control type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
-          </Col>
-          <Col md={2}>
-            <Form.Label>Subtotal ex tax</Form.Label>
-            <Form.Control type="number" step="0.0001" value={subtotal} onChange={(event) => setSubtotal(event.target.value)} />
-          </Col>
-          <Col md={2}>
-            <Form.Label>Tax</Form.Label>
-            <Form.Control type="number" step="0.0001" value={tax} onChange={(event) => setTax(event.target.value)} />
-          </Col>
-          <Col md={2}>
-            <Form.Label>Tax rate (%)</Form.Label>
-            <Form.Control type="number" step="0.0001" value={taxRate} onChange={(event) => setTaxRate(event.target.value)} />
-          </Col>
-          <Col md={2}>
-            <Form.Label>Total</Form.Label>
-            <Form.Control type="number" step="0.0001" value={total} onChange={(event) => setTotal(event.target.value)} />
+            <Form.Control type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} isInvalid={'due_date' in fieldErrors} />
+            {fieldErrors.due_date && <Form.Control.Feedback type="invalid">{fieldErrors.due_date}</Form.Control.Feedback>}
           </Col>
           <Col md={2}>
             <Form.Label>Evidence URL</Form.Label>
             <Form.Control type="url" value={attachmentUrl} onChange={(event) => setAttachmentUrl(event.target.value)} />
           </Col>
         </Row>
-        <Button className="mt-3" disabled={mutation.isPending || !linePk || !supplier || !reference || !invoiceDate} onClick={() => mutation.mutate()}>
+        <h3 className="h6 mt-3">Invoice lines</h3>
+        {lines.length === 0 && <p className="text-muted">No lines yet. Add the received stock this invoice charges for, then its freight or other charges.</p>}
+        {lines.length > 0 && (
+          <Table responsive size="sm" className="align-middle">
+            <thead>
+              <tr>
+                <th>Line</th>
+                <th>Description</th>
+                <th>Subtotal ex tax</th>
+                <th>Tax rate (%)</th>
+                <th>Tax</th>
+                <th>Total</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line) => (
+                <tr key={line.key}>
+                  <td>
+                    <Badge bg="secondary">{LINE_KIND_LABELS[line.kind]}</Badge>
+                    {line.kind === 'expense' && (
+                      <Form.Select
+                        className="mt-1"
+                        size="sm"
+                        value={line.expenseCategory}
+                        onChange={(event) => updateLine(line.key, { expenseCategory: event.target.value ? Number(event.target.value) : '' })}
+                      >
+                        <option value="">Category…</option>
+                        {categories
+                          .filter((entry) => entry.active)
+                          .map((entry) => (
+                            <option key={entry.pk} value={entry.pk}>
+                              {entry.name}
+                            </option>
+                          ))}
+                      </Form.Select>
+                    )}
+                  </td>
+                  <td>
+                    <Form.Control size="sm" value={line.description} onChange={(event) => updateLine(line.key, { description: event.target.value })} />
+                  </td>
+                  <td>
+                    <Form.Control size="sm" type="number" step="0.0001" value={line.subtotal} onChange={(event) => updateLine(line.key, { subtotal: event.target.value })} />
+                  </td>
+                  <td>
+                    <Form.Control size="sm" type="number" step="0.0001" value={line.taxRate} onChange={(event) => updateLine(line.key, { taxRate: event.target.value })} />
+                  </td>
+                  <td>
+                    <Form.Control size="sm" type="number" step="0.0001" value={line.tax} onChange={(event) => updateLine(line.key, { tax: event.target.value })} />
+                  </td>
+                  <td>{formatMoney(sumMoney([line.subtotal, line.tax]), workspace.currency_code)}</td>
+                  <td>
+                    <Button size="sm" variant="outline-danger" onClick={() => removeLine(line.key)}>
+                      Remove
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th colSpan={2}>Invoice total</th>
+                <th>{formatMoney(subtotalTotal, workspace.currency_code)}</th>
+                <th />
+                <th>{formatMoney(taxTotal, workspace.currency_code)}</th>
+                <th>{formatMoney(invoiceTotal, workspace.currency_code)}</th>
+                <th />
+              </tr>
+            </tfoot>
+          </Table>
+        )}
+        <Row className="g-2 align-items-end">
+          <Col md={6}>
+            <Form.Label>Add received item</Form.Label>
+            <Form.Select value="" disabled={!supplier} onChange={(event) => addReceiptLine(event.target.value)}>
+              <option value="">{supplier ? 'Select a posted receipt line…' : 'Choose a supplier first…'}</option>
+              {choices.map(({ receipt, line }) => (
+                <option key={line.pk} value={line.pk}>
+                  {receiptLineLabel(receipt, line, items)}
+                </option>
+              ))}
+            </Form.Select>
+            {supplier !== '' && choices.length === 0 && <Form.Text>Every posted receipt line from this supplier is already invoiced or already on this draft.</Form.Text>}
+          </Col>
+          <Col md="auto">
+            <Button
+              variant="outline-secondary"
+              onClick={() =>
+                addLine({ kind: 'freight', receiptLine: null, expenseCategory: '', description: 'Freight', subtotal: '0', taxRate: workspace.default_tax_rate, tax: '0' })
+              }
+            >
+              Add freight
+            </Button>
+          </Col>
+          <Col md="auto">
+            <Button
+              variant="outline-secondary"
+              disabled={categories.length === 0}
+              onClick={() => addLine({ kind: 'expense', receiptLine: null, expenseCategory: '', description: '', subtotal: '0', taxRate: workspace.default_tax_rate, tax: '0' })}
+            >
+              Add other charge
+            </Button>
+          </Col>
+        </Row>
+        {unclassified && (
+          <Alert variant="warning" className="mt-3">
+            Give every other charge an expense category.
+          </Alert>
+        )}
+        {fieldErrors.lines && (
+          <Alert variant="danger" className="mt-3">
+            {fieldErrors.lines}
+          </Alert>
+        )}
+        {fieldErrors.non_field_errors && (
+          <Alert variant="danger" className="mt-3">
+            {fieldErrors.non_field_errors}
+          </Alert>
+        )}
+        <Button className="mt-3" disabled={create.isPending || incomplete} onClick={() => create.mutate()}>
           Create and confirm invoice
         </Button>
-        <ErrorMessage error={mutation.error} />
+        <ErrorMessage error={create.error} />
       </Card>
       {correcting && <InvoiceCorrection invoice={correcting} onClosed={() => setCorrecting(null)} onSaved={refresh} />}
       <Table responsive striped>
@@ -376,6 +541,13 @@ function Invoices({
                 {invoice.external_reference}
                 <br />
                 <small>{invoice.status}</small>
+                <ul className="list-unstyled small text-muted mb-0">
+                  {invoice.lines.map((line) => (
+                    <li key={line.pk}>
+                      {line.description} · {formatMoney(line.total_incl_tax, invoice.currency_code)}
+                    </li>
+                  ))}
+                </ul>
               </td>
               <td>{invoice.supplier_name}</td>
               <td>

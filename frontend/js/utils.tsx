@@ -124,7 +124,7 @@ async function checkResponse(method: ApiRequestMethod, url: string, response: Re
   }
 }
 
-async function csrfRequest(method: 'POST' | 'PATCH' | 'DELETE', url: string, data?: object): Promise<Response> {
+async function csrfRequest(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, data?: object): Promise<Response> {
   const response = await fetchResponse(method, url, {
     method,
     headers: {
@@ -228,6 +228,10 @@ async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Prom
 
 function csrfPatch(url: string, data: object): Promise<Response> {
   return csrfRequest('PATCH', url, data)
+}
+
+function csrfPut(url: string, data: object): Promise<Response> {
+  return csrfRequest('PUT', url, data)
 }
 
 function localDatetimeInputValue(date: Date = new Date()): string {
@@ -354,6 +358,7 @@ export {
   csrfPost,
   csrfPostForm,
   csrfPatch,
+  csrfPut,
   fetchAsJson,
   localDatetimeInputValue,
   parseLocalDatetimeInput,

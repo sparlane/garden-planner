@@ -132,6 +132,125 @@ class PurchasingRestTests(APITestCase):
         lot.refresh_from_db()
         self.assertEqual(lot.acquisition_total, original_cost)
 
+    def test_one_invoice_covers_several_receipt_lines_with_freight_and_expense(self):
+        """A supplier document is one invoice however many lines it charges for."""
+        first = self.receive_seed(reference='DEL-1')
+        second = self.receive_seed(reference='DEL-2')
+        category = self.client.post('/purchasing/expense-categories/', {
+            'name': 'Delivery surcharge', 'notes': '', 'active': True,
+        }, format='json')
+        self.assertEqual(category.status_code, 201, category.data)
+
+        created = self.client.post('/purchasing/invoices/', {
+            'supplier': self.supplier.pk,
+            'external_reference': 'INV-MULTI',
+            'invoice_date': '2026-08-21',
+            'currency_code': 'NZD',
+            'lines': [
+                {
+                    'description': 'Carrot seed, first delivery',
+                    'receipt_line': first.pk,
+                    'subtotal_ex_tax': '10.0000',
+                    'tax_rate': '15.0000',
+                    'tax_total': '1.5000',
+                    'total_incl_tax': '11.5000',
+                },
+                {
+                    'description': 'Carrot seed, second delivery',
+                    'receipt_line': second.pk,
+                    'subtotal_ex_tax': '10.0000',
+                    'tax_rate': '15.0000',
+                    'tax_total': '1.5000',
+                    'total_incl_tax': '11.5000',
+                },
+                {
+                    'description': 'Freight',
+                    'is_freight': True,
+                    'subtotal_ex_tax': '4.0000',
+                    'tax_rate': '15.0000',
+                    'tax_total': '0.6000',
+                    'total_incl_tax': '4.6000',
+                },
+                {
+                    'description': 'Rural delivery surcharge',
+                    'expense_category': category.data['pk'],
+                    'subtotal_ex_tax': '2.0000',
+                    'tax_rate': '15.0000',
+                    'tax_total': '0.3000',
+                    'total_incl_tax': '2.3000',
+                },
+            ],
+        }, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        confirmed = self.client.post(
+            f"/purchasing/invoices/{created.data['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+
+        self.assertEqual(len(confirmed.data['lines']), 4)
+        self.assertEqual(confirmed.data['subtotal_ex_tax'], '26.0000')
+        self.assertEqual(confirmed.data['tax_total'], '3.9000')
+        self.assertEqual(confirmed.data['total_incl_tax'], '29.9000')
+        self.assertEqual(confirmed.data['state']['balance_due'], Decimal('29.9000'))
+        summary = self.client.get('/purchasing/summary/', {'as_of': '2026-09-21'})
+        self.assertEqual(summary.status_code, 200, summary.data)
+        uninvoiced = {
+            warning['source_id'] for warning in summary.data['warnings']
+            if warning['code'] == 'receipt_not_invoiced'
+        }
+        self.assertNotIn(first.pk, uninvoiced)
+        self.assertNotIn(second.pk, uninvoiced)
+
+    def test_a_receipt_line_cannot_be_claimed_by_a_second_invoice(self):
+        """The invoice builder hides a claimed line because confirming refuses it."""
+        receipt_line = self.receive_seed()
+        self.create_invoice(receipt_line, reference='INV-FIRST')
+
+        created = self.client.post('/purchasing/invoices/', {
+            'supplier': self.supplier.pk,
+            'external_reference': 'INV-SECOND',
+            'invoice_date': '2026-08-22',
+            'currency_code': 'NZD',
+            'lines': [{
+                'description': 'Carrot seed again',
+                'receipt_line': receipt_line.pk,
+                'subtotal_ex_tax': '10.0000',
+                'tax_rate': '15.0000',
+                'tax_total': '1.5000',
+                'total_incl_tax': '11.5000',
+            }],
+        }, format='json')
+        self.assertEqual(created.status_code, 201, created.data)
+        rejected = self.client.post(
+            f"/purchasing/invoices/{created.data['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.data)
+        self.assertIn('lines', rejected.data)
+
+        # The rejected draft still holds INV-SECOND, so the retry replaces that
+        # draft rather than posting a second invoice against a taken reference.
+        replacement = self.receive_seed(reference='DEL-2')
+        retried = self.client.put(f"/purchasing/invoices/{created.data['pk']}/", {
+            'supplier': self.supplier.pk,
+            'external_reference': 'INV-SECOND',
+            'invoice_date': '2026-08-22',
+            'currency_code': 'NZD',
+            'lines': [{
+                'description': 'Carrot seed, second delivery',
+                'receipt_line': replacement.pk,
+                'subtotal_ex_tax': '10.0000',
+                'tax_rate': '15.0000',
+                'tax_total': '1.5000',
+                'total_incl_tax': '11.5000',
+            }],
+        }, format='json')
+        self.assertEqual(retried.status_code, 200, retried.data)
+        confirmed = self.client.post(
+            f"/purchasing/invoices/{created.data['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        self.assertEqual(confirmed.data['lines'][0]['receipt_line'], replacement.pk)
+
     def test_payments_basis_claims_partial_invoice_payments_proportionally(self):
         """A part-paid seed invoice claims only the discharged share of input tax."""
         record_registration(
