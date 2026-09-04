@@ -37,6 +37,8 @@ function CohortTotals({ filters }: { filters: CohortFilters }) {
     <Row className="g-2 mb-3">
       {[
         ['Available cohorts', data.cohort_quantity],
+        ['Reserved on orders', data.cohort_reserved_quantity],
+        ['Cohort stock free to promise', data.cohort_unpromised_quantity],
         ['Available identified plants', data.individual_count],
         ['Combined availability', data.combined_total]
       ].map(([label, value]) => (
@@ -294,6 +296,8 @@ function CohortRegisterView() {
                 <th>Batch</th>
                 <th>State</th>
                 <th>Quantity</th>
+                <th>Reserved</th>
+                <th>Free</th>
                 <th>Stage / grade</th>
                 <th>Container</th>
                 <th>Location</th>
@@ -329,6 +333,8 @@ function CohortRegisterView() {
                     )}
                   </td>
                   <td>{cohort.quantity}</td>
+                  <td>{cohort.reserved_quantity}</td>
+                  <td>{cohort.available_quantity}</td>
                   <td>
                     {cohort.stage_name ?? '—'}
                     <div className="text-muted small">{cohort.grade_name ?? 'Ungraded'}</div>
@@ -509,6 +515,13 @@ function CohortDetailView({ cohortPk }: { cohortPk: number }) {
           <Card body>
             <div className="text-muted">Quantity</div>
             <div className="fs-4">{cohort.quantity}</div>
+          </Card>
+        </Col>
+        <Col md={3}>
+          <Card body>
+            <div className="text-muted">Reserved on orders</div>
+            <div className="fs-4">{cohort.reserved_quantity}</div>
+            <div className="small text-muted">{cohort.available_quantity} free to promise</div>
           </Card>
         </Col>
         <Col md={3}>

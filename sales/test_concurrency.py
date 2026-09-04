@@ -18,14 +18,16 @@ from inventory.ledger import IndividualizationRequest, individualize_lot_units
 from inventory.models import InventoryItem, InventoryUnit, StockLot
 from inventory.units import UnitCode
 from locations.models import Location
+from plantings.cohorts import change_cohort, observe_cohort
 from plantings.lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
-from tests.factories import make_seed_tray, make_specific_plant, make_stock_lot
+from plantings.models import CohortOperation
+from tests.factories import make_production_batch, make_seed_tray, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace
 
 from .commerce import post_fulfillment
 from .expiry import expire_due_reservations
 from .models import ReservationEvent, SalesOrder, SalesOrderAllocation, SalesOrderLine
-from .services import LotRequest, allocate_targets, confirm_order, create_order
+from .services import CohortRequest, LotRequest, allocate_targets, confirm_order, create_order
 
 
 class ReservationConcurrencyTestCase(TransactionTestCase):
@@ -40,7 +42,7 @@ class ReservationConcurrencyTestCase(TransactionTestCase):
         if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
             Workspace.objects.create(pk=settings.CURRENT_WORKSPACE_ID, name='My Garden')
 
-    def _order_with_line(self, line_type, variety=None, item=None):
+    def _order_with_line(self, line_type, variety=None, item=None, quantity=1):
         """Create one draft with a single exact-quantity line."""
         order = create_order(self.workspace, self.user)
         line = SalesOrderLine.objects.create(
@@ -49,7 +51,7 @@ class ReservationConcurrencyTestCase(TransactionTestCase):
             variety=variety,
             item=item,
             description='Concurrent target',
-            quantity=1,
+            quantity=quantity,
             unit_price=Decimal('10'),
             tax_rate=Decimal('15'),
         )
@@ -211,6 +213,51 @@ class ConcurrentReservationExpiryTests(ReservationConcurrencyTestCase):
                 event_type=ReservationEvent.EventType.EXPIRED,
             ).count(),
             1,
+        )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentCohortDrawTests(ReservationConcurrencyTestCase):
+    """Two draws cannot both take the last of one anonymous block."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='cohort-draw-racer')
+        self.batch = make_production_batch()
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user,
+            batch=self.batch, quantity=10, idempotency_key=uuid4(),
+        )
+        self.cohort, _ready = change_cohort(
+            self.workspace, self.user,
+            cohort_id=cohort.pk,
+            expected_revision=cohort.revision,
+            action=CohortOperation.Action.READY,
+            idempotency_key=uuid4(),
+        )
+        self.order_pks = []
+        for _index in range(2):
+            order, line = self._order_with_line(
+                SalesOrderLine.LineType.COHORT_QUANTITY,
+                variety=self.batch.variety,
+                quantity=8,
+            )
+            allocate_targets(line, self.user, cohort_requests=[
+                CohortRequest(self.cohort.pk, 8, self.cohort.revision),
+            ])
+            self.order_pks.append(order.pk)
+
+    def test_exactly_one_order_wins_the_remaining_seedlings(self):
+        """Eight and eight out of ten, so the block lock has to reject one."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(pool.map(self._confirm, self.order_pks))
+
+        self.assertEqual(results, ['confirmed', 'rejected'])
+        self.assertEqual(
+            SalesOrderAllocation.objects.filter(status='reserved').count(), 1,
         )
 
 

@@ -1265,6 +1265,13 @@ class CohortOperation(WorkspaceOwnedModel):
         RETAIN = 'retain', 'Retain'
         LOSS = 'loss', 'Loss'
         PROMOTE = 'promote', 'Promote'
+        # The two directions a customer order moves anonymous quantity. A sale
+        # takes the count out of the block it was standing in; a return brings
+        # a count back from an order, into a new block for a customer return
+        # and into the original one when a dispatch is reversed. Without them
+        # the quantity would drop with nothing in the history saying why.
+        SOLD = 'sold', 'Sold'
+        RETURN = 'return', 'Returned from an order'
 
     class LossCause(models.TextChoices):
         """Why a `LOSS` removed the quantity, in the plant events' vocabulary.

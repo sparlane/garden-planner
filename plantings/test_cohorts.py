@@ -284,6 +284,8 @@ class CohortRESTTests(RESTContractTestCase):
         })
         self.assertEqual(availability.data, {
             'cohort_quantity': 7,
+            'cohort_reserved_quantity': 0,
+            'cohort_unpromised_quantity': 7,
             'individual_count': 2,
             'combined_total': 9,
         })

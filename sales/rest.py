@@ -48,6 +48,7 @@ from .models import (
     SalesReturnLine,
 )
 from .services import (
+    CohortRequest,
     LotRequest,
     allocate_targets,
     cancel_order,
@@ -83,6 +84,14 @@ def _lot_requests(data):
     ]
 
 
+def _cohort_requests(data):
+    """Return the validated cohort draws as the service's own request type."""
+    return [
+        CohortRequest(row['cohort'], row['quantity'], row['expected_revision'])
+        for row in data['cohort_requests']
+    ]
+
+
 class CustomerSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Editable customer details without exposing workspace ownership."""
 
@@ -102,7 +111,7 @@ class ReservationEventSerializer(serializers.ModelSerializer):
 
 
 class AllocationSerializer(serializers.ModelSerializer):
-    """One pending or historical promise: an identity, or a count on a lot."""
+    """One pending or historical promise: an identity, or a count on a pool."""
 
     events = ReservationEventSerializer(many=True, read_only=True)
     asset_code = serializers.CharField(source='inventory_unit.asset_code', read_only=True, allow_null=True)
@@ -110,15 +119,15 @@ class AllocationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SalesOrderAllocation
-        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'stock_lot', 'source_location', 'quantity', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
+        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'stock_lot', 'plant_cohort', 'source_location', 'quantity', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
         read_only_fields = fields
 
     def get_competing_claims(self, allocation):
         """Name other open orders promising this allocation's exact target.
 
         A counted draw competes over a pool rather than over a thing, so the
-        orders holding parts of the same lot are all legitimate; naming them
-        is context for an operator, never a conflict.
+        orders holding parts of the same lot or cohort are all legitimate;
+        naming them is context for an operator, never a conflict.
         """
         identity = {f'{allocation.target_kind}_id': getattr(allocation, f'{allocation.target_kind}_id')}
         if allocation.stock_lot_id:
@@ -262,9 +271,17 @@ class LotRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-
     quantity = serializers.IntegerField(min_value=1)
 
 
-#: The three ways a selection can name stock. Listed once so the preview and
+class CohortRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """One counted draw on a cohort, against the revision it was read at."""
+
+    cohort = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1)
+    expected_revision = serializers.IntegerField(min_value=1)
+
+
+#: The four ways a selection can name stock. Listed once so the preview and
 #: the allocation request cannot drift on which sources they accept.
-SELECTION_SOURCES = ('plant_ids', 'unit_ids', 'lot_requests')
+SELECTION_SOURCES = ('plant_ids', 'unit_ids', 'lot_requests', 'cohort_requests')
 
 
 def _selection_fields():
@@ -273,6 +290,7 @@ def _selection_fields():
         'plant_ids': serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list),
         'unit_ids': serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list),
         'lot_requests': LotRequestSerializer(many=True, required=False, default=list),
+        'cohort_requests': CohortRequestSerializer(many=True, required=False, default=list),
     }
 
 
@@ -280,14 +298,14 @@ class TargetSelectionSerializer(ActionSerializer):  # pylint: disable=abstract-m
     """Exact IDs, counted draws, or register filters for a selection preview."""
 
     line = serializers.IntegerField(min_value=1)
-    plant_ids, unit_ids, lot_requests = _selection_fields().values()
+    plant_ids, unit_ids, lot_requests, cohort_requests = _selection_fields().values()
     filters = serializers.DictField(required=False, default=dict)
 
     def validate(self, attrs):
         """Require one unambiguous selection source."""
         sources = sum(bool(attrs[name]) for name in SELECTION_SOURCES + ('filters',))
         if sources != 1:
-            raise ValidationError('Select exactly one of plant_ids, unit_ids, lot_requests, or filters.')
+            raise ValidationError('Select exactly one of plant_ids, unit_ids, lot_requests, cohort_requests, or filters.')
         return attrs
 
 
@@ -295,13 +313,13 @@ class AllocationRequestSerializer(ActionSerializer):  # pylint: disable=abstract
     """Concrete targets to attach to one order line."""
 
     line = serializers.IntegerField(min_value=1)
-    plant_ids, unit_ids, lot_requests = _selection_fields().values()
+    plant_ids, unit_ids, lot_requests, cohort_requests = _selection_fields().values()
     expires_at = serializers.DateTimeField(required=False, allow_null=True)
 
     def validate(self, attrs):
         """Require exactly one kind of target, never a mixture."""
         if sum(bool(attrs[name]) for name in SELECTION_SOURCES) != 1:
-            raise ValidationError('Select plants, serialized units, or lot quantities.')
+            raise ValidationError('Select plants, serialized units, lot quantities, or cohort quantities.')
         return attrs
 
 
@@ -604,7 +622,7 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
             data['plant_ids'] = plant_ids
         result = _run(
             preview_targets, line, data['plant_ids'], data['unit_ids'],
-            _lot_requests(data),
+            _lot_requests(data), _cohort_requests(data),
         )
         return Response(result)
 
@@ -622,6 +640,7 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
             data['plant_ids'],
             data['unit_ids'],
             _lot_requests(data),
+            _cohort_requests(data),
             data.get('expires_at'),
         )
         return Response(AllocationSerializer(allocations, many=True).data, status=status.HTTP_201_CREATED)

@@ -92,8 +92,31 @@ def _snapshot(cohort):
     }
 
 
+def _locked(cohort_id, workspace):
+    return PlantCohort.objects.select_for_update().get(pk=cohort_id, workspace=workspace)
+
+
+def lock_cohorts(workspace, cohort_ids):
+    """Lock exact workspace cohorts in deterministic primary-key order.
+
+    Deterministic order for the same reason `inventory.ledger.lock_lots` takes
+    it: two orders drawing on the same two blocks have to queue rather than
+    deadlock against each other.
+    """
+    requested = sorted(set(cohort_ids))
+    cohorts = list(
+        PlantCohort.objects.select_for_update(of=('self',))
+        .select_related('batch')
+        .filter(workspace=workspace, pk__in=requested)
+        .order_by('pk')
+    )
+    if len(cohorts) != len(requested):
+        raise ValidationError({'cohorts': 'One or more cohorts are unavailable.'})
+    return {cohort.pk: cohort for cohort in cohorts}
+
+
 def _lock(cohort_id, workspace, expected_revision):
-    cohort = PlantCohort.objects.select_for_update().get(pk=cohort_id, workspace=workspace)
+    cohort = _locked(cohort_id, workspace)
     if cohort.revision != expected_revision:
         raise ValidationError({'revision': 'The cohort changed after it was loaded.'})
     return cohort
@@ -470,3 +493,140 @@ def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
     CohortOperation.objects.filter(pk=operation.pk).update(payload=operation.payload)
     _reallocate(cohort.batch, user, reason)
     return plants, operation
+
+
+@transaction.atomic
+def sell_cohort(workspace, user, *, cohort_id, quantity, idempotency_key,
+                occurred_at=None, reason='', reference='', require_available=True):
+    """Take a sold quantity out of a cohort without naming what left.
+
+    No revision is checked here. The optimistic-concurrency question — is this
+    still the block the operator was looking at? — belongs to the moment a
+    quantity is reserved against a number somebody read; by dispatch the
+    promise already exists, and what has to hold is that the block still holds
+    the count and is still fit to sell. The row lock is what makes that true.
+
+    `require_available` is dropped only when a return is being undone: those
+    units are going back to a customer who already had them rather than being
+    newly offered, so the block they are leaving need not be on sale, and a
+    quarantine opened by the return itself must not trap them.
+
+    The caller reallocates the batch afterwards rather than this doing it. A
+    sold quantity stays an output of its batch — see `costing.sources` — and
+    which units count as sold is read from the order allocation's own status,
+    which the caller settles in this same transaction.
+    """
+    payload = {'cohort': cohort_id, 'quantity': quantity, 'reference': reference}
+    existing = _existing(workspace, idempotency_key, CohortOperation.Action.SOLD, payload)
+    if existing:
+        return existing.events.get()
+    cohort = _locked(cohort_id, workspace)
+    if require_available:
+        _require_not_quarantined(cohort)
+        if cohort.lifecycle_state != PlantCohort.LifecycleState.AVAILABLE:
+            raise ValidationError({'cohort': 'Only an available cohort can be sold.'})
+    if quantity <= 0 or quantity > cohort.quantity:
+        raise ValidationError({'quantity': 'A sale must be within the current quantity.'})
+    before = _snapshot(cohort)
+    cohort.quantity -= quantity
+    if cohort.quantity == 0:
+        cohort.lifecycle_state = PlantCohort.LifecycleState.DEPLETED
+    _save(cohort)
+    operation = _operation(
+        workspace, user, CohortOperation.Action.SOLD,
+        idempotency_key, occurred_at, reason, payload,
+    )
+    return _event(operation, cohort, before)
+
+
+@transaction.atomic
+def return_cohort(workspace, user, *, source_cohort_id, quantity, idempotency_key,
+                  into_source=False, location=None, state=None, occurred_at=None,
+                  reason='', reference=''):
+    """Bring a quantity back from an order into anonymous stock.
+
+    A customer return lands in a new block linked to the one it left, because
+    stock that has been to a customer and back is not the same fact as stock
+    that never went. It may come back fit only for quarantine or for the skip,
+    and the block it left may since have been split, moved, promoted or sold
+    out entirely; imposing the returned units' condition on stock that never
+    moved would be a claim nobody made, and merging into a block that no longer
+    describes them would lose the distinction. `CohortEvent.source_cohorts`
+    keeps the ancestry, so the returned count is still traceable to its batch,
+    sowing and original block.
+
+    `into_source` is the one case where the count goes back exactly where it
+    was: reversing a dispatch says the dispatch never happened, so the block
+    has to end up as it would have been, `state` included.
+
+    As with `sell_cohort`, the caller reallocates the batch once the order's
+    own facts are settled.
+    """
+    payload = {
+        'source': source_cohort_id,
+        'quantity': quantity,
+        'into_source': into_source,
+        'location': location.pk if location else None,
+        'reference': reference,
+    }
+    existing = _existing(workspace, idempotency_key, CohortOperation.Action.RETURN, payload)
+    if existing:
+        return existing.events.get()
+    if quantity <= 0:
+        raise ValidationError({'quantity': 'A return must be a quantity of at least one.'})
+    source = _locked(source_cohort_id, workspace)
+    occurred = occurred_at or timezone.now()
+    if into_source:
+        return _restore_into(workspace, user, source, quantity, state, idempotency_key, occurred, reason, payload)
+    return _open_returned(workspace, user, source, quantity, location, idempotency_key, occurred, reason, payload)
+
+
+def _restore_into(workspace, user, cohort, quantity, state, idempotency_key, occurred_at, reason, payload):
+    """Put a dispatched count back into the block it left, exactly as it was."""
+    before = _snapshot(cohort)
+    cohort.quantity += quantity
+    cohort.lifecycle_state = state or (
+        PlantCohort.LifecycleState.AVAILABLE
+        if before['state'] == PlantCohort.LifecycleState.DEPLETED
+        else before['state']
+    )
+    _save(cohort)
+    operation = _operation(
+        workspace, user, CohortOperation.Action.RETURN,
+        idempotency_key, occurred_at, reason, payload,
+    )
+    return _event(operation, cohort, before)
+
+
+def _open_returned(workspace, user, source, quantity, location, idempotency_key, occurred_at, reason, payload):
+    """Open a new block for a customer return, carrying the source's lineage."""
+    if location is not None:
+        check_capacity(location, cohort_contribution(quantity))
+    growth = current_growth(source)
+    returned = PlantCohort.objects.create(
+        workspace=workspace,
+        batch=source.batch,
+        source_sowing=source.source_sowing,
+        quantity=quantity,
+        lifecycle_state=PlantCohort.LifecycleState.AVAILABLE,
+        location=location,
+        observed_at=source.observed_at,
+        notes=reason,
+        created_by=_actor(user),
+    )
+    operation = _operation(
+        workspace, user, CohortOperation.Action.RETURN,
+        idempotency_key, occurred_at, reason, payload,
+    )
+    event = _event(operation, returned, {
+        'quantity': 0,
+        'state': returned.lifecycle_state,
+        'location': None,
+    }, sources=(source,))
+    # The container count is deliberately not carried over: what came back is
+    # a count of plants, and how many trays or pots they arrived in is a fact
+    # only the person unpacking them can record.
+    returned_values = _observation_values(growth)
+    if returned_values:
+        record_observation(workspace, user, cohort_id=returned.pk, occurred_at=occurred_at, **returned_values)
+    return event

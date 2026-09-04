@@ -15,7 +15,7 @@ from inventory.models import InventoryItem, InventoryUnit, MONEY_DECIMAL_PLACES,
 from inventory.models import StockLot, StockMovement
 from inventory.units import UnitCode
 from locations.models import Location
-from plantings.models import PlantLifecycleEvent, SpecificPlant
+from plantings.models import CohortEvent, PlantCohort, PlantLifecycleEvent, SpecificPlant
 from plants.models import PlantVariety
 from workspaces.models import Workspace, WorkspaceOwnedModel
 
@@ -32,32 +32,44 @@ LOT_BACKED_TRACKING_MODES = frozenset({
     InventoryItem.TrackingMode.MIXED,
 })
 
-#: The columns that can hold what a `SalesOrderAllocation` promises. Exactly
-#: one is filled, which is what the generated identity constraint says.
-ALLOCATION_TARGET_FIELDS = ('plant', 'inventory_unit', 'stock_lot')
+#: What each kind of target a `SalesOrderAllocation` can promise fills in
+#: besides itself. Exactly one target column is filled, which is what the
+#: generated identity constraint says, and the columns listed against it are
+#: filled with it and null against every other target.
+#:
+#: An identity is one thing standing somewhere known, so naming a place and a
+#: count for it would be two ways to say the same figure, and they would be
+#: free to disagree. A lot is one pool spread over many places, so a counted
+#: draw on it has to say which place as well as how many. A cohort stands in
+#: exactly one place of its own, so a draw on it says only how many.
+ALLOCATION_TARGET_FIELDS = {
+    'plant': (),
+    'inventory_unit': (),
+    'stock_lot': ('source_location', 'quantity'),
+    'plant_cohort': ('quantity',),
+}
 
-#: The columns only a counted draw on a lot uses. An identity is one thing
-#: standing somewhere known, so naming a place and a count for it would be two
-#: ways to say the same figure, and they would be free to disagree.
+#: Every column that only a counted draw uses, in one place, so the generated
+#: condition can null out the ones the chosen target does not fill.
 COUNTED_ALLOCATION_FIELDS = ('source_location', 'quantity')
 
 
 def _allocation_identity_condition():
-    """Generate 'exactly one target, counted only when it is a lot'.
+    """Generate 'exactly one target, counted only where that target is a pool'.
 
-    Written out by hand this is one four-hundred-character line, and adding a
-    fourth target later would mean editing every disjunct. Generating it from
+    Written out by hand this is one six-hundred-character line, and adding a
+    fifth target later would mean editing every disjunct. Generating it from
     the column names keeps the database's rule and the model's fields the same
     statement, the way `costing.models.CostAllocation` does.
     """
     shapes = []
-    for chosen in ALLOCATION_TARGET_FIELDS:
+    for chosen, counted in ALLOCATION_TARGET_FIELDS.items():
         nulls = {
             f'{field}__isnull': field != chosen
             for field in ALLOCATION_TARGET_FIELDS
         }
         nulls.update({
-            f'{field}__isnull': chosen != 'stock_lot'
+            f'{field}__isnull': field not in counted
             for field in COUNTED_ALLOCATION_FIELDS
         })
         shapes.append(models.Q(**nulls))
@@ -201,6 +213,10 @@ class SalesOrderLine(models.Model):
         # `each` and sold by the count rather than by identity goes out this
         # way, so a crate follows a pot without a third line type.
         LOT_QUANTITY = 'lot_quantity', 'Counted stock from a lot'
+        # Nursery stock that was deliberately never given identities. It names
+        # a variety, exactly as a seedling line does, because what the customer
+        # is buying is the crop and not the block it happens to be counted in.
+        COHORT_QUANTITY = 'cohort_quantity', 'Counted stock from a cohort'
 
     class DiscountType(models.TextChoices):
         """How the entered discount value is interpreted."""
@@ -252,7 +268,7 @@ class SalesOrderLine(models.Model):
         ordering = ['pk']
         constraints = [
             models.CheckConstraint(
-                condition=(models.Q(line_type='seedling', variety__isnull=False, item__isnull=True) | models.Q(line_type__in=('unit', 'lot_quantity'), variety__isnull=True, item__isnull=False)),
+                condition=(models.Q(line_type__in=('seedling', 'cohort_quantity'), variety__isnull=False, item__isnull=True) | models.Q(line_type__in=('unit', 'lot_quantity'), variety__isnull=True, item__isnull=False)),
                 name='sales_line_target_matches_type',
             ),
             models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_line_quantity_positive'),
@@ -266,7 +282,7 @@ class SalesOrderLine(models.Model):
 
     def _target_errors(self):
         """Validate the catalog target this kind of line has to name."""
-        if self.line_type == self.LineType.SEEDLING:
+        if self.line_type in VARIETY_LINE_TYPES:
             return self._variety_target_errors()
         if self.line_type == self.LineType.UNIT:
             return self._item_target_errors()
@@ -275,7 +291,7 @@ class SalesOrderLine(models.Model):
         return {}
 
     def _variety_target_errors(self):
-        """A seedling line promises a variety and nothing more exact."""
+        """A seedling or cohort line promises a variety and nothing more exact."""
         if not self.variety_id or self.item_id:
             return {'variety': 'A seedling line requires one variety.'}
         if self.variety.workspace_id != self.order.workspace_id:
@@ -373,15 +389,29 @@ class SalesOrderLine(models.Model):
         return result
 
 
+#: The line types whose catalog target is a variety rather than an inventory
+#: item. Both sell nursery plants of one crop: a seedling line by naming each
+#: plant it promises, a cohort line by promising a count of stock that was
+#: deliberately never given identities.
+VARIETY_LINE_TYPES = (
+    SalesOrderLine.LineType.SEEDLING,
+    SalesOrderLine.LineType.COHORT_QUANTITY,
+)
+
+
 class SalesOrderAllocation(models.Model):
-    """One promise of stock: an identity, or a count drawn from one lot.
+    """One promise of stock: an identity, or a count drawn from one pool.
 
     A plant and a numbered unit are each exactly one thing, so for them the
     allocation *is* the quantity and `quantity` stays null. Anonymous stock
-    has no identity to point at, so a lot allocation names the lot, the place
-    it is standing, and how many — and its availability is arithmetic over
-    `inventory.ledger.bulk_balance` rather than a unique index, because many
-    orders may legitimately hold parts of one lot at once.
+    has no identity to point at, so a counted allocation names the pool and
+    how many — and its availability is arithmetic rather than a unique index,
+    because many orders may legitimately hold parts of one pool at once.
+
+    A lot allocation also names the place it is standing, because one lot is
+    spread over as many places as it was put down in; a cohort is one block
+    standing in one place of its own, so naming a place beside it would be a
+    second answer to a question the cohort already answers.
     """
 
     class Status(models.TextChoices):
@@ -398,6 +428,7 @@ class SalesOrderAllocation(models.Model):
     plant = models.ForeignKey(SpecificPlant, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
     inventory_unit = models.ForeignKey(InventoryUnit, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
     stock_lot = models.ForeignKey(StockLot, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
+    plant_cohort = models.ForeignKey(PlantCohort, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
     source_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
     # Null for an identity target, whose quantity is always exactly one. Task
     # 114 widens this to a decimal rather than inventing a column.
@@ -425,13 +456,10 @@ class SalesOrderAllocation(models.Model):
 
     @property
     def target_kind(self):
-        """Return which of the three targets this allocation names."""
-        if self.plant_id:
-            return 'plant'
-        if self.inventory_unit_id:
-            return 'inventory_unit'
-        if self.stock_lot_id:
-            return 'stock_lot'
+        """Return which of the four targets this allocation names."""
+        for field in ALLOCATION_TARGET_FIELDS:
+            if getattr(self, f'{field}_id'):
+                return field
         return None
 
     @property
@@ -448,19 +476,19 @@ class SalesOrderAllocation(models.Model):
 
     def clean(self):
         super().clean()
-        named = [
-            bool(self.plant_id),
-            bool(self.inventory_unit_id),
-            bool(self.stock_lot_id),
-        ]
-        if sum(named) != 1:
+        named = sum(
+            bool(getattr(self, f'{field}_id'))
+            for field in ALLOCATION_TARGET_FIELDS
+        )
+        if named != 1:
             raise ValidationError(
-                {'plant': 'Select exactly one plant, serialized unit, or lot.'},
+                {'plant': 'Select exactly one plant, serialized unit, lot, or cohort.'},
             )
         errors = {
             'plant': self._plant_errors,
             'inventory_unit': self._unit_errors,
             'stock_lot': self._lot_errors,
+            'plant_cohort': self._cohort_errors,
         }[self.target_kind]()
         if errors:
             raise ValidationError(errors)
@@ -488,12 +516,29 @@ class SalesOrderAllocation(models.Model):
     def _lot_errors(self):
         """Require a counted draw on one lot of this line's own item."""
         if self.line.line_type != SalesOrderLine.LineType.LOT_QUANTITY:
-            return {'stock_lot': 'Lots can only be allocated to counted lines.'}
+            return {'stock_lot': 'Lots can only be allocated to counted lot lines.'}
         if self.stock_lot.workspace_id != self.line.order.workspace_id:
             return {'stock_lot': 'The lot belongs to a different workspace.'}
         if self.stock_lot.item_id != self.line.item_id:
             return {'stock_lot': 'The lot is a different item from this line.'}
         return self._counted_draw_errors()
+
+    def _cohort_errors(self):
+        """Require a counted draw on one cohort of this line's own variety.
+
+        The cohort is checked against the line's variety through its batch,
+        exactly as a plant is: a cohort is a block of one crop, and which
+        block it is says nothing about what was sold.
+        """
+        if self.line.line_type != SalesOrderLine.LineType.COHORT_QUANTITY:
+            return {'plant_cohort': 'Cohorts can only be allocated to cohort lines.'}
+        if self.plant_cohort.workspace_id != self.line.order.workspace_id:
+            return {'plant_cohort': 'The cohort belongs to a different workspace.'}
+        if self.plant_cohort.batch.variety_id != self.line.variety_id:
+            return {'plant_cohort': 'The cohort is a different variety from this line.'}
+        if not self.quantity:
+            return {'quantity': 'A counted allocation requires a quantity of at least one.'}
+        return {}
 
     def _counted_draw_errors(self):
         """Require the place a count is drawn from, and the count itself."""
@@ -508,7 +553,7 @@ class SalesOrderAllocation(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.get(pk=self.pk)
-            identity = ('line_id', 'plant_id', 'inventory_unit_id', 'stock_lot_id', 'source_location_id', 'quantity')
+            identity = ('line_id', 'plant_id', 'inventory_unit_id', 'stock_lot_id', 'plant_cohort_id', 'source_location_id', 'quantity')
             if any(getattr(previous, name) != getattr(self, name) for name in identity):
                 raise ValidationError('Allocation identities are immutable.')
         self.full_clean()
@@ -672,6 +717,13 @@ class FulfillmentLine(models.Model):
     )
     stock_movement = models.OneToOneField(
         StockMovement, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='fulfillment_line',
+    )
+    # The cohort history entry that took the quantity out of the block. Kept
+    # beside the other two for the same reason they are: it is what a reversal
+    # has to find to put the count back where it came from.
+    cohort_event = models.OneToOneField(
+        CohortEvent, on_delete=models.PROTECT, null=True, blank=True,
         related_name='fulfillment_line',
     )
 
@@ -868,6 +920,14 @@ class SalesReturnLine(models.Model):
     )
     lifecycle_event = models.OneToOneField(
         PlantLifecycleEvent, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='sales_return_line',
+    )
+    # The history entry that put a returned count back into stock, whose
+    # cohort is the block holding it now. A cohort return lands in a new
+    # block rather than back in the one it left, so this is the only thing
+    # that says where the quantity went.
+    cohort_event = models.OneToOneField(
+        CohortEvent, on_delete=models.PROTECT, null=True, blank=True,
         related_name='sales_return_line',
     )
     return_movement = models.OneToOneField(

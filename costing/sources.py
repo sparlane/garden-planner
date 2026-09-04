@@ -17,6 +17,8 @@ whose cost is None all the way through, and an unvalued batch stays unvalued.
 from decimal import Decimal
 from typing import NamedTuple
 
+from django.db.models import Sum
+
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
@@ -135,15 +137,50 @@ def plants_by_cell(batch):
     return grouped
 
 
+def sold_cohort_quantities(batch):
+    """Return how much of each of a batch's cohorts is out with a customer.
+
+    Read from the order allocations rather than from the cohort history,
+    because that is the one place that says whether a dispatched quantity is
+    still sold: a returned or reversed promise leaves `FULFILLED` and stops
+    counting here, and the units it describes are back among the cohorts.
+
+    Sales is built on the nursery rather than the other way round, so the
+    import is deferred exactly as the cohort one below is.
+    """
+    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
+
+    return dict(
+        SalesOrderAllocation.objects
+        .filter(
+            plant_cohort__batch=batch,
+            status=SalesOrderAllocation.Status.FULFILLED,
+        )
+        .values_list('plant_cohort_id')
+        .annotate(total=Sum('quantity'))
+    )
+
+
 def cohort_outputs(batch):
-    """Return anonymous quantities and promoted identities that share their cost."""
+    """Return anonymous quantities and promoted identities that share their cost.
+
+    A quantity somebody bought is still an output of the batch. The cost left
+    the nursery with the stock, so dropping those units here would silently
+    re-divide their cost over the ones that never moved and quietly restate
+    what the remaining stock is worth. They are listed as their own kind so
+    that `costing.services` can report them as cost of sale rather than as
+    stock still standing on a bench.
+    """
     from plantings.models import PlantCohort  # pylint: disable=import-outside-toplevel
 
     outputs = []
+    sold = sold_cohort_quantities(batch)
     cohorts = PlantCohort.objects.filter(batch=batch).prefetch_related('promoted_plants')
     for cohort in cohorts:
         if cohort.quantity:
             outputs.append(('cohort', cohort.pk, cohort.quantity))
+        if sold.get(cohort.pk):
+            outputs.append(('cohort_sale', cohort.pk, sold[cohort.pk]))
         outputs.extend(
             ('plant', plant_id, 1)
             for plant_id in cohort.promoted_plants.values_list('pk', flat=True)

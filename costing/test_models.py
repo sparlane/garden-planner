@@ -22,7 +22,7 @@ from workspaces.models import Workspace
 from .models import (
     POOL_TARGET_TYPES,
     SOURCE_FIELDS,
-    TARGET_FIELDS,
+    TARGET_COLUMNS,
     CostAllocation,
     CostAllocationRun,
 )
@@ -121,10 +121,10 @@ class CostAllocationIdentityTests(CostingFixtureTestCase):
         )
 
     def test_target_fields_match_the_declared_choices(self):
-        """Individual targets are columns; pools deliberately are not."""
+        """Every individual target maps to a column; pools deliberately do not."""
         self.assertEqual(
             tuple(CostAllocation.TargetType.values),
-            TARGET_FIELDS + POOL_TARGET_TYPES,
+            tuple(TARGET_COLUMNS) + POOL_TARGET_TYPES,
         )
 
     def test_a_layer_resolves_to_the_things_it_points_at(self):

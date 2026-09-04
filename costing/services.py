@@ -41,7 +41,7 @@ from plantings.models import ProductionBatch, SpecificPlant
 
 from .allocation import combine, loss_shares, value_shares
 from .models import CostAllocation, CostAllocationRun
-from .sources import batch_sources
+from .sources import batch_sources, sold_cohort_quantities
 
 
 FACTOR_QUANTUM = Decimal(1).scaleb(-FACTOR_DECIMAL_PLACES)
@@ -52,6 +52,12 @@ TargetType = CostAllocation.TargetType
 #: Finalizing output is the statement that it will not, which is what turns
 #: these into production loss.
 UNRESOLVED_TARGETS = (TargetType.SEED_TRAY_CELL, TargetType.BATCH_POOL)
+
+#: The targets whose share of a batch is a count of anonymous units rather than
+#: a fixed identity. Their division changes whenever the cohort's quantity or
+#: what has been sold out of it changes, which is why a frozen batch still has
+#: to re-divide them where a plant's frozen share is never touched again.
+COHORT_TARGETS = (TargetType.PLANT_COHORT, TargetType.COHORT_SALE)
 
 #: Where a plant's production value goes once its lifecycle resolves. Derived
 #: from the recorded facts every time it is asked for rather than stored, for
@@ -285,7 +291,7 @@ def _frozen_plan(intended, stored):
         """Return whether a frozen batch still has to cancel this layer."""
         if row.target_type in UNRESOLVED_TARGETS:
             return True
-        if row.target_type == TargetType.PLANT_COHORT:
+        if row.target_type in COHORT_TARGETS:
             key = _stored_key(row)
             return key not in intended or not _matches(row, intended[key])
         return (row.source_type, row.source_id) not in live_sources
@@ -411,6 +417,8 @@ def _bucket_of(row, dispositions):
     """Return which value bucket one layer belongs in."""
     if row.target_type == TargetType.SPECIFIC_PLANT:
         return dispositions.get(row.specific_plant_id, (None, 'plant_inventory'))[1]
+    if row.target_type == TargetType.COHORT_SALE:
+        return 'cogs'
     if row.target_type == TargetType.PRODUCTION_LOSS:
         return 'production_loss'
     if row.target_type == TargetType.UNATTRIBUTED:
@@ -466,6 +474,7 @@ def _layer_row(row):
         'seed_tray_cell': row.seed_tray_cell_id,
         'seed_tray_generation': row.seed_tray_generation_id,
         'specific_plant': row.specific_plant_id,
+        'plant_cohort': row.plant_cohort_id,
         'basis': row.basis,
         'basis_weight': f'{row.basis_weight:f}',
         'base_quantity': f'{row.base_quantity:f}',
@@ -588,5 +597,52 @@ def plant_cost_breakdown(plant):
         'disposition': disposition,
         'provisional_value': None if frozen else f'{quantize_money(value):f}',
         'final_value': f'{quantize_money(value):f}' if frozen else None,
+        'layers': [_layer_row(row) for row in rows],
+    }
+
+
+def cohort_cost_breakdown(cohort):
+    """Report what one anonymous block cost, and what one unit of it cost.
+
+    Stock still standing and stock already sold are read together on purpose.
+    Cost divides evenly per unit across a cohort — that is what managing it as
+    a count means — so dividing the whole block's layers by the whole block's
+    units gives the same figure before and after part of it is dispatched. A
+    sale valued against the stock left behind would drift upward every time
+    another order shipped.
+
+    The per-unit figure is what a dispatch out of the cohort is charged at:
+    the cohort holds a count, so there is nothing more exact to value it with.
+    """
+    rows = list(
+        CostAllocation.objects
+        .filter(
+            plant_cohort=cohort,
+            target_type__in=COHORT_TARGETS,
+            reversal_of__isnull=True,
+            reversal__isnull=True,
+        )
+        .select_related(
+            'application_line__lot__item',
+            'sowing_posting__movement__lot__item',
+            'generation_residual__lot__item',
+            'container_unit__source_lot__item',
+        )
+        .order_by('pk')
+    )
+    known = [row.amount for row in rows if row.amount is not None]
+    value = quantize_money(sum(known, Decimal('0')))
+    units = cohort.quantity + sold_cohort_quantities(cohort.batch).get(cohort.pk, 0)
+    frozen = is_frozen(cohort.batch)
+    return {
+        'cohort': cohort.pk,
+        'batch': cohort.batch_id,
+        'currency_code': cohort.workspace.currency_code,
+        'provisional': not frozen,
+        'unknown_cost': len(known) != len(rows),
+        'units': units,
+        'provisional_value': None if frozen else f'{value:f}',
+        'final_value': f'{value:f}' if frozen else None,
+        'unit_value': None if not units else f'{value / Decimal(units):f}',
         'layers': [_layer_row(row) for row in rows],
     }

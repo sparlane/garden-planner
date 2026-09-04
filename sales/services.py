@@ -9,13 +9,15 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from costing.services import plant_cost_breakdown
+from costing.services import cohort_cost_breakdown, plant_cost_breakdown
 from health.availability import is_quarantined
 from inventory.ledger import lock_lots, lock_units, unit_physical_state, unpromised_bulk
 from inventory.models import InventoryUnit, StockLot
 from locations.models import Location
+from plantings.cohort_availability import available_quantity
+from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import SELLABLE_STATES, plant_lifecycle_summary
-from plantings.models import SpecificPlant
+from plantings.models import PlantCohort, SpecificPlant
 
 from .calculations import money
 from .models import (
@@ -54,6 +56,21 @@ class LotRequest(NamedTuple):
     lot: int
     location: int
     quantity: int
+
+
+class CohortRequest(NamedTuple):
+    """One counted draw on one cohort, against the revision it was read at.
+
+    The revision is the operator's half of the bargain: it says which figure
+    they were looking at when they chose the count. Two orders may hold parts
+    of one block at once, so it is not what stops them overselling — the row
+    lock and the arithmetic are — but a block that was split, moved or written
+    down since the screen loaded is not the one the count was chosen from.
+    """
+
+    cohort: int
+    quantity: int
+    expected_revision: int
 
 
 @transaction.atomic
@@ -161,8 +178,8 @@ def _unit_target_error(line, target):
 
 
 #: One resolver per identity line type, and the column each one competes over.
-#: A counted line is absent on purpose: it promises no identity, so there is
-#: nothing here for it to be looked up by.
+#: Neither kind of counted line is here, on purpose: they promise no identity,
+#: so there is nothing to be looked up by.
 IDENTITY_TARGETS = {
     SalesOrderLine.LineType.SEEDLING: (_plant_target_error, 'plant'),
     SalesOrderLine.LineType.UNIT: (_unit_target_error, 'inventory_unit'),
@@ -206,6 +223,47 @@ def _lot_request_error(line, lot, location, request, taken):
     return None, available
 
 
+def _cohort_block_error(line, cohort, request):
+    """Return why this block is not one the line may draw from at all.
+
+    Separate from the quantity question below because it answers a different
+    one: whether these are the right plants, still described as the operator
+    read them, and free of a hold that has nothing to do with how many there
+    are.
+    """
+    if cohort.workspace_id != line.order.workspace_id:
+        return 'wrong_workspace'
+    if cohort.batch.variety_id != line.variety_id:
+        return 'wrong_variety'
+    if cohort.revision != request.expected_revision:
+        return 'stale_revision'
+    if cohort.lifecycle_state != PlantCohort.LifecycleState.AVAILABLE:
+        return 'not_sellable'
+    if is_quarantined(cohort):
+        return 'quarantined'
+    return None
+
+
+def _cohort_request_error(line, cohort, request, taken):
+    """Return why a counted draw on a cohort cannot be met, and what is free.
+
+    `taken` is what earlier requests in the same basket have already claimed,
+    so two draws on one block cannot each be told the whole count is theirs.
+    The availability figure comes back only once the block itself is fit to
+    draw on: what is unpromised in a block nobody may sell from is not a
+    number anybody should act on.
+    """
+    if cohort is None:
+        return 'unknown', None
+    reason = _cohort_block_error(line, cohort, request)
+    if reason:
+        return reason, None
+    available = available_quantity(cohort) - taken
+    if request.quantity > available:
+        return 'insufficient_stock', available
+    return None, available
+
+
 def _allocation_reference(allocation):
     """Describe the competing promise without exposing mutable line details."""
     return {
@@ -215,25 +273,72 @@ def _allocation_reference(allocation):
     }
 
 
-def _reject_foreign_selection(line, plant_ids, unit_ids, lot_requests):
+def _reject_foreign_selection(line, plant_ids, unit_ids, lot_requests, cohort_requests):
     """Refuse a selection of a kind this line cannot promise, before locking."""
-    offered = {'plants': plant_ids, 'units': unit_ids, 'lots': lot_requests}
+    offered = {
+        'plants': plant_ids,
+        'units': unit_ids,
+        'lots': lot_requests,
+        'cohorts': cohort_requests,
+    }
     accepted = {
         SalesOrderLine.LineType.SEEDLING: ('plants', 'A seedling line accepts plants only.'),
         SalesOrderLine.LineType.UNIT: ('units', 'A unit line accepts numbered units only.'),
         SalesOrderLine.LineType.LOT_QUANTITY: ('lots', 'A counted line accepts lot quantities only.'),
+        SalesOrderLine.LineType.COHORT_QUANTITY: ('cohorts', 'A cohort line accepts cohort quantities only.'),
     }[line.line_type]
     for field, values in offered.items():
         if field != accepted[0] and values:
             raise ValidationError({field: accepted[1]})
 
 
-def preview_targets(line, plant_ids=(), unit_ids=(), lot_requests=()):
+def preview_targets(line, plant_ids=(), unit_ids=(), lot_requests=(), cohort_requests=()):  # pylint: disable=too-many-arguments,too-many-positional-arguments
     """Resolve an explicit selection to what can be had and what cannot."""
-    _reject_foreign_selection(line, plant_ids, unit_ids, lot_requests)
+    _reject_foreign_selection(line, plant_ids, unit_ids, lot_requests, cohort_requests)
     if line.line_type == SalesOrderLine.LineType.LOT_QUANTITY:
         return _preview_lot_requests(line, lot_requests)
+    if line.line_type == SalesOrderLine.LineType.COHORT_QUANTITY:
+        return _preview_cohort_requests(line, cohort_requests)
     return _preview_identities(line, plant_ids, unit_ids)
+
+
+def _preview_cohort_requests(line, cohort_requests):
+    """Resolve counted draws on cohorts against what is standing unpromised.
+
+    Requests are answered in order and each one's accepted quantity is held
+    against the block for the ones after it, exactly as a basket of lot draws
+    is answered, so asking twice for the same cohort is told the truth the
+    second time too.
+    """
+    requests = [CohortRequest(*row) for row in cohort_requests]
+    cohorts = {
+        row.pk: row for row in PlantCohort.objects.filter(
+            pk__in={request.cohort for request in requests},
+        ).select_related('batch')
+    }
+    taken = {}
+    selected = []
+    conflicts = []
+    for request in requests:
+        cohort = cohorts.get(request.cohort)
+        reason, available = _cohort_request_error(
+            line, cohort, request, taken.get(request.cohort, 0),
+        )
+        row = {
+            'id': request.cohort,
+            'quantity': request.quantity,
+            'expected_revision': request.expected_revision,
+            # A string like every other availability figure the preview
+            # returns, so one screen helper renders counted stock whether the
+            # pool behind it is a decimal lot balance or a cohort's count.
+            'available': None if available is None else str(available),
+        }
+        if reason:
+            conflicts.append({**row, 'reason': reason})
+            continue
+        taken[request.cohort] = taken.get(request.cohort, 0) + request.quantity
+        selected.append(row)
+    return {'selected': selected, 'conflicts': conflicts, 'warnings': []}
 
 
 def _preview_lot_requests(line, lot_requests):
@@ -357,18 +462,59 @@ def _next_status(order):
 # refusal that catches a plant offered to a tray line before any lock is taken.
 @transaction.atomic
 def allocate_targets(line, user, plant_ids=(), unit_ids=(), lot_requests=(),  # pylint: disable=too-many-arguments,too-many-positional-arguments
-                     expires_at=None):
+                     cohort_requests=(), expires_at=None):
     """Add tentative targets, or immediately reserve confirmed replacements."""
     order = SalesOrder.objects.select_for_update().get(pk=line.order_id)
     line = SalesOrderLine.objects.select_related('order').get(pk=line.pk, order=order)
     if order.status not in ALLOCATABLE_ORDER_STATUSES:
         raise ValidationError({'status': 'This order cannot accept allocations.'})
-    _reject_foreign_selection(line, plant_ids, unit_ids, lot_requests)
+    _reject_foreign_selection(line, plant_ids, unit_ids, lot_requests, cohort_requests)
     if line.line_type == SalesOrderLine.LineType.LOT_QUANTITY:
         return _allocate_lot_requests(line, order, user, lot_requests, expires_at)
+    if line.line_type == SalesOrderLine.LineType.COHORT_QUANTITY:
+        return _allocate_cohort_requests(line, order, user, cohort_requests, expires_at)
     return _allocate_identities(
         line, order, user, sorted(set(plant_ids or unit_ids)), expires_at,
     )
+
+
+def _allocate_cohort_requests(line, order, user, cohort_requests, expires_at):
+    """Attach counted draws on anonymous nursery stock, holding the block lock.
+
+    The lock is taken before availability is read and kept for the whole
+    transaction, which is what makes this serialise against another order
+    reserving from the same block and against `plantings.cohorts` splitting,
+    promoting or writing down the very same plants.
+    """
+    requests = [CohortRequest(*row) for row in cohort_requests]
+    if not requests:
+        raise ValidationError({'cohorts': 'Select at least one quantity to draw.'})
+    cohorts = lock_cohorts(order.workspace, [request.cohort for request in requests])
+    requested = sum(request.quantity for request in requests)
+    if _promised_quantity(line) + requested > line.quantity:
+        raise ValidationError({'allocations': 'Allocations cannot exceed the requested quantity.'})
+    status, immediate = _next_status(order)
+    taken = {}
+    created = []
+    for request in requests:
+        reason, _available = _cohort_request_error(
+            line, cohorts[request.cohort], request, taken.get(request.cohort, 0),
+        )
+        if reason:
+            raise ValidationError({'allocations': f'Cohort {request.cohort}: {reason}.'})
+        taken[request.cohort] = taken.get(request.cohort, 0) + request.quantity
+        allocation = SalesOrderAllocation.objects.create(
+            line=line,
+            plant_cohort=cohorts[request.cohort],
+            quantity=request.quantity,
+            status=status,
+            expires_at=expires_at,
+            created_by=user,
+        )
+        if immediate:
+            _event(allocation, ReservationEvent.EventType.RESERVED, user)
+        created.append(allocation)
+    return created
 
 
 def _allocate_identities(line, order, user, ids, expires_at):
@@ -498,11 +644,46 @@ def _validate_pending_identity(allocation, plants, units):
     raise ValidationError({'allocations': f'Target {target.pk}: {reason}{held_by}.'})
 
 
+def _validate_pending_cohort_draws(pending, cohorts):
+    """Refuse to reserve more anonymous nursery stock than is standing free.
+
+    The whole order's draws on one block are added together first, so two
+    cohort lines cannot each be told the same plants are theirs. The blocks are
+    already locked by the caller, which is what makes the figure hold.
+
+    Availability rather than the revision is what is rechecked here. A draft
+    may sit for days while the block is counted, moved or graded, and none of
+    that is a reason to refuse an order that the stock can still cover.
+    """
+    wanted = {}
+    for allocation in pending:
+        if allocation.plant_cohort_id is None:
+            continue
+        wanted[allocation.plant_cohort_id] = (
+            wanted.get(allocation.plant_cohort_id, 0) + allocation.quantity
+        )
+    for cohort_id, quantity in sorted(wanted.items()):
+        cohort = cohorts[cohort_id]
+        if cohort.lifecycle_state != PlantCohort.LifecycleState.AVAILABLE:
+            raise ValidationError({
+                'allocations': f'Cohort {cohort_id} is no longer available to sell.',
+            })
+        if is_quarantined(cohort):
+            raise ValidationError({
+                'allocations': f'Cohort {cohort_id} is quarantined.',
+            })
+        available = available_quantity(cohort)
+        if quantity > available:
+            raise ValidationError({
+                'allocations': f'Cohort {cohort_id}: only {available} is unpromised.',
+            })
+
+
 def _validate_pending_draws(pending, lots):
     """Refuse to reserve more anonymous stock than is standing unpromised.
 
     The whole order's draws on one lot and place are added together first, so
-    two counted lines cannot each be told the same pots are theirs. The lots
+    two counted lot lines cannot each be told the same pots are theirs. The lots
     are already locked by the caller, which is what makes the figure hold.
     """
     wanted = {}
@@ -539,13 +720,16 @@ def confirm_order(order, user):
     plant_ids = [allocation.plant_id for allocation in pending if allocation.plant_id]
     unit_ids = [allocation.inventory_unit_id for allocation in pending if allocation.inventory_unit_id]
     lot_ids = [allocation.stock_lot_id for allocation in pending if allocation.stock_lot_id]
+    cohort_ids = [allocation.plant_cohort_id for allocation in pending if allocation.plant_cohort_id]
     plants = _locked_plants(order.workspace, plant_ids)
     units = lock_units(order.workspace, unit_ids)
     lots = lock_lots(order.workspace, lot_ids)
+    cohorts = lock_cohorts(order.workspace, cohort_ids)
     _validate_pending_draws(pending, lots)
+    _validate_pending_cohort_draws(pending, cohorts)
     try:
         for allocation in sorted(pending, key=lambda row: row.pk):
-            if allocation.stock_lot_id is None:
+            if allocation.stock_lot_id is None and allocation.plant_cohort_id is None:
                 _validate_pending_identity(allocation, plants, units)
             SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
                 status=SalesOrderAllocation.Status.RESERVED,
@@ -629,8 +813,26 @@ def _allocated_cost(allocation):
         if unit_cost is None:
             return None, True, False
         return money(Decimal(allocation.quantity) * unit_cost), False, False
+    if allocation.plant_cohort_id:
+        return cohort_draw_cost(allocation.plant_cohort, allocation.quantity)
     value = allocation.inventory_unit.acquisition_cost
     return value, value is None, False
+
+
+def cohort_draw_cost(cohort, quantity):
+    """Return what a counted draw on one cohort costs, and how sure that is.
+
+    An anonymous block divides its cost evenly per unit, so a draw on it is
+    worth its share and nothing more exact exists to charge it with. A block
+    whose inputs have no recorded price yields an unknown cost rather than a
+    zero, exactly as an unpriced lot does — a part-priced one included, because
+    a share of an incomplete total is not what the plants cost.
+    """
+    breakdown = cohort_cost_breakdown(cohort)
+    unit_value = breakdown['unit_value']
+    if unit_value is None or breakdown['unknown_cost']:
+        return None, True, breakdown['provisional']
+    return money(Decimal(unit_value) * quantity), False, breakdown['provisional']
 
 
 def order_margin(order):
@@ -639,7 +841,7 @@ def order_margin(order):
         SalesOrderAllocation.objects.filter(
             line__order=order,
             status__in=[SalesOrderAllocation.Status.PENDING, SalesOrderAllocation.Status.RESERVED, SalesOrderAllocation.Status.FULFILLED],
-        ).select_related('plant__batch', 'inventory_unit', 'stock_lot')
+        ).select_related('plant__batch', 'inventory_unit', 'stock_lot', 'plant_cohort__batch')
     )
     allocated_count = sum(
         1 if row.quantity is None else row.quantity for row in allocations

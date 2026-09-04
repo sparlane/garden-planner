@@ -32,10 +32,14 @@ import { SupplyDocumentPanel } from './billing/order_panel'
 import { getInventoryBalances, getInventoryItems } from './api/inventory'
 import { getLocations } from './api/locations'
 import { getHealthObservationTypes } from './api/health'
+import { getCohorts } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { queryClient, queryKeys } from './query'
+import { CohortFilters } from './types/plantings'
 import {
   AllocationPreview,
+  CohortDraw,
+  CohortDrawPreview,
   Customer,
   LotDraw,
   LotDrawPreview,
@@ -66,16 +70,26 @@ const TAX_TREATMENT_LABELS: Record<SalesTaxTreatment, string> = {
 const LINE_TYPE_LABELS: Record<SalesLineType, string> = {
   seedling: 'Seedling',
   unit: 'Numbered unit',
-  lot_quantity: 'Counted stock'
+  lot_quantity: 'Counted stock',
+  cohort_quantity: 'Counted seedlings'
 }
 
-// What each kind of line names in the catalog. A seedling line promises a
-// variety and nothing more exact; the other two name an inventory item and
-// differ only in whether the stock they draw has identities.
+// What each kind of line names in the catalog. A seedling line and a cohort
+// line both promise a variety and nothing more exact — the customer is buying
+// the crop, not the block it happens to be counted in — while the other two
+// name an inventory item and differ only in whether the stock they draw has
+// identities.
 const LINE_TARGET_LABELS: Record<SalesLineType, string> = {
   seedling: 'Variety',
   unit: 'Numbered item',
-  lot_quantity: 'Counted item'
+  lot_quantity: 'Counted item',
+  cohort_quantity: 'Variety'
+}
+
+// Which line types name a variety rather than an inventory item. Written once
+// so the picker, the payload and the target list cannot disagree about it.
+function namesAVariety(lineType: SalesLineType): boolean {
+  return lineType === 'seedling' || lineType === 'cohort_quantity'
 }
 
 // A unit line sells anything individually identified — a tray or a numbered
@@ -251,8 +265,8 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
       createSalesOrderLine({
         order: order.pk,
         line_type: lineType,
-        variety: lineType === 'seedling' ? Number(target) : null,
-        item: lineType === 'seedling' ? null : Number(target),
+        variety: namesAVariety(lineType) ? Number(target) : null,
+        item: namesAVariety(lineType) ? null : Number(target),
         description,
         quantity,
         unit_price: unitPrice,
@@ -263,7 +277,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
       }),
     onSuccess: () => invalidateSales(order.pk)
   })
-  const targets = lineType === 'seedling' ? (varieties.data ?? []) : itemsForLineType(items.data ?? [], lineType)
+  const targets = namesAVariety(lineType) ? (varieties.data ?? []) : itemsForLineType(items.data ?? [], lineType)
   return (
     <Card body className="mb-3">
       <Card.Title>Add line</Card.Title>
@@ -359,6 +373,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
 function allocationTarget(allocation: SalesAllocation): string {
   if (allocation.plant) return `Plant #${allocation.plant}`
   if (allocation.stock_lot) return `${allocation.quantity ?? 0} from lot #${allocation.stock_lot}`
+  if (allocation.plant_cohort) return `${allocation.quantity ?? 0} from cohort #${allocation.plant_cohort}`
   return allocation.asset_code ?? 'Unknown'
 }
 
@@ -367,6 +382,17 @@ function selectedLotDraws(preview: AllocationPreview | undefined): Array<LotDraw
     lot: row.id,
     location: row.location,
     quantity: row.quantity
+  }))
+}
+
+// The revision travels back with the draw so the server can refuse a block
+// that changed between the preview and the allocation, rather than quietly
+// promising a count nobody read.
+function selectedCohortDraws(preview: AllocationPreview | undefined): Array<CohortDraw> {
+  return ((preview?.selected ?? []) as Array<CohortDrawPreview>).map((row) => ({
+    cohort: row.id,
+    quantity: row.quantity,
+    expected_revision: row.expected_revision
   }))
 }
 
@@ -385,6 +411,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   const [readyTo, setReadyTo] = React.useState('')
   const [selectedUnits, setSelectedUnits] = React.useState<Array<number>>([])
   const [draw, setDraw] = React.useState<{ balance: string; quantity: number }>({ balance: '', quantity: 1 })
+  const [cohortDraw, setCohortDraw] = React.useState<{ cohort: number | ''; quantity: number }>({ cohort: '', quantity: 1 })
   const [expiresAt, setExpiresAt] = React.useState('')
   const [preview, setPreview] = React.useState<AllocationPreview>()
   const units = useQuery({
@@ -401,6 +428,16 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
     enabled: line.line_type === 'lot_quantity'
   })
   const drawRows = (balances.data ?? []).filter((row) => Number(row.unpromised_quantity) > 0)
+  // A cohort line draws on blocks of its own variety. Only stock that is on
+  // sale, out of quarantine and not already promised can be offered, which is
+  // the same set the server checks again under the block's lock.
+  const cohortFilters: CohortFilters = { variety: line.variety ?? 0, state: 'available', active: true, quarantined: false }
+  const cohorts = useQuery({
+    queryKey: queryKeys.plantings.cohorts(cohortFilters),
+    queryFn: ({ signal }) => getCohorts(cohortFilters, signal),
+    enabled: line.line_type === 'cohort_quantity' && line.variety !== null
+  })
+  const cohortRows = (cohorts.data?.results ?? []).filter((row) => row.available_quantity > 0)
   const previewMutation = useMutation({
     mutationFn: () => {
       const ids = plantIds
@@ -412,6 +449,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         const row = drawRows.find((entry) => `${entry.lot}:${entry.location}` === draw.balance)
         const lotRequests = row ? [{ lot: row.lot, location: row.location, quantity: draw.quantity }] : []
         return previewAllocation(order.pk, { line: line.pk, lot_requests: lotRequests })
+      }
+      if (line.line_type === 'cohort_quantity') {
+        const row = cohortRows.find((entry) => entry.pk === cohortDraw.cohort)
+        const cohortRequests = row ? [{ cohort: row.pk, quantity: cohortDraw.quantity, expected_revision: row.revision }] : []
+        return previewAllocation(order.pk, { line: line.pk, cohort_requests: cohortRequests })
       }
       if (ids.length) return previewAllocation(order.pk, { line: line.pk, plant_ids: ids })
       return previewAllocation(order.pk, {
@@ -437,7 +479,8 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         {
           plantIds: line.line_type === 'seedling' ? ((preview?.selected ?? []) as Array<number>) : [],
           unitIds: line.line_type === 'unit' ? ((preview?.selected ?? []) as Array<number>) : [],
-          lotDraws: line.line_type === 'lot_quantity' ? selectedLotDraws(preview) : []
+          lotDraws: line.line_type === 'lot_quantity' ? selectedLotDraws(preview) : [],
+          cohortDraws: line.line_type === 'cohort_quantity' ? selectedCohortDraws(preview) : []
         },
         expiresAt ? new Date(expiresAt).toISOString() : null
       ),
@@ -510,6 +553,34 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
               </Col>
               <Col md={3}>
                 <Form.Control type="date" title="Expected ready by" value={readyTo} onChange={(event) => setReadyTo(event.target.value)} />
+              </Col>
+            </Row>
+          ) : line.line_type === 'cohort_quantity' ? (
+            <Row className="g-2 align-items-end">
+              <Col md={8}>
+                <Form.Label>Draw from</Form.Label>
+                <Form.Select
+                  value={cohortDraw.cohort === '' ? '' : String(cohortDraw.cohort)}
+                  onChange={(event) => setCohortDraw({ ...cohortDraw, cohort: event.target.value === '' ? '' : Number(event.target.value) })}
+                >
+                  <option value="">Select…</option>
+                  {cohortRows.map((row) => (
+                    <option key={row.pk} value={row.pk}>
+                      Cohort #{row.pk} · {row.batch_code} · {row.location_name || 'Not placed'} · {row.available_quantity} of {row.quantity} unpromised
+                    </option>
+                  ))}
+                </Form.Select>
+                {cohortRows.length === 0 && !cohorts.isPending && <Form.Text>No anonymous stock of this variety is available and unpromised.</Form.Text>}
+              </Col>
+              <Col md={4}>
+                <Form.Label>How many</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={1}
+                  max={line.quantity - active}
+                  value={cohortDraw.quantity}
+                  onChange={(event) => setCohortDraw({ ...cohortDraw, quantity: Number(event.target.value) })}
+                />
               </Col>
             </Row>
           ) : line.line_type === 'lot_quantity' ? (

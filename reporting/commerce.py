@@ -92,9 +92,10 @@ def order_report(workspace, filters):
     if filters.get('variety'):
         queryset = queryset.filter(lines__variety_id=filters['variety'])
     if filters.get('batch'):
-        queryset = queryset.filter(
-            lines__allocations__plant__batch_id=filters['batch'],
-        )
+        batch = filters['batch']
+        matches_batch = Q(lines__allocations__plant__batch_id=batch)
+        matches_batch |= Q(lines__allocations__plant_cohort__batch_id=batch)
+        queryset = queryset.filter(matches_batch)
     valid_statuses = {choice for choice, _label in SalesOrder.Status.choices}
     if filters.get('status'):
         if filters['status'] not in valid_statuses:
@@ -196,11 +197,15 @@ def _commerce_queryset(workspace, filters, start, end):
     ).select_related(
         'fulfillment__order__customer', 'allocation__line',
         'allocation__plant__batch', 'allocation__inventory_unit',
+        'allocation__plant_cohort__batch',
     )
     if filters.get('variety'):
         queryset = queryset.filter(allocation__line__variety_id=filters['variety'])
     if filters.get('batch'):
-        queryset = queryset.filter(allocation__plant__batch_id=filters['batch'])
+        batch = filters['batch']
+        matches_batch = Q(allocation__plant__batch_id=batch)
+        matches_batch |= Q(allocation__plant_cohort__batch_id=batch)
+        queryset = queryset.filter(matches_batch)
     if filters.get('customer'):
         queryset = queryset.filter(fulfillment__order__customer_id=filters['customer'])
     if filters.get('fulfillment'):
@@ -217,20 +222,48 @@ def _commerce_queryset(workspace, filters, start, end):
 def _cogs_bucket(allocation):
     """Return which cost-of-sale column one dispatched promise belongs in.
 
-    Anonymous stock sold by the count is neither a plant nor a lent tray, so
-    it lands in the general bucket rather than being reported as a tray whose
-    generations and occupancy it does not have.
+    A count sold out of a cohort is nursery plants the business grew, so it
+    belongs beside the identified seedlings rather than in the general bucket:
+    the difference between the two is whether anybody wrote the plants down
+    one by one, which is not a difference in what was sold. Anonymous stock
+    out of an inventory lot really is neither a plant nor a lent tray, and
+    stays where it was.
     """
-    if allocation.plant_id:
+    if allocation.plant_id or allocation.plant_cohort_id:
         return 'plant_cogs'
     if allocation.inventory_unit_id:
         return 'tray_cogs'
     return 'other_cogs'
 
 
+def _allocation_batch_id(allocation):
+    """Return the production batch a dispatched promise's plants came from.
+
+    A cohort reaches its batch the same way a plant does, so a cohort sale is
+    reportable by batch and lands in the same profitability row as the
+    identified half of the very same crop.
+    """
+    if allocation.plant_id:
+        return allocation.plant.batch_id
+    if allocation.plant_cohort_id:
+        return allocation.plant_cohort.batch_id
+    return None
+
+
 def _matches_place(line, filters, occurred_at):
+    """Return whether a dispatched line was standing where the filter asks.
+
+    A cohort stands in one place as a block rather than plant by plant, and it
+    keeps no history of where it stood when: the location on the block is the
+    only answer there is, so a garden-square filter — which is a question
+    about one plant in one square — never matches one.
+    """
     if not filters.get('location') and not filters.get('garden_square'):
         return True
+    if line.allocation.plant_cohort_id:
+        if filters.get('garden_square'):
+            return False
+        return line.allocation.plant_cohort.location_id == int(filters['location'])
     if not line.allocation.plant_id:
         return False
     locations = SpecificPlantLocation.objects.filter(
@@ -260,6 +293,7 @@ def _base_financial_row(kind, occurred_at, currency, source_id):
         'plant_id': None,
         'inventory_unit_id': None,
         'lot_id': None,
+        'cohort_id': None,
         'loss_cause': None,
         'gross_sales': decimal_string(ZERO, 4),
         'discounts': decimal_string(ZERO, 4),
@@ -294,12 +328,11 @@ def _fulfillment_rows(lines, filters):
             'order_number': line.fulfillment.order.order_number,
             'customer_id': line.fulfillment.order.customer_id,
             'variety_id': line.allocation.line.variety_id,
-            'batch_id': (
-                line.allocation.plant.batch_id if line.allocation.plant_id else None
-            ),
+            'batch_id': _allocation_batch_id(line.allocation),
             'plant_id': line.allocation.plant_id,
             'inventory_unit_id': line.allocation.inventory_unit_id,
             'lot_id': line.allocation.stock_lot_id,
+            'cohort_id': line.allocation.plant_cohort_id,
             'gross_sales': decimal_string(line.gross_ex_tax, 4),
             'discounts': decimal_string(line.discount_ex_tax, 4),
             'net_sales': decimal_string(line.subtotal_ex_tax, 4),
@@ -354,6 +387,7 @@ def _refund_rows(workspace, filters, start, end):
     ).select_related(
         'refund__order', 'fulfillment_line__allocation__line',
         'fulfillment_line__allocation__plant__batch',
+        'fulfillment_line__allocation__plant_cohort__batch',
         'fulfillment_line__fulfillment',
     )
     if filters.get('variety'):
@@ -361,9 +395,10 @@ def _refund_rows(workspace, filters, start, end):
             fulfillment_line__allocation__line__variety_id=filters['variety'],
         )
     if filters.get('batch'):
-        queryset = queryset.filter(
-            fulfillment_line__allocation__plant__batch_id=filters['batch'],
-        )
+        batch = filters['batch']
+        matches_batch = Q(fulfillment_line__allocation__plant__batch_id=batch)
+        matches_batch |= Q(fulfillment_line__allocation__plant_cohort__batch_id=batch)
+        queryset = queryset.filter(matches_batch)
     if filters.get('customer'):
         queryset = queryset.filter(refund__order__customer_id=filters['customer'])
     if filters.get('order'):
@@ -389,10 +424,11 @@ def _refund_rows(workspace, filters, start, end):
             'order_number': refund_line.refund.order.order_number,
             'customer_id': refund_line.refund.order.customer_id,
             'variety_id': line.allocation.line.variety_id,
-            'batch_id': line.allocation.plant.batch_id if line.allocation.plant_id else None,
+            'batch_id': _allocation_batch_id(line.allocation),
             'plant_id': line.allocation.plant_id,
             'inventory_unit_id': line.allocation.inventory_unit_id,
             'lot_id': line.allocation.stock_lot_id,
+            'cohort_id': line.allocation.plant_cohort_id,
             'refunds': decimal_string(refund_line.subtotal_ex_tax, 4),
             'net_sales': decimal_string(-refund_line.subtotal_ex_tax, 4),
         })
@@ -414,15 +450,17 @@ def _return_rows(workspace, filters, start, end):
         'sales_return__order', 'fulfillment_line__fulfillment',
         'fulfillment_line__allocation__line',
         'fulfillment_line__allocation__plant__batch',
+        'fulfillment_line__allocation__plant_cohort__batch',
     )
     if filters.get('variety'):
         queryset = queryset.filter(
             fulfillment_line__allocation__line__variety_id=filters['variety'],
         )
     if filters.get('batch'):
-        queryset = queryset.filter(
-            fulfillment_line__allocation__plant__batch_id=filters['batch'],
-        )
+        batch = filters['batch']
+        matches_batch = Q(fulfillment_line__allocation__plant__batch_id=batch)
+        matches_batch |= Q(fulfillment_line__allocation__plant_cohort__batch_id=batch)
+        queryset = queryset.filter(matches_batch)
     if filters.get('customer'):
         queryset = queryset.filter(sales_return__order__customer_id=filters['customer'])
     if filters.get('order'):
@@ -450,10 +488,11 @@ def _return_rows(workspace, filters, start, end):
             'order_number': return_line.sales_return.order.order_number,
             'customer_id': return_line.sales_return.order.customer_id,
             'variety_id': line.allocation.line.variety_id,
-            'batch_id': line.allocation.plant.batch_id if line.allocation.plant_id else None,
+            'batch_id': _allocation_batch_id(line.allocation),
             'plant_id': line.allocation.plant_id,
             'inventory_unit_id': line.allocation.inventory_unit_id,
             'lot_id': line.allocation.stock_lot_id,
+            'cohort_id': line.allocation.plant_cohort_id,
             'provisional': line.cogs_provisional,
             'unvalued': line.cogs_amount is None,
         })

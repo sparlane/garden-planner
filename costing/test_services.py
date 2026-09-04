@@ -9,6 +9,7 @@ and germinations recorded against its cells.
 # pylint: disable=duplicate-code
 
 from decimal import Decimal
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -28,7 +29,7 @@ from applications.models import InputApplicationTarget
 from inventory.models import InventoryItem, QuantityCertainty
 from inventory.units import UnitCode
 from plantings.batches import finalize_batch_output
-from plantings.cohorts import observe_cohort, promote_cohort
+from plantings.cohorts import change_cohort, observe_cohort, promote_cohort
 from plantings.germination import close_germination, reopen_germination
 from plantings.lifecycle import (
     EventType,
@@ -44,6 +45,9 @@ from plantings.models import (
     SpecificPlantLocation,
 )
 from plantings.sowing import post_sowing_consumption
+from sales.commerce import post_fulfillment, reverse_fulfillment
+from sales.models import SalesOrderLine
+from sales.services import CohortRequest, allocate_targets, confirm_order, create_order
 from seeds.models import SeedPacket
 from tests.factories import (
     make_batch_for_packet,
@@ -339,6 +343,95 @@ class CohortCostTests(CostingServiceTestCase):
         self.assertEqual(after[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
         self.assertEqual(after[CostAllocation.TargetType.SPECIFIC_PLANT], Decimal('0.2700'))
         self.assertEqual(plant_cost_breakdown(plants[0])['provisional_value'], '0.2700')
+
+
+class CohortSaleCostTests(CostingServiceTestCase):
+    """A count somebody buys takes its share of the batch's cost with it.
+
+    Without this the units that sold would simply stop being outputs, and their
+    cost would re-divide over the stock that never moved — quietly restating
+    what the remaining plants are worth every time an order shipped.
+    """
+
+    def setUp(self):
+        super().setUp()
+        sowing = self.sow([(self.cells[0], 4)])
+        self.apply_media([self.cells[0]], '0.04')
+        self.cohort, _observed = observe_cohort(
+            self.workspace, self.user,
+            batch=self.batch,
+            source_sowing=sowing,
+            quantity=4,
+            idempotency_key=uuid4(),
+        )
+        self.cohort, _ready = change_cohort(
+            self.workspace, self.user,
+            cohort_id=self.cohort.pk,
+            expected_revision=self.cohort.revision,
+            action=CohortOperation.Action.READY,
+            idempotency_key=uuid4(),
+        )
+
+    def sell(self, quantity=1):
+        """Quote, reserve and dispatch one count out of the block."""
+        order = create_order(self.workspace, self.user)
+        line = SalesOrderLine(
+            order=order,
+            line_type=SalesOrderLine.LineType.COHORT_QUANTITY,
+            variety=self.batch.variety,
+            description='Anonymous seedlings',
+            quantity=quantity,
+            unit_price=Decimal('1.0000'),
+            tax_rate=Decimal('15'),
+        )
+        line.save()
+        allocate_targets(line, self.user, cohort_requests=[
+            CohortRequest(self.cohort.pk, quantity, self.cohort.revision),
+        ])
+        confirm_order(order, self.user)
+        return post_fulfillment(
+            order, self.user,
+            operation_key=uuid4(),
+            allocation_ids=[line.allocations.get().pk],
+        )
+
+    def test_a_sold_count_becomes_cost_of_sale_and_the_rest_is_unmoved(self):
+        """Three quarters stays with the stock; a quarter left with the order."""
+        self.sell()
+
+        totals = self.totals_by_target()
+        self.assertEqual(totals[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
+        self.assertEqual(totals[CostAllocation.TargetType.COHORT_SALE], Decimal('0.2700'))
+
+    def test_the_batch_still_reconciles_and_reports_the_sale_as_cogs(self):
+        """The input total is unchanged; only which bucket holds it moved."""
+        self.sell()
+
+        breakdown = batch_cost_breakdown(self.batch)
+        self.assertEqual(breakdown['provisional_total'], '1.0800')
+        self.assertEqual(breakdown['totals']['cogs'], '0.2700')
+        self.assertEqual(sum(Decimal(value) for value in breakdown['totals'].values()), Decimal('1.0800'))
+
+    def test_the_dispatch_is_charged_the_unit_cost_it_was_worth(self):
+        """One of four units of a block that cost 1.08 is worth 0.27."""
+        fulfillment = self.sell()
+
+        line = fulfillment.lines.get()
+        self.assertEqual(line.cogs_amount, Decimal('0.2700'))
+        self.assertTrue(line.cogs_provisional)
+
+    def test_a_reversed_dispatch_takes_the_cost_back_out_of_sales(self):
+        """The count is back on the bench, so its value is back with it."""
+        fulfillment = self.sell()
+
+        reverse_fulfillment(
+            fulfillment, self.user,
+            operation_key=uuid4(), reason='Dispatched in error.',
+        )
+
+        totals = self.totals_by_target()
+        self.assertEqual(totals[CostAllocation.TargetType.PLANT_COHORT], Decimal('1.0800'))
+        self.assertNotIn(CostAllocation.TargetType.COHORT_SALE, totals)
 
 
 class MultigermTests(CostingServiceTestCase):
