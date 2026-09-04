@@ -1,4 +1,4 @@
-type ApiRequestMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE'
+type ApiRequestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 interface ApiErrorOptions {
   method: ApiRequestMethod
