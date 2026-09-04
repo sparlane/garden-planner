@@ -2,6 +2,7 @@
 
 # pylint: disable=too-many-lines
 
+from collections import defaultdict
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
@@ -201,6 +202,41 @@ def physical_balance(lot, location):
     return (totals['incoming'] or Decimal('0')) - (
         totals['outgoing'] or Decimal('0')
     )
+
+
+def physical_balances(lots):
+    """Derive every lot/location balance for a set of lots in one query.
+
+    The batched sibling of `physical_balance`, for callers that would
+    otherwise run one aggregate per row they return. The lot alone answers
+    the question — a movement belongs to exactly one lot, and a lot to one
+    workspace — so the caller's workspace filter is already accounted for by
+    the lots it passes in.
+
+    The mapping carries an entry for every location a lot's history touched,
+    including the ones it has since emptied, because a place stock has left
+    is reported as zero rather than omitted. Pairs the ledger never touched
+    read as zero too.
+
+    Deliberately no stored total: a running balance kept beside the movement
+    rows is a second source of truth that can drift from them, which is the
+    thing an append-only ledger exists to prevent.
+    """
+    balances = defaultdict(Decimal)
+    # The trailing `order_by()` clears the model's default ordering, which
+    # would otherwise join `occurred_at` to the GROUP BY and hand back one
+    # group per movement instead of one per lot and place.
+    grouped = StockMovement.objects.filter(
+        lot_id__in=[lot.pk for lot in lots],
+    ).values(
+        'lot_id', 'source_id', 'destination_id',
+    ).annotate(total=Sum('quantity')).order_by()
+    for row in grouped:
+        if row['source_id']:
+            balances[(row['lot_id'], row['source_id'])] -= row['total']
+        if row['destination_id']:
+            balances[(row['lot_id'], row['destination_id'])] += row['total']
+    return balances
 
 
 def bulk_balance(lot, location):
