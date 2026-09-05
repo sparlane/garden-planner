@@ -1,15 +1,11 @@
-import React from 'react'
+import React, { useState } from 'react'
 import type { KeyboardEvent } from 'react'
+import { Button, ButtonGroup } from 'react-bootstrap'
 
 import { GardenBed, GardenRow, GardenSquare } from '../types/garden'
 
-// The drawn area sits inside a margin so its outline is not clipped by the
-// viewBox, and every child is offset by the same amount.
 const OUTLINE_WIDTH = 100
 
-// What the canvas needs to know about an area to draw it. The Gardens screen
-// passes a saved area; the setup wizard passes one it has not written yet, so
-// this is deliberately narrower than GardenArea.
 interface CanvasArea {
   pk?: number
   name: string
@@ -22,10 +18,14 @@ interface GardenCanvasProps {
   beds: Array<GardenBed>
   rows?: Array<GardenRow>
   squares: Array<GardenSquare>
-  // Absent when nothing is selectable, which is how the wizard previews a
-  // layout that has no squares to open yet.
+  describeBed?: (bed: GardenBed) => string
+  describeRow?: (row: GardenRow) => string
   describeSquare?: (square: GardenSquare) => string
+  bedClassName?: (bed: GardenBed) => string
+  rowClassName?: (row: GardenRow) => string
   squareClassName?: (square: GardenSquare) => string
+  onSelectBed?: (bedPk: number) => void
+  onSelectRow?: (rowPk: number) => void
   onSelectSquare?: (squarePk: number) => void
 }
 
@@ -34,22 +34,24 @@ interface GardenBedElementProps {
   bed: GardenBed
   rows: Array<GardenRow>
   squares: Array<GardenSquare>
+  describeBed: (bed: GardenBed) => string
+  describeRow: (row: GardenRow) => string
   describeSquare: (square: GardenSquare) => string
+  bedClassName: (bed: GardenBed) => string
+  rowClassName: (row: GardenRow) => string
   squareClassName: (square: GardenSquare) => string
+  onSelectBed?: (bedPk: number) => void
+  onSelectRow?: (rowPk: number) => void
   onSelectSquare?: (squarePk: number) => void
 }
 
-interface GardenSquareElementProps {
-  area: CanvasArea
-  bed: GardenBed
-  square: GardenSquare
+interface SelectableGeometryProps {
+  children: React.ReactNode
   description: string
-  className: string
-  onSelect?: (squarePk: number) => void
+  geometryPk: number
+  onSelect?: (pk: number) => void
 }
 
-// Model coordinates grow upwards from the bottom left; SVG grows downwards
-// from the top left, so every y is flipped through the area's height.
 function calculateSvgY(area: CanvasArea, offsetY: number, placementY: number, sizeY: number): number {
   return OUTLINE_WIDTH + area.size_y - (offsetY + placementY + sizeY)
 }
@@ -64,81 +66,100 @@ function groupByParent<T extends { bed: number }>(children: Array<T>): Map<numbe
   return grouped
 }
 
-function GardenSquareElement({ area, bed, square, description, className, onSelect }: GardenSquareElementProps) {
-  const x = OUTLINE_WIDTH + bed.placement_x + square.placement_x
-  const y = calculateSvgY(area, bed.placement_y, square.placement_y, square.size_y)
-
+function SelectableGeometry({ children, description, geometryPk, onSelect }: SelectableGeometryProps) {
   if (onSelect === undefined) {
     return (
       <g>
         <title>{description}</title>
-        <rect className={className} x={x} y={y} width={square.size_x} height={square.size_y} />
+        {children}
       </g>
     )
   }
 
   function handleKeyDown(event: KeyboardEvent<SVGGElement>) {
-    if (event.key !== 'Enter' && event.key !== ' ') {
-      return
-    }
-
+    if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
-    onSelect?.(square.pk)
+    onSelect?.(geometryPk)
   }
 
   return (
-    <g className="garden-square-control" role="button" tabIndex={0} aria-label={description} aria-haspopup="dialog" onClick={() => onSelect(square.pk)} onKeyDown={handleKeyDown}>
+    <g
+      className="garden-geometry-control"
+      role="button"
+      tabIndex={0}
+      aria-label={description}
+      aria-haspopup="dialog"
+      onClick={() => onSelect(geometryPk)}
+      onKeyDown={handleKeyDown}
+    >
       <title>{description}</title>
-      <rect className={className} x={x} y={y} width={square.size_x} height={square.size_y} />
+      {children}
     </g>
   )
 }
 
-function GardenBedElement({ area, bed, rows, squares, describeSquare, squareClassName, onSelectSquare }: GardenBedElementProps) {
+function GardenBedElement({
+  area,
+  bed,
+  rows,
+  squares,
+  describeBed,
+  describeRow,
+  describeSquare,
+  bedClassName,
+  rowClassName,
+  squareClassName,
+  onSelectBed,
+  onSelectRow,
+  onSelectSquare
+}: GardenBedElementProps) {
   return (
     <g>
-      <rect className="garden-bed" x={OUTLINE_WIDTH + bed.placement_x} y={calculateSvgY(area, 0, bed.placement_y, bed.size_y)} width={bed.size_x} height={bed.size_y}>
-        <title>{bed.name}</title>
-      </rect>
+      <SelectableGeometry description={describeBed(bed)} geometryPk={bed.pk} onSelect={onSelectBed}>
+        <rect className={bedClassName(bed)} x={OUTLINE_WIDTH + bed.placement_x} y={calculateSvgY(area, 0, bed.placement_y, bed.size_y)} width={bed.size_x} height={bed.size_y} />
+      </SelectableGeometry>
       {rows.map((row) => (
-        <rect
-          key={row.pk}
-          className="garden-row"
-          x={OUTLINE_WIDTH + bed.placement_x + row.placement_x}
-          y={calculateSvgY(area, bed.placement_y, row.placement_y, row.size_y)}
-          width={row.size_x}
-          height={row.size_y}
-        >
-          <title>{row.name}</title>
-        </rect>
+        <SelectableGeometry key={row.pk} description={describeRow(row)} geometryPk={row.pk} onSelect={onSelectRow}>
+          <rect
+            className={rowClassName(row)}
+            x={OUTLINE_WIDTH + bed.placement_x + row.placement_x}
+            y={calculateSvgY(area, bed.placement_y, row.placement_y, row.size_y)}
+            width={row.size_x}
+            height={row.size_y}
+          />
+        </SelectableGeometry>
       ))}
       {squares.map((square) => (
-        <GardenSquareElement
-          key={square.pk}
-          area={area}
-          bed={bed}
-          square={square}
-          description={describeSquare(square)}
-          className={squareClassName(square)}
-          onSelect={onSelectSquare}
-        />
+        <SelectableGeometry key={square.pk} description={describeSquare(square)} geometryPk={square.pk} onSelect={onSelectSquare}>
+          <rect
+            className={squareClassName(square)}
+            x={OUTLINE_WIDTH + bed.placement_x + square.placement_x}
+            y={calculateSvgY(area, bed.placement_y, square.placement_y, square.size_y)}
+            width={square.size_x}
+            height={square.size_y}
+          />
+        </SelectableGeometry>
       ))}
     </g>
   )
 }
 
-// The one place an area, its beds, its rows, and its squares are drawn. The
-// Gardens screen and the setup preview both render through it so that what a
-// gardener is shown before saving is what they get afterwards.
 function GardenCanvas({
   area,
   beds,
   rows = [],
   squares,
+  describeBed = (bed) => `${bed.name}: ${bed.kind.replace('_', ' ')}`,
+  describeRow = (row) => row.name,
   describeSquare = (square) => square.name,
+  bedClassName = (bed) => `garden-bed garden-bed--${bed.kind}`,
+  rowClassName = () => 'garden-row',
   squareClassName = () => 'garden-square garden-square--empty',
+  onSelectBed,
+  onSelectRow,
   onSelectSquare
 }: GardenCanvasProps) {
+  const [zoom, setZoom] = useState(1)
   const rowsByBed = React.useMemo(() => groupByParent(rows), [rows])
   const squaresByBed = React.useMemo(() => groupByParent(squares), [squares])
   const viewWidth = area.size_x + OUTLINE_WIDTH * 2
@@ -146,23 +167,48 @@ function GardenCanvas({
   const titleId = `garden-area-${area.pk ?? 'preview'}-title`
 
   return (
-    <div className="garden-area-container">
-      <svg className="garden-area-display" viewBox={`0 0 ${viewWidth} ${viewHeight}`} role="group" aria-labelledby={titleId}>
-        <title id={titleId}>{area.name} garden layout</title>
-        <rect className="garden-area-outline" x={OUTLINE_WIDTH / 2} y={OUTLINE_WIDTH / 2} width={area.size_x + OUTLINE_WIDTH} height={area.size_y + OUTLINE_WIDTH} />
-        {beds.map((bed) => (
-          <GardenBedElement
-            key={bed.pk}
-            area={area}
-            bed={bed}
-            rows={rowsByBed.get(bed.pk) ?? []}
-            squares={squaresByBed.get(bed.pk) ?? []}
-            describeSquare={describeSquare}
-            squareClassName={squareClassName}
-            onSelectSquare={onSelectSquare}
-          />
-        ))}
-      </svg>
+    <div>
+      <div className="d-flex align-items-center justify-content-between gap-2 mb-2">
+        <span className="small text-muted">Pinch, scroll, or use the controls to inspect the plan.</span>
+        <ButtonGroup size="sm" aria-label="Garden map zoom">
+          <Button variant="outline-secondary" disabled={zoom <= 0.75} aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(0.75, value - 0.25))}>
+            −
+          </Button>
+          <Button variant="outline-secondary" onClick={() => setZoom(1)} aria-label={`Reset zoom, currently ${Math.round(zoom * 100)} percent`}>
+            {Math.round(zoom * 100)}%
+          </Button>
+          <Button variant="outline-secondary" disabled={zoom >= 3} aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(3, value + 0.25))}>
+            +
+          </Button>
+        </ButtonGroup>
+      </div>
+      <div className="garden-area-container">
+        <svg className="garden-area-display" style={{ width: `${zoom * 100}%` }} viewBox={`0 0 ${viewWidth} ${viewHeight}`} role="group" aria-labelledby={titleId}>
+          <title id={titleId}>{area.name} garden layout</title>
+          <rect className="garden-area-outline" x={OUTLINE_WIDTH / 2} y={OUTLINE_WIDTH / 2} width={area.size_x + OUTLINE_WIDTH} height={area.size_y + OUTLINE_WIDTH} />
+          <rect className="garden-unallocated" x={OUTLINE_WIDTH} y={OUTLINE_WIDTH} width={area.size_x} height={area.size_y}>
+            <title>Paths and unallocated space</title>
+          </rect>
+          {beds.map((bed) => (
+            <GardenBedElement
+              key={bed.pk}
+              area={area}
+              bed={bed}
+              rows={rowsByBed.get(bed.pk) ?? []}
+              squares={squaresByBed.get(bed.pk) ?? []}
+              describeBed={describeBed}
+              describeRow={describeRow}
+              describeSquare={describeSquare}
+              bedClassName={bedClassName}
+              rowClassName={rowClassName}
+              squareClassName={squareClassName}
+              onSelectBed={onSelectBed}
+              onSelectRow={onSelectRow}
+              onSelectSquare={onSelectSquare}
+            />
+          ))}
+        </svg>
+      </div>
     </div>
   )
 }
