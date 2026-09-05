@@ -21,6 +21,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from costing.services import reallocate_batches
 from garden.geometry import square_metres
 from inventory.ledger import (
     MovementRequest,
@@ -34,7 +35,7 @@ from inventory.ledger import (
 from inventory.models import InventoryItem, StockMovement
 from plantings.batches import batch_specific_plants, lock_batch_with_plants
 from plantings.lifecycle import is_final, lifecycle_summaries
-from plantings.models import ProductionBatch, SpecificPlant
+from plantings.models import ProductionBatch, SpecificPlant, SeedTrayPlanting
 from seedtrays.generations import require_open_generation
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration
 
@@ -251,7 +252,6 @@ def affected_batches(application):
     lot of media can go into a tray whose cells are serving two crops, and each
     of them carries its own share of it.
     """
-    from plantings.models import SeedTrayPlanting  # pylint: disable=import-outside-toplevel
 
     targets = InputApplicationTarget.objects.filter(line__application=application)
     batch_ids = set(
@@ -688,11 +688,9 @@ def _post_movement(application, line, user, posting):
 def _reallocate(batches, user, trigger):
     """Bring every affected batch's cost allocations back in step.
 
-    Imported inside the call because costing reads applications, plantings, and
-    seedtrays; importing it at module level would close the cycle.
+    Costing reads application models, not this command module, so calling it
+    needs no deferred import.
     """
-    from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel
-
     return reallocate_batches(batches, user, trigger)
 
 

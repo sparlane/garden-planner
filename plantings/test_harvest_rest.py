@@ -22,7 +22,7 @@ from tests.factories import (
 from workspaces.models import Workspace
 
 from .lifecycle import record_germination_event
-from .models import Harvest, PlantLifecycleEvent
+from .models import Harvest, PlantLifecycleEvent, ProductionBatch
 
 
 class HarvestRESTTestCase(RESTContractTestCase):
@@ -151,7 +151,6 @@ class HarvestValidationTests(HarvestRESTTestCase):
 
     def test_a_planned_batch_cannot_be_harvested(self):
         """Nothing has been sown yet, so nothing can have come out."""
-        from .models import ProductionBatch  # pylint: disable=import-outside-toplevel
         batch = make_production_batch(status=ProductionBatch.Status.PLANNED)
         self._reject('batch', batch=batch.pk)
 

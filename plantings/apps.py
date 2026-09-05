@@ -13,4 +13,5 @@ class PlantingsConfig(AppConfig):
 
     def ready(self):
         """Register workspace-default hooks after the app registry is ready."""
+        # Register signal handlers only after Django has populated the app registry.
         from . import signals  # pylint: disable=import-outside-toplevel,unused-import

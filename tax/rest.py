@@ -7,6 +7,7 @@ different act from editing and reads as one in the audit trail.
 
 # pylint: disable=duplicate-code
 
+from django.utils import timezone
 from django.core.exceptions import ValidationError as DjangoValidationError
 
 from rest_framework import mixins, routers, serializers, viewsets
@@ -251,7 +252,6 @@ class GstStatusView(RequireWorkspaceModeMixin, APIView):
 
 def request_now():
     """Return the current instant, isolated so a test can freeze it."""
-    from django.utils import timezone  # pylint: disable=import-outside-toplevel
     return timezone.now()
 
 

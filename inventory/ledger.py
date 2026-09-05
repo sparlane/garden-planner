@@ -7,11 +7,18 @@ from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from purchasing.models import SupplierInvoiceLine
+from locations.occupancy import check_capacity, container_contribution, tray_contribution
+from plantings.models import SeedTrayPlanting, SpecificPlantLocation
+from seedtrays.services import create_tray_for_unit
+from labels.models import LabelPrintItem
+from sales.models import SalesOrderAllocation
 from .models import (
     COST_DECIMAL_PLACES,
     MONEY_DECIMAL_PLACES,
@@ -265,15 +272,13 @@ def promised_bulk(lot, location):
     """Return how much anonymous stock a live sales reservation holds here.
 
     Numbering units and selling by the count draw on the very same pots, so
-    neither may keep its own notion of what is free. Sales is built on the
-    ledger rather than the other way round, so the import is deferred exactly
-    as `unit_is_in_use` defers its reach into plantings.
+    neither may keep its own notion of what is free. This ledger projection
+    reads sales allocation models; those models do not import ledger services.
 
     Only a reserved allocation counts. A pending one is a tentative selection
     somebody is still drafting, which warns rather than blocks, the same way it
     does for a plant.
     """
-    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
     total = SalesOrderAllocation.objects.filter(
         stock_lot=lot,
@@ -669,13 +674,6 @@ def _numbering_is_unused(unit):
         return 'The unit has stock history.'
     if unit_is_in_use(unit):
         return 'The unit is holding a plant.'
-    # Reached from function bodies so `inventory` keeps depending only on
-    # `locations` and `workspaces` at import time, the same one-way-at-load
-    # pattern `unit_is_in_use` already uses.
-    from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
-    from labels.models import LabelPrintItem  # pylint: disable=import-outside-toplevel
-    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
-
     # Every numbered unit is issued an identity the moment it exists, so the
     # question is not whether it has a code but whether that code has been put
     # on anything. A printed label loose in the nursery would resolve to a pot
@@ -842,7 +840,6 @@ def post_receipt(receipt, user):  # pylint: disable=too-many-branches
 
 def _create_seed_tray_for_unit(unit):
     """Create a tray when the serialized item maps to tray geometry."""
-    from seedtrays.services import create_tray_for_unit  # pylint: disable=import-outside-toplevel
 
     return create_tray_for_unit(unit)
 
@@ -995,7 +992,6 @@ def _reverse_document_movements(
 
 def unit_is_in_use(unit):
     """Return whether cultivation still occupies this physical asset."""
-    from plantings.models import SeedTrayPlanting, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
 
     try:
         tray = unit.seed_tray
@@ -1060,12 +1056,6 @@ def _check_unit_destination_capacity(unit, destination, reason):
     An overrun is allowed when the caller gave a reason, which the movement
     already records — that is the audited override, not a separate field.
     """
-    from locations.occupancy import (  # pylint: disable=import-outside-toplevel
-        check_capacity,
-        container_contribution,
-        tray_contribution,
-    )
-    from plantings.models import SpecificPlantLocation  # pylint: disable=import-outside-toplevel
 
     try:
         tray = unit.seed_tray
@@ -1293,7 +1283,6 @@ def settle_receipt(receipt, settled_on):
     ).get(pk=receipt.pk)
     if receipt.status != StockReceipt.Status.POSTED:
         raise ValidationError({'status': 'Only posted receipts can be settled.'})
-    from purchasing.models import SupplierInvoiceLine  # pylint: disable=import-outside-toplevel
     if SupplierInvoiceLine.objects.filter(receipt_line__receipt=receipt).exists():
         raise ValidationError({
             'settled_on': 'Record payments against the linked supplier invoice.',

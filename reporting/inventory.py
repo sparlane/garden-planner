@@ -3,8 +3,10 @@
 from collections import defaultdict
 from decimal import Decimal
 
+from rest_framework.exceptions import ValidationError
 from django.db.models import Q
 
+from plantings.models import SeedTrayPlanting, SpecificPlantLocation
 from inventory.ledger import physical_balances
 from inventory.models import (
     InventoryItem,
@@ -214,7 +216,6 @@ def serialized_trays(workspace, filters):  # pylint: disable=too-many-locals
         )
     }
     occupied_trays = set()
-    from plantings.models import SeedTrayPlanting, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
     occupied_trays.update(SeedTrayPlanting.objects.filter(
         seed_tray__inventory_unit_id__in=unit_ids, removed=False,
     ).values_list('seed_tray_id', flat=True))
@@ -316,7 +317,6 @@ def movement_history(workspace, filters):
     if filters.get('movement_type'):
         valid = {choice for choice, _label in StockMovement.MovementType.choices}
         if filters['movement_type'] not in valid:
-            from rest_framework.exceptions import ValidationError  # pylint: disable=import-outside-toplevel
             raise ValidationError({'movement_type': 'Select a valid movement type.'})
         queryset = queryset.filter(movement_type=filters['movement_type'])
     if filters.get('reference'):

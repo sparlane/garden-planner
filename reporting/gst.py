@@ -26,8 +26,11 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
 
+from django.utils import timezone
+from purchasing.models import SupplierInvoiceLine
 from inventory.input_tax import receipt_tax_warnings
 from inventory.models import StockReceipt, StockReceiptLine
+from tax.models import GstRegistration
 from tax.entries import (
     AWAITING_PAYMENT,
     INPUT_TAX_ADJUSTMENT,
@@ -304,7 +307,6 @@ def _direction(net):
 
 def _gst_number(period):
     """Return the number this period's return is filed under."""
-    from tax.models import GstRegistration  # pylint: disable=import-outside-toplevel
     registration = GstRegistration.objects.filter(pk=period.registration_id).first()
     return registration.gst_number if registration else ''
 
@@ -469,7 +471,6 @@ def _data_quality(workspace, entries, rows, as_at):  # pylint: disable=too-many-
         if entry.source_type in {'supplier_invoice', 'supplier_payment'} and entry.document_id
     }
     if supplier_invoice_ids:
-        from purchasing.models import SupplierInvoiceLine  # pylint: disable=import-outside-toplevel
         receipt_ids.update(SupplierInvoiceLine.objects.filter(
             invoice_id__in=supplier_invoice_ids,
             receipt_line__isnull=False,
@@ -581,5 +582,4 @@ def _as_date(value):
 
 def _now():
     """Return the current instant, isolated so a test can control the default."""
-    from django.utils import timezone  # pylint: disable=import-outside-toplevel
     return timezone.now()

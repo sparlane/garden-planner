@@ -14,6 +14,9 @@ from uuid import uuid4
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
+from sales.models import SalesOrder
+from sales.services import create_order
+from sales.commerce import post_return, post_refund
 from .documents import invoiceable, issue_supply_document
 from .models import SupplyDocument, SupplyDocumentCoverage
 from .test_fixtures import DocumentScenarioMixin
@@ -133,7 +136,6 @@ class IssuingTests(DocumentScenarioMixin, TestCase):
     def test_a_returned_item_is_not_offered_for_invoicing(self):
         """Something given back before it was ever invoiced is not a supply."""
         fulfillment = self.fulfill(self.order, self.allocations)
-        from sales.commerce import post_return  # pylint: disable=import-outside-toplevel
 
         post_return(
             self.order, self.user,
@@ -190,7 +192,6 @@ class IssuingTests(DocumentScenarioMixin, TestCase):
         """Paid to date is cash net of what went back, not cash in."""
         payment = self.pay(self.order, '23.0000', date(2026, 5, 1))
         fulfillment = self.fulfill(self.order, self.allocations)
-        from sales.commerce import post_refund  # pylint: disable=import-outside-toplevel
 
         post_refund(
             self.order, self.user,
@@ -281,8 +282,6 @@ class RefusalTests(DocumentScenarioMixin, TestCase):
 
     def test_a_quote_cannot_be_invoiced(self):
         """A quote is an offer, not a supply."""
-        from sales.services import create_order  # pylint: disable=import-outside-toplevel
-        from sales.models import SalesOrder  # pylint: disable=import-outside-toplevel
 
         quote = create_order(self.workspace, self.user, status=SalesOrder.Status.QUOTE)
         with self.assertRaises(ValidationError) as caught:

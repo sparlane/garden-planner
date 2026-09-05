@@ -281,9 +281,8 @@ def finalize_batch_output(batch, user, reason=''):
     batch.output_finalized_at = timezone.now()
     batch.save()
     _record_transition(batch, previous_status, user, reason)
-    # Imported here because costing reads plantings, applications, and
-    # seedtrays; importing it at module level would close the cycle.
-    from costing.services import finalize_batch_costs  # pylint: disable=import-outside-toplevel
+    # Batch finalization calls back into costing, which reads cultivation facts.
+    from costing.services import finalize_batch_costs  # pylint: disable=import-outside-toplevel,cyclic-import
 
     finalize_batch_costs(batch, user, reason)
     return batch

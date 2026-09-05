@@ -11,4 +11,5 @@ class BookkeepingConfig(AppConfig):
 
     def ready(self):
         """Register cross-app deletion protection after every model is loaded."""
+        # Register signal handlers only after Django has populated the app registry.
         from . import signals  # pylint: disable=import-outside-toplevel,unused-import

@@ -5,11 +5,14 @@ update, so the only decisions left are which dated row to append and what to
 tell the operator about the consequences, and both belong here.
 """
 
+from django.utils import timezone
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from sales.models import FulfillmentLine, RefundLine, SalesOrderLine
 from workspaces.models import get_current_workspace
 
+from .periods import local_date, registration_in_force
 from .models import GstPeriodClosure, GstRegistration, TaxTreatmentCorrection
 
 
@@ -54,8 +57,6 @@ def supersede_registration(registration, user, **values):
 
 def current_registration(workspace=None):
     """Return the arrangement in force today, or None if unregistered."""
-    from .periods import local_date, registration_in_force  # pylint: disable=import-outside-toplevel
-    from django.utils import timezone  # pylint: disable=import-outside-toplevel
 
     workspace = workspace or get_current_workspace()
     today = local_date(workspace, timezone.now())
@@ -82,7 +83,6 @@ def correct_tax_treatment(line, treatment, user, reason):
     transaction. They are the record of record for a return, so leaving them
     behind would make the correction invisible to every report that matters.
     """
-    from sales.models import FulfillmentLine, RefundLine, SalesOrderLine  # pylint: disable=import-outside-toplevel
 
     if treatment not in CORRECTABLE_TREATMENTS:
         raise ValidationError({

@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from health.availability import active_alert_count
 from common.rest_query import parse_boolean
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -161,7 +162,6 @@ class LocationViewSet(
         remaining = None
         if location.capacity_basis in Location.ENFORCED_BASES:
             remaining = location.capacity_value - below.of(location.capacity_basis)
-        from health.availability import active_alert_count  # pylint: disable=import-outside-toplevel
         return Response({
             'location': location.pk,
             'capacity_basis': location.capacity_basis,

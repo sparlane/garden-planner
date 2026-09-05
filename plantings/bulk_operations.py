@@ -9,9 +9,15 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 
+from costing.services import reallocate_batch
+from costing.models import CostAllocationRun
+from applications.services import TargetRequest, application_state, create_application_draft, post_application
+from applications.requests import build_request
+from applications.models import InputApplicationTarget
 from locations.models import Location
 from locations.occupancy import capacity_chain, location_occupancy
 
+from .movement import move_specific_plant
 from .batches import lock_batch_with_plants
 from .germination import validate_late_germination
 from .lifecycle import (
@@ -265,11 +271,8 @@ def _plant_preview(workspace, request, lock=False):  # pylint: disable=too-many-
 
 def _application_request(workspace, plants, values):
     """Build an application whose targets are the reviewed concrete plants."""
-    from applications.models import InputApplicationTarget  # pylint: disable=import-outside-toplevel
-    from applications.rest import _build_request  # pylint: disable=import-outside-toplevel,protected-access
-    from applications.services import TargetRequest  # pylint: disable=import-outside-toplevel
 
-    request = _build_request(workspace, values)
+    request = build_request(workspace, values)
     targets = tuple(
         TargetRequest(
             target_type=InputApplicationTarget.TargetType.SPECIFIC_PLANT,
@@ -284,7 +287,6 @@ def _application_request(workspace, plants, values):
 
 def _preview_repot_application(workspace, plants, request):
     """Use the posting service's calculations but roll its draft back."""
-    from applications.services import application_state, create_application_draft  # pylint: disable=import-outside-toplevel
 
     with transaction.atomic():
         draft = create_application_draft(
@@ -371,7 +373,6 @@ def _move_data(request):
 
 def _apply_plant_operation(operation, user, request, preview):
     """Apply eligible plan rows and append one result for every selection member."""
-    from .rest import move_specific_plant  # pylint: disable=import-outside-toplevel
 
     rows = {row['plant']: row for row in preview['plants']}
     plants = {
@@ -441,7 +442,6 @@ def _apply_plant_operation(operation, user, request, preview):
 
 def _post_repot_application(workspace, user, plants, request):
     """Post exact potting inputs and return their container observation facts."""
-    from applications.services import create_application_draft, post_application  # pylint: disable=import-outside-toplevel
 
     draft = create_application_draft(
         workspace, user,
@@ -507,9 +507,6 @@ def _apply_germination(operation, user, request):
     for allocation in allocations:
         for _index in range(quantities[allocation.pk]):
             _create_germinated_plant(operation, user, request, allocation, notes)
-
-    from costing.models import CostAllocationRun  # pylint: disable=import-outside-toplevel
-    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
 
     for batch in locked_batches:
         reallocate_batch(batch, user, CostAllocationRun.Trigger.GERMINATION)

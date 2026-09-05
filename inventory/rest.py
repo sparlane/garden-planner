@@ -10,6 +10,9 @@ from rest_framework.response import Response
 from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
+from .ledger_rest import InputTaxAdjustmentViewSet, StockLotViewSet, StockMovementViewSet, StockReceiptViewSet
+from .serialized_rest import InventoryUnitViewSet
+from .stocktake_rest import NurseryStocktakeViewSet
 from .models import InventoryItem, ItemUnitConversion
 from .units import UNIT_DEFINITIONS, get_unit_definition
 
@@ -250,8 +253,9 @@ router = routers.DefaultRouter()
 router.register(r'items', InventoryItemViewSet)
 router.register(r'conversions', ItemUnitConversionViewSet)
 
-
-from .ledger_rest import register_ledger_routes  # noqa: E402  pylint: disable=wrong-import-position
-
-
-register_ledger_routes(router)
+router.register(r'receipts', StockReceiptViewSet)
+router.register(r'input-tax-adjustments', InputTaxAdjustmentViewSet)
+router.register(r'lots', StockLotViewSet)
+router.register(r'serialized-units', InventoryUnitViewSet)
+router.register(r'movements', StockMovementViewSet)
+router.register(r'stocktakes', NurseryStocktakeViewSet, basename='stocktake')

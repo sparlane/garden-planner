@@ -7,21 +7,22 @@ Rest for Plantings
 # pylint: disable=too-many-lines
 
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError, transaction
+from django.db import transaction
 from django.db.models.deletion import ProtectedError
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from costing.services import reallocate_batch
+from labels.services import ensure_identity
 from attachments.rest import AttachmentSerializer
-from locations.occupancy import check_capacity, plant_contribution
 from seeds.models import SeedPacket
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 from sales.models import SalesOrderAllocation, active_allocation_prefetch
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
+from .bulk_rest import register_bulk_operation_routes
 from .batches import lock_batch_with_plants
 from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
 from .garden_quick_add import register_garden_quick_add_routes
@@ -34,7 +35,7 @@ from .germination import (
     reopen_germination,
     validate_late_germination,
 )
-from .lifecycle import record_germination_event, record_transplant_event
+from .lifecycle import record_germination_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
 from .models import (
     CohortOperation,
@@ -47,6 +48,14 @@ from .models import (
     SowingGerminationClosure,
     SpecificPlant,
     SpecificPlantLocation,
+)
+from .movement_rest import SpecificPlantMoveSerializer
+from .movement import (
+    FIELD_MISSING,
+    move_specific_plant,
+    places_from,
+    validate_location_history,
+    validate_specific_plant_location,
 )
 from .register_rest import register_register_routes
 from .timeline_rest import PlantTimelineViewSetMixin
@@ -440,7 +449,7 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
 
         specific_plant, started, ended = self._get_effective_history_fields(data)
         validate_specific_plant_location(
-            location_type=data.get('location_type', _FIELD_MISSING),
+            location_type=data.get('location_type', FIELD_MISSING),
             places=places_from(data),
             interval=(started, ended),
             instance=self.instance,
@@ -469,36 +478,6 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
             self.instance = instance
             self._validate_history(validated_data, append_only=False)
             return super().update(instance, validated_data)
-
-
-class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
-    """
-    Serializer for moving a SpecificPlant to a new active location.
-    """
-    class Meta:
-        model = SpecificPlantLocation
-        fields = ['location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit', 'started', 'notes', 'override_reason']
-        extra_kwargs = {
-            'started': {'required': False},
-            'override_reason': {'required': False},
-        }
-
-    workspace_field_lookups = {
-        'seed_tray_cell': 'tray__workspace',
-        'garden_square': 'workspace',
-        'location': 'workspace',
-        'container_unit': 'workspace',
-    }
-
-    def validate(self, data):  # pylint: disable=arguments-renamed
-        validate_specific_plant_location(
-            location_type=data.get('location_type'),
-            places={
-                field_name: data.get(field_name)
-                for field_name in SpecificPlantLocation.LOCATION_FIELDS.values()
-            },
-        )
-        return data
 
 
 class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -546,7 +525,6 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
 
     def get_label_code(self, plant):
         """Return the immutable physical label code currently in use."""
-        from labels.services import ensure_identity  # pylint: disable=import-outside-toplevel
 
         identity = ensure_identity(plant)
         return identity.codes.get(status='active').code
@@ -600,9 +578,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
             record_germination_event(plant, user, reason=reason)
             # A new seedling re-divides whatever its cell was carrying, so the
             # subledger is brought back in step here rather than drifting until
-            # somebody asks for a report. Imported inside the call because
-            # costing reads this module's app.
-            from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+            # somebody asks for a report.
 
             reallocate_batch(batch, user, 'germination')
         return plant
@@ -693,198 +669,6 @@ class GardenSquareTransplantSerializer(CurrentWorkspaceSerializerMixin, serializ
         'original_planting': 'workspace',
         'location': 'workspace',
     }
-
-
-_FIELD_MISSING = object()
-
-
-def places_from(data):
-    """Read every kind of place a plant can be out of request data.
-
-    Driven by the model's own field table so that adding a fourth kind of place
-    reaches the API without a second list needing to be remembered.
-    """
-    return {
-        field_name: data.get(field_name, _FIELD_MISSING)
-        for field_name in SpecificPlantLocation.LOCATION_FIELDS.values()
-    }
-
-
-def validate_specific_plant_location(
-    *,
-    location_type=None,
-    places=None,
-    interval=None,
-    instance=None,
-):
-    """
-    Validate location fields, optionally defaulting omitted fields from an instance.
-    """
-    supplied = dict(places or {})
-    if instance is not None:
-        if location_type is _FIELD_MISSING:
-            location_type = instance.location_type
-        for field_name in SpecificPlantLocation.LOCATION_FIELDS.values():
-            if supplied.get(field_name, _FIELD_MISSING) is _FIELD_MISSING:
-                supplied[field_name] = getattr(instance, field_name)
-        if interval is None:
-            interval = (instance.started, instance.ended)
-
-    location_data = {
-        'location_type': None if location_type is _FIELD_MISSING else location_type,
-    }
-    for field_name in SpecificPlantLocation.LOCATION_FIELDS.values():
-        value = supplied.get(field_name, _FIELD_MISSING)
-        location_data[field_name] = None if value is _FIELD_MISSING else value
-    if interval is not None:
-        location_data['started'], location_data['ended'] = interval
-
-    tmp = SpecificPlantLocation(
-        **location_data,
-    )
-    try:
-        tmp.clean()
-    except DjangoValidationError as exc:
-        raise serializers.ValidationError(exc.message_dict) from exc
-
-
-def validate_location_history(
-    *,
-    specific_plant,
-    started,
-    ended,
-    exclude_pk=None,
-    append_only=False,
-):
-    """Reject location intervals that overlap or insert before existing history."""
-    locations = SpecificPlantLocation.objects.filter(specific_plant=specific_plant)
-    if exclude_pk is not None:
-        locations = locations.exclude(pk=exclude_pk)
-
-    if append_only:
-        latest_location = locations.order_by('-started', '-pk').first()
-        if latest_location is None:
-            return
-        if latest_location.ended is None or started < latest_location.ended:
-            raise serializers.ValidationError({
-                'started': 'New locations must start at or after existing history ends.'
-            })
-        return
-
-    overlapping = locations.filter(Q(ended__isnull=True) | Q(ended__gt=started))
-    if ended is not None:
-        overlapping = overlapping.filter(started__lt=ended)
-    if overlapping.exists():
-        raise serializers.ValidationError({
-            'started': 'Location interval overlaps another location.'
-        })
-
-
-def get_single_active_location_for_update(plant):
-    """
-    Lock and return the current active location for a plant.
-    """
-    active_locations = list(
-        SpecificPlantLocation.objects
-        .select_for_update()
-        .filter(specific_plant=plant, ended__isnull=True)
-    )
-    if len(active_locations) > 1:
-        raise serializers.ValidationError({
-            'specific_plant': 'Plant has multiple active locations.'
-        })
-    if active_locations:
-        return active_locations[0]
-    return None
-
-
-def is_active_location_integrity_error(exc):
-    """
-    Return whether an integrity error came from the active-location constraint.
-    """
-    cause = getattr(exc, '__cause__', None)
-    diag = getattr(cause, 'diag', None)
-    if getattr(diag, 'constraint_name', None) == 'unique_active_location_per_plant':
-        return True
-
-    message = ' '.join(str(arg) for arg in exc.args)
-    names_constraint = 'unique_active_location_per_plant' in message
-    names_sqlite_column = 'plantings_specificplantlocation.specific_plant_id' in message
-    return names_constraint or names_sqlite_column
-
-
-def _check_destination_capacity(destination, override_reason, plant):
-    """Refuse a bench that is full, or that cannot measure a single plant.
-
-    Locks the destination and every capacitated ancestor before counting, so
-    two plants racing for the last space cannot both read it as free.
-    """
-    if not destination.active:
-        raise serializers.ValidationError({'location': 'The location is inactive.'})
-    try:
-        check_capacity(destination, plant_contribution(plant), override_reason)
-    except DjangoValidationError as exc:
-        raise serializers.ValidationError(
-            {'location': _model_errors(exc).get('destination', exc.messages)},
-        ) from exc
-
-
-def move_specific_plant(plant, move_data, user=None):
-    """
-    Move a plant by ending its active location and creating the new one atomically.
-
-    A move into a garden square is also the moment the plant is planted out, so
-    the matching lifecycle fact is appended in the same transaction. Only a
-    garden square counts: moving a plant onto a nursery bench is still nursery
-    work, and calling it planting out would close a production batch early.
-    """
-    started = move_data.get('started') or timezone.now()
-    move_payload = {**move_data, 'started': started}
-    planted_out = move_payload.get('location_type') == SpecificPlantLocation.GARDEN_SQUARE
-    destination = move_payload.get('location')
-    with transaction.atomic():
-        plant = get_object_or_404(
-            SpecificPlant.objects.select_for_update(),
-            pk=plant.pk,
-            workspace=plant.workspace,
-        )
-        if destination is not None:
-            _check_destination_capacity(
-                destination, move_payload.get('override_reason', ''), plant,
-            )
-        if planted_out:
-            try:
-                record_transplant_event(plant, user, started)
-            except DjangoValidationError as exc:
-                raise serializers.ValidationError(_model_errors(exc)) from exc
-        active_location = get_single_active_location_for_update(plant)
-
-        if active_location:
-            if started < active_location.started:
-                raise serializers.ValidationError({
-                    'started': 'Move cannot start before the active location.'
-                })
-            active_location.ended = started
-            active_location.save(update_fields=['ended'])
-        else:
-            validate_location_history(
-                specific_plant=plant,
-                started=started,
-                ended=None,
-                append_only=True,
-            )
-
-        try:
-            return SpecificPlantLocation.objects.create(
-                specific_plant=plant,
-                **move_payload,
-            )
-        except IntegrityError as exc:
-            if not is_active_location_integrity_error(exc):
-                raise
-            raise serializers.ValidationError({
-                'specific_plant': 'Move must leave exactly one active location.'
-            }) from exc
 
 
 class SowingCorrectionSerializer(
@@ -1254,12 +1038,4 @@ register_planning_routes(router)
 register_garden_quick_add_routes(router)
 register_garden_register_routes(router)
 
-
-def _register_bulk_routes():
-    """Import after the move serializer that bulk payload validation reuses."""
-    from .bulk_rest import register_bulk_operation_routes  # pylint: disable=import-outside-toplevel
-
-    register_bulk_operation_routes(router)
-
-
-_register_bulk_routes()
+register_bulk_operation_routes(router)

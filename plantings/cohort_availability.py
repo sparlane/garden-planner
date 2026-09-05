@@ -15,6 +15,7 @@ does for a plant and for a lot.
 from django.db.models import Case, F, IntegerField, OuterRef, Subquery, Sum, Value, When
 from django.db.models.functions import Coalesce
 
+from sales.models import SalesOrderAllocation
 from .models import PlantCohort
 
 
@@ -44,11 +45,9 @@ COMMITTABLE_STATES = frozenset({
 def _reserved_subquery():
     """Return the per-cohort reserved total as a correlated subquery.
 
-    Sales is built on the nursery rather than the other way round, so the
-    import is deferred exactly as `inventory.ledger.promised_bulk` defers its
-    own reach back into sales.
+    Read sales allocation models here; sales commands may consume this
+    projection, but the models do not depend on it.
     """
-    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
     return (
         SalesOrderAllocation.objects
@@ -92,7 +91,6 @@ def with_availability(queryset):
 
 def reserved_quantity(cohort):
     """Return how many of one cohort's plants a live reservation holds."""
-    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
     total = SalesOrderAllocation.objects.filter(
         plant_cohort=cohort,

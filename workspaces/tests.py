@@ -10,6 +10,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, transaction
 from django.test import TestCase, override_settings
 from rest_framework.test import APITestCase
+from inventory import models as inventory_models
 from seedtrays.models import SeedTrayModel
 from supplies.models import Supplier
 
@@ -22,8 +23,7 @@ class LedgerPrecisionTests(TestCase):
     """The restated quantity precision must track its definition of record."""
 
     def test_quantity_precision_matches_inventory(self):
-        """Inventory cannot be imported here without closing a cycle."""
-        from inventory import models as inventory_models  # pylint: disable=import-outside-toplevel
+        """Workspace quantity precision agrees with inventory's definition."""
 
         self.assertEqual(QUANTITY_MAX_DIGITS, inventory_models.QUANTITY_MAX_DIGITS)
         self.assertEqual(

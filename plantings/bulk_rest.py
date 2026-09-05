@@ -30,7 +30,7 @@ from .models import (
     PlantGrade,
     SeedTrayCellPlanting,
 )
-from .rest import SpecificPlantMoveSerializer
+from .movement_rest import SpecificPlantMoveSerializer
 
 
 MAX_BULK_PLANTS = 5000

@@ -11,4 +11,5 @@ class HealthConfig(AppConfig):
 
     def ready(self):
         """Register Nursery catalog defaults after models are loaded."""
+        # Register signal handlers only after Django has populated the app registry.
         from . import signals  # pylint: disable=import-outside-toplevel,unused-import

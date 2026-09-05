@@ -12,6 +12,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from costing.services import reallocate_batch
 from garden.models import GardenSquare
 from locations.models import Location, location_full_name
 from locations.occupancy import check_capacity, plant_contribution
@@ -22,7 +23,7 @@ from workspaces.models import Workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin, RequireWorkspaceModeMixin
 
 from .batches import BatchRequest, create_and_activate_batch
-from .models import GardenPlanting, ProductionBatch, SpecificPlant, SpecificPlantLocation
+from .models import GardenPlanting, ProductionBatch, SpecificPlant, SpecificPlantLocation, GardenSquareDirectSowPlanting
 from .sowing import post_sowing_consumption
 
 
@@ -134,7 +135,6 @@ def _legacy_occupant_exists(entry, workspace):
     square = entry.get('garden_square')
     location = entry.get('location')
     if square is not None:
-        from .models import GardenSquareDirectSowPlanting  # pylint: disable=import-outside-toplevel
 
         return GardenSquareDirectSowPlanting.objects.filter(
             workspace=workspace, location=square, removed=False,
@@ -237,7 +237,6 @@ class GardenQuickAddViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMi
                 )
         if entry.seed_packet_id:
             post_sowing_consumption(entry, user)
-        from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
 
         reallocate_batch(batch, user, 'manual_recalculate')
         return entry

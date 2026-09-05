@@ -38,6 +38,7 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
+from costing.models import CostAllocationRun
 from .batches import lock_batch_with_plants
 from .models import (
     SeedTrayCellPlanting,
@@ -278,8 +279,8 @@ def close_germination(sowing, user, *, closed_at=None, loss_cause='', reason='')
     `lock_batch_with_plants` fixes, so a germination cannot be recorded between
     counting the seedlings and storing the count.
     """
-    from costing.models import CostAllocationRun  # pylint: disable=import-outside-toplevel
-    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+    # Germination calls back into costing, which reads germination balances.
+    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel,cyclic-import
 
     sowing = SeedTrayPlanting.objects.select_for_update().get(pk=sowing.pk)
     batch = lock_batch_with_plants(sowing.batch)
@@ -320,8 +321,8 @@ def reopen_germination(closure, user, reason):
     finished when somebody said it was, so the cost the close retired comes
     back onto the cells it came from.
     """
-    from costing.models import CostAllocationRun  # pylint: disable=import-outside-toplevel
-    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+    # Germination calls back into costing, which reads germination balances.
+    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel,cyclic-import
 
     _require_reason(reason)
     closure = SowingGerminationClosure.objects.select_for_update().get(pk=closure.pk)

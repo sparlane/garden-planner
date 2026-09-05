@@ -11,6 +11,8 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from sales.models import SalesOrderAllocation, FulfillmentLine
+from inventory.ledger import unit_physical_state
 from health.availability import active_cases, is_quarantined
 from health.services import preview_observation
 from locations.models import location_full_name
@@ -150,7 +152,6 @@ def _add_growth_values(values, target):
 
 
 def _target_active(identity):
-    from inventory.ledger import unit_physical_state  # pylint: disable=import-outside-toplevel
 
     target = identity.target
     if not identity.active or target is None:
@@ -180,13 +181,11 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
     route = TARGET_ROUTES.get(key)
     capabilities = ['inspect', 'print'] if resolution_status == LabelCode.Status.ACTIVE else ['inspect']
     if resolution_status == LabelCode.Status.ACTIVE and key == ('plantings', 'specificplant'):
-        from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
         summary = derive_state(identity.target.lifecycle_events.all())
         if summary.state in ('growing', 'available', 'retained'):
             capabilities.append('bulk_select')
         if workspace.mode == Workspace.Mode.NURSERY and summary.state == 'available':
-            from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
             reserved = SalesOrderAllocation.objects.filter(
                 plant=identity.target,
@@ -195,7 +194,6 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
             if not reserved and not is_quarantined(identity.target):
                 capabilities.append('order_allocate')
         if workspace.mode == Workspace.Mode.NURSERY:
-            from sales.models import FulfillmentLine  # pylint: disable=import-outside-toplevel
 
             if SalesOrderAllocation.objects.filter(
                     plant=identity.target, status=SalesOrderAllocation.Status.RESERVED).exists():
@@ -212,8 +210,6 @@ def _resolution(code, workspace):  # pylint: disable=too-many-locals,too-many-br
             if fulfilled and not returned:
                 capabilities.append('order_return')
     if resolution_status == LabelCode.Status.ACTIVE and key == ('seedtrays', 'seedtray'):
-        from inventory.ledger import unit_physical_state  # pylint: disable=import-outside-toplevel
-        from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel,reimported
 
         unit = identity.target.inventory_unit
         reserved = SalesOrderAllocation.objects.filter(

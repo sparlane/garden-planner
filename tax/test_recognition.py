@@ -14,6 +14,8 @@ from decimal import Decimal
 
 from django.test import SimpleTestCase
 
+from billing.models import SupplyCorrection
+from .models import GstRegistration
 from .recognition import (
     BASES,
     HYBRID,
@@ -616,12 +618,10 @@ class RestatedConstantTests(SimpleTestCase):
 
     def test_the_bases_match_the_registration_model(self):
         """A basis the model offers and this module rejects would raise at report time."""
-        from .models import GstRegistration  # pylint: disable=import-outside-toplevel
         self.assertEqual(set(BASES), set(GstRegistration.Basis.values))
 
     def test_the_correction_kinds_match_the_document_model(self):
         """A third kind added to `billing` and not here would adjust nothing."""
-        from billing.models import SupplyCorrection  # pylint: disable=import-outside-toplevel
         self.assertEqual(
             {CREDIT_NOTE, DEBIT_NOTE},
             set(SupplyCorrection.CorrectionType.values),

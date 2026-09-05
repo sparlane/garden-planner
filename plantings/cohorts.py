@@ -9,6 +9,8 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from costing.services import reallocate_batch
+from health.availability import is_quarantined
 from locations.occupancy import check_capacity, cohort_contribution
 
 from .lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
@@ -124,7 +126,6 @@ def _lock(cohort_id, workspace, expected_revision):
 
 def _require_not_quarantined(cohort):
     """Keep structural and commercial changes behind the health workflow."""
-    from health.availability import is_quarantined  # pylint: disable=import-outside-toplevel
 
     if is_quarantined(cohort):
         raise ValidationError({'cohort': 'Release this cohort from quarantine first.'})
@@ -171,8 +172,6 @@ def _container_allocation(growth, allocated, remaining_quantity):
 
 def _reallocate(batch, user, reason):
     """Keep the append-only cost layers aligned with the changed output units."""
-    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
-
     reallocate_batch(batch, user, 'manual_recalculate', reason)
 
 

@@ -13,6 +13,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from health.availability import target_alert_count
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -66,7 +67,6 @@ class LinkSerializer(serializers.ModelSerializer):
         ]
 
     def get_active_health_alerts(self, link):
-        from health.availability import target_alert_count  # pylint: disable=import-outside-toplevel
 
         return target_alert_count(link.target)
 
@@ -150,7 +150,6 @@ def _projected_data(task):
 
 
 def _target_health_alert_count(target):
-    from health.availability import target_alert_count  # pylint: disable=import-outside-toplevel
 
     return target_alert_count(target)
 

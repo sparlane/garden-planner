@@ -10,4 +10,5 @@ class LabelsConfig(AppConfig):
     name = 'labels'
 
     def ready(self):
+        # Register signal handlers only after Django has populated the app registry.
         from . import signals  # pylint: disable=import-outside-toplevel,unused-import

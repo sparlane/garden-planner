@@ -22,6 +22,7 @@ Three rules keep the numbers honest:
 
 from decimal import Decimal
 
+from plantings.models import SpecificPlant
 from inventory.models import COST_DECIMAL_PLACES
 
 from .generations import applied_media, cell_shares, generation_cells
@@ -38,7 +39,6 @@ def quantize_cost(value):
 
 def _plants_by_cell(generation):
     """Return the plants observed in each cell of this fill."""
-    from plantings.models import SpecificPlant  # pylint: disable=import-outside-toplevel
 
     plants = SpecificPlant.objects.filter(
         cell_planting__seed_tray_planting__generation=generation,

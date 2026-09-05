@@ -10,6 +10,7 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from sales.demand import import_committed_demand
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -350,12 +351,9 @@ class ProductionPlanViewSet(NurseryPlanningViewSetMixin, viewsets.ModelViewSet):
     def import_demand(self, request, pk=None):
         """Read confirmed orders falling due in a window in as plan demand.
 
-        `sales` is imported here rather than at the top of the module for the
-        reason `cohort_availability` defers its own reach: the nursery is built
-        without knowledge of who is buying from it, and only this endpoint
-        needs the other direction.
+        This endpoint coordinates sales demand with nursery planning; neither
+        domain service depends on the endpoint.
         """
-        from sales.demand import import_committed_demand  # pylint: disable=import-outside-toplevel
 
         values = ImportDemandSerializer(data=request.data)
         values.is_valid(raise_exception=True)

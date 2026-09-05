@@ -11,10 +11,13 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from work.services import create_manual_task
+from work.models import WorkTaskType
 from applications.models import InputApplication, InputApplicationTarget
 from inventory.ledger import UnitMovementRequest, post_unit_movement
 from inventory.models import StockMovement
 from locations.models import Location
+from plantings.movement import move_specific_plant
 from plantings.cohorts import change_cohort
 from plantings.lifecycle import (
     EventType,
@@ -120,7 +123,6 @@ def _tray_groups(plants):
 
 def _move_members(workspace, user, action, plants, cohorts, destination, reason):
     """Move direct plants, whole cohorts, and fully selected tray carriers."""
-    from plantings.rest import move_specific_plant  # pylint: disable=import-outside-toplevel
 
     by_plant, trays = _tray_groups(plants)
     selected_ids = {plant.pk for plant in plants}
@@ -299,8 +301,6 @@ def _cull_members(workspace, user, action, plants, cohorts):
 
 def _escalate_case(workspace, user, action, plants, cohorts):
     """Create an immediate high-priority task linked to the reviewed stock."""
-    from work.models import WorkTaskType  # pylint: disable=import-outside-toplevel
-    from work.services import create_manual_task  # pylint: disable=import-outside-toplevel
 
     targets = [
         (action.case.observation, f'Health observation {action.case.observation_id}', '/health')

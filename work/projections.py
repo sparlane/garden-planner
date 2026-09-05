@@ -12,6 +12,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
+from health.models import HealthFollowUp, HealthObservation, HealthTreatment
 from plantings.assumption_variance import assumption_variance_rows
 from plantings.growth import current_growth
 from plantings.models import (
@@ -487,7 +488,6 @@ def _health_target_links(observation):
 
 def _health_follow_up_tasks(rule):
     """Project outstanding observation and treatment review dates."""
-    from health.models import HealthFollowUp, HealthObservation, HealthTreatment  # pylint: disable=import-outside-toplevel
 
     observation_complete = HealthFollowUp.objects.filter(
         observation_id=OuterRef('pk'), treatment__isnull=True,

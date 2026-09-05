@@ -2,16 +2,20 @@
 
 from decimal import Decimal
 
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
+from work.models import WorkTask, WorkTaskLink
 from labels.models import LabelCode
 from locations.models import Location
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
+from .ledger_rest import StocktakeSerializer
 from .models import (
     Stocktake,
     StocktakeAttachment,
@@ -220,7 +224,6 @@ def _target_data(target, reveal_expected):
 def stocktake_data(stocktake):
     """Serialize workflow state while preserving blind-count behavior."""
     if not stocktake.targets.exists():
-        from .ledger_rest import StocktakeSerializer  # pylint: disable=import-outside-toplevel
         return StocktakeSerializer(stocktake).data
     reveal = not stocktake.blind or stocktake.status in {
         Stocktake.Status.REVIEW, Stocktake.Status.APPROVED,
@@ -271,7 +274,6 @@ class NurseryStocktakeViewSet(
         try:
             return self.get_queryset().get(pk=pk)
         except Stocktake.DoesNotExist as exc:
-            from rest_framework.exceptions import NotFound  # pylint: disable=import-outside-toplevel
             raise NotFound('Stocktake not found.') from exc
 
     def list(self, request):  # pylint: disable=unused-argument
@@ -292,7 +294,6 @@ class NurseryStocktakeViewSet(
     def create(self, request):
         """Resolve and freeze scope immediately when a session opens."""
         if 'lines' in request.data:
-            from .ledger_rest import StocktakeSerializer  # pylint: disable=import-outside-toplevel
             serializer = StocktakeSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             stocktake = serializer.save(
@@ -305,7 +306,6 @@ class NurseryStocktakeViewSet(
         work_task_id = values.pop('work_task', None)
         task = None
         if work_task_id:
-            from work.models import WorkTask  # pylint: disable=import-outside-toplevel
             try:
                 task = WorkTask.objects.get(pk=work_task_id, workspace=self.get_current_workspace())
             except WorkTask.DoesNotExist as exc:
@@ -315,8 +315,6 @@ class NurseryStocktakeViewSet(
             **values,
         )
         if task:
-            from django.contrib.contenttypes.models import ContentType  # pylint: disable=import-outside-toplevel
-            from work.models import WorkTaskLink  # pylint: disable=import-outside-toplevel
             WorkTaskLink.objects.create(
                 task=task, role=WorkTaskLink.Role.RESULT,
                 content_type=ContentType.objects.get_for_model(stocktake),

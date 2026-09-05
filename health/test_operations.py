@@ -10,6 +10,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from work.models import WorkTask
 from applications.models import InputApplicationTarget
 from applications.services import (
     ApplicationRequest,
@@ -380,7 +381,6 @@ class QuarantineCaseLifecycleTests(HealthOperationTestCase):
 
     def test_escalating_raises_a_linked_task_and_leaves_the_case_open(self):
         """Escalation asks for attention; it does not resolve anything."""
-        from work.models import WorkTask  # pylint: disable=import-outside-toplevel
 
         case, plant = self.open_case_for_plant()
         action = self.act(
