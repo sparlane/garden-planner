@@ -35,6 +35,7 @@ import {
   GardenRegisterDetail,
   GardenRegisterFilters,
   GardenRegisterPage,
+  DirectSownEventCreate,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
@@ -217,6 +218,18 @@ function finishGardenRegisterCrop(key: string, eventType: 'finished' | 'failed',
 
 function correctGardenRegisterStatus(key: string, event: number, reason: string): Promise<Response> {
   return csrfPost(`/plantings/garden-register/${key}/correct-status/`, { event, reason })
+}
+
+function recordDirectSownEvent(key: string, data: DirectSownEventCreate): Promise<Response> {
+  return csrfPost(`/plantings/garden-register/${key}/direct-event/`, data)
+}
+
+function individualizeDirectSownCrop(key: string, quantity: number, notes: string): Promise<Response> {
+  return csrfPost(`/plantings/garden-register/${key}/individualize/`, { quantity, names: [], notes })
+}
+
+function reverseDirectSownEvent(key: string, event: number, notes: string): Promise<Response> {
+  return csrfPost(`/plantings/garden-register/${key}/reverse-direct-event/`, { event, notes })
 }
 
 function getSpecificPlantsBySeedTray(seedTrayPk: number, signal?: AbortSignal): Promise<Array<SpecificPlant>> {
@@ -441,6 +454,9 @@ export {
   getGardenRegisterDetail,
   finishGardenRegisterCrop,
   correctGardenRegisterStatus,
+  recordDirectSownEvent,
+  individualizeDirectSownCrop,
+  reverseDirectSownEvent,
   getSpecificPlantsBySeedTray,
   addSpecificPlant,
   addSpecificPlantLocation,

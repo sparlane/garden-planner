@@ -417,6 +417,149 @@ class GardenPlantingStatusEvent(WorkspaceOwnedModel):
         raise ValidationError('Garden planting status events cannot be deleted.')
 
 
+class DirectSownCropEvent(WorkspaceOwnedModel):
+    """One immutable quantity or location fact for a direct-sown crop."""
+
+    class EventType(models.TextChoices):
+        """Facts which contribute to the crop's derived lifecycle."""
+
+        EMERGED = 'emerged', 'Emerged'
+        THINNED = 'thinned', 'Thinned'
+        FAILED_GERMINATION = 'failed_germination', 'Failed germination'
+        PEST_LOSS = 'pest_loss', 'Pest loss'
+        REMOVED = 'removed', 'Removed'
+        RETAINED = 'retained', 'Retained count observed'
+        MOVED = 'moved', 'Moved or transplanted'
+        INDIVIDUALIZED = 'individualized', 'Made into individual plants'
+        REVERSED = 'reversed', 'Reversed'
+
+    class CountQuality(models.TextChoices):
+        """How confidently an emergence or retained count was observed."""
+
+        EXACT = 'exact', 'Exact'
+        ESTIMATED = 'estimated', 'Estimated'
+        UNKNOWN = 'unknown', 'Unknown'
+
+    planting = models.ForeignKey(
+        GardenPlanting, on_delete=models.PROTECT, related_name='direct_sown_events',
+    )
+    event_type = models.CharField(max_length=24, choices=EventType.choices)
+    occurred_on = models.DateField()
+    quantity = models.PositiveIntegerField(null=True, blank=True)
+    quantity_delta = models.IntegerField(default=0)
+    count_quality = models.CharField(
+        max_length=12, choices=CountQuality.choices, blank=True, default='',
+    )
+    garden_square_before = models.ForeignKey(
+        GardenSquare, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
+    location_before = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
+    garden_square_after = models.ForeignKey(
+        GardenSquare, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
+    location_after = models.ForeignKey(
+        Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+',
+    )
+    reversal_of = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True, related_name='reversal',
+    )
+    notes = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['occurred_on', 'pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__isnull=True) | models.Q(quantity__gte=1),
+                name='direct_crop_event_quantity_positive',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(event_type='reversed', reversal_of__isnull=False),
+                    ~models.Q(event_type='reversed') & models.Q(reversal_of__isnull=True),
+                    _connector=models.Q.OR,
+                ),
+                name='direct_crop_reversal_has_target',
+            ),
+        ]
+
+    def clean(self):  # pylint: disable=too-many-branches
+        """Keep event meaning, ownership, and location shape coherent."""
+        super().clean()
+        errors = {}
+        if self.planting_id:
+            if self.planting.workspace_id != self.workspace_id:
+                errors['planting'] = 'The planting belongs to another workspace.'
+            if self.planting.source != GardenPlanting.Source.DIRECT_SEED or (
+                self.planting.tracking != GardenPlanting.Tracking.AGGREGATE
+            ):
+                errors['planting'] = 'Choose an aggregate direct-sown crop.'
+            if self.occurred_on < self.planting.recorded_on:
+                errors['occurred_on'] = 'The event cannot predate the sowing.'
+        count_events = {self.EventType.EMERGED, self.EventType.RETAINED}
+        removal_events = {
+            self.EventType.THINNED, self.EventType.FAILED_GERMINATION,
+            self.EventType.PEST_LOSS, self.EventType.REMOVED,
+            self.EventType.INDIVIDUALIZED,
+        }
+        if self.event_type in count_events:
+            if not self.count_quality:
+                errors['count_quality'] = 'Record whether the count is exact, estimated, or unknown.'
+            if self.count_quality == self.CountQuality.UNKNOWN and self.quantity is not None:
+                errors['quantity'] = 'An unknown observation cannot include a count.'
+            if self.count_quality and self.count_quality != self.CountQuality.UNKNOWN and self.quantity is None:
+                errors['quantity'] = 'An exact or estimated observation needs a count.'
+        elif self.event_type in removal_events:
+            if self.quantity is None:
+                errors['quantity'] = 'Record the affected quantity.'
+            if self.count_quality:
+                errors['count_quality'] = 'Count quality applies only to observations.'
+            if not self.notes.strip():
+                errors['notes'] = 'Explain why this quantity changed.'
+        elif self.count_quality:
+            errors['count_quality'] = 'Count quality applies only to observations.'
+        before = [self.garden_square_before_id is not None, self.location_before_id is not None]
+        after = [self.garden_square_after_id is not None, self.location_after_id is not None]
+        if self.event_type == self.EventType.MOVED:
+            if sum(before) != 1 or sum(after) != 1:
+                errors['location_after'] = 'A move needs exactly one before and one after location.'
+            if not self.notes.strip():
+                errors['notes'] = 'Explain the move or transplant.'
+        elif any(before + after):
+            errors['location_after'] = 'Locations apply only to movement events.'
+        for field in (
+            'garden_square_before', 'location_before',
+            'garden_square_after', 'location_after',
+        ):
+            place = getattr(self, field, None)
+            if place is not None and place.workspace_id != self.workspace_id:
+                errors[field] = 'The location belongs to another workspace.'
+        if self.reversal_of_id:
+            if self.reversal_of.planting_id != self.planting_id:
+                errors['reversal_of'] = 'The reversed event belongs to another crop.'
+            if self.reversal_of.event_type == self.EventType.REVERSED:
+                errors['reversal_of'] = 'A reversal cannot itself be reversed.'
+            if not self.notes.strip():
+                errors['notes'] = 'Explain why the earlier event was wrong.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Direct-sown crop events are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Direct-sown crop events cannot be deleted.')
+
+
 class Planting(WorkspaceOwnedModel):
     """
     An abstract class for planting of seeds
