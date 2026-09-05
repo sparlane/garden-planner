@@ -15,6 +15,7 @@ import {
   NurseryRegisterPage,
   NurseryRegisterSelection,
   PlantLifecycleEvent,
+  PlantTimelinePage,
   PlantOutcome,
   PlantOutcomeAction,
   ReversePlantEvent,
@@ -262,6 +263,11 @@ function getSpecificPlantLifecycleEvents(plantPk: number, signal?: AbortSignal):
   return fetchAsJson<Array<PlantLifecycleEvent>>(`/plantings/specificplants/${plantPk}/lifecycle-events/`, signal)
 }
 
+function getSpecificPlantTimeline(plantPk: number, page: number, pageSize: number, signal?: AbortSignal): Promise<PlantTimelinePage> {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  return fetchAsJson<PlantTimelinePage>(`/plantings/specificplants/${plantPk}/timeline/?${query.toString()}`, signal)
+}
+
 function postSpecificPlantOutcome(plantPk: number, outcome: PlantOutcomeAction, data: PlantOutcome = {}): Promise<PlantLifecycleEvent> {
   return csrfPost(`/plantings/specificplants/${plantPk}/${outcome}/`, data).then((response) => response.json() as Promise<PlantLifecycleEvent>)
 }
@@ -481,6 +487,7 @@ export {
   moveSpecificPlant,
   getSpecificPlant,
   getSpecificPlantLifecycleEvents,
+  getSpecificPlantTimeline,
   postSpecificPlantOutcome,
   reverseSpecificPlantEvent,
   postBulkPlantOutcome,

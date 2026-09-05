@@ -14,10 +14,12 @@ import { formatDate, formatDateTime, formatMoney } from '../utils'
 import { costSourceLabel } from './cost_sources'
 import { placementLabel } from './placements'
 import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
+import { PlantTimeline } from './timeline'
 
-// Physical history in the order it happened, which is separate from the
-// lifecycle history beside it: where a plant has been and what became of it
-// are different facts and are never merged into one timeline.
+// Physical history in the order it happened, which stays its own card rather
+// than joining the timeline above: a location is a span with a start and an end
+// and often no end at all, while everything the timeline reads is a dated fact.
+// Interleaving the two would put "still there" in the middle of a sequence.
 function LocationHistory({ locations }: { locations: Array<SpecificPlantLocation> }) {
   if (locations.length === 0) {
     return <p className="text-muted mb-0">No location has been recorded.</p>
@@ -126,6 +128,18 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
       </p>
 
       <Row className="g-3">
+        <Col md={12}>
+          <Card>
+            <Card.Header>What happened to this plant</Card.Header>
+            <Card.Body>
+              <p className="text-muted small">
+                Everything recorded about this plant in one sequence: what became of it, what was done to it in the nursery, when health held it back, and who it was promised to.
+                Each of those is still listed on its own below.
+              </p>
+              <PlantTimeline plantPk={plant.pk} />
+            </Card.Body>
+          </Card>
+        </Col>
         {workspace.mode === 'nursery' && (
           <Col md={6}>
             <Card>
