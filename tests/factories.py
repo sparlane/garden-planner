@@ -28,8 +28,11 @@ from plantings.models import (
     GardenPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
+    GrowthStage,
     Harvest,
     HarvestPlant,
+    NurseryPlanningAssumption,
+    NurseryPlanningStageAssumption,
     PlantLifecycleEvent,
     ProductionBatch,
     ProductionBatchTransition,
@@ -449,6 +452,43 @@ def make_production_batch(**overrides):
         reason='Created for tests.',
     )
     return batch
+
+
+def make_growth_stage(**overrides):
+    """Create one workspace growth stage with a unique stable code."""
+    values = {'name': _next_name('Stage'), 'display_order': 0}
+    values.update(overrides)
+    values.setdefault('workspace', get_current_workspace())
+    values.setdefault('code', values['name'].replace(' ', '-').lower())
+    return GrowthStage.objects.create(**values)
+
+
+def make_planning_assumption(**overrides):
+    """Create one effective-dated planning assumption for a variety."""
+    values = {
+        'effective_from': date(2026, 1, 1),
+        'germination_rate': Decimal('0.85'),
+        'seeds_per_cluster': 1,
+        'tray_density': 10,
+    }
+    if 'variety' not in overrides:
+        values['variety'] = make_plant_variety()
+    values.update(overrides)
+    values.setdefault('workspace', values['variety'].workspace)
+    return NurseryPlanningAssumption.objects.create(**values)
+
+
+def make_planning_stage_assumption(**overrides):
+    """Attach one stage's timing, loss, and space plan to an assumption."""
+    values = {'sequence': 1, 'lead_days': 10, 'loss_rate': Decimal('0.1')}
+    values.update(overrides)
+    if 'assumption' not in values:
+        values['assumption'] = make_planning_assumption()
+    if 'stage' not in values:
+        values['stage'] = make_growth_stage(
+            workspace=values['assumption'].workspace,
+        )
+    return NurseryPlanningStageAssumption.objects.create(**values)
 
 
 def make_batch_for_packet(packet, **overrides):
