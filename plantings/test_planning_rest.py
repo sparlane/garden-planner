@@ -52,6 +52,58 @@ class NurseryPlanningRESTTests(RESTContractTestCase):
             loss_rate=Decimal('0.2'),
             location=self.location,
         )
+        self.assumption = assumption
+
+    def test_the_variance_action_reports_every_assumption_against_its_batches(self):
+        response = self.client.get('/plantings/planning-assumptions/variance/')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(
+            item for item in response.data
+            if item['assumption_id'] == self.assumption.pk
+        )
+        self.assertEqual(row['assumed_germination_rate'], '0.800000')
+        self.assertEqual(row['batches'], 0)
+        self.assertFalse(row['diverged'])
+
+    def test_the_revision_draft_pre_fills_without_writing_a_version(self):
+        response = self.client.get(
+            f'/plantings/planning-assumptions/{self.assumption.pk}/revision-draft/',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['germination_rate'], '0.800000')
+        self.assertEqual(response.data['germination_rate_source'], 'assumed')
+        self.assertEqual(NurseryPlanningAssumption.objects.count(), 1)
+
+    def test_accepting_a_revision_creates_a_version_and_closes_the_last_one(self):
+        response = self.client.post(
+            f'/plantings/planning-assumptions/{self.assumption.pk}/revise/',
+            {
+                'effective_from': '2026-07-01',
+                'germination_rate': '0.600000',
+                'stages': [{'stage': self.assumption.stages.get().stage_id, 'lead_days': 14}],
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['germination_rate'], '0.600000')
+        self.assertEqual(response.data['stages'][0]['lead_days'], 14)
+        self.assertEqual(response.data['stages'][0]['loss_rate'], '0.200000')
+        self.assumption.refresh_from_db()
+        self.assertEqual(str(self.assumption.effective_until), '2026-06-30')
+        self.assertEqual(self.assumption.germination_rate, Decimal('0.8'))
+
+    def test_a_revision_starting_before_the_version_it_replaces_is_rejected(self):
+        response = self.client.post(
+            f'/plantings/planning-assumptions/{self.assumption.pk}/revise/',
+            {'effective_from': '2025-12-01'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('effective_from', response.data)
 
     def test_plan_workflow_calculates_approves_revises_and_reports_variance(self):
         created = self.client.post('/plantings/production-plans/', {

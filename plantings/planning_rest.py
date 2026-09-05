@@ -3,6 +3,8 @@
 # DRF viewsets and serializers use framework-defined small method signatures.
 # pylint: disable=too-many-ancestors,missing-class-docstring,missing-function-docstring,duplicate-code,unused-argument
 
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
@@ -15,6 +17,11 @@ from workspaces.scoping import (
     RequireWorkspaceModeMixin,
 )
 
+from .assumption_variance import (
+    assumption_variance_rows,
+    revise_assumption,
+    revision_draft,
+)
 from .models import (
     NurseryPlanDemand,
     NurseryPlanInputRequirement,
@@ -85,6 +92,36 @@ class PlanningAssumptionSerializer(
         ]
 
     workspace_field_lookups = {'variety': 'workspace'}
+
+
+class ReviseStageSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """One stage's accepted duration and loss for the next version."""
+
+    stage = serializers.IntegerField(min_value=1)
+    lead_days = serializers.IntegerField(min_value=0, required=False)
+    loss_rate = serializers.DecimalField(
+        max_digits=7, decimal_places=6, min_value=0, max_value=Decimal('0.999999'),
+        required=False,
+    )
+
+
+class ReviseAssumptionSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """The figures an operator accepted, which are the only ones written.
+
+    Every value is optional because a revision may accept the observed
+    germination rate and leave the tray density alone; anything omitted is
+    carried across from the version being replaced rather than defaulted.
+    """
+
+    effective_from = serializers.DateField()
+    germination_rate = serializers.DecimalField(
+        max_digits=7, decimal_places=6, min_value=Decimal('0.000001'), max_value=1,
+        required=False,
+    )
+    seeds_per_cluster = serializers.IntegerField(min_value=1, required=False)
+    tray_density = serializers.IntegerField(min_value=1, required=False)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    stages = ReviseStageSerializer(many=True, required=False, default=list)
 
 
 class PlanMilestoneSerializer(serializers.ModelSerializer):
@@ -191,10 +228,46 @@ class NurseryPlanningViewSetMixin(
 
 class PlanningAssumptionViewSet(
         NurseryPlanningViewSetMixin, viewsets.ModelViewSet):
+    """Read, write, and close the feedback loop on planning assumptions.
+
+    The variance actions live here rather than beside the reports because the
+    comparison belongs at the moment of the decision: an operator editing an
+    assumption should see the last observed figure next to the one they are
+    about to keep.
+    """
+
     queryset = NurseryPlanningAssumption.objects.select_related('variety').prefetch_related(
         'stages__stage', 'stages__location', 'inputs__item',
     )
     serializer_class = PlanningAssumptionSerializer
+
+    @action(detail=False)
+    def variance(self, request):
+        """Compare every version with the batches sown under it, in one pass.
+
+        A list action rather than a field on each assumption: the comparison
+        reads the whole workspace's batches either way, and computing it per
+        serialized row would run that work once per version on screen.
+        """
+        return Response(assumption_variance_rows(self.get_current_workspace()))
+
+    @action(detail=True, url_path='revision-draft')
+    def revision_draft(self, request, pk=None):
+        """Pre-fill the next version with what happened, saving nothing."""
+        return Response(revision_draft(self.get_object()))
+
+    @action(detail=True, methods=['post'])
+    def revise(self, request, pk=None):
+        """Write the next version from the figures an operator accepted."""
+        values = ReviseAssumptionSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        try:
+            revision = revise_assumption(self.get_object(), **values.validated_data)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_errors(exc)) from exc
+        return Response(
+            self.get_serializer(revision).data, status=status.HTTP_201_CREATED,
+        )
 
 
 class PlanningStageAssumptionViewSet(
