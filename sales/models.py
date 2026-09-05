@@ -423,6 +423,11 @@ class SalesOrderAllocation(models.Model):
         EXPIRED = 'expired', 'Expired'
         FULFILLED = 'fulfilled', 'Fulfilled'
         RETURNED = 'returned', 'Returned'
+        # A promise the stock never grew into. Distinct from `released`, which
+        # says somebody chose to give the stock back to the pool: this says the
+        # nursery could not supply what it sold, which is the fact a customer
+        # is owed an explanation for and a season review has to be able to find.
+        SHORTFALL = 'shortfall', 'Short-supplied'
 
     line = models.ForeignKey(SalesOrderLine, on_delete=models.PROTECT, related_name='allocations')
     plant = models.ForeignKey(SpecificPlant, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
@@ -590,6 +595,7 @@ class ReservationEvent(models.Model):
         EXPIRED = 'expired', 'Expired'
         CANCELLED = 'cancelled', 'Cancelled'
         FULFILLED = 'fulfilled', 'Fulfilled'
+        SHORTFALL = 'shortfall', 'Short-supplied'
 
     allocation = models.ForeignKey(SalesOrderAllocation, on_delete=models.PROTECT, related_name='events')
     event_type = models.CharField(max_length=16, choices=EventType.choices)
@@ -609,6 +615,75 @@ class ReservationEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError('Reservation events cannot be deleted.')
+
+
+class SalesOrderShortfall(models.Model):
+    """A commitment the nursery could not meet, closed as a commercial event.
+
+    A forward order promises stock months before it ships and some of it does
+    not grow. Left to the dispatch, that is a validation error at the worst
+    moment there is: the customer is waiting, the rest of the load is packed,
+    and the only way past it is to pretend the promise was never made. Recorded
+    here, the order says what it could not supply and why, the rest of it ships,
+    and `sales.commerce.recompute_order_status` counts a short line as settled
+    rather than leaving the order partially fulfilled for ever.
+
+    Both allocations are named. Allocations are immutable, so giving up part of
+    a promise means closing the whole one and re-promising the rest, and the
+    row it was replaced by is what lets the trail read as the one event it was.
+    A promise given up entirely leaves `replacement` null.
+
+    The line is denormalised off the allocation because every fulfillment
+    recomputes a status from these totals, exactly as `PlantLifecycleEvent`
+    carries the batch that raised its plant.
+    """
+
+    line = models.ForeignKey(SalesOrderLine, on_delete=models.PROTECT, related_name='shortfalls')
+    allocation = models.ForeignKey(SalesOrderAllocation, on_delete=models.PROTECT, related_name='shortfalls')
+    replacement = models.OneToOneField(
+        SalesOrderAllocation,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='replaced_commitment',
+    )
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    reason = models.TextField()
+    recorded_at = models.DateTimeField()
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['recorded_at', 'pk']
+        constraints = [
+            models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_shortfall_quantity_positive'),
+        ]
+
+    def __str__(self):
+        return f'{self.quantity} short on {self.line.order.order_number}'
+
+    def clean(self):
+        super().clean()
+        errors = {}
+        if self.allocation_id and self.allocation.line_id != self.line_id:
+            errors['allocation'] = 'The allocation belongs to a different line.'
+        if self.replacement_id and self.replacement.line_id != self.line_id:
+            errors['replacement'] = 'The replacement belongs to a different line.'
+        if self.allocation_id and self.quantity > self.allocation.promised_units:
+            errors['quantity'] = 'A shortfall cannot exceed what the promise covered.'
+        if not self.reason.strip():
+            errors['reason'] = 'A shortfall requires a stated reason.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Recorded shortfalls are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Recorded shortfalls cannot be deleted.')
 
 
 class FulfillmentNumberSequence(models.Model):

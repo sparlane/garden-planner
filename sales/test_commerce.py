@@ -798,17 +798,22 @@ class AllocationStatusMachineTests(CommerceFixtureTestCase):
     # state -> the states one operator action can move it to.
     TRANSITIONS = {
         Status.PENDING: {Status.RESERVED},
-        Status.RESERVED: {Status.RELEASED, Status.EXPIRED, Status.FULFILLED},
+        Status.RESERVED: {
+            Status.RELEASED, Status.EXPIRED, Status.FULFILLED, Status.SHORTFALL,
+        },
         Status.FULFILLED: {Status.RETURNED, Status.RESERVED},
         Status.RETURNED: {Status.FULFILLED},
         Status.RELEASED: set(),
         Status.EXPIRED: set(),
+        Status.SHORTFALL: set(),
     }
 
-    # Released and expired reservations are resolved: the stock is back in
-    # general availability and a replacement reservation is what claims it
-    # again, so there is deliberately no route back into the same row.
-    RESOLVED = {Status.RELEASED, Status.EXPIRED}
+    # Released, expired and short-supplied reservations are resolved: the stock
+    # is back in general availability and a replacement reservation is what
+    # claims it again, so there is deliberately no route back into the same row.
+    # A shortfall that only covered part of a promise creates that replacement
+    # itself, in the same transaction, so the kept half is never briefly free.
+    RESOLVED = {Status.RELEASED, Status.EXPIRED, Status.SHORTFALL}
 
     def states_without_exits(self, transitions):
         """Return unresolved states no operator action can move on from."""

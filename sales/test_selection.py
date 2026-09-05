@@ -54,7 +54,9 @@ LOT_REASONS = ('unknown_location', 'insufficient_stock')
 #: `not_sellable`, `quarantined`, `wrong_workspace` and `unknown` with a
 #: seedling line and `insufficient_stock` with a lot draw, and adds the one
 #: only an anonymous block has: it has changed since the count was chosen
-#: against the figure on screen.
+#: against the figure on screen. `not_sellable` means something narrower here
+#: than it does for a plant: a block still growing may be promised forward, so
+#: only stock kept for the nursery's own use refuses the draw.
 COHORT_REASONS = ('stale_revision',)
 
 #: The refusals a cohort draw borrows from the other two kinds of selection.
@@ -493,11 +495,21 @@ class CohortSelectionTests(SelectionFixture):
             'expected_revision': cohort.revision if revision is None else revision,
         }
 
-    def growing_cohort(self):
+    def growing_cohort(self, quantity=10):
         """Observe a block nobody has offered for sale yet."""
         cohort, _observed = observe_cohort(
             get_current_workspace(), self.user,
-            batch=self.batch, quantity=10, idempotency_key=uuid4(),
+            batch=self.batch, quantity=quantity, idempotency_key=uuid4(),
+        )
+        return cohort
+
+    def retained_cohort(self):
+        """Keep a block for the nursery's own use, so nobody may buy it."""
+        cohort, _retained = change_cohort(
+            get_current_workspace(), self.user,
+            cohort_id=self.growing_cohort(quantity=100).pk, expected_revision=1,
+            action=CohortOperation.Action.RETAIN, idempotency_key=uuid4(),
+            reason='Kept for stock plants.',
         )
         return cohort
 
@@ -521,7 +533,7 @@ class CohortSelectionTests(SelectionFixture):
         """Return a draw the preview should refuse for exactly one reason."""
         builders = {
             'wrong_variety': lambda: self.draw(self.ready_cohort(batch=make_production_batch())),
-            'not_sellable': lambda: self.draw(self.growing_cohort()),
+            'not_sellable': lambda: self.draw(self.retained_cohort()),
             'quarantined': lambda: self.draw(self.quarantined_cohort()),
             'stale_revision': lambda: self.draw(self.cohort, revision=self.cohort.revision + 1),
             'insufficient_stock': lambda: self.draw(self.ready_cohort(quantity=4)),

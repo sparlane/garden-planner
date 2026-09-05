@@ -3,6 +3,10 @@
 # The services coordinate several ledgers deliberately in one transaction.
 # pylint: disable=too-many-locals,too-many-branches,too-many-statements
 # pylint: disable=too-many-arguments
+# One posting command per commercial event, each one whole in a single
+# transaction. Splitting the file would separate a command from the reversal
+# that has to undo exactly what it did.
+# pylint: disable=too-many-lines
 
 import hashlib
 import json
@@ -27,6 +31,7 @@ from inventory.ledger import (
     reverse_movement,
 )
 from inventory.models import InventoryItem, StockMovement
+from plantings.cohort_availability import DISPATCHABLE_STATES
 from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import (
     EventType,
@@ -34,7 +39,7 @@ from plantings.lifecycle import (
     record_lifecycle_event,
     reverse_lifecycle_event,
 )
-from plantings.models import SpecificPlant, SpecificPlantLocation
+from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
 
 from .calculations import line_position_amounts, money, proportional_refund
 from .cohort_stock import (
@@ -64,6 +69,7 @@ from .models import (
     ReservationEvent,
     SalesOrder,
     SalesOrderAllocation,
+    SalesOrderShortfall,
     SalesReturn,
     SalesReturnLine,
 )
@@ -133,23 +139,46 @@ def dispatched_quantity(allocation):
     return allocation.promised_units
 
 
-def recompute_order_status(order):
-    """Derive fulfillment status from effective dispatch and return facts."""
-    order = SalesOrder.objects.select_for_update(of=('self',)).get(pk=order.pk)
-    if order.status == SalesOrder.Status.CANCELLED:
-        return order
+def shortfall_quantity(order):
+    """Return how much of this order's commitment was given up unsupplied."""
+    return SalesOrderShortfall.objects.filter(line__order=order).aggregate(
+        total=Sum('quantity'),
+    )['total'] or 0
+
+
+def outstanding_quantity(order):
+    """Return what this order still owes: ordered, less short, less shipped.
+
+    Both subtractions are the same idea from two sides. A dispatch supplies a
+    unit and a shortfall says one will never be supplied, and an order with
+    neither left outstanding is finished whichever way its units went.
+    """
     returned = _effective_return_line_ids(order)
     fulfilled = sum(
         dispatched_quantity(row.allocation)
         for row in _effective_fulfillment_lines(order).exclude(pk__in=returned)
     )
     requested = sum(order.lines.values_list('quantity', flat=True))
-    if fulfilled == 0:
-        next_status = SalesOrder.Status.CONFIRMED
-    elif fulfilled < requested:
-        next_status = SalesOrder.Status.PARTIALLY_FULFILLED
-    else:
+    return requested - shortfall_quantity(order) - fulfilled, fulfilled
+
+
+def recompute_order_status(order):
+    """Derive fulfillment status from effective dispatch, return, and shortfall."""
+    order = SalesOrder.objects.select_for_update(of=('self',)).get(pk=order.pk)
+    if order.status == SalesOrder.Status.CANCELLED:
+        return order
+    outstanding, fulfilled = outstanding_quantity(order)
+    if outstanding <= 0:
+        # Nothing is owed, whether because it all shipped or because what did
+        # not ship was written off as short. An order that supplied none of
+        # what it promised never reaches here: `record_shortfall` refuses the
+        # last of it and says to cancel the order instead, because "fulfilled"
+        # would be a plainly false word for a load that never left.
         next_status = SalesOrder.Status.FULFILLED
+    elif fulfilled == 0:
+        next_status = SalesOrder.Status.CONFIRMED
+    else:
+        next_status = SalesOrder.Status.PARTIALLY_FULFILLED
     SalesOrder.objects.filter(pk=order.pk).update(
         status=next_status, updated=timezone.now(),
     )
@@ -216,6 +245,37 @@ def _plant_cost(plant):
         Decimal(value) if value is not None else None,
         bool(breakdown['provisional']),
     )
+
+
+def _require_ready_cohorts(allocations, cohorts):
+    """Refuse a dispatch of anonymous stock nobody has graded ready yet.
+
+    Committing and shipping are separate questions: an order may promise stock
+    that is still in plugs, and `plantings.cohort_availability` says so, but the
+    plants have to actually exist on a trolley before they leave. The check runs
+    over the whole dispatch before any of it is written, so an operator picking
+    six lines is told every block that is not ready rather than one per attempt
+    — `plantings.cohorts.sell_cohort` would refuse the first and say nothing
+    about the rest.
+    """
+    promised = [
+        cohorts[allocation.plant_cohort_id]
+        for allocation in allocations
+        if allocation.plant_cohort_id
+    ]
+    waiting = sorted(
+        cohort.pk for cohort in promised
+        if cohort.lifecycle_state not in DISPATCHABLE_STATES
+    )
+    if not waiting:
+        return
+    listed = ', '.join(str(cohort_id) for cohort_id in waiting)
+    raise ValidationError({
+        'allocations': (
+            f'Not ready to dispatch: cohort {listed}. Grade the stock ready, '
+            f'or record a shortfall against the order.'
+        ),
+    })
 
 
 def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfilled_at):
@@ -292,6 +352,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         order.workspace,
         [row.plant_cohort_id for row in allocations if row.plant_cohort_id],
     )
+    _require_ready_cohorts(allocations, cohorts)
     riders = resolve_riders(units, set(plant_ids))
     validate_riders_are_free(riders, order)
     positions = _available_positions(order)
@@ -397,6 +458,93 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
     recost_cohort_batches(cohorts.values(), user, 'Anonymous stock dispatched.')
     recompute_order_status(order)
     return fulfillment
+
+
+@transaction.atomic
+def record_shortfall(order, user, *, allocation_id, quantity, reason, recorded_at=None):
+    """Give up the part of a commitment the stock cannot meet, keeping the rest.
+
+    This is the outcome a forward order needs and a dispatch cannot give it. By
+    the time a load is being picked, "these plants never grew" is not a bad
+    request to be refused — it is the answer, and it belongs on the order where
+    the customer's claim, the season review and the production plan can all read
+    it. Refusing it at dispatch instead leaves an operator editing the promise
+    away, and with it the record that the promise was ever made.
+
+    Allocations are immutable, so shrinking one is not possible: the whole
+    promise is closed short and the remainder re-promised against the same
+    pool in the same transaction, which is what stops the kept part falling
+    back into availability for somebody else to take in between. Only a counted
+    draw ever has a remainder — an identity promises exactly one thing, and one
+    thing fails whole — so the replacement copies the pool columns and nothing
+    else.
+
+    An order that supplied nothing at all is refused: writing off the last of a
+    commitment would leave a "fulfilled" order that never shipped, and what the
+    operator means in that case is a cancellation.
+    """
+    reason = reason.strip()
+    if not reason:
+        raise ValidationError({'reason': 'A shortfall requires a stated reason.'})
+    recorded_at = recorded_at or timezone.now()
+    order = SalesOrder.objects.select_for_update(of=('self',)).get(pk=order.pk)
+    if order.status not in {
+            SalesOrder.Status.CONFIRMED, SalesOrder.Status.PARTIALLY_FULFILLED}:
+        raise ValidationError({
+            'status': 'Only a confirmed incomplete order can be short-supplied.',
+        })
+    allocation = SalesOrderAllocation.objects.select_for_update(of=('self',)).select_related(
+        'line',
+    ).filter(
+        pk=allocation_id,
+        line__order=order,
+        status=SalesOrderAllocation.Status.RESERVED,
+    ).first()
+    if allocation is None:
+        raise ValidationError({
+            'allocation': 'Select an active reservation on this order.',
+        })
+    promised = allocation.promised_units
+    if not 1 <= quantity <= promised:
+        raise ValidationError({
+            'quantity': f'A shortfall covers between 1 and {promised} of this promise.',
+        })
+    outstanding, fulfilled = outstanding_quantity(order)
+    if fulfilled == 0 and outstanding - quantity <= 0:
+        raise ValidationError({
+            'quantity': 'This order would have nothing left to supply; cancel it instead.',
+        })
+    SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
+        status=SalesOrderAllocation.Status.SHORTFALL, updated=timezone.now(),
+    )
+    allocation.status = SalesOrderAllocation.Status.SHORTFALL
+    ReservationEvent.objects.create(
+        allocation=allocation, event_type=ReservationEvent.EventType.SHORTFALL,
+        occurred_at=recorded_at, reason=reason, created_by=_actor(user),
+    )
+    replacement = None
+    if promised > quantity:
+        replacement = SalesOrderAllocation.objects.create(
+            line=allocation.line,
+            plant_cohort=allocation.plant_cohort,
+            stock_lot=allocation.stock_lot,
+            source_location=allocation.source_location,
+            quantity=promised - quantity,
+            status=SalesOrderAllocation.Status.RESERVED,
+            expires_at=allocation.expires_at,
+            created_by=_actor(user),
+        )
+        ReservationEvent.objects.create(
+            allocation=replacement, event_type=ReservationEvent.EventType.RESERVED,
+            occurred_at=recorded_at, created_by=_actor(user),
+        )
+    shortfall = SalesOrderShortfall.objects.create(
+        line=allocation.line, allocation=allocation, replacement=replacement,
+        quantity=quantity, reason=reason, recorded_at=recorded_at,
+        created_by=_actor(user),
+    )
+    recompute_order_status(order)
+    return shortfall
 
 
 @transaction.atomic
@@ -757,6 +905,18 @@ def order_commerce_summary(order):
                 line__order=order, status=SalesOrderAllocation.Status.RESERVED,
             )
         ),
+        # The part of the reservation that is a promise about the future: stock
+        # this order holds in a block nobody has graded ready. Reported beside
+        # the reservation rather than folded into it, because a salesperson
+        # answering "when can you deliver?" needs the two figures apart.
+        'committed_forward_quantity': sum(
+            dispatched_quantity(row) for row in SalesOrderAllocation.objects.filter(
+                line__order=order,
+                status=SalesOrderAllocation.Status.RESERVED,
+                plant_cohort__lifecycle_state=PlantCohort.LifecycleState.GROWING,
+            )
+        ),
+        'short_quantity': shortfall_quantity(order),
         'fulfilled_quantity': sum(
             dispatched_quantity(row.allocation) for row in fulfilled
         ),
