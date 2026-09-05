@@ -7,7 +7,7 @@ import { addProductionBatch, getHarvests, getProductionBatch, getProductionBatch
 import { getPlantVarieties } from '../api/plants'
 import { queryKeys } from '../query'
 import { formatDate, formatDateTime } from '../utils'
-import { PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
+import { CohortLifecycleState, PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
 import { Workspace } from '../types/workspace'
 import { isAdvanced } from '../workspace_mode'
 import { HarvestForm } from './harvest_form'
@@ -15,6 +15,7 @@ import { ApplicationTargetOption, InputApplicationForm } from '../applications/a
 import { ApplicationTable } from '../applications/application_list'
 import { getInputApplications } from '../api/applications'
 import { FamilyTotals, HarvestTable } from './harvest_list'
+import { COHORT_STATE_LABELS } from './cohort_terms'
 import { STATE_LABELS } from './lifecycle'
 import { BatchCosts } from './batch_costs'
 import { GerminationSummary } from './germination'
@@ -433,6 +434,59 @@ function BatchLifecycleStates({ batch }: { batch: ProductionBatchDetail }) {
   )
 }
 
+// Anonymous stock, counted separately from the plants that were given
+// identities. A grower deciding what to hold back needs to know which part of
+// the crop is already somebody else's -- and which part of that is sold before
+// anybody has graded it ready, since those plants have to be kept alive rather
+// than merely picked.
+function BatchCohortStock({ batch }: { batch: ProductionBatchDetail }) {
+  const commitments = batch.cohort_commitments
+  const states = Object.entries(commitments.state_quantities).filter(([, count]) => count > 0) as Array<[CohortLifecycleState, number]>
+
+  return (
+    <Card className="mb-3">
+      <Card.Body>
+        <Card.Title>Anonymous stock</Card.Title>
+        {commitments.quantity === 0 ? (
+          <p className="text-muted mb-0">This batch holds no cohort stock.</p>
+        ) : (
+          <>
+            <Row className="g-2 mb-2">
+              {[
+                ['Standing', commitments.quantity],
+                ['Sold', commitments.reserved_quantity],
+                ['Sold before ready', commitments.committed_forward_quantity],
+                ['Free to promise', commitments.free_quantity]
+              ].map(([label, value]) => (
+                <Col key={label} md={3}>
+                  <div className="text-muted small">{label}</div>
+                  <div className="fs-5">{value}</div>
+                </Col>
+              ))}
+            </Row>
+            <Table size="sm" className="mb-0">
+              <thead>
+                <tr>
+                  <th>State</th>
+                  <th>Plants</th>
+                </tr>
+              </thead>
+              <tbody>
+                {states.map(([state, count]) => (
+                  <tr key={state}>
+                    <td>{COHORT_STATE_LABELS[state]}</td>
+                    <td>{count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </>
+        )}
+      </Card.Body>
+    </Card>
+  )
+}
+
 function BatchLocations({ batch }: { batch: ProductionBatchDetail }) {
   return (
     <Card className="mb-3">
@@ -685,6 +739,7 @@ function ProductionBatchDetailView({ batchPk, workspace }: ProductionBatchDetail
         <BatchDetailsForm batch={batch} workspace={workspace} />
         <BatchSowings batch={batch} />
         <BatchLifecycleStates batch={batch} />
+        <BatchCohortStock batch={batch} />
         <BatchYield batch={batch} workspace={workspace} />
         <BatchHarvests batch={batch} />
         <BatchInputs batch={batch} />

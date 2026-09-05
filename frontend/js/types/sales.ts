@@ -26,12 +26,14 @@ type SalesLineType = 'seedling' | 'unit' | 'lot_quantity' | 'cohort_quantity'
 type SalesTaxTreatment = 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope' | 'unclassified'
 
 type SalesDiscountType = 'none' | 'fixed' | 'percentage'
-type SalesAllocationStatus = 'pending' | 'reserved' | 'released' | 'expired' | 'fulfilled' | 'returned'
+// 'shortfall' is distinct from 'released': a release gives stock back to the
+// pool by choice, while this says the nursery could not supply what it sold.
+type SalesAllocationStatus = 'pending' | 'reserved' | 'released' | 'expired' | 'fulfilled' | 'returned' | 'shortfall'
 type CommerceStatus = 'posted' | 'reversed' | 'reversal'
 
 interface ReservationEvent {
   pk: number
-  event_type: 'reserved' | 'released' | 'expired' | 'cancelled' | 'fulfilled'
+  event_type: 'reserved' | 'released' | 'expired' | 'cancelled' | 'fulfilled' | 'shortfall'
   occurred_at: string
   reason: string
   created_by: number | null
@@ -55,6 +57,19 @@ interface SalesAllocation {
   updated: string
   events: Array<ReservationEvent>
   competing_claims: Array<AllocationOrderReference>
+}
+
+interface SalesShortfall {
+  pk: number
+  allocation: number
+  // The reserved remainder this shortfall re-promised, when only part of the
+  // commitment failed. Null when the whole promise was given up.
+  replacement: number | null
+  quantity: number
+  reason: string
+  recorded_at: string
+  created_by: number | null
+  created: string
 }
 
 interface AllocationOrderReference {
@@ -84,6 +99,7 @@ interface SalesOrderLine {
   tax_total: string
   total_incl_tax: string
   allocations: Array<SalesAllocation>
+  shortfalls: Array<SalesShortfall>
   created: string
   updated: string
 }
@@ -124,6 +140,12 @@ interface SalesOrder {
 interface SalesCommerceSummary {
   requested_quantity: number
   reserved_quantity: number
+  // The part of the reservation that is a promise about the future: stock this
+  // order holds in a block nobody has graded ready. Reported beside the
+  // reservation rather than inside it, so "when can you deliver?" is answerable.
+  committed_forward_quantity: number
+  // What was promised and will never be supplied, given up with a reason.
+  short_quantity: number
   fulfilled_quantity: number
   returned_quantity: number
   fulfilled_total_incl_tax: string
@@ -292,6 +314,12 @@ interface CohortDrawPreview {
   available: string | null
 }
 
+interface SalesShortfallWrite {
+  allocation: number
+  quantity: number
+  reason: string
+}
+
 interface AllocationPreview {
   selected: Array<number> | Array<LotDrawPreview> | Array<CohortDrawPreview>
   conflicts: Array<{ id: number; reason: string; location?: number; available?: string | null; order?: number; order_number?: string; status?: SalesAllocationStatus }>
@@ -321,5 +349,7 @@ export {
   SalesOrderStatus,
   SalesPayment,
   SalesRefund,
-  SalesReturn
+  SalesReturn,
+  SalesShortfall,
+  SalesShortfallWrite
 }

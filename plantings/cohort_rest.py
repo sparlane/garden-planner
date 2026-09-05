@@ -94,6 +94,7 @@ class PlantCohortSerializer(serializers.ModelSerializer):
     quarantined = serializers.BooleanField(read_only=True)
     reserved_quantity = serializers.SerializerMethodField()
     available_quantity = serializers.SerializerMethodField()
+    committed_forward_quantity = serializers.SerializerMethodField()
 
     class Meta:
         model = PlantCohort
@@ -105,6 +106,7 @@ class PlantCohortSerializer(serializers.ModelSerializer):
             'stage', 'stage_name', 'grade', 'grade_name', 'container',
             'container_name', 'container_size', 'container_count', 'expected_ready',
             'quarantined', 'reserved_quantity', 'available_quantity',
+            'committed_forward_quantity',
             'created', 'updated',
         ]
         read_only_fields = [
@@ -127,6 +129,19 @@ class PlantCohortSerializer(serializers.ModelSerializer):
         if hasattr(cohort, 'available_quantity'):
             return cohort.available_quantity
         return cohort_availability.available_quantity(cohort)
+
+    def get_committed_forward_quantity(self, cohort):
+        """Return what is sold out of a block nobody has graded ready yet.
+
+        Zero for a block that is on sale: its reservations are stock a picker
+        can go and get. On a growing block the same figure is a promise about
+        the future, and the register says which by reporting it separately.
+        """
+        if hasattr(cohort, 'committed_forward_quantity'):
+            return cohort.committed_forward_quantity
+        if cohort.lifecycle_state != PlantCohort.LifecycleState.GROWING:
+            return 0
+        return cohort_availability.reserved_quantity(cohort)
 
     def get_label_code(self, cohort):
         """Return the active physical identity issued for this cohort."""
@@ -374,9 +389,21 @@ class PlantCohortViewSet(
         """Return one page plus quantity totals for the complete filter."""
         response = super().list(request, *args, **kwargs)
         queryset = self.filter_queryset(self.get_queryset()).order_by()
+        sums = queryset.aggregate(
+            quantity=Sum('quantity'),
+            reserved=Sum('reserved_quantity'),
+            committed_forward=Sum('committed_forward_quantity'),
+        )
         totals = {
             'cohort_count': queryset.count(),
-            'quantity': queryset.aggregate(total=Sum('quantity'))['total'] or 0,
+            'quantity': sums['quantity'] or 0,
+            # Three figures rather than one, because a grower reading the
+            # register wants what is standing there and a salesperson wants
+            # the part of it still free to promise. `committed_forward` is
+            # the overlap they argue about: sold, and not ready yet.
+            'reserved_quantity': sums['reserved'] or 0,
+            'available_quantity': (sums['quantity'] or 0) - (sums['reserved'] or 0),
+            'committed_forward_quantity': sums['committed_forward'] or 0,
         }
         for state_name, _label in PlantCohort.LifecycleState.choices:
             totals[state_name] = (
@@ -388,18 +415,26 @@ class PlantCohortViewSet(
     @action(detail=False, methods=['get'])
     def availability(self, request):
         """Report anonymous and identified available stock under shared filters."""
-        cohorts = self.get_queryset().filter(
+        standing = self.get_queryset().filter(quantity__gt=0, quarantined=False)
+        cohorts = standing.filter(
             lifecycle_state=PlantCohort.LifecycleState.AVAILABLE,
-            quantity__gt=0,
-            quarantined=False,
+        )
+        growing = standing.filter(
+            lifecycle_state=PlantCohort.LifecycleState.GROWING,
         )
         params = request.query_params.copy()
         params.setlist('state', ['available'])
         individuals = register_queryset(
             self.get_current_workspace(), parse_register_filters(params),
         )
-        cohort_quantity = cohorts.aggregate(total=Sum('quantity'))['total'] or 0
-        cohort_reserved = cohorts.aggregate(total=Sum('reserved_quantity'))['total'] or 0
+        ready = cohorts.aggregate(
+            quantity=Sum('quantity'), reserved=Sum('reserved_quantity'),
+        )
+        forward = growing.aggregate(
+            quantity=Sum('quantity'), reserved=Sum('reserved_quantity'),
+        )
+        cohort_quantity = ready['quantity'] or 0
+        cohort_reserved = ready['reserved'] or 0
         individual_count = individuals.count()
         return Response({
             'cohort_quantity': cohort_quantity,
@@ -409,6 +444,12 @@ class PlantCohortViewSet(
             # salesperson quoting wants the part of it still free to promise.
             'cohort_reserved_quantity': cohort_reserved,
             'cohort_unpromised_quantity': cohort_quantity - cohort_reserved,
+            # Stock that is coming, and the part of it already sold forward.
+            # Left out of every total above, because a customer asking what
+            # can be delivered this week is not asking about plugs -- but a
+            # salesperson quoting for spring is asking about nothing else.
+            'cohort_growing_quantity': forward['quantity'] or 0,
+            'cohort_committed_forward_quantity': forward['reserved'] or 0,
             'individual_count': individual_count,
             'combined_total': cohort_quantity + individual_count,
         })

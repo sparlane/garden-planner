@@ -104,7 +104,19 @@ interface ProductionBatchDetail extends ProductionBatch {
   harvest_count: number
   harvest_totals: Array<HarvestFamilyTotal>
   plants_harvest_finished: number
+  // The batch's anonymous stock, counted separately from `lifecycle_counts`,
+  // which walks the plants that were given identities. A block that was never
+  // promoted has none, so adding the two would say a crop was twice its size.
+  cohort_commitments: BatchCohortCommitments
   transitions: Array<ProductionBatchTransition>
+}
+
+interface BatchCohortCommitments {
+  quantity: number
+  state_quantities: Record<CohortLifecycleState, number>
+  reserved_quantity: number
+  committed_forward_quantity: number
+  free_quantity: number
 }
 
 interface BatchAction {
@@ -933,6 +945,10 @@ interface PlantCohort {
   // arithmetic rather than a flag on the stock.
   reserved_quantity: number
   available_quantity: number
+  // The part of the reservation that is sold before anybody graded the block
+  // ready. Zero on a block that is on sale, where a reservation is stock a
+  // picker can go and get; on a growing block it is a promise about the future.
+  committed_forward_quantity: number
   created: string
   updated: string
   events?: Array<CohortEvent>
@@ -942,6 +958,9 @@ interface PlantCohort {
 interface CohortTotals {
   cohort_count: number
   quantity: number
+  reserved_quantity: number
+  available_quantity: number
+  committed_forward_quantity: number
   growing: number
   available: number
   retained: number
@@ -979,6 +998,12 @@ interface CohortAvailability {
   cohort_quantity: number
   cohort_reserved_quantity: number
   cohort_unpromised_quantity: number
+  // Stock that is coming, and the part of it already sold forward. Left out of
+  // every total above: a customer asking what can go this week is not asking
+  // about plugs, and a salesperson quoting for spring is asking about nothing
+  // else.
+  cohort_growing_quantity: number
+  cohort_committed_forward_quantity: number
   individual_count: number
   combined_total: number
 }
@@ -1173,6 +1198,7 @@ export {
   NurseryRegisterRow,
   NurseryRegisterSelection,
   BulkPlantAction,
+  BatchCohortCommitments,
   BulkPlantAtomicity,
   BulkPlantOperationRequest,
   BulkPlantPreview,

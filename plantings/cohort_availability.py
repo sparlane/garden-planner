@@ -109,3 +109,33 @@ def available_quantity(cohort):
     same units.
     """
     return cohort.quantity - reserved_quantity(cohort)
+
+
+def batch_commitments(batch):
+    """Return one batch's anonymous stock, split by state and by what is sold.
+
+    The batch detail is where production looks at a crop, so it is where "how
+    much of this is already somebody else's" belongs. Depleted blocks are left
+    out: they hold nothing, and counting them would report a batch's whole
+    history rather than what is standing on the bench now.
+    """
+    rows = with_availability(
+        PlantCohort.objects.filter(batch=batch, quantity__gt=0),
+    ).values('lifecycle_state', 'quantity', 'reserved_quantity')
+    totals = {state.value: 0 for state in PlantCohort.LifecycleState}
+    quantity = reserved = committed_forward = 0
+    for row in rows:
+        totals[row['lifecycle_state']] += row['quantity']
+        quantity += row['quantity']
+        reserved += row['reserved_quantity']
+        if row['lifecycle_state'] == PlantCohort.LifecycleState.GROWING:
+            committed_forward += row['reserved_quantity']
+    return {
+        'quantity': quantity,
+        'state_quantities': totals,
+        # Sold, whether or not it is ready. The forward half is the part a
+        # grower has to keep alive rather than a part a picker can go and get.
+        'reserved_quantity': reserved,
+        'committed_forward_quantity': committed_forward,
+        'free_quantity': quantity - reserved,
+    }

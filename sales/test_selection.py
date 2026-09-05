@@ -674,3 +674,44 @@ class ForwardSaleRESTTests(CohortSelectionFixture):
         self.assertEqual(len(demand), 1)
         self.assertEqual(demand[0]['target_quantity'], 10)
         self.assertEqual(demand[0]['source'], 'confirmed_order')
+
+    def test_the_cohort_register_reports_what_is_sold_before_it_is_ready(self):
+        """Production has to see what is already promised out of a crop."""
+        self.committed_order(quantity=10)
+
+        register = self.client.get('/plantings/cohorts/', {'batch': self.batch.pk})
+
+        self.assertEqual(register.status_code, 200, register.data)
+        totals = register.data['cohort_totals']
+        self.assertEqual(totals['reserved_quantity'], 10)
+        self.assertEqual(totals['committed_forward_quantity'], 10)
+        rows = {row['pk']: row for row in register.data['results']}
+        growing = [row for row in rows.values() if row['lifecycle_state'] == 'growing']
+        self.assertEqual(growing[0]['committed_forward_quantity'], 10)
+        self.assertEqual(growing[0]['available_quantity'], 90)
+
+    def test_availability_keeps_stock_that_is_coming_out_of_todays_figure(self):
+        """A customer asking what can go this week is not asking about plugs."""
+        self.committed_order(quantity=10)
+
+        availability = self.client.get(
+            '/plantings/cohorts/availability/', {'batch': self.batch.pk},
+        )
+
+        self.assertEqual(availability.status_code, 200, availability.data)
+        self.assertEqual(availability.data['cohort_quantity'], 100)
+        self.assertEqual(availability.data['cohort_growing_quantity'], 100)
+        self.assertEqual(availability.data['cohort_committed_forward_quantity'], 10)
+
+    def test_the_batch_screen_reports_the_part_of_the_crop_already_sold(self):
+        """A grower deciding what to hold back needs to know what is spoken for."""
+        self.committed_order(quantity=10)
+
+        batch = self.client.get(f'/plantings/batches/{self.batch.pk}/')
+
+        self.assertEqual(batch.status_code, 200, batch.data)
+        commitments = batch.data['cohort_commitments']
+        self.assertEqual(commitments['reserved_quantity'], 10)
+        self.assertEqual(commitments['committed_forward_quantity'], 10)
+        self.assertEqual(commitments['free_quantity'], 190)
+        self.assertEqual(commitments['state_quantities']['growing'], 100)

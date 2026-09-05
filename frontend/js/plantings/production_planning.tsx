@@ -12,6 +12,7 @@ import {
   getPlanningAssumptions,
   getPlanVariance,
   getProductionPlans,
+  importPlanDemand,
   postPlanAction
 } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
@@ -419,8 +420,16 @@ function PlanVariance({ plan }: { plan: NurseryProductionPlan }) {
 
 function PlanCard({ plan, varieties }: { plan: NurseryProductionPlan; varieties: Array<PlantVariety> }) {
   const cache = useQueryClient()
+  // The delivery window whose confirmed orders the plan takes on. Asked for
+  // rather than assumed, because a plan covers a season and the order book
+  // covers all of them.
+  const [window, setWindow] = React.useState({ ready_from: '', ready_until: '' })
   const action = useMutation({
     mutationFn: (name: 'calculate' | 'approve' | 'revise') => postPlanAction(plan.pk, name),
+    onSuccess: () => cache.invalidateQueries({ queryKey: queryKeys.plantings.productionPlans })
+  })
+  const importDemand = useMutation({
+    mutationFn: () => importPlanDemand(plan.pk, window),
     onSuccess: () => cache.invalidateQueries({ queryKey: queryKeys.plantings.productionPlans })
   })
   return (
@@ -447,6 +456,24 @@ function PlanCard({ plan, varieties }: { plan: NurseryProductionPlan; varieties:
         </span>
       </Card.Header>
       <Card.Body>
+        {plan.status === 'draft' && (
+          <Row className="g-2 align-items-end mb-3">
+            <Col md={3}>
+              <Form.Label>Deliveries from</Form.Label>
+              <Form.Control type="date" value={window.ready_from} onChange={(event) => setWindow({ ...window, ready_from: event.target.value })} />
+            </Col>
+            <Col md={3}>
+              <Form.Label>Deliveries until</Form.Label>
+              <Form.Control type="date" value={window.ready_until} onChange={(event) => setWindow({ ...window, ready_until: event.target.value })} />
+            </Col>
+            <Col md={6}>
+              <Button size="sm" variant="outline-secondary" disabled={importDemand.isPending || !window.ready_from || !window.ready_until} onClick={() => importDemand.mutate()}>
+                Import confirmed orders
+              </Button>
+              <Form.Text className="d-block">Replaces the demand read from orders; forecasts entered by hand are left alone.</Form.Text>
+            </Col>
+          </Row>
+        )}
         {plan.issues.map((issue) => (
           <Alert key={issue.pk} variant="warning" className="py-2">
             {issue.kind}: {issue.message}

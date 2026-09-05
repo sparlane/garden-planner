@@ -12,7 +12,9 @@ import {
   SalesOrderStatus,
   SalesPayment,
   SalesRefund,
-  SalesReturn
+  SalesReturn,
+  SalesShortfall,
+  SalesShortfallWrite
 } from '../types/sales'
 
 const CUSTOMERS_URL = '/sales/customers/'
@@ -84,6 +86,14 @@ async function allocateOrderLine(
     expires_at: expiresAt
   })
   return response.json() as Promise<Array<SalesAllocation>>
+}
+
+// A shortfall is not a release: it says the nursery could not supply what it
+// sold, so the reason is mandatory and the commitment is closed short rather
+// than handed back by choice.
+async function postShortfall(pk: number, data: SalesShortfallWrite): Promise<SalesShortfall> {
+  const response = await csrfPost(`${ORDERS_URL}${pk}/shortfall/`, data)
+  return response.json() as Promise<SalesShortfall>
 }
 
 async function closeAllocations(pk: number, action: 'release' | 'expire', allocations: Array<number>, reason: string): Promise<Array<SalesAllocation>> {
@@ -164,6 +174,7 @@ export {
   postPayment,
   postRefund,
   postReturn,
+  postShortfall,
   reverseCommerce,
   updateCustomer,
   updateSalesOrder

@@ -286,6 +286,8 @@ class CohortRESTTests(RESTContractTestCase):
             'cohort_quantity': 7,
             'cohort_reserved_quantity': 0,
             'cohort_unpromised_quantity': 7,
+            'cohort_growing_quantity': 0,
+            'cohort_committed_forward_quantity': 0,
             'individual_count': 2,
             'combined_total': 9,
         })

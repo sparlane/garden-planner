@@ -309,6 +309,12 @@ function postPlanAction(planPk: number, actionName: 'calculate' | 'approve' | 'r
   return csrfPost(`/plantings/production-plans/${planPk}/${actionName}/`, {}).then((response) => response.json() as Promise<NurseryProductionPlan>)
 }
 
+// The plan takes on the commitments already sold for delivery in a window,
+// rather than an operator retyping them as a forecast beside the orders.
+function importPlanDemand(planPk: number, window: { ready_from: string; ready_until: string }): Promise<NurseryProductionPlan> {
+  return csrfPost(`/plantings/production-plans/${planPk}/import-demand/`, window).then((response) => response.json() as Promise<NurseryProductionPlan>)
+}
+
 function getPlanVariance(planPk: number, signal?: AbortSignal): Promise<Array<NurseryPlanVariance>> {
   return fetchAsJson<Array<NurseryPlanVariance>>(`/plantings/production-plans/${planPk}/variance/`, signal)
 }
@@ -456,6 +462,7 @@ export {
   getProductionPlans,
   addProductionPlan,
   addPlanDemand,
+  importPlanDemand,
   postPlanAction,
   getPlanVariance,
   getHarvests,
