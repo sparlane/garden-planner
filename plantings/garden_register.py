@@ -26,6 +26,7 @@ from plants.models import MaturityBasis
 from work.models import WorkTask, WorkTaskLink
 
 from .lifecycle import FINAL_STATES, LifecycleState, with_lifecycle_state
+from .direct_sown import direct_sown_summary
 from .models import (
     GardenPlanting, GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting,
     GardenSquareTransplant, ProductionBatch, SpecificPlant, SpecificPlantLocation,
@@ -125,24 +126,37 @@ def _location_values(location, names):
     return 'unplaced', 'Unplaced', False
 
 
-def _aggregate_rows(workspace, location_names):
+def _aggregate_rows(workspace, location_names):  # pylint: disable=too-many-locals
     entries = (
         GardenPlanting.objects
         .filter(workspace=workspace, tracking=GardenPlanting.Tracking.AGGREGATE)
         .select_related('batch__variety__plant', 'garden_square', 'location')
-        .prefetch_related('status_events__reversal')
+        .prefetch_related(
+            'status_events__reversal',
+            'direct_sown_events__reversal',
+            'direct_sown_events__garden_square_before',
+            'direct_sown_events__location_before',
+            'direct_sown_events__garden_square_after',
+            'direct_sown_events__location_after',
+        )
     )
     rows = []
     for entry in entries:
         variety = entry.batch.variety
-        if entry.garden_square_id:
-            location_key = f'square:{entry.garden_square_id}'
-            location_label = str(entry.garden_square)
+        lifecycle = (
+            direct_sown_summary(entry)
+            if entry.source == GardenPlanting.Source.DIRECT_SEED else None
+        )
+        garden_square = lifecycle['garden_square'] if lifecycle else entry.garden_square
+        location = lifecycle['location'] if lifecycle else entry.location
+        if garden_square is not None:
+            location_key = f'square:{garden_square.pk}'
+            location_label = str(garden_square)
             container = False
         else:
-            location_key = f'location:{entry.location_id}'
-            location_label = location_full_name(entry.location, location_names)
-            container = entry.location.location_type == Location.LocationType.CONTAINER
+            location_key = f'location:{location.pk}'
+            location_label = location_full_name(location, location_names)
+            container = location.location_type == Location.LocationType.CONTAINER
         expected_early, expected_late = _expected_harvest(variety, entry.recorded_on)
         effective_events = [
             event for event in entry.status_events.all()
@@ -156,7 +170,15 @@ def _aggregate_rows(workspace, location_names):
             'variety': variety.pk, 'variety_name': variety.name,
             'batch': entry.batch_id, 'batch_code': entry.batch.code,
             'name': '', 'source': entry.source, 'state': state,
-            'quantity': entry.quantity, 'quantity_is_approximate': entry.quantity_is_approximate,
+            'quantity': (
+                lifecycle['current_plants']
+                if lifecycle and lifecycle['current_plants'] is not None else entry.quantity
+            ),
+            'quantity_is_approximate': (
+                lifecycle['count_quality'] == 'estimated'
+                if lifecycle and lifecycle['current_plants'] is not None
+                else entry.quantity_is_approximate
+            ),
             'perennial': entry.perennial, 'container': container,
             'planted_on': entry.recorded_on, 'date_is_approximate': entry.date_is_approximate,
             'location': location_key, 'location_label': location_label,
