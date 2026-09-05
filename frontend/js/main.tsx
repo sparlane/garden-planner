@@ -280,7 +280,7 @@ function FrontEndPage() {
         <Route
           path="/health"
           element={
-            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['garden', 'nursery']}>
               <HealthView />
             </WorkspaceModeRoute>
           }
@@ -288,7 +288,7 @@ function FrontEndPage() {
         <Route
           path="/work"
           element={
-            <WorkspaceModeRoute workspace={workspace} enabledModes={['nursery']}>
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['garden', 'nursery']}>
               <WorkQueueView />
             </WorkspaceModeRoute>
           }

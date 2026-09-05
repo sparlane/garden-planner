@@ -53,6 +53,15 @@
   stroke-width: 10;
 }
 
+.garden-row--empty {
+  fill: #d7b98e;
+}
+
+.garden-row--planted {
+  fill: #78c679;
+  fill-opacity: 0.75;
+}
+
 .garden-setup-preview {
   max-width: 40rem;
 }
@@ -80,6 +89,85 @@
   fill: #78c679;
 }
 
+.garden-square--attention {
+  fill: #dc3545;
+  stroke: #842029;
+}
+
+.garden-square--due {
+  fill: #0d6efd;
+  stroke: #052c65;
+}
+
+.garden-square--season {
+  fill: #ffc107;
+  stroke: #997404;
+}
+
+.garden-crop-0 {
+  fill: #66c2a5;
+}
+
+.garden-crop-1 {
+  fill: #fc8d62;
+}
+
+.garden-crop-2 {
+  fill: #8da0cb;
+}
+
+.garden-crop-3 {
+  fill: #e78ac3;
+}
+
+.garden-crop-4 {
+  fill: #a6d854;
+}
+
+.garden-crop-5 {
+  fill: #ffd92f;
+}
+
+.garden-geometry--hidden {
+  opacity: 0.12;
+  pointer-events: none;
+}
+
+.garden-workspace-toolbar {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) auto auto;
+  gap: 1rem;
+  align-items: end;
+  margin: 1rem 0;
+}
+
+.garden-legend {
+  border: 1px solid #dee2e6;
+  border-radius: 0.375rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.garden-layout-list {
+  margin-top: 1.5rem;
+}
+
+.garden-geometry-list {
+  display: grid;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.garden-geometry-list li {
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  min-height: 2.75rem;
+}
+
 .garden-square-control:hover .garden-square,
 .garden-square-control:focus-visible .garden-square,
 .garden-geometry-control:hover > .garden-square,
@@ -105,5 +193,11 @@
 @media (prefers-reduced-motion: reduce) {
   .garden-square {
     transition: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .garden-workspace-toolbar {
+    grid-template-columns: 1fr;
   }
 }
