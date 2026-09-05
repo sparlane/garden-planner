@@ -18,14 +18,8 @@ import {
 } from '../api/plantings'
 import { queryClient, queryKeys } from '../query'
 import { CohortAction, CohortFilters, CohortLifecycleState, CohortLossCause, PlantCohort } from '../types/plantings'
+import { COHORT_STATE_LABELS as STATE_LABELS } from './cohort_terms'
 import { LOSS_CAUSE_LABELS, RECORDABLE_LOSS_CAUSES, lossCauseLabel } from './loss_causes'
-
-const STATE_LABELS: Record<CohortLifecycleState, string> = {
-  growing: 'Growing',
-  available: 'Available',
-  retained: 'Retained',
-  depleted: 'Depleted'
-}
 
 function CohortTotals({ filters }: { filters: CohortFilters }) {
   const { data } = useQuery({
@@ -39,6 +33,10 @@ function CohortTotals({ filters }: { filters: CohortFilters }) {
         ['Available cohorts', data.cohort_quantity],
         ['Reserved on orders', data.cohort_reserved_quantity],
         ['Cohort stock free to promise', data.cohort_unpromised_quantity],
+        // Stock that is coming, and the part of it already sold. Kept out of
+        // the availability figures above, which answer what can go this week.
+        ['Growing cohorts', data.cohort_growing_quantity],
+        ['Sold before it is ready', data.cohort_committed_forward_quantity],
         ['Available identified plants', data.individual_count],
         ['Combined availability', data.combined_total]
       ].map(([label, value]) => (
@@ -333,7 +331,10 @@ function CohortRegisterView() {
                     )}
                   </td>
                   <td>{cohort.quantity}</td>
-                  <td>{cohort.reserved_quantity}</td>
+                  <td>
+                    {cohort.reserved_quantity}
+                    {cohort.committed_forward_quantity > 0 && <div className="text-muted small">{cohort.committed_forward_quantity} sold before ready</div>}
+                  </td>
                   <td>{cohort.available_quantity}</td>
                   <td>
                     {cohort.stage_name ?? '—'}
@@ -522,6 +523,7 @@ function CohortDetailView({ cohortPk }: { cohortPk: number }) {
             <div className="text-muted">Reserved on orders</div>
             <div className="fs-4">{cohort.reserved_quantity}</div>
             <div className="small text-muted">{cohort.available_quantity} free to promise</div>
+            {cohort.committed_forward_quantity > 0 && <div className="small text-muted">{cohort.committed_forward_quantity} sold before it is ready</div>}
           </Card>
         </Col>
         <Col md={3}>

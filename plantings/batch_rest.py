@@ -36,6 +36,7 @@ from .batches import (
     lock_batch_for_sowing,
     reopen_batch,
 )
+from .cohort_availability import batch_commitments
 from .germination import germination_json
 from .models import GardenPlanting, ProductionBatch, ProductionBatchTransition, SpecificPlantLocation
 from .yields import batch_harvest_finished_count, batch_harvest_totals
@@ -369,6 +370,7 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
     harvest_count = serializers.SerializerMethodField()
     harvest_totals = serializers.SerializerMethodField()
     plants_harvest_finished = serializers.SerializerMethodField()
+    cohort_commitments = serializers.SerializerMethodField()
     transitions = ProductionBatchTransitionSerializer(many=True, read_only=True)
 
     class Meta(ProductionBatchSerializer.Meta):
@@ -379,6 +381,7 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
             'harvest_count',
             'harvest_totals',
             'plants_harvest_finished',
+            'cohort_commitments',
             'transitions',
         ]
 
@@ -409,6 +412,16 @@ class ProductionBatchDetailSerializer(ProductionBatchSerializer):
     def get_lifecycle_counts(self, batch):
         """Return how many of this batch's plants sit in each derived state."""
         return batch_lifecycle_counts(batch)
+
+    def get_cohort_commitments(self, batch):
+        """Return this batch's anonymous stock, and how much of it is sold.
+
+        Counted separately from `lifecycle_counts`, which walks the plants that
+        were given identities. A block that was never promoted has none, so the
+        two figures answer the same question about different stock and adding
+        them would say a crop was twice its size.
+        """
+        return batch_commitments(batch)
 
     def get_current_locations(self, batch):
         """Return where this batch's individual plants are living now."""

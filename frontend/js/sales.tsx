@@ -23,6 +23,7 @@ import {
   postPayment,
   postRefund,
   postReturn,
+  postShortfall,
   previewAllocation,
   reverseCommerce,
   updateCustomer,
@@ -35,7 +36,7 @@ import { getHealthObservationTypes } from './api/health'
 import { getCohorts } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { queryClient, queryKeys } from './query'
-import { CohortFilters } from './types/plantings'
+import { CohortFilters, PlantCohort } from './types/plantings'
 import {
   AllocationPreview,
   CohortDraw,
@@ -48,6 +49,7 @@ import {
   SalesLineType,
   SalesOrder,
   SalesOrderLine,
+  SalesShortfallWrite,
   SalesTaxTreatment
 } from './types/sales'
 import { InventoryItem } from './types/inventory'
@@ -388,6 +390,14 @@ function selectedLotDraws(preview: AllocationPreview | undefined): Array<LotDraw
 // The revision travels back with the draw so the server can refuse a block
 // that changed between the preview and the allocation, rather than quietly
 // promising a count nobody read.
+// Which of the two questions a block answers: can this ship, or is this a
+// promise about the future? The register state is the fact, and the expected
+// ready date is what a customer actually wants to hear when it is the latter.
+function cohortReadiness(row: PlantCohort): string {
+  if (row.lifecycle_state === 'available') return 'ready now'
+  return row.expected_ready ? `ready ${row.expected_ready}` : 'still growing'
+}
+
 function selectedCohortDraws(preview: AllocationPreview | undefined): Array<CohortDraw> {
   return ((preview?.selected ?? []) as Array<CohortDrawPreview>).map((row) => ({
     cohort: row.id,
@@ -414,6 +424,10 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   const [cohortDraw, setCohortDraw] = React.useState<{ cohort: number | ''; quantity: number }>({ cohort: '', quantity: 1 })
   const [expiresAt, setExpiresAt] = React.useState('')
   const [preview, setPreview] = React.useState<AllocationPreview>()
+  // Which standing promise is being written off, and by how much. Held apart
+  // from the release buttons because a shortfall is a different statement: the
+  // stock is not going back to the pool, it never grew.
+  const [shortfall, setShortfall] = React.useState<{ allocation: number; quantity: number; reason: string }>()
   const units = useQuery({
     queryKey: queryKeys.sales.availableUnits(line.item ?? 0),
     queryFn: ({ signal }) => getAvailableSerializedUnits(line.item as number, signal),
@@ -428,16 +442,19 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
     enabled: line.line_type === 'lot_quantity'
   })
   const drawRows = (balances.data ?? []).filter((row) => Number(row.unpromised_quantity) > 0)
-  // A cohort line draws on blocks of its own variety. Only stock that is on
-  // sale, out of quarantine and not already promised can be offered, which is
-  // the same set the server checks again under the block's lock.
-  const cohortFilters: CohortFilters = { variety: line.variety ?? 0, state: 'available', active: true, quarantined: false }
+  // A cohort line draws on blocks of its own variety. Growing stock is offered
+  // beside stock that is on sale, because a nursery order is placed months
+  // before it ships: what may be promised is wider than what may be dispatched,
+  // and the option says which each block is. Retained stock is left out — it is
+  // kept for the nursery's own use — and so is anything quarantined or already
+  // promised, which is the same set the server checks under the block's lock.
+  const cohortFilters: CohortFilters = { variety: line.variety ?? 0, active: true, quarantined: false }
   const cohorts = useQuery({
     queryKey: queryKeys.plantings.cohorts(cohortFilters),
     queryFn: ({ signal }) => getCohorts(cohortFilters, signal),
     enabled: line.line_type === 'cohort_quantity' && line.variety !== null
   })
-  const cohortRows = (cohorts.data?.results ?? []).filter((row) => row.available_quantity > 0)
+  const cohortRows = (cohorts.data?.results ?? []).filter((row) => row.available_quantity > 0 && (row.lifecycle_state === 'available' || row.lifecycle_state === 'growing'))
   const previewMutation = useMutation({
     mutationFn: () => {
       const ids = plantIds
@@ -494,6 +511,13 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
       closeAllocations(order.pk, action, [allocation], `${action === 'release' ? 'Released' : 'Expired'} by operator.`),
     onSuccess: () => invalidateSales(order.pk)
   })
+  const short = useMutation({
+    mutationFn: (values: SalesShortfallWrite) => postShortfall(order.pk, values),
+    onSuccess: () => {
+      setShortfall(undefined)
+      invalidateSales(order.pk)
+    }
+  })
   // Counted in units rather than in rows: one counted allocation can promise
   // fifty pots, and a line showing 1/50 would read as barely started.
   const active = line.allocations
@@ -507,6 +531,15 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         </strong>
         {active === line.quantity && <Badge bg="success">Complete</Badge>}
       </div>
+      {line.shortfalls.length > 0 && (
+        <div className="text-danger mb-2">
+          {line.shortfalls.map((row) => (
+            <div key={row.pk}>
+              {row.quantity} short-supplied · {row.reason}
+            </div>
+          ))}
+        </div>
+      )}
       <ul className="mb-2">
         {line.allocations.map((allocation) => (
           <li key={allocation.pk}>
@@ -524,7 +557,43 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                     Expire
                   </Button>
                 )}
+                {(order.status === 'confirmed' || order.status === 'partially_fulfilled') && (
+                  <Button
+                    size="sm"
+                    variant="link"
+                    className="text-danger"
+                    onClick={() => setShortfall({ allocation: allocation.pk, quantity: allocation.quantity ?? 1, reason: '' })}
+                  >
+                    Short-supply
+                  </Button>
+                )}
               </>
+            )}
+            {shortfall?.allocation === allocation.pk && (
+              <Row className="g-2 align-items-end my-1">
+                <Col md={3}>
+                  <Form.Label>How many are short</Form.Label>
+                  <Form.Control
+                    type="number"
+                    min={1}
+                    max={allocation.quantity ?? 1}
+                    value={shortfall.quantity}
+                    onChange={(event) => setShortfall({ ...shortfall, quantity: Number(event.target.value) })}
+                  />
+                </Col>
+                <Col md={6}>
+                  <Form.Label>Why the customer will not get them</Form.Label>
+                  <Form.Control value={shortfall.reason} onChange={(event) => setShortfall({ ...shortfall, reason: event.target.value })} />
+                </Col>
+                <Col md={3}>
+                  <Button size="sm" variant="danger" disabled={!shortfall.reason.trim()} onClick={() => short.mutate(shortfall)}>
+                    Record shortfall
+                  </Button>{' '}
+                  <Button size="sm" variant="link" onClick={() => setShortfall(undefined)}>
+                    Cancel
+                  </Button>
+                </Col>
+              </Row>
             )}
             {allocation.competing_claims.map((claim) => (
               <div className="text-warning" key={`${claim.order}:${claim.status}`}>
@@ -566,11 +635,12 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                   <option value="">Select…</option>
                   {cohortRows.map((row) => (
                     <option key={row.pk} value={row.pk}>
-                      Cohort #{row.pk} · {row.batch_code} · {row.location_name || 'Not placed'} · {row.available_quantity} of {row.quantity} unpromised
+                      Cohort #{row.pk} · {row.batch_code} · {row.location_name || 'Not placed'} · {row.available_quantity} of {row.quantity} unpromised · {cohortReadiness(row)}
                     </option>
                   ))}
                 </Form.Select>
-                {cohortRows.length === 0 && !cohorts.isPending && <Form.Text>No anonymous stock of this variety is available and unpromised.</Form.Text>}
+                {cohortRows.length === 0 && !cohorts.isPending && <Form.Text>No anonymous stock of this variety is unpromised.</Form.Text>}
+                <Form.Text>Growing stock can be committed now and dispatched once it is graded ready.</Form.Text>
               </Col>
               <Col md={4}>
                 <Form.Label>How many</Form.Label>
