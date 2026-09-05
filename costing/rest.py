@@ -24,7 +24,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework_nested import routers
 
-from inventory.rest_query import parse_integer
+from common.rest_query import parse_integer
 from plantings.models import ProductionBatch, SpecificPlant
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
 

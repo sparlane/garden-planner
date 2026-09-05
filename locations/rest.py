@@ -6,7 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from inventory.rest_query import parse_boolean
+from common.rest_query import parse_boolean
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,

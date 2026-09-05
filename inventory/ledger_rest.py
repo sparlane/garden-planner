@@ -12,6 +12,12 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from common.rest_query import (
+    parse_boolean as _parse_boolean,
+    parse_date as _parse_date,
+    parse_datetime as _parse_datetime,
+    parse_integer as _parse_integer,
+)
 from locations.models import Location
 from supplies.defaults import ensure_default_supplier
 from workspaces.models import get_current_workspace
@@ -48,12 +54,6 @@ from .models import (
     StocktakeLine,
 )
 from .input_tax import receipt_tax_warnings
-from .rest_query import (
-    parse_boolean as _parse_boolean,
-    parse_date as _parse_date,
-    parse_datetime as _parse_datetime,
-    parse_integer as _parse_integer,
-)
 from .units import UnitCode
 
 

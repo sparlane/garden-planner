@@ -10,6 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from common.rest_query import parse_boolean, parse_integer
 from locations.models import Location, location_full_name
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -26,7 +27,6 @@ from .ledger import (
     unit_physical_state,
 )
 from .models import InventoryUnit, StockLot, StockMovement
-from .rest_query import parse_boolean, parse_integer
 
 
 def _model_errors(error):

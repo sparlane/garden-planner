@@ -22,7 +22,7 @@ from inventory.models import (
     ItemUnitConversion,
     StockLot,
 )
-from inventory.rest_query import parse_datetime, parse_integer
+from common.rest_query import parse_datetime, parse_integer
 from locations.models import Location
 from plantings.models import PlantCohort, ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTray, SeedTrayCell
