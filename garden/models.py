@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from workspaces.models import WorkspaceOwnedModel
 
-from .layout import placement_errors
+from .layout import children_containment_errors, placement_errors
 
 
 #: Smallest grid step a confirmation can record, matching ``cell_length``'s
@@ -40,6 +40,25 @@ class GardenArea(WorkspaceOwnedModel):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        """Do not let an edit strand beds outside the resized area."""
+        super().clean()
+        if not self.pk:
+            return
+        errors = children_containment_errors(
+            self,
+            self.gardenbed_set.only(
+                'name', 'placement_x', 'placement_y', 'size_x', 'size_y',
+            ),
+            f'area "{self.name}"',
+        )
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean(validate_constraints=False)
+        super().save(*args, **kwargs)
 
 
 class GardenGeometryConfirmation(WorkspaceOwnedModel):
@@ -187,6 +206,18 @@ class GardenBed(WorkspaceOwnedModel):
         )
         if errors:
             raise ValidationError(errors)
+        if self.pk:
+            children = list(self.gardenrow_set.only(
+                'name', 'placement_x', 'placement_y', 'size_x', 'size_y',
+            ))
+            children.extend(self.gardensquare_set.only(
+                'name', 'placement_x', 'placement_y', 'size_x', 'size_y',
+            ))
+            errors = children_containment_errors(
+                self, children, f'bed "{self.name}"',
+            )
+            if errors:
+                raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
         # The check constraints restate the field validators that

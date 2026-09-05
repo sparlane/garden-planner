@@ -114,3 +114,28 @@ def placement_errors(child, parent, siblings, child_label, parent_label):
         if overlaps(rect, sibling_rect):
             return {NON_FIELD_ERRORS: overlap_message(sibling_rect, f'"{sibling.name}"')}
     return {}
+
+
+def children_containment_errors(parent, children, parent_label):
+    """Explain when resizing ``parent`` would strand an existing child.
+
+    Placement validation normally runs while saving the child.  Editing the
+    parent reverses that direction, so it needs an explicit check against the
+    geometry already below it.  Returning one non-field error keeps the model
+    validation shape consistent with overlap failures while naming the exact
+    child that needs attention.
+    """
+    if parent.size_x is None or parent.size_y is None:
+        return {}
+    extent = extent_of(parent)
+    for child in children:
+        rect = rect_of(child)
+        if rect.right > extent.width or rect.top > extent.height:
+            return {
+                NON_FIELD_ERRORS: (
+                    f'Cannot resize {parent_label}: "{child.name}" occupies '
+                    f'{rect.x} to {rect.right} across and {rect.y} to '
+                    f'{rect.top} up.'
+                ),
+            }
+    return {}
