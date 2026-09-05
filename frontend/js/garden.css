@@ -1,6 +1,8 @@
 .garden-area-container {
   width: 100%;
   overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .garden-area-display {
@@ -16,11 +18,30 @@
   stroke-width: 100;
 }
 
+.garden-unallocated {
+  fill: #ded6bd;
+  stroke: #a89f87;
+  stroke-dasharray: 20 12;
+  stroke-width: 4;
+}
+
 .garden-bed {
   fill: #8b6f47;
   fill-opacity: 0.18;
   stroke: #6c757d;
   stroke-width: 50;
+}
+
+.garden-bed--container {
+  fill: #b5651d;
+  fill-opacity: 0.35;
+  stroke: #7c3f00;
+}
+
+.garden-bed--raised {
+  fill: #8b5a2b;
+  fill-opacity: 0.3;
+  stroke: #5c4033;
 }
 
 /* A row is a strip of a bed, drawn under any squares so both can be read when
@@ -36,7 +57,8 @@
   max-width: 40rem;
 }
 
-.garden-square-control {
+.garden-square-control,
+.garden-geometry-control {
   cursor: pointer;
   outline: none;
 }
@@ -59,7 +81,13 @@
 }
 
 .garden-square-control:hover .garden-square,
-.garden-square-control:focus-visible .garden-square {
+.garden-square-control:focus-visible .garden-square,
+.garden-geometry-control:hover > .garden-square,
+.garden-geometry-control:focus-visible > .garden-square,
+.garden-geometry-control:hover > .garden-bed,
+.garden-geometry-control:focus-visible > .garden-bed,
+.garden-geometry-control:hover > .garden-row,
+.garden-geometry-control:focus-visible > .garden-row {
   stroke: #0d6efd;
   stroke-width: 20;
 }
