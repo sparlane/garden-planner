@@ -3,7 +3,13 @@
 # pylint: disable=duplicate-code
 
 from tests.api import RESTContractTestCase
-from tests.factories import make_garden_area, make_garden_bed, make_garden_square
+from tests.factories import (
+    make_garden_area,
+    make_garden_bed,
+    make_garden_planting,
+    make_garden_row,
+    make_garden_square,
+)
 
 from .models import GardenBed, GardenSquare
 
@@ -59,6 +65,69 @@ class BedPlacementRESTTests(RESTContractTestCase):
         self.assertEqual(response.status_code, 400, response.data)
         bed.refresh_from_db()
         self.assertEqual(bed.placement_x, 40)
+
+    def test_an_area_cannot_shrink_past_an_existing_bed(self):
+        """Editing a parent cannot orphan geometry that is already saved."""
+        make_garden_bed(
+            area=self.area, placement_x=70, placement_y=0,
+            size_x=20, size_y=20,
+        )
+        response = self.client.patch(
+            f'/garden/areas/{self.area.pk}/', {'size_x': 80}, format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Cannot resize', str(response.data['non_field_errors'][0]))
+        self.area.refresh_from_db()
+        self.assertEqual(self.area.size_x, 100)
+
+    def test_a_bed_cannot_shrink_past_an_existing_child(self):
+        """Rows and squares remain contained when their bed is edited."""
+        bed = make_garden_bed(
+            area=self.area, placement_x=0, placement_y=0,
+            size_x=40, size_y=40,
+        )
+        make_garden_row(
+            bed=bed, placement_x=0, placement_y=30, size_x=40, size_y=5,
+        )
+        response = self.client.patch(
+            f'/garden/beds/{bed.pk}/', {'size_y': 30}, format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Cannot resize', str(response.data['non_field_errors'][0]))
+
+    def test_preview_validates_without_writing(self):
+        """The edit screen can show a refusal before enabling Save."""
+        bed = make_garden_bed(
+            area=self.area, placement_x=0, placement_y=0,
+            size_x=40, size_y=40,
+        )
+        response = self.client.post(
+            f'/garden/beds/{bed.pk}/preview/',
+            {'placement_x': 50},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data, {'valid': True, 'warnings': []})
+        bed.refresh_from_db()
+        self.assertEqual(bed.placement_x, 0)
+
+    def test_preview_warns_when_activity_would_move(self):
+        """Occupied and historical locations are called out before Save."""
+        square = make_garden_square(
+            bed=make_garden_bed(
+                area=self.area, placement_x=0, placement_y=0,
+                size_x=40, size_y=40,
+            ),
+        )
+        make_garden_planting(garden_square=square)
+        response = self.client.post(
+            f'/garden/squares/{square.pk}/preview/',
+            {'placement_x': 1},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data['warnings']), 1)
+        self.assertIn('historical location', response.data['warnings'][0])
 
 
 class BedKindRESTTests(RESTContractTestCase):

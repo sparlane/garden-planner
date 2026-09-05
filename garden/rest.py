@@ -105,6 +105,79 @@ class GeometryWriteMixin:
                 'This is still referenced by recorded activity and cannot be removed.',
             ) from exc
 
+    @action(detail=True, methods=['post'])
+    def preview(self, request, pk=None):  # pylint: disable=unused-argument
+        """Validate an edit without writing it and flag recorded activity.
+
+        The browser uses this before enabling Save.  Validation runs on a
+        detached model instance so model-level containment and overlap rules
+        are identical to a real PATCH, while the database remains unchanged.
+        """
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        candidate = self.queryset.model()
+        for field in instance._meta.concrete_fields:  # pylint: disable=protected-access
+            setattr(candidate, field.attname, getattr(instance, field.attname))
+        for field, value in serializer.validated_data.items():
+            setattr(candidate, field, value)
+        try:
+            candidate.full_clean(
+                validate_unique=False,
+                validate_constraints=False,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_model_errors(exc)) from exc
+
+        geometry_fields = {'placement_x', 'placement_y', 'size_x', 'size_y'}
+        geometry_changed = bool(geometry_fields.intersection(serializer.validated_data))
+        warnings = []
+        if geometry_changed and _has_recorded_activity(instance):
+            warnings.append(
+                'This geometry contains a current or historical location. '
+                'Its records will be preserved, but the saved map position will change.',
+            )
+        return Response({'valid': True, 'warnings': warnings})
+
+
+def _has_recorded_activity(instance):
+    """Return whether geometry at or below ``instance`` has audit records."""
+    # Imported lazily to keep the garden models independent of the planting
+    # app whose records point back to them.
+    from applications.models import InputApplicationTarget  # pylint: disable=import-outside-toplevel
+    from plantings.models import (  # pylint: disable=import-outside-toplevel
+        GardenPlanting,
+        GardenRowDirectSowPlanting,
+        GardenSquareDirectSowPlanting,
+        Harvest,
+        SpecificPlantLocation,
+    )
+
+    if isinstance(instance, GardenArea):
+        bed_ids = GardenBed.objects.filter(area=instance).values('pk')
+        square_ids = GardenSquare.objects.filter(bed_id__in=bed_ids).values('pk')
+        row_ids = GardenRow.objects.filter(bed_id__in=bed_ids).values('pk')
+    elif isinstance(instance, GardenBed):
+        square_ids = GardenSquare.objects.filter(bed=instance).values('pk')
+        row_ids = GardenRow.objects.filter(bed=instance).values('pk')
+    elif isinstance(instance, GardenSquare):
+        square_ids = GardenSquare.objects.filter(pk=instance.pk).values('pk')
+        row_ids = GardenRow.objects.none().values('pk')
+    else:
+        square_ids = GardenSquare.objects.none().values('pk')
+        row_ids = GardenRow.objects.filter(pk=instance.pk).values('pk')
+
+    return any((
+        GardenPlanting.objects.filter(garden_square_id__in=square_ids).exists(),
+        GardenSquareDirectSowPlanting.objects.filter(location_id__in=square_ids).exists(),
+        SpecificPlantLocation.objects.filter(garden_square_id__in=square_ids).exists(),
+        Harvest.objects.filter(garden_square_id__in=square_ids).exists(),
+        Harvest.objects.filter(garden_row_id__in=row_ids).exists(),
+        GardenRowDirectSowPlanting.objects.filter(location_id__in=row_ids).exists(),
+        InputApplicationTarget.objects.filter(garden_square_id__in=square_ids).exists(),
+        InputApplicationTarget.objects.filter(garden_row_id__in=row_ids).exists(),
+    ))
+
 
 class GardenGeometryConfirmationSerializer(serializers.ModelSerializer):
     """
