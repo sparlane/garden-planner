@@ -7,6 +7,7 @@ from workspaces.scoping import RequireWorkspaceModeMixin
 
 from .common import csv_response, normalized_filters, report_response
 from .filters import (
+    AssumptionVarianceFilters,
     CommerceFilters,
     DashboardFilters,
     GerminationFilters,
@@ -21,6 +22,7 @@ from .filters import (
     SupplyDocumentFilters,
     TraceFilters,
 )
+from .assumptions import assumption_variance
 from .commerce import dashboard_report, order_report, profitability_report
 from .documents import supply_document_report
 from .germination import germination_rates
@@ -107,6 +109,13 @@ ProductionView = _view(
 )
 ProductionExportView = _view(
     'ProductionExportView', ProductionFilters, production_batches, True,
+)
+AssumptionVarianceView = _view(
+    'AssumptionVarianceView', AssumptionVarianceFilters, assumption_variance,
+)
+AssumptionVarianceExportView = _view(
+    'AssumptionVarianceExportView', AssumptionVarianceFilters,
+    assumption_variance, True,
 )
 SupplyDocumentView = _view(
     'SupplyDocumentView', SupplyDocumentFilters, supply_document_report,

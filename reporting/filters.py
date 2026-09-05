@@ -108,6 +108,25 @@ class ProductionFilters(BaseReportFilters):  # pylint: disable=abstract-method
         return attrs
 
 
+class AssumptionVarianceFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Filters for planning assumptions against the batches sown under them."""
+
+    date_from = serializers.DateField(required=False)
+    date_to = serializers.DateField(required=False)
+    variety = serializers.IntegerField(required=False, min_value=1)
+    assumption = serializers.IntegerField(required=False, min_value=1)
+    diverged = ReportBooleanField(required=False)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get('date_from') and attrs.get('date_to'):
+            if attrs['date_to'] < attrs['date_from']:
+                raise serializers.ValidationError({
+                    'date_to': 'The end must not be before the start.',
+                })
+        return attrs
+
+
 class GerminationFilters(BaseReportFilters):  # pylint: disable=abstract-method
     """Filters for observed germination rate per sowing."""
 
