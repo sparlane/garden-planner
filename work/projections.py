@@ -12,12 +12,14 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
+from plantings.assumption_variance import assumption_variance_rows
 from plantings.growth import current_growth
 from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
     GardenSquareTransplant,
     NurseryPlanMilestone,
+    NurseryPlanningAssumption,
     NurseryProductionPlan,
     PlantCohort,
     ProductionBatch,
@@ -683,6 +685,54 @@ def _short_lines(order):
     return lines
 
 
+def _assumption_variance_tasks(rule):
+    """Ask for a decision once an assumption has drifted from what happened.
+
+    Only the standing version raises the question. A version somebody has
+    already replaced has been revisited, which is what the task was asking
+    for, so it stops projecting rather than needing to be dismissed — the same
+    way a closed sowing clears its germination assessment.
+
+    The task is anchored on the last day a batch was sown under the
+    assumption, because that is the day the evidence stopped accumulating and
+    it is what makes the rule's offsets mean something. A divergence with no
+    sowing behind it cannot arise: the observation came from those sowings.
+    """
+    rows = [
+        row for row in assumption_variance_rows(rule.workspace)
+        if row['diverged'] and row['superseded_by'] is None
+    ]
+    if not rows:
+        return []
+    assumptions = NurseryPlanningAssumption.objects.filter(
+        pk__in=[row['assumption_id'] for row in rows],
+    ).select_related('variety').in_bulk()
+    tasks = []
+    for row in rows:
+        assumption = assumptions.get(row['assumption_id'])
+        if assumption is None or not _allows(rule, variety=assumption.variety):
+            continue
+        due_day = row['last_sown']
+        tasks.append(_source_task(
+            rule, f'assumption:{assumption.pk}',
+            f'Review planning assumption: {assumption.variety}',
+            due_day, due_day,
+            [TargetLink(
+                assumption, f'{assumption.variety} from {assumption.effective_from}',
+                '/plantings/production-planning',
+            )],
+            {
+                'assumption': assumption.pk,
+                'effective_from': assumption.effective_from.isoformat(),
+                'batches': row['batches'],
+                'divergences': row['divergences'],
+                'assumed_germination_rate': row['assumed_germination_rate'],
+                'observed_germination_rate': row['observed_germination_rate'],
+            },
+        ))
+    return [task for task in tasks if task]
+
+
 PROJECTORS = {
     WorkTaskRule.Trigger.GERMINATION: _sowing_tasks,
     WorkTaskRule.Trigger.GERMINATION_WINDOW_END: _germination_assessment_tasks,
@@ -692,6 +742,7 @@ PROJECTORS = {
     WorkTaskRule.Trigger.EXPECTED_READY: lambda rule: _growth_tasks(rule, expected_ready=True),
     WorkTaskRule.Trigger.HEALTH_FOLLOW_UP: _health_follow_up_tasks,
     WorkTaskRule.Trigger.RESERVATION_EXPIRY: _reservation_expiry_tasks,
+    WorkTaskRule.Trigger.ASSUMPTION_VARIANCE: _assumption_variance_tasks,
 }
 
 

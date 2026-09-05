@@ -36,6 +36,7 @@ class WorkTaskType(models.TextChoices):
     HEALTH_INSPECTION = 'health_inspection', 'Health inspection'
     TREATMENT_FOLLOW_UP = 'treatment_follow_up', 'Treatment follow-up'
     RESERVATION = 'reservation_review', 'Reservation review'
+    ASSUMPTION = 'assumption_review', 'Planning assumption review'
     CUSTOM = 'custom', 'Custom'
 
 
@@ -54,6 +55,7 @@ class WorkTaskRule(WorkspaceOwnedModel):
         CALENDAR = 'calendar', 'Recurring calendar work'
         HEALTH_FOLLOW_UP = 'health_follow_up', 'Health follow-up due'
         RESERVATION_EXPIRY = 'reservation_expiry', 'Sales reservation expiry'
+        ASSUMPTION_VARIANCE = 'assumption_variance', 'Diverged planning assumption'
 
     class Frequency(models.TextChoices):
         """Calendar recurrence units evaluated in workspace local time."""
