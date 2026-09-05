@@ -166,6 +166,28 @@ class Workspace(models.Model):
             'reason, so a rounding-sized drift never does. Zero disables it.'
         ),
     )
+    assumption_tolerance_percent = models.DecimalField(
+        max_digits=7,
+        decimal_places=4,
+        default=Decimal('10'),
+        validators=[
+            MinValueValidator(Decimal('0')),
+            MaxValueValidator(Decimal('100')),
+        ],
+        help_text=(
+            'How far an observed planning figure may differ from the assumption '
+            'that predicted it, as a percentage of the assumption, before the '
+            'variance report flags it for revision.'
+        ),
+    )
+    assumption_minimum_samples = models.PositiveSmallIntegerField(
+        default=5,
+        validators=[MinValueValidator(1)],
+        help_text=(
+            'Smallest number of batches behind an observed figure that can '
+            'raise a flag, so three trays never look like evidence.'
+        ),
+    )
     stocktake_two_person_required = models.BooleanField(
         default=False,
         help_text=(
@@ -194,6 +216,17 @@ class Workspace(models.Model):
             models.CheckConstraint(
                 condition=models.Q(override_tolerance_floor__gte=0),
                 name='workspace_override_floor_nonnegative',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    assumption_tolerance_percent__gte=0,
+                    assumption_tolerance_percent__lte=100,
+                ),
+                name='workspace_assumption_percent_range',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(assumption_minimum_samples__gte=1),
+                name='workspace_assumption_samples_positive',
             ),
         ]
 

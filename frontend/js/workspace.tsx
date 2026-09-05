@@ -47,6 +47,8 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     measurement_system: workspace.measurement_system,
     override_tolerance_percent: workspace.override_tolerance_percent,
     override_tolerance_floor: workspace.override_tolerance_floor,
+    assumption_tolerance_percent: workspace.assumption_tolerance_percent,
+    assumption_minimum_samples: workspace.assumption_minimum_samples,
     stocktake_two_person_required: workspace.stocktake_two_person_required
   })
   const mutation = useMutation({
@@ -75,6 +77,8 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       measurement_system: workspace.measurement_system,
       override_tolerance_percent: workspace.override_tolerance_percent,
       override_tolerance_floor: workspace.override_tolerance_floor,
+      assumption_tolerance_percent: workspace.assumption_tolerance_percent,
+      assumption_minimum_samples: workspace.assumption_minimum_samples,
       stocktake_two_person_required: workspace.stocktake_two_person_required
     })
   }, [workspace])
@@ -234,6 +238,40 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
             Smallest difference, in an item&apos;s own unit, that can require a reason. Zero disables it, so the percentage alone applies.
           </Form.Text>
         </Form.Group>
+        {form.mode === 'nursery' && (
+          <Form.Group className="mb-3" controlId="workspace-assumption-percent">
+            <Form.Label>Planning assumption tolerance (%)</Form.Label>
+            <Form.Control
+              type="number"
+              min="0"
+              max="100"
+              step="0.0001"
+              value={form.assumption_tolerance_percent}
+              onChange={(event) => updateField('assumption_tolerance_percent', event.target.value)}
+              aria-describedby="workspace-assumption-percent-help"
+            />
+            <Form.Text id="workspace-assumption-percent-help">
+              How far an observed germination rate, stage duration, loss rate or tray density may differ from the assumption that predicted it before the variance report flags it
+              for revision.
+            </Form.Text>
+          </Form.Group>
+        )}
+        {form.mode === 'nursery' && (
+          <Form.Group className="mb-3" controlId="workspace-assumption-samples">
+            <Form.Label>Smallest assumption sample</Form.Label>
+            <Form.Control
+              type="number"
+              min="1"
+              step="1"
+              value={form.assumption_minimum_samples}
+              onChange={(event) => updateField('assumption_minimum_samples', Number(event.target.value))}
+              aria-describedby="workspace-assumption-samples-help"
+            />
+            <Form.Text id="workspace-assumption-samples-help">
+              How many batches have to sit behind an observed figure before it can raise a flag, so three trays never look like evidence.
+            </Form.Text>
+          </Form.Group>
+        )}
         {form.mode === 'nursery' && (
           <Form.Check
             className="mb-3"

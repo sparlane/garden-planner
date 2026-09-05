@@ -122,6 +122,8 @@ class WorkspaceEndpointTests(APITestCase):
         self.assertEqual(response.data['measurement_system'], 'metric')
         self.assertEqual(response.data['override_tolerance_percent'], '5.0000')
         self.assertEqual(response.data['override_tolerance_floor'], '0.000000000')
+        self.assertEqual(response.data['assumption_tolerance_percent'], '10.0000')
+        self.assertEqual(response.data['assumption_minimum_samples'], 5)
 
     def test_patch_updates_the_override_tolerance(self):
         """A deployment sets how far a confirmed input may drift unexplained."""
@@ -154,6 +156,39 @@ class WorkspaceEndpointTests(APITestCase):
         self.assertEqual(
             set(response.data),
             {'override_tolerance_percent', 'override_tolerance_floor'},
+        )
+
+    def test_patch_updates_the_assumption_tolerance(self):
+        """A deployment sets how far a planning figure may drift unquestioned."""
+        response = self.client.patch(
+            self.url,
+            {
+                'assumption_tolerance_percent': '20.0000',
+                'assumption_minimum_samples': 3,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        workspace = Workspace.objects.get(pk=1)
+        self.assertEqual(workspace.assumption_tolerance_percent, Decimal('20'))
+        self.assertEqual(workspace.assumption_minimum_samples, 3)
+
+    def test_patch_validates_the_assumption_tolerance(self):
+        """A percentage over a hundred, or a sample size no batch can meet."""
+        response = self.client.patch(
+            self.url,
+            {
+                'assumption_tolerance_percent': '101',
+                'assumption_minimum_samples': 0,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            set(response.data),
+            {'assumption_tolerance_percent', 'assumption_minimum_samples'},
         )
 
     def test_patch_updates_editable_settings(self):

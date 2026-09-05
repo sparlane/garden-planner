@@ -25,6 +25,8 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'measurement_system',
             'override_tolerance_percent',
             'override_tolerance_floor',
+            'assumption_tolerance_percent',
+            'assumption_minimum_samples',
             'stocktake_two_person_required',
             'garden_setup_state',
             'created',
