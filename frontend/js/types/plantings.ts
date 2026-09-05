@@ -347,6 +347,7 @@ interface GardenRegisterFilters {
   search?: string
   ordering?: 'planted' | '-planted' | 'crop' | '-crop' | 'location' | '-location' | 'expected_harvest' | '-expected_harvest'
   page?: number
+  page_size?: number
 }
 
 interface GardenRegisterTotals {

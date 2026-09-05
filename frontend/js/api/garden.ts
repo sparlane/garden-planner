@@ -1,5 +1,18 @@
-import { ConfirmGardenGeometry, GardenArea, GardenAreaCreate, GardenBed, GardenBedCreate, GardenRow, GardenRowCreate, GardenSquare, GardenSquareCreate } from '../types/garden'
-import { csrfDelete, csrfPost, fetchAsJson } from '../utils'
+import {
+  ConfirmGardenGeometry,
+  GardenArea,
+  GardenAreaCreate,
+  GardenBed,
+  GardenBedCreate,
+  GardenGeometryEdit,
+  GardenGeometryPreview,
+  GardenGeometryResource,
+  GardenRow,
+  GardenRowCreate,
+  GardenSquare,
+  GardenSquareCreate
+} from '../types/garden'
+import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 async function getGardenAreas(signal?: AbortSignal): Promise<Array<GardenArea>> {
   return fetchAsJson<Array<GardenArea>>('/garden/areas/', signal)
@@ -44,6 +57,14 @@ async function confirmGardenGeometry(areaPk: number, data: ConfirmGardenGeometry
   return csrfPost(`/garden/areas/${areaPk}/confirm-geometry/`, data)
 }
 
+async function previewGardenGeometry(resource: GardenGeometryResource, pk: number, data: GardenGeometryEdit): Promise<GardenGeometryPreview> {
+  return csrfPost(`/garden/${resource}/${pk}/preview/`, data).then((response) => response.json() as Promise<GardenGeometryPreview>)
+}
+
+async function updateGardenGeometry(resource: GardenGeometryResource, pk: number, data: GardenGeometryEdit): Promise<Response> {
+  return csrfPatch(`/garden/${resource}/${pk}/`, data)
+}
+
 export {
   confirmGardenGeometry,
   createGardenArea,
@@ -54,5 +75,7 @@ export {
   getGardenAreas,
   getGardenBeds,
   getGardenRows,
-  getGardenSquares
+  getGardenSquares,
+  previewGardenGeometry,
+  updateGardenGeometry
 }

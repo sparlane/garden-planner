@@ -86,6 +86,21 @@ type GardenRowCreate = GardenChildCreate
 
 type GardenSquareCreate = GardenChildCreate
 
+type GardenGeometryResource = 'areas' | 'beds' | 'rows' | 'squares'
+
+interface GardenGeometryEdit {
+  name?: string
+  placement_x?: number
+  placement_y?: number
+  size_x?: number
+  size_y?: number
+}
+
+interface GardenGeometryPreview {
+  valid: boolean
+  warnings: Array<string>
+}
+
 export {
   ConfirmGardenGeometry,
   GardenArea,
@@ -94,6 +109,9 @@ export {
   GardenBedCreate,
   GardenBedKind,
   GardenChildCreate,
+  GardenGeometryEdit,
+  GardenGeometryPreview,
+  GardenGeometryResource,
   GardenLengthUnit,
   GardenRow,
   GardenRowCreate,

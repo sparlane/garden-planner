@@ -2,20 +2,20 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 import './garden.css'
 
-import React, { useMemo, useState } from 'react'
-import { Alert, Button, Modal } from 'react-bootstrap'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Alert, Button, Card, Modal } from 'react-bootstrap'
 import Select from 'react-select'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router'
 
 import { GardenArea, GardenBed, GardenRow, GardenSquare } from './types/garden'
-import { GardenSquarePlanting, PlantLifecycleState, PlantOutcomeAction } from './types/plantings'
+import { GardenRegisterRow, GardenSquarePlanting, PlantLifecycleState, PlantOutcomeAction } from './types/plantings'
 import { getGardenAreas, getGardenBeds, getGardenRows, getGardenSquares } from './api/garden'
-import { getHarvests, getPlantingGardenSquaresCurrent } from './api/plantings'
+import { getGardenRegister, getHarvests, getPlantingGardenSquaresCurrent } from './api/plantings'
 import { HarvestForm, HarvestFormBatch, HarvestFormPlant } from './plantings/harvest_form'
 import { InputApplicationForm } from './applications/application_form'
 import { ConfirmGeometryForm } from './garden/geometry'
-import { GardenCanvas } from './garden/canvas'
+import { GardenWorkspace, LayoutEditModal } from './garden/workspace'
 import { HarvestTable } from './plantings/harvest_list'
 import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
@@ -29,6 +29,7 @@ interface GardenAreaDisplayProps {
   rows: Array<GardenRow>
   squares: Array<GardenSquare>
   plantings: Array<GardenSquarePlanting>
+  registerRows: Array<GardenRegisterRow>
   workspace: Workspace
 }
 
@@ -38,20 +39,12 @@ interface GardenSquareDetailsModalProps {
   square: GardenSquare
   plantings: Array<GardenSquarePlanting>
   onClose: () => void
+  onEdit: () => void
   workspace: Workspace
 }
 
 function plantingName(planting: GardenSquarePlanting): string {
   return `${planting.plant} — ${planting.variety}`
-}
-
-function squareDescription(square: GardenSquare, plantings: Array<GardenSquarePlanting>): string {
-  if (plantings.length === 0) {
-    return `${square.name}: empty`
-  }
-
-  const plantingDescriptions = plantings.map((planting) => `${plantingName(planting)} (${planting.quantity})`)
-  return `${square.name}: ${plantingDescriptions.join(', ')}`
 }
 
 function formatDateRange(early?: string, late?: string): string | undefined {
@@ -91,7 +84,7 @@ function SquareHarvests({ squarePk }: { squarePk: number }) {
   return <HarvestTable harvests={harvests} showLocation={false} />
 }
 
-function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, workspace }: GardenSquareDetailsModalProps) {
+function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, onEdit, workspace }: GardenSquareDetailsModalProps) {
   const queryClient = useQueryClient()
   const [selectedOutcome, setSelectedOutcome] = useState<{ plant: { pk: number; lifecycle_state: PlantLifecycleState }; outcome: PlantOutcomeAction }>()
 
@@ -221,8 +214,22 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, works
               title="Apply an input to this square"
             />
           </section>
+          <nav className="d-flex flex-wrap gap-3 mt-3" aria-label="More square actions">
+            <Link to={`/plantings/garden-register?location=square:${square.pk}`}>View history</Link>
+            <Link to="/health">Report a problem</Link>
+            {plantings.some((planting) => planting.specific_plant_pk !== undefined) && <span className="text-muted">Open an individual plant above to move it.</span>}
+          </nav>
         </Modal.Body>
         <Modal.Footer>
+          <Button
+            variant="outline-primary"
+            onClick={() => {
+              onClose()
+              onEdit()
+            }}
+          >
+            Edit layout
+          </Button>
           <Button variant="secondary" onClick={onClose}>
             Close
           </Button>
@@ -238,8 +245,105 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, works
   )
 }
 
-function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings, workspace }: GardenAreaDisplayProps) {
+interface GardenGeometryDetailsProps {
+  area: GardenArea
+  bed: GardenBed
+  row?: GardenRow
+  records: Array<GardenRegisterRow>
+  workspace: Workspace
+  onClose: () => void
+  onEdit: () => void
+}
+
+function GardenGeometryDetailsModal({ area, bed, row, records, workspace, onClose, onEdit }: GardenGeometryDetailsProps) {
+  const geometry = row ?? bed
+  const kind = row === undefined ? (bed.kind === 'container' ? 'Container' : 'Bed') : 'Row'
+  const batches = [...new Map(records.map((record) => [record.batch, `${record.batch_code} · ${record.plant_name} — ${record.variety_name}`])).entries()].map(([pk, label]) => ({
+    pk,
+    label
+  }))
+  const targetType = row === undefined ? 'garden_bed' : 'garden_row'
+
+  return (
+    <Modal show onHide={onClose} size="lg" aria-labelledby="garden-geometry-details-title">
+      <Modal.Header closeButton>
+        <Modal.Title id="garden-geometry-details-title">{geometry.name}</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        <dl className="row">
+          <dt className="col-sm-3">Type</dt>
+          <dd className="col-sm-9">{kind}</dd>
+          <dt className="col-sm-3">Garden area</dt>
+          <dd className="col-sm-9">{area.name}</dd>
+          {row !== undefined && (
+            <>
+              <dt className="col-sm-3">Garden bed</dt>
+              <dd className="col-sm-9">{bed.name}</dd>
+            </>
+          )}
+          <dt className="col-sm-3">Position</dt>
+          <dd className="col-sm-9">
+            {geometry.placement_x}, {geometry.placement_y}
+          </dd>
+          <dt className="col-sm-3">Size</dt>
+          <dd className="col-sm-9">
+            {geometry.size_x} × {geometry.size_y}
+          </dd>
+          <dt className="col-sm-3">Current crops</dt>
+          <dd className="col-sm-9">{records.length === 0 ? 'None' : records.map((record) => `${record.plant_name} — ${record.variety_name} (${record.quantity})`).join(', ')}</dd>
+        </dl>
+        {row !== undefined && (
+          <section className="mb-4">
+            <h2 className="h5">Record a harvest</h2>
+            <HarvestForm batches={batches} gardenRow={row.pk} workspace={workspace} />
+          </section>
+        )}
+        <section>
+          <h2 className="h5">Record care</h2>
+          {!area.geometry_confirmed && <ConfirmGeometryForm area={area} />}
+          <InputApplicationForm
+            targets={[
+              {
+                key: `${targetType}:${geometry.pk}`,
+                target_type: targetType,
+                pk: geometry.pk,
+                label: geometry.name,
+                blocked: area.geometry_confirmed ? undefined : `${area.name} has no confirmed length unit`
+              }
+            ]}
+            defaultTargetKeys={[`${targetType}:${geometry.pk}`]}
+            title={`Apply an input to this ${kind.toLocaleLowerCase()}`}
+          />
+        </section>
+        <nav className="d-flex flex-wrap gap-3 mt-3" aria-label={`More ${kind.toLocaleLowerCase()} actions`}>
+          <Link to={`/plantings/garden-register?location=${row === undefined ? 'square' : 'row'}:${geometry.pk}`}>View history</Link>
+          <Link to="/health">Report a problem</Link>
+          {row !== undefined && <Link to="/plantings/garden-squares">Plant or move crops</Link>}
+        </nav>
+      </Modal.Body>
+      <Modal.Footer>
+        <Button
+          variant="outline-primary"
+          onClick={() => {
+            onClose()
+            onEdit()
+          }}
+        >
+          Edit layout
+        </Button>
+        <Button variant="secondary" onClick={onClose}>
+          Close
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings, registerRows, workspace }: GardenAreaDisplayProps) {
+  const [selectedBedPk, setSelectedBedPk] = useState<number>()
+  const [selectedRowPk, setSelectedRowPk] = useState<number>()
   const [selectedSquarePk, setSelectedSquarePk] = useState<number>()
+  const [editing, setEditing] = useState<{ resource: 'areas' | 'beds' | 'rows' | 'squares'; geometry: GardenArea | GardenBed | GardenRow | GardenSquare }>()
   const plantingsBySquare = useMemo(() => {
     const groupedPlantings = new Map<number, Array<GardenSquarePlanting>>()
     for (const planting of plantings) {
@@ -250,17 +354,34 @@ function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings, workspa
     return groupedPlantings
   }, [plantings])
   const selectedSquare = squares.find((square) => square.pk === selectedSquarePk)
-  const selectedBed = selectedSquare === undefined ? undefined : gardenBeds.find((bed) => bed.pk === selectedSquare.bed)
+  const selectedRow = rows.find((row) => row.pk === selectedRowPk)
+  const selectedBed = gardenBeds.find((bed) => bed.pk === (selectedSquare?.bed ?? selectedRow?.bed ?? selectedBedPk))
+  const geometryRecords = registerRows.filter((record) => {
+    if (selectedRow !== undefined) return record.location === `row:${selectedRow.pk}`
+    if (selectedBed === undefined) return false
+    const bedSquarePks = new Set(squares.filter((square) => square.bed === selectedBed.pk).map((square) => square.pk))
+    const bedRowPks = new Set(rows.filter((row) => row.bed === selectedBed.pk).map((row) => row.pk))
+    const [kind, identifier] = record.location.split(':')
+    return (kind === 'square' && bedSquarePks.has(Number(identifier))) || (kind === 'row' && bedRowPks.has(Number(identifier)))
+  })
 
   return (
     <>
-      <GardenCanvas
+      <div className="d-flex justify-content-between align-items-center">
+        <h1 className="h3 mb-0">{area.name}</h1>
+        <Button variant="outline-secondary" onClick={() => setEditing({ resource: 'areas', geometry: area })}>
+          Edit area layout
+        </Button>
+      </div>
+      <GardenWorkspace
         area={area}
         beds={gardenBeds}
         rows={rows}
         squares={squares}
-        describeSquare={(square) => squareDescription(square, plantingsBySquare.get(square.pk) ?? [])}
-        squareClassName={(square) => ((plantingsBySquare.get(square.pk) ?? []).length > 0 ? 'garden-square garden-square--planted' : 'garden-square garden-square--empty')}
+        plantings={plantings}
+        registerRows={registerRows}
+        onSelectBed={setSelectedBedPk}
+        onSelectRow={setSelectedRowPk}
         onSelectSquare={setSelectedSquarePk}
       />
       {selectedSquare !== undefined && (
@@ -270,9 +391,25 @@ function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings, workspa
           square={selectedSquare}
           plantings={plantingsBySquare.get(selectedSquare.pk) ?? []}
           onClose={() => setSelectedSquarePk(undefined)}
+          onEdit={() => setEditing({ resource: 'squares', geometry: selectedSquare })}
           workspace={workspace}
         />
       )}
+      {selectedSquare === undefined && selectedBed !== undefined && (
+        <GardenGeometryDetailsModal
+          area={area}
+          bed={selectedBed}
+          row={selectedRow}
+          records={geometryRecords}
+          workspace={workspace}
+          onClose={() => {
+            setSelectedBedPk(undefined)
+            setSelectedRowPk(undefined)
+          }}
+          onEdit={() => setEditing({ resource: selectedRow === undefined ? 'beds' : 'rows', geometry: selectedRow ?? selectedBed })}
+        />
+      )}
+      {editing !== undefined && <LayoutEditModal resource={editing.resource} geometry={editing.geometry} onClose={() => setEditing(undefined)} />}
     </>
   )
 }
@@ -301,6 +438,24 @@ function GardenDisplay({ workspace }: { workspace: Workspace }) {
     queryKey: queryKeys.plantings.currentGardenSquares,
     queryFn: ({ signal }) => getPlantingGardenSquaresCurrent(signal)
   })
+  const { data: register } = useQuery({
+    queryKey: ['plantings', 'garden-register', 'garden-workspace'],
+    queryFn: ({ signal }) => getGardenRegister({ state: 'current', page_size: 100 }, signal),
+    enabled: workspace.mode === 'garden'
+  })
+  const lastAreaKey = `garden-workspace:last-area:${workspace.name}`
+
+  useEffect(() => {
+    if (areasPending || areas.length === 0) return
+    if (areaId !== undefined && areas.some((area) => area.pk === selectedArea)) {
+      globalThis.localStorage.setItem(lastAreaKey, String(selectedArea))
+      return
+    }
+    if (areaId !== undefined) return
+    const remembered = Number(globalThis.localStorage.getItem(lastAreaKey))
+    const destination = areas.find((area) => area.pk === remembered) ?? (areas.length === 1 ? areas[0] : undefined)
+    if (destination !== undefined) navigate(`/gardens/${destination.pk}`, { replace: true })
+  }, [areaId, areas, areasPending, lastAreaKey, navigate, selectedArea])
 
   function updateSelectedGardenArea(selectedGardenArea: SelectOption | null) {
     const value = selectedGardenArea?.value
@@ -319,20 +474,56 @@ function GardenDisplay({ workspace }: { workspace: Workspace }) {
     if (area) {
       const areaBeds = beds.filter((bed) => bed.area === area.pk)
       const bedPks = new Set(areaBeds.map((bed) => bed.pk))
+      const areaSquares = squares.filter((square) => bedPks.has(square.bed))
+      const areaSquarePks = new Set(areaSquares.map((square) => square.pk))
       areaView = (
         <GardenAreaDisplay
           key={area.pk}
           area={area}
           gardenBeds={areaBeds}
           rows={rows.filter((row) => bedPks.has(row.bed))}
-          squares={squares}
-          plantings={plantings}
+          squares={areaSquares}
+          plantings={plantings.filter((planting) => areaSquarePks.has(planting.location.pk))}
+          registerRows={(register?.results ?? []).filter((record) => {
+            const [kind, identifier] = record.location.split(':')
+            if (kind === 'square') return areaSquarePks.has(Number(identifier))
+            return kind === 'row' && rows.some((row) => row.pk === Number(identifier) && bedPks.has(row.bed))
+          })}
           workspace={workspace}
         />
       )
     } else if (!areasPending) {
       areaView = <div>Garden area not found.</div>
     }
+  } else if (!areasPending && areas.length > 1) {
+    areaView = (
+      <section className="mt-3" aria-labelledby="garden-overview-title">
+        <h1 id="garden-overview-title" className="h3">
+          Garden overview
+        </h1>
+        <div className="row g-3">
+          {areas.map((area) => {
+            const areaBeds = beds.filter((bed) => bed.area === area.pk)
+            const bedPks = new Set(areaBeds.map((bed) => bed.pk))
+            const areaSquares = squares.filter((square) => bedPks.has(square.bed))
+            const occupied = new Set(plantings.map((planting) => planting.location.pk))
+            return (
+              <div className="col-md-6 col-xl-4" key={area.pk}>
+                <Card className="h-100">
+                  <Card.Body>
+                    <Card.Title>{area.name}</Card.Title>
+                    <Card.Text>
+                      {areaBeds.length} beds and containers · {areaSquares.length} squares · {areaSquares.filter((square) => occupied.has(square.pk)).length} occupied
+                    </Card.Text>
+                    <Button onClick={() => navigate(`/gardens/${area.pk}`)}>Open workspace</Button>
+                  </Card.Body>
+                </Card>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    )
   }
 
   // A workspace with no garden yet has nothing to select between, and the bare
