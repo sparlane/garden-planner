@@ -11,6 +11,7 @@ from costing.services import plant_cost_breakdown
 from inventory.models import StockLot, StockMovement
 from plantings.lifecycle import lifecycle_summaries
 from plantings.models import SpecificPlant
+from plantings.timeline import timeline_rows
 from sales.models import FulfillmentLine
 
 from .common import Report, decimal_string
@@ -97,6 +98,9 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
         'cogs_amount': decimal_string(line.cogs_amount, 4),
         'cogs_provisional': line.cogs_provisional,
     } for line in fulfillment_lines]
+    # The same projection the plant screen reads, so a recall answers "what
+    # was done to this plant and when" from here rather than from four screens.
+    timeline = timeline_rows(plant)
     origin = plant.cell_planting
     garden_origin = plant.garden_planting
     sowing = origin.seed_tray_planting if origin else None
@@ -133,6 +137,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
             'currency_code': getattr(layer, 'currency_code', workspace.currency_code),
             'unvalued': bool(layer and layer.amount is None),
             'commerce': commerce,
+            'timeline': timeline,
         })
     cost = plant_cost_breakdown(plant)
     summary = lifecycle_summaries([plant.pk])[plant.pk]
@@ -143,6 +148,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
             'plant_id': plant.pk,
             'lifecycle_state': summary.state,
             'fulfillments': len(commerce),
+            'timeline_entries': len(timeline),
             'provisional_value': cost['provisional_value'],
             'final_value': cost['final_value'],
             'currency_code': cost['currency_code'],

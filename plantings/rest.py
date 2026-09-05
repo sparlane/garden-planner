@@ -49,6 +49,7 @@ from .models import (
     SpecificPlantLocation,
 )
 from .register_rest import register_register_routes
+from .timeline_rest import PlantTimelineViewSetMixin
 from .growth_rest import NurseryObservationSerializer, register_growth_routes
 from .planning_rest import register_planning_routes
 from .growth import current_growth
@@ -1122,7 +1123,7 @@ class GardenSquareTransplantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadO
     serializer_class = GardenSquareTransplantSerializer
 
 
-class SpecificPlantViewSet(PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SpecificPlantViewSet(PlantTimelineViewSetMixin, PlantOutcomeViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlant
     """
