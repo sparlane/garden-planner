@@ -3,12 +3,20 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { NavLink, useParams } from 'react-router'
 
-import { correctGardenRegisterStatus, finishGardenRegisterCrop, getGardenRegister, getGardenRegisterDetail } from '../api/plantings'
+import {
+  correctGardenRegisterStatus,
+  finishGardenRegisterCrop,
+  getGardenRegister,
+  getGardenRegisterDetail,
+  individualizeDirectSownCrop,
+  recordDirectSownEvent,
+  reverseDirectSownEvent
+} from '../api/plantings'
 import { getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
 import { getPlants, getPlantVarieties } from '../api/plants'
 import { queryClient, queryKeys } from '../query'
-import { GardenPlantingSource, GardenRegisterFilters, PlantLifecycleState, PlantOutcomeAction } from '../types/plantings'
+import { DirectSownCountQuality, DirectSownEventType, GardenPlantingSource, GardenRegisterFilters, PlantLifecycleState, PlantOutcomeAction } from '../types/plantings'
 import { formatDate, formatDateRange } from '../utils'
 import { GardenQuickAddButton } from './garden_quick_add'
 import { GARDEN_OUTCOME_ACTIONS, PlantOutcomeButtons, PlantOutcomeDialog } from './lifecycle'
@@ -283,6 +291,10 @@ function GardenRegisterView() {
 function GardenRegisterDetailView() {
   const { registerKey = '' } = useParams()
   const [selectedOutcome, setSelectedOutcome] = useState<{ plant: { pk: number; lifecycle_state: PlantLifecycleState }; outcome: PlantOutcomeAction }>()
+  const [directType, setDirectType] = useState<DirectSownEventType>('emerged')
+  const [directQuantity, setDirectQuantity] = useState('')
+  const [directQuality, setDirectQuality] = useState<DirectSownCountQuality>('exact')
+  const [directNotes, setDirectNotes] = useState('')
   const { data, isPending } = useQuery({
     queryKey: queryKeys.plantings.gardenRegisterDetail(registerKey),
     queryFn: ({ signal }) => getGardenRegisterDetail(registerKey, signal),
@@ -299,6 +311,25 @@ function GardenRegisterDetailView() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.plantings.gardenRegisterAll })
     }
+  })
+  const refreshDirect = () => queryClient.invalidateQueries({ queryKey: queryKeys.plantings.gardenRegisterAll })
+  const directMutation = useMutation({
+    mutationFn: () =>
+      recordDirectSownEvent(registerKey, {
+        event_type: directType,
+        quantity: directQuality === 'unknown' ? undefined : Number(directQuantity),
+        count_quality: directType === 'emerged' || directType === 'retained' ? directQuality : undefined,
+        notes: directNotes
+      }),
+    onSuccess: refreshDirect
+  })
+  const individualizeMutation = useMutation({
+    mutationFn: () => individualizeDirectSownCrop(registerKey, Number(directQuantity), directNotes || 'Individualized from garden register'),
+    onSuccess: refreshDirect
+  })
+  const reverseDirectMutation = useMutation({
+    mutationFn: (event: number) => reverseDirectSownEvent(registerKey, event, 'Corrected from garden register'),
+    onSuccess: refreshDirect
   })
   function refreshOutcomeData(plantPk: number) {
     return Promise.all([
@@ -353,6 +384,74 @@ function GardenRegisterDetailView() {
           />
         </div>
       )}
+      {data.direct_sown_lifecycle && data.state === 'current' && (
+        <Card body className="mb-3">
+          <h2 className="h5">Direct-sown crop</h2>
+          <p>
+            {data.direct_sown_lifecycle.seeds_sown} seeds sown · {data.direct_sown_lifecycle.emerged_plants ?? 'Unknown'} emerged · {data.direct_sown_lifecycle.loss_quantity}{' '}
+            losses · {data.direct_sown_lifecycle.current_plants ?? 'Unknown'} currently growing
+          </p>
+          <Form
+            onSubmit={(event) => {
+              event.preventDefault()
+              directMutation.mutate()
+            }}
+          >
+            <Row className="g-2 align-items-end">
+              <Col md={3}>
+                <Form.Label>Observation or change</Form.Label>
+                <Form.Select value={directType} onChange={(event) => setDirectType(event.target.value as DirectSownEventType)}>
+                  <option value="emerged">New seedlings emerged</option>
+                  <option value="retained">Plants retained now</option>
+                  <option value="thinned">Thinned</option>
+                  <option value="failed_germination">Failed germination</option>
+                  <option value="pest_loss">Pest loss</option>
+                  <option value="removed">Removed</option>
+                </Form.Select>
+              </Col>
+              <Col md={2}>
+                <Form.Label>Quantity</Form.Label>
+                <Form.Control
+                  type="number"
+                  min="1"
+                  disabled={directQuality === 'unknown' && (directType === 'emerged' || directType === 'retained')}
+                  value={directQuantity}
+                  onChange={(event) => setDirectQuantity(event.target.value)}
+                />
+              </Col>
+              {(directType === 'emerged' || directType === 'retained') && (
+                <Col md={2}>
+                  <Form.Label>Count</Form.Label>
+                  <Form.Select value={directQuality} onChange={(event) => setDirectQuality(event.target.value as DirectSownCountQuality)}>
+                    <option value="exact">Exact</option>
+                    <option value="estimated">Estimated</option>
+                    <option value="unknown">Unknown</option>
+                  </Form.Select>
+                </Col>
+              )}
+              <Col>
+                <Form.Label>Notes</Form.Label>
+                <Form.Control value={directNotes} onChange={(event) => setDirectNotes(event.target.value)} />
+              </Col>
+              <Col xs="auto">
+                <Button type="submit" disabled={directMutation.isPending}>
+                  Record
+                </Button>
+              </Col>
+              <Col xs="auto">
+                <Button variant="outline-primary" disabled={!directQuantity || individualizeMutation.isPending} onClick={() => individualizeMutation.mutate()}>
+                  Make individual
+                </Button>
+              </Col>
+            </Row>
+          </Form>
+          {directMutation.isError && (
+            <Alert variant="danger" className="mt-2">
+              Could not record that crop event.
+            </Alert>
+          )}
+        </Card>
+      )}
       {data.key.startsWith('aggregate-') && data.state === 'current' && (
         <ButtonGroup className="mb-3">
           <Button disabled={statusMutation.isPending} onClick={() => statusMutation.mutate({ type: 'finished', reason: 'Finished from garden register' })}>
@@ -397,7 +496,7 @@ function GardenRegisterDetailView() {
         <Col lg={6}>
           <Card body>
             <h2 className="h5">History</h2>
-            {data.history.length === 0 ? (
+            {data.history.length === 0 && !data.direct_sown_lifecycle ? (
               <p>No aggregate status changes yet. Individual care, locations, photos and lifecycle history are on the plant record.</p>
             ) : (
               <ol>
@@ -405,6 +504,22 @@ function GardenRegisterDetailView() {
                   <li key={event.id}>
                     {formatDate(event.occurred_on)} · {event.type}
                     {event.reason ? ` — ${event.reason}` : ''}
+                  </li>
+                ))}
+              </ol>
+            )}
+            {data.direct_sown_lifecycle && (
+              <ol>
+                {data.direct_sown_lifecycle.events.map((event) => (
+                  <li key={`direct-${event.pk}`}>
+                    {formatDate(event.occurred_on)} · {event.event_type}
+                    {event.quantity === null ? '' : ` (${event.quantity})`}
+                    {event.notes ? ` — ${event.notes}` : ''}
+                    {event.event_type !== 'reversed' && (
+                      <Button size="sm" variant="link" disabled={reverseDirectMutation.isPending} onClick={() => reverseDirectMutation.mutate(event.pk)}>
+                        Correct
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ol>
