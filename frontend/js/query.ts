@@ -138,6 +138,8 @@ const queryKeys = {
     specificPlantDetail: (plantPk: number) => ['plantings', 'specificPlants', 'detail', plantPk] as const,
     plantLifecycleAll: ['plantings', 'plantLifecycle'] as const,
     plantLifecycle: (plantPk: number) => ['plantings', 'plantLifecycle', plantPk] as const,
+    plantTimelineAll: ['plantings', 'plantTimeline'] as const,
+    plantTimeline: (plantPk: number, page: number) => ['plantings', 'plantTimeline', plantPk, page] as const,
     harvestsAll: ['plantings', 'harvests'] as const,
     harvests: (batch: number | '', variety: number | '', square: number | '', row: number | '', status: string, from: string, to: string) =>
       ['plantings', 'harvests', batch, variety, square, row, status, from, to] as const,

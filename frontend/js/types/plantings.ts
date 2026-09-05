@@ -515,6 +515,36 @@ interface PlantOutcome {
   reference?: string
 }
 
+// The append-only record each timeline entry was projected from. `allocation`
+// is the promise itself and `reservation` is what became of it: the commercial
+// claim is written in two tables and the timeline reads both.
+type PlantTimelineSource = 'cohort' | 'lifecycle' | 'observation' | 'quarantine' | 'allocation' | 'reservation'
+
+// The server names each entry from the choices its own source declares, so the
+// wording cannot drift between the timeline, the lifecycle history, and the
+// cohort history. `kind` stays machine-readable for filtering; `label` is what
+// a reader is shown.
+interface PlantTimelineEntry {
+  entry_id: string
+  source: PlantTimelineSource
+  kind: string
+  label: string
+  occurred_at: string
+  source_id: number
+  summary: string
+  detail: Record<string, unknown>
+  corrected: boolean
+  corrects: string | null
+}
+
+interface PlantTimelinePage {
+  count: number
+  next: string | null
+  previous: string | null
+  sources: Array<PlantTimelineSource>
+  results: Array<PlantTimelineEntry>
+}
+
 interface BulkPlantOutcome extends PlantOutcome {
   plants: Array<number>
   event_type: PlantLifecycleEventType
@@ -1309,6 +1339,9 @@ export {
   PlantAllocationStatus,
   PlantOutcome,
   PlantOutcomeAction,
+  PlantTimelineEntry,
+  PlantTimelinePage,
+  PlantTimelineSource,
   ReversePlantEvent,
   NewBatchInline,
   NurseryRegisterFilters,
