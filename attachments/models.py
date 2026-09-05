@@ -31,6 +31,7 @@ class ImageAttachment(WorkspaceOwnedModel):
         NURSERY_OBSERVATION = 'nursery_observation', 'Nursery observation'
         HEALTH_OBSERVATION = 'health_observation', 'Health observation'
         HARVEST = 'harvest', 'Harvest'
+        DIRECT_SOWN_EVENT = 'direct_sown_event', 'Direct-sown crop event'
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     plant = models.ForeignKey(
@@ -47,6 +48,10 @@ class ImageAttachment(WorkspaceOwnedModel):
     )
     harvest = models.ForeignKey(
         'plantings.Harvest', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='image_attachments',
+    )
+    direct_sown_event = models.ForeignKey(
+        'plantings.DirectSownCropEvent', on_delete=models.PROTECT,
         null=True, blank=True, related_name='image_attachments',
     )
     original = models.FileField(
@@ -75,6 +80,7 @@ class ImageAttachment(WorkspaceOwnedModel):
         TargetType.NURSERY_OBSERVATION: 'nursery_observation',
         TargetType.HEALTH_OBSERVATION: 'health_observation',
         TargetType.HARVEST: 'harvest',
+        TargetType.DIRECT_SOWN_EVENT: 'direct_sown_event',
     }
 
     class Meta:
@@ -84,15 +90,23 @@ class ImageAttachment(WorkspaceOwnedModel):
                 models.Q(
                     plant__isnull=False, nursery_observation__isnull=True,
                     health_observation__isnull=True, harvest__isnull=True,
+                    direct_sown_event__isnull=True,
                 ) | models.Q(
                     plant__isnull=True, nursery_observation__isnull=False,
                     health_observation__isnull=True, harvest__isnull=True,
+                    direct_sown_event__isnull=True,
                 ) | models.Q(
                     plant__isnull=True, nursery_observation__isnull=True,
                     health_observation__isnull=False, harvest__isnull=True,
+                    direct_sown_event__isnull=True,
                 ) | models.Q(
                     plant__isnull=True, nursery_observation__isnull=True,
                     health_observation__isnull=True, harvest__isnull=False,
+                    direct_sown_event__isnull=True,
+                ) | models.Q(
+                    plant__isnull=True, nursery_observation__isnull=True,
+                    health_observation__isnull=True, harvest__isnull=True,
+                    direct_sown_event__isnull=False,
                 )
             ),
             name='attachment_exactly_one_target',
@@ -102,6 +116,7 @@ class ImageAttachment(WorkspaceOwnedModel):
             models.Index(fields=['workspace', 'nursery_observation']),
             models.Index(fields=['workspace', 'health_observation']),
             models.Index(fields=['workspace', 'harvest']),
+            models.Index(fields=['workspace', 'direct_sown_event']),
         ]
 
     @property

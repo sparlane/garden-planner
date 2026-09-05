@@ -385,6 +385,44 @@ interface GardenRegisterDetail extends GardenRegisterRow {
   links: Record<'garden' | 'batch' | 'plant' | 'harvest' | 'care' | 'health' | 'tasks', string | null>
   origin: { seed_packet: number | null; supplier: number | null; purchase_cost: string | null; notes: string } | null
   history: Array<{ id: number; type: string; occurred_on: string; reason: string; reversal_of: number | null }>
+  direct_sown_lifecycle: DirectSownLifecycle | null
+}
+
+type DirectSownEventType = 'emerged' | 'thinned' | 'failed_germination' | 'pest_loss' | 'removed' | 'retained'
+type DirectSownCountQuality = 'exact' | 'estimated' | 'unknown'
+
+interface DirectSownEvent {
+  pk: number
+  event_type: string
+  occurred_on: string
+  quantity: number | null
+  quantity_delta: number
+  count_quality: DirectSownCountQuality | ''
+  reversal_of: number | null
+  notes: string
+  attachments: Array<{ id: string; thumbnail_url: string; content_url: string }>
+}
+
+interface DirectSownLifecycle {
+  seeds_sown: number
+  emerged_plants: number | null
+  losses: Record<string, number>
+  loss_quantity: number
+  individualized: number
+  current_plants: number | null
+  count_quality: DirectSownCountQuality | null
+  state: 'unknown' | 'growing' | 'depleted'
+  garden_square: number | null
+  location: number | null
+  harvest: Array<{ id: number; quantity: string; unit_code: string }>
+  events: Array<DirectSownEvent>
+}
+
+interface DirectSownEventCreate {
+  event_type: DirectSownEventType
+  quantity?: number
+  count_quality?: DirectSownCountQuality
+  notes: string
 }
 
 // Where a plant is. A plant in a tray records the cell rather than the bench
@@ -1237,6 +1275,10 @@ export {
   GardenRegisterRow,
   GardenRegisterState,
   GardenRegisterTotals,
+  DirectSownCountQuality,
+  DirectSownEventCreate,
+  DirectSownEventType,
+  DirectSownLifecycle,
   GardenRowDirectPlantingCreate,
   GardenSquareDirectPlantingCreate,
   SeedTrayPlantingCreate,
