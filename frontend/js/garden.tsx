@@ -38,6 +38,7 @@ interface GardenSquareDetailsModalProps {
   bed?: GardenBed
   square: GardenSquare
   plantings: Array<GardenSquarePlanting>
+  records: Array<GardenRegisterRow>
   onClose: () => void
   onEdit: () => void
   workspace: Workspace
@@ -84,7 +85,7 @@ function SquareHarvests({ squarePk }: { squarePk: number }) {
   return <HarvestTable harvests={harvests} showLocation={false} />
 }
 
-function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, onEdit, workspace }: GardenSquareDetailsModalProps) {
+function GardenSquareDetailsModal({ area, bed, square, plantings, records, onClose, onEdit, workspace }: GardenSquareDetailsModalProps) {
   const queryClient = useQueryClient()
   const [selectedOutcome, setSelectedOutcome] = useState<{ plant: { pk: number; lifecycle_state: PlantLifecycleState }; outcome: PlantOutcomeAction }>()
 
@@ -215,7 +216,12 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, onClose, onEdi
             />
           </section>
           <nav className="d-flex flex-wrap gap-3 mt-3" aria-label="More square actions">
-            <Link to={`/plantings/garden-register?location=square:${square.pk}`}>View history</Link>
+            {records.map((record) => (
+              <Link key={record.key} to={`/plantings/garden-register/${record.key}`}>
+                Manage {record.plant_name} — history and finish
+              </Link>
+            ))}
+            {records.length === 0 && <Link to="/plantings/garden-register">View garden history</Link>}
             <Link to="/health">Report a problem</Link>
             {plantings.some((planting) => planting.specific_plant_pk !== undefined) && <span className="text-muted">Open an individual plant above to move it.</span>}
           </nav>
@@ -316,7 +322,12 @@ function GardenGeometryDetailsModal({ area, bed, row, records, workspace, onClos
           />
         </section>
         <nav className="d-flex flex-wrap gap-3 mt-3" aria-label={`More ${kind.toLocaleLowerCase()} actions`}>
-          <Link to={`/plantings/garden-register?location=${row === undefined ? 'square' : 'row'}:${geometry.pk}`}>View history</Link>
+          {records.map((record) => (
+            <Link key={record.key} to={`/plantings/garden-register/${record.key}`}>
+              Manage {record.plant_name} — history and finish
+            </Link>
+          ))}
+          {records.length === 0 && <Link to="/plantings/garden-register">View garden history</Link>}
           <Link to="/health">Report a problem</Link>
           {row !== undefined && <Link to="/plantings/garden-squares">Plant or move crops</Link>}
         </nav>
@@ -390,6 +401,7 @@ function GardenAreaDisplay({ area, gardenBeds, rows, squares, plantings, registe
           bed={selectedBed}
           square={selectedSquare}
           plantings={plantingsBySquare.get(selectedSquare.pk) ?? []}
+          records={registerRows.filter((record) => record.location === `square:${selectedSquare.pk}`)}
           onClose={() => setSelectedSquarePk(undefined)}
           onEdit={() => setEditing({ resource: 'squares', geometry: selectedSquare })}
           workspace={workspace}
