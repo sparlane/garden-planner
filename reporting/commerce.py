@@ -134,6 +134,8 @@ def order_report(workspace, filters):
             'overdue': overdue,
             'requested_quantity': summary['requested_quantity'],
             'reserved_quantity': summary['reserved_quantity'],
+            'committed_forward_quantity': summary['committed_forward_quantity'],
+            'short_quantity': summary['short_quantity'],
             'fulfilled_quantity': summary['fulfilled_quantity'],
             'returned_quantity': summary['returned_quantity'],
             'fulfillments': effective_fulfillments.count(),
@@ -162,7 +164,8 @@ def order_report(workspace, filters):
         columns=tuple(rows[0]) if rows else (
             'order_id', 'order_number', 'order_date', 'requested_date',
             'customer_id', 'customer_name', 'status', 'overdue',
-            'requested_quantity', 'reserved_quantity', 'fulfilled_quantity',
+            'requested_quantity', 'reserved_quantity',
+            'committed_forward_quantity', 'short_quantity', 'fulfilled_quantity',
             'returned_quantity', 'fulfillments', 'returns', 'refunds',
             'order_total_incl_tax', 'fulfilled_total_incl_tax',
             'refunded_total_incl_tax', 'paid_total', 'net_paid_total',

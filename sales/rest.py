@@ -24,6 +24,7 @@ from workspaces.scoping import (
 from .commerce import (
     order_commerce_summary,
     post_fulfillment,
+    record_shortfall,
     post_refund,
     post_return,
     record_payment,
@@ -44,6 +45,7 @@ from .models import (
     SalesOrder,
     SalesOrderAllocation,
     SalesOrderLine,
+    SalesOrderShortfall,
     SalesReturn,
     SalesReturnLine,
 )
@@ -156,10 +158,20 @@ class AllocationSerializer(serializers.ModelSerializer):
         ]
 
 
+class ShortfallSerializer(serializers.ModelSerializer):
+    """One commitment the nursery gave up unsupplied, and what replaced it."""
+
+    class Meta:
+        model = SalesOrderShortfall
+        fields = ['pk', 'allocation', 'replacement', 'quantity', 'reason', 'recorded_at', 'created_by', 'created']
+        read_only_fields = fields
+
+
 class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Editable commercial terms and read-only concrete allocations."""
 
     allocations = AllocationSerializer(many=True, read_only=True)
+    shortfalls = ShortfallSerializer(many=True, read_only=True)
     prices_include_tax = serializers.BooleanField(source='order.prices_include_tax', read_only=True)
 
     class Meta:
@@ -170,7 +182,7 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
             'discount_type', 'discount_value',
             'prices_include_tax', 'gross_ex_tax', 'discount_ex_tax',
             'subtotal_ex_tax', 'tax_total', 'total_incl_tax', 'allocations',
-            'created', 'updated',
+            'shortfalls', 'created', 'updated',
         ]
         read_only_fields = [
             'gross_ex_tax', 'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
@@ -328,6 +340,20 @@ class AllocationIdsSerializer(ActionSerializer):  # pylint: disable=abstract-met
 
     allocations = serializers.ListField(child=serializers.IntegerField(min_value=1), allow_empty=False)
     reason = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class ShortfallRequestSerializer(ActionSerializer):  # pylint: disable=abstract-method
+    """One promise the stock cannot meet, and how much of it fails.
+
+    The reason may not be blank, unlike a release: a released reservation is a
+    choice somebody made about stock that still exists, while this one is what
+    the customer is owed an explanation for.
+    """
+
+    allocation = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(allow_blank=False)
+    recorded_at = serializers.DateTimeField(required=False)
 
 
 class ReasonSerializer(ActionSerializer):  # pylint: disable=abstract-method
@@ -549,7 +575,7 @@ class SalesOrderLineViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMi
     required_workspace_modes = (Workspace.Mode.NURSERY,)
     workspace_lookup = 'order__workspace'
     bind_workspace_on_create = False
-    queryset = SalesOrderLine.objects.select_related('order', 'variety', 'item').prefetch_related('allocations__events')
+    queryset = SalesOrderLine.objects.select_related('order', 'variety', 'item').prefetch_related('allocations__events', 'shortfalls')
     serializer_class = SalesOrderLineSerializer
 
     def destroy(self, request, *args, **kwargs):
@@ -563,7 +589,7 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
 
     required_workspace_modes = (Workspace.Mode.NURSERY,)
     bind_workspace_on_create = False
-    queryset = SalesOrder.objects.select_related('customer', 'workspace').prefetch_related('lines__allocations__events')
+    queryset = SalesOrder.objects.select_related('customer', 'workspace').prefetch_related('lines__allocations__events', 'lines__shortfalls')
     serializer_class = SalesOrderSerializer
 
     def get_serializer_context(self):
@@ -675,6 +701,19 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
     def expire(self, request, pk=None):  # pylint: disable=unused-argument
         """Explicitly expire selected overdue or unwanted reservations."""
         return self._close(request, 'expire')
+
+    @action(detail=True, methods=['post'])
+    def shortfall(self, request, pk=None):  # pylint: disable=unused-argument
+        """Give up part of a commitment the stock cannot meet."""
+        values = ShortfallRequestSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        data = values.validated_data
+        row = _run(
+            record_shortfall, self.get_object(), request.user,
+            allocation_id=data['allocation'], quantity=data['quantity'],
+            reason=data['reason'], recorded_at=data.get('recorded_at'),
+        )
+        return Response(ShortfallSerializer(row).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):  # pylint: disable=unused-argument

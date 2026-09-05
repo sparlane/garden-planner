@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from costing.services import cohort_cost_breakdown, plant_cost_breakdown
@@ -14,7 +15,7 @@ from health.availability import is_quarantined
 from inventory.ledger import lock_lots, lock_units, unit_physical_state, unpromised_bulk
 from inventory.models import InventoryUnit, StockLot
 from locations.models import Location
-from plantings.cohort_availability import available_quantity
+from plantings.cohort_availability import COMMITTABLE_STATES, available_quantity
 from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import SELLABLE_STATES, plant_lifecycle_summary
 from plantings.models import PlantCohort, SpecificPlant
@@ -26,6 +27,7 @@ from .models import (
     SalesOrderAllocation,
     SalesOrderLine,
     SalesOrderNumberSequence,
+    SalesOrderShortfall,
 )
 
 
@@ -237,7 +239,7 @@ def _cohort_block_error(line, cohort, request):
         return 'wrong_variety'
     if cohort.revision != request.expected_revision:
         return 'stale_revision'
-    if cohort.lifecycle_state != PlantCohort.LifecycleState.AVAILABLE:
+    if cohort.lifecycle_state not in COMMITTABLE_STATES:
         return 'not_sellable'
     if is_quarantined(cohort):
         return 'quarantined'
@@ -664,7 +666,7 @@ def _validate_pending_cohort_draws(pending, cohorts):
         )
     for cohort_id, quantity in sorted(wanted.items()):
         cohort = cohorts[cohort_id]
-        if cohort.lifecycle_state != PlantCohort.LifecycleState.AVAILABLE:
+        if cohort.lifecycle_state not in COMMITTABLE_STATES:
             raise ValidationError({
                 'allocations': f'Cohort {cohort_id} is no longer available to sell.',
             })
@@ -846,7 +848,13 @@ def order_margin(order):
     allocated_count = sum(
         1 if row.quantity is None else row.quantity for row in allocations
     )
-    requested_count = sum(order.lines.values_list('quantity', flat=True))
+    # What was written off as short is no longer allocatable and no longer
+    # wanted, so it comes off both sides of the comparison rather than leaving
+    # a short order looking permanently under-allocated.
+    short = SalesOrderShortfall.objects.filter(line__order=order).aggregate(
+        total=Sum('quantity'),
+    )['total'] or 0
+    requested_count = sum(order.lines.values_list('quantity', flat=True)) - short
     cost = Decimal('0')
     unknown = False
     provisional = False

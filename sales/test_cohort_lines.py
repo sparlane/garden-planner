@@ -232,13 +232,25 @@ class CohortAllocationTests(CohortStockTestCase):
 
         self.assertIn('quarantined', str(caught.exception))
 
-    def test_a_growing_block_cannot_be_allocated(self):
-        """Stock nobody has offered for sale is not sellable stock."""
-        growing = self.observe(quantity=40)
+    def test_a_retained_block_cannot_be_allocated(self):
+        """Stock kept for the nursery's own use was never on offer.
+
+        Growing stock is a different answer and lives in `test_forward_sales`:
+        a block still in plugs may be promised forward, and only a block whose
+        plants are spoken for by the operation itself refuses the draw.
+        """
+        retained, _operation = change_cohort(
+            self.workspace, self.user,
+            cohort_id=self.observe(quantity=40).pk,
+            expected_revision=1,
+            action=CohortOperation.Action.RETAIN,
+            idempotency_key=uuid4(),
+            reason='Kept as stock plants.',
+        )
         line = self.cohort_line(quantity=10)
 
         with self.assertRaises(ValidationError) as caught:
-            self.draw(line, cohort=growing, quantity=10)
+            self.draw(line, cohort=retained, quantity=10)
 
         self.assertIn('not_sellable', str(caught.exception))
 

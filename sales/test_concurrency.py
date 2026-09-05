@@ -220,24 +220,37 @@ class ConcurrentReservationExpiryTests(ReservationConcurrencyTestCase):
 class ConcurrentCohortDrawTests(ReservationConcurrencyTestCase):
     """Two draws cannot both take the last of one anonymous block."""
 
-    def setUp(self):
-        super().setUp()
-        self.workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
-        self.workspace.mode = Workspace.Mode.NURSERY
-        self.workspace.save()
-        self.user = get_user_model().objects.create_user(username='cohort-draw-racer')
-        self.batch = make_production_batch()
-        cohort, _observed = observe_cohort(
-            self.workspace, self.user,
-            batch=self.batch, quantity=10, idempotency_key=uuid4(),
-        )
-        self.cohort, _ready = change_cohort(
+    racer_username = 'cohort-draw-racer'
+
+    def block(self, cohort):
+        """Put the block in the state this race is run against.
+
+        Overridden by the forward-commitment race below, which runs the same
+        two draws against stock nobody has graded ready: the arithmetic and the
+        row lock are what decide both, and neither has anything to do with
+        whether the plants are saleable yet.
+        """
+        cohort, _ready = change_cohort(
             self.workspace, self.user,
             cohort_id=cohort.pk,
             expected_revision=cohort.revision,
             action=CohortOperation.Action.READY,
             idempotency_key=uuid4(),
         )
+        return cohort
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = Workspace.objects.get(pk=settings.CURRENT_WORKSPACE_ID)
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username=self.racer_username)
+        self.batch = make_production_batch()
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user,
+            batch=self.batch, quantity=10, idempotency_key=uuid4(),
+        )
+        self.cohort = self.block(cohort)
         self.order_pks = []
         for _index in range(2):
             order, line = self._order_with_line(
@@ -259,6 +272,17 @@ class ConcurrentCohortDrawTests(ReservationConcurrencyTestCase):
         self.assertEqual(
             SalesOrderAllocation.objects.filter(status='reserved').count(), 1,
         )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class ConcurrentForwardCommitmentTests(ConcurrentCohortDrawTests):
+    """Two winter orders cannot both be promised the same spring plants."""
+
+    racer_username = 'forward-commitment-racer'
+
+    def block(self, cohort):
+        """Leave the block growing: this is stock sold before it is ready."""
+        return cohort
 
 
 @skipUnlessDBFeature('has_select_for_update')

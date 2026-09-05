@@ -12,8 +12,33 @@ somebody is still drafting, which warns rather than blocks, the same way it
 does for a plant and for a lot.
 """
 
-from django.db.models import F, IntegerField, OuterRef, Subquery, Sum
+from django.db.models import Case, F, IntegerField, OuterRef, Subquery, Sum, Value, When
 from django.db.models.functions import Coalesce
+
+from .models import PlantCohort
+
+
+#: The cohort states a dispatch may take stock out of. Grading a block ready is
+#: a judgement somebody makes, and `available` is the fact that records it, so
+#: nothing leaves for a customer before it exists.
+DISPATCHABLE_STATES = frozenset({PlantCohort.LifecycleState.AVAILABLE})
+
+#: The cohort states an order may promise stock out of. Growing is here because
+#: nursery trade commits long before it dispatches: spring orders are placed in
+#: winter against plants still in plugs. Refusing those left an operator two bad
+#: options -- grade the stock ready months early, which falsifies the very
+#: signal the register exists to give, or keep the commitment outside the
+#: application, where it holds no stock and two customers can be promised the
+#: same plants.
+#:
+#: Retained stock is kept for the operation's own use and a depleted block has
+#: nothing left, so neither may be promised. `DISPATCHABLE_STATES` is a subset
+#: on purpose: committing and shipping are different questions, asked months
+#: apart, and only the second one is about whether the plants are ready.
+COMMITTABLE_STATES = frozenset({
+    PlantCohort.LifecycleState.GROWING,
+    PlantCohort.LifecycleState.AVAILABLE,
+})
 
 
 def _reserved_subquery():
@@ -50,6 +75,18 @@ def with_availability(queryset):
         ),
     ).annotate(
         available_quantity=F('quantity') - F('reserved_quantity'),
+        # What is promised out of stock nobody has graded ready yet. It is the
+        # same reservations counted a second way, so a screen can tell a block
+        # that is sold and shippable from one that is sold and still in plugs
+        # without reading each row's state itself.
+        committed_forward_quantity=Case(
+            When(
+                lifecycle_state=PlantCohort.LifecycleState.GROWING,
+                then=F('reserved_quantity'),
+            ),
+            default=Value(0),
+            output_field=IntegerField(),
+        ),
     )
 
 
