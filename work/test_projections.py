@@ -1,14 +1,17 @@
 """Tests for live source projections and local-time recurrence."""
 
-from datetime import datetime, time, timedelta, timezone as datetime_timezone
+from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from health.models import HealthObservation, HealthObservationType
 from health.operations import record_follow_up
 from health.services import preview_observation, record_observation
 
+from plantings.assumption_variance import revise_assumption
 from plantings.germination import close_germination, reopen_germination
 from plantings.models import (
     GardenSquareTransplant,
@@ -20,8 +23,12 @@ from tests.factories import (
     make_garden_row_sowing,
     make_garden_square,
     make_plant_variety,
+    make_planning_assumption,
+    make_planning_stage_assumption,
+    make_production_batch,
     make_seed_packet,
     make_seed_tray,
+    make_seed_tray_cell,
     make_seed_tray_cell_planting,
     make_seed_tray_planting,
     make_seeds,
@@ -347,3 +354,84 @@ class WorkProjectionTests(TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0].due_start.date(), (transplanted_at + timedelta(days=10)).date())
         self.assertIn(f'maturity:transplant:{transplant.pk}', tasks[0].key)
+
+
+class AssumptionReviewProjectionTests(TestCase):
+    """A diverged assumption asks to be revisited until somebody revises it."""
+
+    def setUp(self):
+        self.workspace = get_current_workspace()
+        self.workspace.mode = self.workspace.Mode.NURSERY
+        self.workspace.timezone = 'Pacific/Auckland'
+        self.workspace.assumption_minimum_samples = 1
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='assumption-planner')
+        self.variety = make_plant_variety(workspace=self.workspace)
+        self.assumption = make_planning_assumption(variety=self.variety)
+        make_planning_stage_assumption(assumption=self.assumption)
+        WorkTaskRule.objects.create(
+            workspace=self.workspace, code='assumption-review',
+            name='Planning assumption reviews',
+            task_type=WorkTaskType.ASSUMPTION,
+            trigger=WorkTaskRule.Trigger.ASSUMPTION_VARIANCE,
+        )
+        self.sown = datetime(2026, 2, 1, 9, tzinfo=datetime_timezone.utc)
+
+    def _sow(self, observed):
+        """Sow ten seeds under the assumption and close the germination."""
+        packet = make_seed_packet(workspace=self.workspace, seeds=make_seeds(
+            workspace=self.workspace, plant_variety=self.variety,
+        ))
+        tray = make_seed_tray(workspace=self.workspace)
+        sowing = make_seed_tray_planting(
+            workspace=self.workspace, seeds_used=packet, seed_tray=tray,
+            quantity=10, planted=self.sown,
+            batch=make_production_batch(
+                workspace=self.workspace, variety=self.variety, actual_start=self.sown,
+            ),
+        )
+        allocation = make_seed_tray_cell_planting(
+            seed_tray_planting=sowing, cell=make_seed_tray_cell(tray=tray), quantity=10,
+        )
+        for _index in range(observed):
+            make_specific_plant(workspace=self.workspace, cell_planting=allocation)
+        close_germination(sowing, self.user, loss_cause='failed', reason='Window passed.')
+
+    def _reviews(self):
+        return [
+            task for task in projected_tasks(self.workspace)
+            if task.task_type == WorkTaskType.ASSUMPTION
+        ]
+
+    def test_an_assumption_that_matches_what_happened_asks_for_nothing(self):
+        """A figure inside tolerance is a judgement nobody has to revisit."""
+        self._sow(observed=9)
+
+        self.assertEqual(self._reviews(), [])
+
+    def test_a_diverged_assumption_is_projected_from_the_day_it_last_sowed(self):
+        """The last sowing is where the evidence stopped accumulating."""
+        self._sow(observed=5)
+
+        tasks = self._reviews()
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].key, f'rule:{WorkTaskRule.objects.get(code="assumption-review").pk}:assumption:{self.assumption.pk}')
+        self.assertEqual(
+            tasks[0].due_end.astimezone(ZoneInfo(self.workspace.timezone)).date(),
+            self.sown.astimezone(ZoneInfo(self.workspace.timezone)).date(),
+        )
+        self.assertEqual(tasks[0].source_snapshot['divergences'], ['germination_rate'])
+        self.assertEqual(tasks[0].source_snapshot['observed_germination_rate'], '0.500000')
+
+    def test_revising_the_assumption_clears_the_review_without_dismissing_it(self):
+        """Answering the question is what retires it, not dismissing it."""
+        self._sow(observed=5)
+        self.assertEqual(len(self._reviews()), 1)
+
+        revise_assumption(
+            self.assumption, effective_from=date(2026, 7, 1),
+            germination_rate=Decimal('0.5'),
+        )
+
+        self.assertEqual(self._reviews(), [])
