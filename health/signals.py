@@ -1,4 +1,4 @@
-"""Install useful health catalogs when Nursery mode is enabled."""
+"""Install useful health catalogs for every operational workspace."""
 
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -26,9 +26,7 @@ DIAGNOSES = (
 
 
 def ensure_health_catalogs(workspace):
-    """Idempotently create conservative catalogs for a Nursery workspace."""
-    if workspace.mode != Workspace.Mode.NURSERY:
-        return
+    """Idempotently create conservative catalogs for a garden or nursery."""
     for order, (code, name) in enumerate(OBSERVATION_TYPES):
         HealthObservationType.objects.get_or_create(
             workspace=workspace, code=code,
@@ -45,5 +43,5 @@ def ensure_health_catalogs(workspace):
 
 @receiver(post_save, sender=Workspace)
 def workspace_saved(sender, instance, **_kwargs):  # pylint: disable=unused-argument
-    """Install catalogs when a workspace becomes a Nursery."""
+    """Keep every operational workspace supplied with health choices."""
     ensure_health_catalogs(instance)
