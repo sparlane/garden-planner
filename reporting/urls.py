@@ -3,6 +3,8 @@
 from django.urls import path
 
 from .rest import (
+    AssumptionVarianceExportView,
+    AssumptionVarianceView,
     DashboardView,
     GerminationExportView,
     GerminationView,
@@ -47,6 +49,8 @@ urlpatterns = [
     path('germination/export/', GerminationExportView.as_view()),
     path('production-batches/', ProductionView.as_view()),
     path('production-batches/export/', ProductionExportView.as_view()),
+    path('assumption-variance/', AssumptionVarianceView.as_view()),
+    path('assumption-variance/export/', AssumptionVarianceExportView.as_view()),
     path('orders/', OrderView.as_view()),
     path('orders/export/', OrderExportView.as_view()),
     path('profitability/', ProfitabilityView.as_view()),
