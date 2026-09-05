@@ -23,7 +23,7 @@ from inventory.models import (
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
 )
-from inventory.rest_query import parse_date, parse_integer
+from common.rest_query import parse_date, parse_integer
 from workspaces.models import get_current_workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,

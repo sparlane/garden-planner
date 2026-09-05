@@ -19,7 +19,7 @@ from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
 
 from health.models import HealthAffectedStock
-from inventory.rest_query import parse_boolean, parse_date, parse_integer
+from common.rest_query import parse_boolean, parse_date, parse_integer
 from locations.models import Location, location_full_name
 from plants.metadata import variety_days
 from plants.models import MaturityBasis

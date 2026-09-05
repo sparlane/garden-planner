@@ -19,7 +19,7 @@ from django.contrib.contenttypes.models import ContentType
 from rest_framework.exceptions import ValidationError
 
 from costing.models import CostAllocation
-from inventory.rest_query import parse_boolean, parse_date, parse_datetime, parse_integer
+from common.rest_query import parse_boolean, parse_date, parse_datetime, parse_integer
 from locations.models import Location
 from labels.models import LabelCode
 from health.availability import quarantine_expression, with_quarantine

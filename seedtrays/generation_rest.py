@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework_nested import routers
 
 from inventory.ledger import quantize_quantity
-from inventory.rest_query import parse_integer
+from common.rest_query import parse_integer
 from locations.models import Location
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
