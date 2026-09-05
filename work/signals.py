@@ -1,4 +1,4 @@
-"""Create conservative automation defaults when Nursery mode is enabled."""
+"""Create conservative automation defaults for operational workspaces."""
 
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -21,8 +21,6 @@ DEFAULT_RULES = (
 
 def ensure_default_rules(workspace):
     """Idempotently install only rules backed by authoritative source dates."""
-    if workspace.mode != Workspace.Mode.NURSERY:
-        return
     for code, name, task_type, trigger in DEFAULT_RULES:
         WorkTaskRule.objects.get_or_create(
             workspace=workspace, code=code,
@@ -32,5 +30,5 @@ def ensure_default_rules(workspace):
 
 @receiver(post_save, sender=Workspace)
 def workspace_saved(sender, instance, **_kwargs):  # pylint: disable=unused-argument
-    """Install defaults when an existing Garden workspace becomes a Nursery."""
+    """Keep every garden or nursery supplied with useful work rules."""
     ensure_default_rules(instance)

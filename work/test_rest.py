@@ -67,14 +67,14 @@ class WorkRESTTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(WorkTask.objects.get(pk=task['pk']).status, WorkTask.Status.OPEN)
 
-    def test_routes_require_authentication_and_nursery_mode(self):
-        """The queue is authenticated and belongs to the Nursery profile."""
+    def test_routes_require_authentication_in_each_workspace_mode(self):
+        """The shared queue stays authenticated in gardens and nurseries."""
         self.client.force_authenticate(user=None)
         self.assertEqual(self.client.get('/work/tasks/').status_code, 403)
         self.client.force_authenticate(self.user)
         self.workspace.mode = self.workspace.Mode.GARDEN
         self.workspace.save()
-        self.assertEqual(self.client.get('/work/tasks/').status_code, 403)
+        self.assertEqual(self.client.get('/work/tasks/').status_code, 200)
 
     def test_switching_to_nursery_installs_safe_default_rules(self):
         """A profile change after migration receives the conservative defaults."""

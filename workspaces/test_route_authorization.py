@@ -16,9 +16,7 @@ from .models import Workspace
 
 #: One representative registered route per nursery-gated app.
 NURSERY_ONLY_URLS = (
-    '/health/observation-types/',
     '/sales/customers/',
-    '/work/rules/',
     '/reports/dashboard/',
     '/plantings/growth-stages/',
     '/plantings/planning-assumptions/',
@@ -28,6 +26,11 @@ NURSERY_ONLY_URLS = (
     '/tax/gst/status/',
     '/tax/gst/period-closures/',
     '/tax/gst/basis-transitions/',
+)
+
+SHARED_OPERATION_URLS = (
+    '/health/observation-types/',
+    '/work/rules/',
 )
 
 
@@ -65,3 +68,14 @@ class NurseryOnlyRouteAuthorizationTests(RESTContractTestCase):
             with self.subTest(url=url):
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200, response.data)
+
+    def test_garden_mode_allows_health_and_work_routes(self):
+        """Garden workspace actions can report problems and manage due care."""
+        workspace = get_current_workspace()
+        workspace.mode = Workspace.Mode.GARDEN
+        workspace.save()
+        for url in SHARED_OPERATION_URLS:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertTrue(response.data)

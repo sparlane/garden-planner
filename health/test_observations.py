@@ -220,11 +220,12 @@ class HealthObservationRestTests(RESTContractTestCase):
             [corrected.data['pk']],
         )
 
-    def test_garden_workspace_is_rejected(self):
+    def test_garden_workspace_receives_health_catalogs(self):
         self.workspace.mode = Workspace.Mode.GARDEN
         self.workspace.save()
         response = self.client.get('/health/observation-types/')
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['results'])
 
     def test_active_alerts_surface_in_location_and_task_views(self):
         location = make_location(workspace=self.workspace)

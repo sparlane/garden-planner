@@ -70,7 +70,7 @@ class HealthDiagnosisSerializer(CatalogSerializer):
 class CatalogViewSet(
     RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet,
 ):
-    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    required_workspace_modes = (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
 
@@ -323,7 +323,7 @@ class HealthObservationViewSet(
     CurrentWorkspaceViewSetMixin,
     viewsets.ReadOnlyModelViewSet,
 ):
-    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    required_workspace_modes = (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
     queryset = HealthObservation.objects.select_related(
         'observation_type', 'created_by',
     ).prefetch_related(
@@ -472,7 +472,7 @@ class QuarantineCaseViewSet(
     CurrentWorkspaceViewSetMixin,
     viewsets.ReadOnlyModelViewSet,
 ):
-    required_workspace_modes = (Workspace.Mode.NURSERY,)
+    required_workspace_modes = (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
     queryset = QuarantineCase.objects.select_related(
         'observation__observation_type', 'created_by',
     ).prefetch_related('members', 'actions')

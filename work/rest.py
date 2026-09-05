@@ -195,11 +195,12 @@ def _has_target(task, target_type, object_id):
     ).exists()
 
 
-class NurseryWorkMixin(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin):
-    required_workspace_modes = (Workspace.Mode.NURSERY,)
+class OperationalWorkMixin(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin):
+    """Work scheduling is shared by private gardens and nurseries."""
+    required_workspace_modes = (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
 
 
-class WorkRuleViewSet(NurseryWorkMixin, viewsets.ModelViewSet):
+class WorkRuleViewSet(OperationalWorkMixin, viewsets.ModelViewSet):
     queryset = WorkTaskRule.objects.select_related('variety', 'stage', 'location', 'default_assignee')
     serializer_class = WorkRuleSerializer
 
@@ -207,7 +208,7 @@ class WorkRuleViewSet(NurseryWorkMixin, viewsets.ModelViewSet):
         serializer.save(workspace=self.get_current_workspace(), created_by=self.request.user)
 
 
-class WorkTaskViewSet(NurseryWorkMixin, viewsets.GenericViewSet):
+class WorkTaskViewSet(OperationalWorkMixin, viewsets.GenericViewSet):
     queryset = WorkTask.objects.select_related('rule', 'assignee').prefetch_related(
         'links__content_type', 'history__actor',
     )
@@ -271,7 +272,7 @@ class WorkTaskViewSet(NurseryWorkMixin, viewsets.GenericViewSet):
         return Response(WorkTaskSerializer(task).data)
 
 
-class AssigneeViewSet(NurseryWorkMixin, viewsets.ViewSet):
+class AssigneeViewSet(OperationalWorkMixin, viewsets.ViewSet):
     queryset = get_user_model().objects.none()
 
     def list(self, request):
