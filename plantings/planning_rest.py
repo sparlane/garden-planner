@@ -176,6 +176,13 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class ImportDemandSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """The delivery window whose confirmed commitments a plan takes on."""
+
+    ready_from = serializers.DateField()
+    ready_until = serializers.DateField()
+
+
 class NurseryPlanningViewSetMixin(
         RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin):
     required_workspace_modes = (Workspace.Mode.NURSERY,)
@@ -265,6 +272,26 @@ class ProductionPlanViewSet(NurseryPlanningViewSetMixin, viewsets.ModelViewSet):
     def revise(self, request, pk=None):
         revision = self._run(lambda current: revise_plan(current, request.user))
         return Response(self.get_serializer(revision).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='import-demand')
+    def import_demand(self, request, pk=None):
+        """Read confirmed orders falling due in a window in as plan demand.
+
+        `sales` is imported here rather than at the top of the module for the
+        reason `cohort_availability` defers its own reach: the nursery is built
+        without knowledge of who is buying from it, and only this endpoint
+        needs the other direction.
+        """
+        from sales.demand import import_committed_demand  # pylint: disable=import-outside-toplevel
+
+        values = ImportDemandSerializer(data=request.data)
+        values.is_valid(raise_exception=True)
+        window = values.validated_data
+        self._run(lambda current: import_committed_demand(
+            current, window['ready_from'], window['ready_until'],
+        ))
+        plan = self.get_queryset().get(pk=self.get_object().pk)
+        return Response(self.get_serializer(plan).data)
 
     @action(detail=True, methods=['get'])
     def variance(self, request, pk=None):

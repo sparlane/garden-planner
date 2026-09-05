@@ -1,5 +1,10 @@
 """What the allocation preview promises, allocation itself has to honour."""
 
+# Each kind of stock adds a fixture layer over DRF's own four-deep test case,
+# which is the point: the cohort helpers are shared by the refusal walk and by
+# the forward-sale contracts rather than written out twice.
+# pylint: disable=too-many-ancestors
+
 import ast
 from decimal import Decimal
 from pathlib import Path
@@ -455,8 +460,8 @@ class RegisterFilterSelectionTests(SelectionFixture):
         self.assertIn('sellable', response.data)
 
 
-class CohortSelectionTests(SelectionFixture):
-    """Every refusal a cohort draw can carry is reachable and honoured."""
+class CohortSelectionFixture(SelectionFixture):
+    """A nursery with one block on sale, reached through its own endpoints."""
 
     def setUp(self):
         """Offer one block of anonymous seedlings for sale."""
@@ -544,6 +549,10 @@ class CohortSelectionTests(SelectionFixture):
         }
         return builders[reason]()
 
+
+class CohortSelectionTests(CohortSelectionFixture):
+    """Every refusal a cohort draw can carry is reachable and honoured."""
+
     def test_every_refusal_is_reachable_and_allocate_refuses_it_too(self):
         """The preview is only worth reading if allocation agrees with it."""
         for reason in COHORT_REASONS + SHARED_COHORT_REASONS:
@@ -579,3 +588,89 @@ class CohortSelectionTests(SelectionFixture):
         self.assertEqual(allocated.status_code, 201, allocated.data)
         self.assertEqual(allocated.data[0]['plant_cohort'], self.cohort.pk)
         self.assertEqual(allocated.data[0]['quantity'], 10)
+
+
+class ForwardSaleRESTTests(CohortSelectionFixture):
+    """The screens can commit forward, write off short, and feed the plan."""
+
+    plans_url = '/plantings/production-plans/'
+
+    def committed_order(self, quantity=10, requested_date='2026-10-01'):
+        """Confirm one order against a block nobody has graded ready."""
+        order = self.create_order()
+        patched = self.client.patch(
+            f"{self.orders_url}{order['pk']}/",
+            {'requested_date': requested_date}, format='json',
+        )
+        self.assertEqual(patched.status_code, 200, patched.data)
+        line = self.cohort_line(order, quantity=quantity)
+        allocated = self.allocate(order, line, cohort_requests=[
+            self.draw(self.growing_cohort(quantity=100), quantity=quantity),
+        ])
+        self.assertEqual(allocated.status_code, 201, allocated.data)
+        confirmed = self.client.post(
+            f"{self.orders_url}{order['pk']}/confirm/", {}, format='json',
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.data)
+        return confirmed.data, allocated.data[0]
+
+    def short(self, order, allocation, quantity, reason='Damping off.'):
+        """Post one shortfall against a standing commitment."""
+        return self.client.post(
+            f"{self.orders_url}{order['pk']}/shortfall/",
+            {'allocation': allocation['pk'], 'quantity': quantity, 'reason': reason},
+            format='json',
+        )
+
+    def test_the_order_screen_separates_what_is_reserved_from_what_is_ready(self):
+        """A screen answering "when can you deliver?" needs both figures."""
+        order, _allocation = self.committed_order(quantity=10)
+
+        detail = self.client.get(f"{self.orders_url}{order['pk']}/")
+
+        self.assertEqual(detail.status_code, 200, detail.data)
+        self.assertEqual(detail.data['commerce']['reserved_quantity'], 10)
+        self.assertEqual(detail.data['commerce']['committed_forward_quantity'], 10)
+
+    def test_a_shortfall_is_posted_and_read_back_on_its_line(self):
+        """The customer's explanation is on the order, where it can be found."""
+        order, allocation = self.committed_order(quantity=10)
+
+        response = self.short(order, allocation, 4)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        detail = self.client.get(f"{self.orders_url}{order['pk']}/")
+        shortfalls = detail.data['lines'][0]['shortfalls']
+        self.assertEqual(len(shortfalls), 1)
+        self.assertEqual(shortfalls[0]['quantity'], 4)
+        self.assertEqual(shortfalls[0]['reason'], 'Damping off.')
+        self.assertEqual(detail.data['commerce']['short_quantity'], 4)
+
+    def test_a_shortfall_without_a_reason_is_refused(self):
+        """An unexplained shrinkage is indistinguishable from a mis-click."""
+        order, allocation = self.committed_order(quantity=10)
+
+        response = self.short(order, allocation, 4, reason='')
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('reason', response.data)
+
+    def test_a_plan_imports_the_commitments_falling_due_in_its_window(self):
+        """The order that created the demand is what the plan sows for."""
+        self.committed_order(quantity=10)
+        plan = self.client.post(
+            self.plans_url, {'code': 'SPRING-2026'}, format='json',
+        )
+        self.assertEqual(plan.status_code, 201, plan.data)
+
+        imported = self.client.post(
+            f"{self.plans_url}{plan.data['pk']}/import-demand/",
+            {'ready_from': '2026-09-01', 'ready_until': '2026-12-31'},
+            format='json',
+        )
+
+        self.assertEqual(imported.status_code, 200, imported.data)
+        demand = imported.data['demand_lines']
+        self.assertEqual(len(demand), 1)
+        self.assertEqual(demand[0]['target_quantity'], 10)
+        self.assertEqual(demand[0]['source'], 'confirmed_order')

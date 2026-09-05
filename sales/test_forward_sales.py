@@ -7,25 +7,33 @@ somebody grades it ready, and recording the commercial outcome when the plants
 never arrive at all.
 """
 
+from datetime import date
 from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 
 from plantings.cohort_availability import available_quantity, reserved_quantity
 from plantings.cohorts import change_cohort
-from plantings.models import CohortOperation, PlantCohort
+from plantings.models import (
+    CohortOperation,
+    NurseryPlanDemand,
+    NurseryProductionPlan,
+    PlantCohort,
+)
 
 from .commerce import (
     order_commerce_summary,
     post_fulfillment,
     record_shortfall,
 )
+from .demand import import_committed_demand
 from .models import (
     ReservationEvent,
     SalesOrder,
     SalesOrderAllocation,
     SalesOrderShortfall,
 )
+from .services import cancel_order, create_order
 from .test_cohort_lines import CohortStockTestCase
 
 
@@ -306,3 +314,117 @@ class ShortfallTests(ForwardStockTestCase):
             )
 
         self.assertIn('status', caught.exception.message_dict)
+
+
+class CommittedDemandTests(ForwardStockTestCase):
+    """A confirmed commitment is the demand a production plan was built for."""
+
+    def setUp(self):
+        """Add a draft plan covering the season the orders fall due in."""
+        super().setUp()
+        self.plan = NurseryProductionPlan.objects.create(
+            workspace=self.workspace, code='SPRING-2026', created_by=self.user,
+        )
+
+    def committed_order(self, quantity=50, requested_date=date(2026, 10, 1)):
+        """Confirm one forward order for a delivery on a stated date."""
+        order = create_order(
+            self.workspace, self.user, requested_date=requested_date,
+        )
+        line = self.cohort_line(order=order, quantity=quantity)
+        allocations = self.draw(line, cohort=self.growing_cohort(), quantity=quantity)
+        self.confirm(order)
+        return line, allocations[0]
+
+    def imported(self):
+        """Import the season's commitments and return the plan's demand lines."""
+        import_committed_demand(self.plan, date(2026, 9, 1), date(2026, 12, 31))
+        return list(self.plan.demand_lines.order_by('pk'))
+
+    def test_a_confirmed_commitment_becomes_plan_demand(self):
+        """The order that created the demand is what the plan now sows for."""
+        line, _allocation = self.committed_order(quantity=50)
+
+        demand = self.imported()
+
+        self.assertEqual(len(demand), 1)
+        self.assertEqual(demand[0].variety_id, line.variety_id)
+        self.assertEqual(demand[0].target_quantity, 50)
+        self.assertEqual(demand[0].ready_from, date(2026, 10, 1))
+        self.assertEqual(demand[0].source, NurseryPlanDemand.Source.CONFIRMED_ORDER)
+        self.assertEqual(demand[0].order_reference, line.order.order_number)
+
+    def test_a_delivery_outside_the_window_is_somebody_elses_plan(self):
+        """A plan sows for the season it covers, not for every open order."""
+        self.committed_order(requested_date=date(2027, 4, 1))
+
+        self.assertEqual(self.imported(), [])
+
+    def test_a_draft_order_is_not_yet_demand(self):
+        """Nobody has agreed to buy it, so nothing has to be grown for it."""
+        order = create_order(
+            self.workspace, self.user, requested_date=date(2026, 10, 1),
+        )
+        line = self.cohort_line(order=order, quantity=50)
+        self.draw(line, cohort=self.growing_cohort(), quantity=50)
+
+        self.assertEqual(self.imported(), [])
+
+    def test_what_was_written_off_short_stops_being_demand(self):
+        """Nobody is waiting for the plants the nursery already gave up on."""
+        line, allocation = self.committed_order(quantity=50)
+        record_shortfall(
+            line.order, self.user, allocation_id=allocation.pk,
+            quantity=20, reason='Damping off.',
+        )
+
+        demand = self.imported()
+
+        self.assertEqual(demand[0].target_quantity, 30)
+
+    def test_importing_twice_refreshes_rather_than_duplicates(self):
+        """The orders are read again; they are not added to what was read before."""
+        line, allocation = self.committed_order(quantity=50)
+        self.imported()
+
+        record_shortfall(
+            line.order, self.user, allocation_id=allocation.pk,
+            quantity=20, reason='Damping off.',
+        )
+        demand = self.imported()
+
+        self.assertEqual(len(demand), 1)
+        self.assertEqual(demand[0].target_quantity, 30)
+
+    def test_a_cancelled_commitment_is_removed_on_the_next_import(self):
+        """A plan that kept sowing for it would be growing a crop nobody bought."""
+        line, _allocation = self.committed_order(quantity=50)
+        self.imported()
+
+        cancel_order(line.order, self.user, 'Customer withdrew.')
+
+        self.assertEqual(self.imported(), [])
+
+    def test_a_hand_entered_forecast_survives_an_import(self):
+        """Somebody wrote it for a reason the orders cannot see."""
+        forecast = NurseryPlanDemand.objects.create(
+            plan=self.plan, variety=self.batch.variety, target_quantity=100,
+            ready_from=date(2026, 10, 1), ready_until=date(2026, 10, 8),
+            source=NurseryPlanDemand.Source.FORECAST,
+            source_line_reference='market-stall',
+        )
+        self.committed_order(quantity=50)
+
+        self.assertIn(forecast, self.imported())
+
+    def test_an_approved_plan_refuses_the_import(self):
+        """Approved demand is immutable, so it cannot be quietly rewritten."""
+        NurseryProductionPlan.objects.filter(pk=self.plan.pk).update(
+            status=NurseryProductionPlan.Status.APPROVED,
+        )
+        self.plan.refresh_from_db()
+
+        with self.assertRaises(ValidationError) as caught:
+            self.imported()
+
+        self.assertIn('plan', caught.exception.message_dict)
