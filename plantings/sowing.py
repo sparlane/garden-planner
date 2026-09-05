@@ -34,7 +34,8 @@ def _reallocate(planting, user, trigger):
     reallocation is idempotent, so calling it from every sowing write costs
     nothing when nothing changed.
     """
-    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel
+    # Sowing calls back into costing, which reads sowing consumption.
+    from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel,cyclic-import
 
     reallocate_batch(planting.batch, user, trigger)
 

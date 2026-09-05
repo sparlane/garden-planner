@@ -12,6 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from purchasing.services import receipt_paid_on
 from common.rest_query import (
     parse_boolean as _parse_boolean,
     parse_date as _parse_date,
@@ -26,6 +27,7 @@ from workspaces.scoping import (
     CurrentWorkspaceViewSetMixin,
 )
 
+from .serialized_rest import InventoryUnitSerializer
 from .ledger import (
     IndividualizationRequest,
     MovementRequest,
@@ -288,7 +290,6 @@ class StockReceiptSerializer(
 
     def get_settled_on(self, receipt):
         """Expose invoice-allocation settlement, falling back for legacy receipts."""
-        from purchasing.services import receipt_paid_on  # pylint: disable=import-outside-toplevel
 
         paid_on = receipt_paid_on(receipt)
         return paid_on.isoformat() if paid_on else None
@@ -941,7 +942,6 @@ class StockLotViewSet(
                 reason=values['reason'],
             ),
         )
-        from .serialized_rest import InventoryUnitSerializer  # pylint: disable=import-outside-toplevel
 
         return Response(
             InventoryUnitSerializer(units, many=True).data,
@@ -1183,16 +1183,3 @@ class StocktakeViewSet(
             reason.validated_data['reason'],
         )
         return Response(self.get_serializer(stocktake).data)
-
-
-def register_ledger_routes(router):
-    """Attach ledger viewsets to the inventory API router."""
-    from .serialized_rest import InventoryUnitViewSet  # pylint: disable=import-outside-toplevel
-    from .stocktake_rest import NurseryStocktakeViewSet  # pylint: disable=import-outside-toplevel
-
-    router.register(r'receipts', StockReceiptViewSet)
-    router.register(r'input-tax-adjustments', InputTaxAdjustmentViewSet)
-    router.register(r'lots', StockLotViewSet)
-    router.register(r'serialized-units', InventoryUnitViewSet)
-    router.register(r'movements', StockMovementViewSet)
-    router.register(r'stocktakes', NurseryStocktakeViewSet, basename='stocktake')

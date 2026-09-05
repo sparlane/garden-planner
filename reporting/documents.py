@@ -18,6 +18,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
 
+from django.utils import timezone
 from billing.documents import document_information, document_state
 from billing.models import SupplyCorrection, SupplyDocument
 from billing.thresholds import describe, missing_information
@@ -294,5 +295,4 @@ def _as_date(value):
 
 def _today():
     """Return today, isolated so a test can control the default range."""
-    from django.utils import timezone  # pylint: disable=import-outside-toplevel
     return timezone.localdate()

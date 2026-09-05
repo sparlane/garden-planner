@@ -8,6 +8,7 @@ from django.db.models import Sum
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from sales.models import SalesOrderAllocation
 from common.rest_query import parse_boolean, parse_date, parse_integer
 from locations.models import Location, location_full_name
 from workspaces.models import get_current_workspace
@@ -125,7 +126,6 @@ class BalanceView(APIView):
         own that way. Only reserved draws count: a pending one is a selection
         somebody is still drafting, which warns rather than holds.
         """
-        from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
         promised = defaultdict(Decimal)
         rows = SalesOrderAllocation.objects.filter(

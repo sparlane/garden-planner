@@ -9,6 +9,9 @@ from uuid import uuid4
 
 from django.utils import timezone
 
+from health.services import preview_observation, record_observation
+from health.operations import quarantine_observation
+from health.models import HealthObservation, HealthObservationType
 from garden.models import (
     GardenArea,
     GardenBed,
@@ -87,9 +90,6 @@ def quarantine_stock(workspace, user, scopes, reason='Prevent spread while revie
     quarantined stock cannot be sold does not carry its own copy of the health
     workflow — and so a change to that workflow surfaces in one place.
     """
-    from health.models import HealthObservation, HealthObservationType  # pylint: disable=import-outside-toplevel
-    from health.operations import quarantine_observation  # pylint: disable=import-outside-toplevel
-    from health.services import preview_observation, record_observation  # pylint: disable=import-outside-toplevel
 
     preview = preview_observation(workspace, scopes)
     observation = record_observation(

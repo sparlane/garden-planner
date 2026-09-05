@@ -11,6 +11,14 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.settings import api_settings
 
+from plantings.models import (
+    GardenPlanting,
+    GardenRowDirectSowPlanting,
+    GardenSquareDirectSowPlanting,
+    Harvest,
+    SpecificPlantLocation,
+)
+from applications.models import InputApplicationTarget
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .geometry import latest_confirmation, measure
@@ -142,16 +150,8 @@ class GeometryWriteMixin:
 
 def _has_recorded_activity(instance):
     """Return whether geometry at or below ``instance`` has audit records."""
-    # Imported lazily to keep the garden models independent of the planting
-    # app whose records point back to them.
-    from applications.models import InputApplicationTarget  # pylint: disable=import-outside-toplevel
-    from plantings.models import (  # pylint: disable=import-outside-toplevel
-        GardenPlanting,
-        GardenRowDirectSowPlanting,
-        GardenSquareDirectSowPlanting,
-        Harvest,
-        SpecificPlantLocation,
-    )
+    # The endpoint reads planting/application facts; garden models remain
+    # independent of this activity projection.
 
     if isinstance(instance, GardenArea):
         bed_ids = GardenBed.objects.filter(area=instance).values('pk')

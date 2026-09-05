@@ -17,10 +17,11 @@ threshold test asks about regardless of how the workspace accounts.
 from datetime import date
 from decimal import Decimal
 
+from django.utils import timezone
 from inventory.ledger import quantize_money
 
 from .facts import workspace_order_facts
-from .periods import local_date, registration_history
+from .periods import local_date, registration_history, registration_in_force
 from .recognition import INVOICE, TURNOVER_CODES, order_recognition
 
 
@@ -242,11 +243,9 @@ def _warning(code, message, value=None, threshold=None):
 
 def _registration_in_force(workspace, on_date):
     """Return the arrangement applying on a date, reusing one history read."""
-    from .periods import registration_in_force  # pylint: disable=import-outside-toplevel
     return registration_in_force(workspace, on_date, history=registration_history(workspace))
 
 
 def _now():
     """Return the current instant, isolated so a test can control the date."""
-    from django.utils import timezone  # pylint: disable=import-outside-toplevel
     return timezone.now()

@@ -18,6 +18,7 @@ from inventory.models import (
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
     StockMovement,
+    InventoryItem,
 )
 from inventory.units import UnitCode
 from locations.models import Location
@@ -1892,7 +1893,6 @@ class SpecificPlantLocation(models.Model):
         tray's unit be named here too would give one plant in one tray two
         different ways to say where it is.
         """
-        from inventory.models import InventoryItem  # pylint: disable=import-outside-toplevel
 
         unit = self.container_unit
         if unit.item.tracking_mode != InventoryItem.TrackingMode.MIXED:

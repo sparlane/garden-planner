@@ -8,12 +8,13 @@ would pass against a system that never stopped warning at all.
 
 # pylint: disable=duplicate-code
 
+from uuid import uuid4
 from datetime import date
 from decimal import Decimal
 
 from inventory.models import InventoryItem
 from inventory.units import UnitCode
-from sales.models import SalesOrder, SalesOrderLine
+from sales.models import SalesOrder, SalesOrderLine, Payment
 from sales.services import create_order
 from tests.api import RESTContractTestCase
 from tests.factories import make_inventory_item
@@ -79,8 +80,6 @@ class TurnoverTestCase(RESTContractTestCase):
         no allocations and no stock, and the threshold is measured on supplies
         made — which the invoice basis recognises at the earlier of the two.
         """
-        from sales.models import Payment  # pylint: disable=import-outside-toplevel
-        from uuid import uuid4  # pylint: disable=import-outside-toplevel
 
         order = create_order(self.workspace, self.user, status=SalesOrder.Status.DRAFT)
         values = {

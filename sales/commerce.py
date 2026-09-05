@@ -31,6 +31,7 @@ from inventory.ledger import (
     reverse_movement,
 )
 from inventory.models import InventoryItem, StockMovement
+from plantings.movement import move_specific_plant
 from plantings.cohort_availability import DISPATCHABLE_STATES
 from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import (
@@ -721,7 +722,6 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
                 ),
             )
             if destination:
-                from plantings.rest import move_specific_plant  # pylint: disable=import-outside-toplevel
                 move_specific_plant(allocation.plant, {
                     'location_type': SpecificPlantLocation.LOCATION,
                     'location': destination,

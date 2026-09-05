@@ -18,6 +18,7 @@ from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
+from .models import GstRegistration
 
 
 #: How many months one taxable period spans, keyed by the stored filing
@@ -109,7 +110,6 @@ def registration_history(workspace):
     Superseded rows are excluded: they record what somebody entered, not what
     applied. They stay readable through the row that replaced them.
     """
-    from .models import GstRegistration  # pylint: disable=import-outside-toplevel
     return list(
         GstRegistration.objects
         .filter(workspace=workspace, superseded_by__isnull=True)

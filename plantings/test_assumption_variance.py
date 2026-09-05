@@ -31,6 +31,8 @@ from tests.factories import (
     make_planning_assumption,
     make_planning_stage_assumption,
     make_production_batch,
+    make_seeds,
+    make_inventory_item,
 )
 
 from .assumption_variance import (
@@ -75,7 +77,6 @@ class AssumptionFixture:
         self.packet = make_seed_packet(seeds=self._seeds())
 
     def _seeds(self):
-        from tests.factories import make_seeds  # pylint: disable=import-outside-toplevel
         return make_seeds(plant_variety=self.variety, workspace=self.workspace)
 
     def _assumption(self, effective_from, **overrides):
@@ -128,7 +129,6 @@ class AssumptionFixture:
         return rows[0]
 
     def _item(self):
-        from tests.factories import make_inventory_item  # pylint: disable=import-outside-toplevel
         return make_inventory_item(workspace=self.workspace)
 
 

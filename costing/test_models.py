@@ -10,12 +10,15 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 
+from plantings.models import SowingStockPosting
+from inventory.models import StockMovement
 from tests.factories import (
     make_production_batch,
     make_seed_tray_cell,
     make_seed_tray_generation,
     make_specific_plant,
     make_stock_lot,
+    make_seed_tray_planting,
 )
 from workspaces.models import Workspace
 
@@ -45,12 +48,6 @@ class CostingFixtureTestCase(TestCase):
 
     def make_sowing_posting(self, batch=None):
         """Create the sowing-side source a seed layer draws from."""
-        # Imported here so the module's own import list stays about costing.
-        from tests.factories import make_seed_tray_planting  # pylint: disable=import-outside-toplevel
-
-        from inventory.models import StockMovement  # pylint: disable=import-outside-toplevel
-        from plantings.models import SowingStockPosting  # pylint: disable=import-outside-toplevel
-
         sowing = make_seed_tray_planting() if batch is None else make_seed_tray_planting(batch=batch)
         lot = make_stock_lot(workspace=sowing.workspace)
         movement = StockMovement.objects.get(lot=lot)

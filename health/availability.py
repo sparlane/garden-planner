@@ -3,6 +3,7 @@
 from django.core.exceptions import ValidationError
 from django.db.models import Exists, OuterRef, Q
 
+from .services import preview_observation
 from .models import QuarantineAction, QuarantineCase, QuarantineMember
 
 
@@ -72,7 +73,6 @@ def require_available(targets, *, lock=False):
 
 def active_alert_count(workspace, scopes):
     """Count active quarantine cases intersecting one reviewed target scope."""
-    from .services import preview_observation  # pylint: disable=import-outside-toplevel
 
     try:
         preview = preview_observation(workspace, scopes)

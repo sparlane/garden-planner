@@ -11,6 +11,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from purchasing.services import receipt_paid_on
 from inventory.ledger import (
     COST_QUANTUM,
     MovementRequest,
@@ -18,6 +19,7 @@ from inventory.ledger import (
     post_receipt,
     post_stock_movement,
     quantize_quantity,
+    reverse_movement,
 )
 from inventory.models import (
     InventoryItem,
@@ -356,7 +358,6 @@ def packet_provenance(packet):
     figures do, so the payload reads the same whether it was rendered to JSON
     or read straight off the serializer.
     """
-    from purchasing.services import receipt_paid_on  # pylint: disable=import-outside-toplevel
 
     brand = packet.seeds.supplier
     lot = packet.stock_lot if packet.stock_lot_id else None
@@ -527,7 +528,6 @@ def reverse_packet_reconciliation(reconciliation, user, reason):
     ).order_by('-pk').first()
     movement = None
     if reconciliation.movement_id:
-        from inventory.ledger import reverse_movement  # pylint: disable=import-outside-toplevel
         movement = reverse_movement(reconciliation.movement, user, reason)
     if previous:
         counted = previous.counted_quantity

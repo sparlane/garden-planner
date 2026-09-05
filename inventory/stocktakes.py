@@ -14,14 +14,21 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from labels.models import LabelCode, LabelIdentity
 from locations.models import Location
 from plantings.growth import current_growth
-from plantings.lifecycle import EventType, OutcomeRequest, plant_lifecycle_summary, record_lifecycle_event
+from plantings.lifecycle import (
+    EventType,
+    OutcomeRequest,
+    plant_lifecycle_summary,
+    record_lifecycle_event,
+    reverse_lifecycle_event,
+)
 from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
 from plantings.cohorts import change_cohort
-from plantings.rest import move_specific_plant
-from seeds.models import SeedPacket
-from seeds.services import packet_inventory_snapshot
+from plantings.movement import move_specific_plant
+from seeds.models import SeedPacket, QuantityCertainty
+from seeds.services import packet_inventory_snapshot, reconcile_packet_quantity, reverse_packet_reconciliation
 from seedtrays.models import SeedTray
 
 from .ledger import (
@@ -85,7 +92,6 @@ def _location_ids(workspace, scope):
 
 def _active_code(target):
     """Return the current scannable code without requiring every target to have one."""
-    from labels.models import LabelCode, LabelIdentity  # pylint: disable=import-outside-toplevel
 
     content_type = ContentType.objects.get_for_model(target, for_concrete_model=True)
     identity = LabelIdentity.objects.filter(
@@ -673,8 +679,6 @@ def _post_lot(stocktake, target, user, reason):
 
 
 def _post_packet(stocktake, target, user, reason, _action, payload):
-    from seeds.models import QuantityCertainty  # pylint: disable=import-outside-toplevel
-    from seeds.services import reconcile_packet_quantity  # pylint: disable=import-outside-toplevel
 
     packet = SeedPacket.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
     before = packet_inventory_snapshot(packet)
@@ -871,7 +875,6 @@ def _reverse_link(link, stocktake, user, reason):
     if link.domain in {'lot', 'tray'}:
         inverse = reverse_movement(result, user, reason)
     elif link.domain == 'seed_packet':
-        from seeds.services import reverse_packet_reconciliation  # pylint: disable=import-outside-toplevel
         inverse = reverse_packet_reconciliation(result, user, reason)
     elif link.domain == 'cohort':
         cohort = result.events.order_by('pk').first().cohort
@@ -892,7 +895,6 @@ def _reverse_link(link, stocktake, user, reason):
         )
     elif link.domain == 'plant':
         if link.result_model == 'plantlifecycleevent':
-            from plantings.lifecycle import reverse_lifecycle_event  # pylint: disable=import-outside-toplevel
             inverse = reverse_lifecycle_event(result, user, reason)
             plant = result.plant
             if link.before.get('location') and _plant_location(plant) is None:

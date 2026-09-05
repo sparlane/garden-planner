@@ -12,12 +12,7 @@ from django.test import SimpleTestCase, TestCase
 from workspaces.models import get_current_workspace
 
 from . import calculations
-from .calculations import (
-    distribute_money,
-    line_position_amounts,
-    money,
-    proportional_refund,
-)
+from .calculations import distribute_money, line_position_amounts, money, proportional_refund, calculate_line
 from .models import Customer, SalesOrder, SalesOrderLine
 from .services import create_order, update_pricing_mode
 
@@ -68,7 +63,6 @@ class SalesOrderArithmeticTests(TestCase):
 
     def test_exclusive_and_inclusive_calculations_reconcile(self):
         """Both entry modes return canonical components that add exactly."""
-        from .calculations import calculate_line  # pylint: disable=import-outside-toplevel
 
         exclusive = create_order(self.workspace, self.user)
         amounts = calculate_line(self.make_line(exclusive))
@@ -85,7 +79,6 @@ class SalesOrderArithmeticTests(TestCase):
 
     def test_percentage_discount_uses_entered_gross(self):
         """Percentage discounts apply before tax in either entry mode."""
-        from .calculations import calculate_line  # pylint: disable=import-outside-toplevel
 
         order = create_order(self.workspace, self.user)
         line = self.make_line(

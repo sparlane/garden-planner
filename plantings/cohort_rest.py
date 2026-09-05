@@ -15,6 +15,7 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from labels.services import ensure_identity
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -145,7 +146,6 @@ class PlantCohortSerializer(serializers.ModelSerializer):
 
     def get_label_code(self, cohort):
         """Return the active physical identity issued for this cohort."""
-        from labels.services import ensure_identity  # pylint: disable=import-outside-toplevel
 
         return ensure_identity(cohort).codes.get(status='active').code
 

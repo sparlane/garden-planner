@@ -2,7 +2,7 @@
 
 from rest_framework.views import APIView
 
-from workspaces.models import Workspace
+from workspaces.models import Workspace, get_current_workspace
 from workspaces.scoping import RequireWorkspaceModeMixin
 
 from .common import csv_response, normalized_filters, report_response
@@ -62,7 +62,6 @@ class ReportView(RequireWorkspaceModeMixin, APIView):  # pylint: disable=not-cal
 
     @staticmethod
     def _workspace():
-        from workspaces.models import get_current_workspace  # pylint: disable=import-outside-toplevel
         return get_current_workspace()
 
 

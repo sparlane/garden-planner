@@ -29,6 +29,22 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from applications.models import InputApplication, InputApplicationLine
+from plantings.batches import lock_batch_with_plants
+from plantings.lifecycle import (
+    is_final,
+    plant_lifecycle_summary,
+    OutcomeRequest,
+    record_lifecycle_event,
+    reverse_lifecycle_event,
+)
+from plantings.models import (
+    SeedTrayPlanting,
+    SpecificPlant,
+    SpecificPlantLocation,
+    ProductionBatch,
+    PlantLifecycleEvent,
+)
 from inventory.ledger import (
     MovementRequest,
     lock_lots,
@@ -212,7 +228,6 @@ def generation_cells(generation):
 
 def generation_sowings(generation):
     """Return the sowings made into this fill."""
-    from plantings.models import SeedTrayPlanting  # pylint: disable=import-outside-toplevel
 
     return SeedTrayPlanting.objects.filter(
         generation=generation,
@@ -226,7 +241,6 @@ def generation_plants(generation):
     into a garden square already left, and holding up the clean for it would ask
     an operator to dispose of something that is not in the tray.
     """
-    from plantings.models import SpecificPlant  # pylint: disable=import-outside-toplevel
 
     return SpecificPlant.objects.filter(
         cell_planting__seed_tray_planting__generation=generation,
@@ -237,7 +251,6 @@ def generation_plants(generation):
 
 def unresolved_plants(generation):
     """Return the plants in the tray that have recorded no final outcome."""
-    from plantings.lifecycle import is_final, plant_lifecycle_summary  # pylint: disable=import-outside-toplevel
 
     return [
         plant for plant in generation_plants(generation)
@@ -261,7 +274,6 @@ def applied_media(generation):
     A reversed application put its stock back, so it left nothing in the tray
     and nothing here to dispose of.
     """
-    from applications.models import InputApplication, InputApplicationLine  # pylint: disable=import-outside-toplevel
 
     return InputApplicationLine.objects.filter(
         application__status=InputApplication.Status.POSTED,
@@ -453,8 +465,6 @@ def _match_quantities(expected, dispositions, key, field, allowed):
 
 def _resolve_plants(pairs, user, occurred_at):
     """Record each chosen outcome, then empty the cell the plant occupied."""
-    from plantings.lifecycle import OutcomeRequest, record_lifecycle_event  # pylint: disable=import-outside-toplevel
-    from plantings.models import SpecificPlant, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
 
     # Every plant is locked up front in primary-key order, before any of them is
     # written, so two cleans of overlapping selections queue rather than each
@@ -675,8 +685,6 @@ def _lock_generation_batches(generation):
     whole set is taken here in one place and in the canonical order rather than
     accumulated piecemeal as the clean proceeds.
     """
-    from plantings.batches import lock_batch_with_plants  # pylint: disable=import-outside-toplevel
-    from plantings.models import ProductionBatch  # pylint: disable=import-outside-toplevel
 
     batch_ids = sorted({
         batch_id
@@ -691,7 +699,8 @@ def _lock_generation_batches(generation):
 
 def _reallocate(batches, user, trigger):
     """Bring each affected crop's cost allocations back in step with the fill."""
-    from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel
+    # Tray corrections call back into costing, which reads tray generations.
+    from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel,cyclic-import
 
     return reallocate_batches(batches, user, trigger)
 
@@ -716,8 +725,6 @@ def _reverse_recovered_stock(generation, user, reason):
 
 def _reverse_close_outcomes(generation, user, reason, occurred_at):
     """Correct each outcome this clean recorded, leaving the mistake visible."""
-    from plantings.lifecycle import reverse_lifecycle_event  # pylint: disable=import-outside-toplevel
-    from plantings.models import PlantLifecycleEvent  # pylint: disable=import-outside-toplevel
 
     events = list(
         PlantLifecycleEvent.objects

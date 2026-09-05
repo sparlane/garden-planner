@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 from django.db.models import Sum
 
+from sales.models import SalesOrderAllocation, FulfillmentRider
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
@@ -33,6 +34,7 @@ from plantings.models import (
     SeedTrayPlanting,
     SpecificPlant,
     SpecificPlantLocation,
+    PlantCohort,
 )
 from plantings.sowing import current_sowing_consumption
 from seedtrays.generations import cell_shares
@@ -145,10 +147,8 @@ def sold_cohort_quantities(batch):
     still sold: a returned or reversed promise leaves `FULFILLED` and stops
     counting here, and the units it describes are back among the cohorts.
 
-    Sales is built on the nursery rather than the other way round, so the
-    import is deferred exactly as the cohort one below is.
+    Cost projections read sales facts directly without importing sales commands.
     """
-    from sales.models import SalesOrderAllocation  # pylint: disable=import-outside-toplevel
 
     return dict(
         SalesOrderAllocation.objects
@@ -171,7 +171,6 @@ def cohort_outputs(batch):
     that `costing.services` can report them as cost of sale rather than as
     stock still standing on a bench.
     """
-    from plantings.models import PlantCohort  # pylint: disable=import-outside-toplevel
 
     outputs = []
     sold = sold_cohort_quantities(batch)
@@ -616,7 +615,6 @@ def _sold_containers(batch):
     derived rather than appended, a later return takes this cost off the plant
     on the next reallocation without anything having to remember to.
     """
-    from sales.models import FulfillmentRider  # pylint: disable=import-outside-toplevel
 
     effective = FulfillmentRider.objects.filter(
         fulfillment_line__fulfillment__reversal_of__isnull=True,

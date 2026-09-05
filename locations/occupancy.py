@@ -6,11 +6,9 @@ capacity basis is compared against its limit. Unlike dimensions are never
 compared: a bench counted in trays says nothing about how many loose pots fit
 on it.
 
-This module reaches back into `plantings` and `seedtrays` from function bodies
-rather than at import time, so the `locations` app itself keeps depending only
-on `workspaces`. It is the same one-way-at-load pattern `inventory.ledger`
-already uses for `unit_is_in_use`, and the reason `.pylintrc` turns
-`cyclic-import` off.
+This projection reads inventory, plantings, and seedtrays models and growth
+facts. Those models depend on `locations.models`, never on this projection,
+so the reads can be ordinary module imports. See docs/dependencies.md.
 """
 
 from decimal import Decimal
@@ -18,6 +16,10 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 
+from inventory.models import InventoryItem, InventoryUnit
+from seedtrays.models import SeedTray
+from plantings.models import PlantCohort, SpecificPlantLocation
+from plantings.growth import current_growth
 from .models import Location
 
 
@@ -73,7 +75,6 @@ def plant_contribution(plant=None):
     """
     if plant is None:
         return Occupancy(trays=0, plants=1, containers=1)
-    from plantings.growth import current_growth  # pylint: disable=import-outside-toplevel
 
     growth = current_growth(plant)
     if growth['container_observation'] is None:
@@ -90,7 +91,6 @@ def cohort_contribution(quantity, cohort=None):
     """Return the measurable footprint of anonymous nursery stock."""
     if cohort is None:
         return Occupancy(trays=0, plants=quantity, containers=0)
-    from plantings.growth import current_growth  # pylint: disable=import-outside-toplevel
 
     growth = current_growth(cohort)
     if growth['container_observation'] is None:
@@ -105,7 +105,6 @@ def cohort_contribution(quantity, cohort=None):
 
 def _container_occupancy(plants, cohorts):
     """Count each current shared assignment once across concrete targets."""
-    from plantings.growth import current_growth  # pylint: disable=import-outside-toplevel
 
     seen = set()
     containers = 0
@@ -129,9 +128,6 @@ def _container_occupancy(plants, cohorts):
 
 def location_occupancy(location, subtree=False):  # pylint: disable=too-many-locals
     """Count what is standing in a location, optionally including its children."""
-    from inventory.models import InventoryItem, InventoryUnit  # pylint: disable=import-outside-toplevel
-    from plantings.models import PlantCohort, SpecificPlantLocation  # pylint: disable=import-outside-toplevel
-    from seedtrays.models import SeedTray  # pylint: disable=import-outside-toplevel
 
     if subtree:
         lookup, value = 'in', list(location.subtree().values_list('pk', flat=True))

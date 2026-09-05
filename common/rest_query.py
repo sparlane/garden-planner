@@ -1,4 +1,4 @@
-"""Small strict parsers shared by inventory query-string filters."""
+"""Small strict query-string parsers with no application dependencies."""
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
