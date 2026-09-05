@@ -43,6 +43,13 @@ Features
   - Individual plant locations are the source of truth for new transplant workflows. Legacy aggregate rows remain visible and completable but cannot be created through the REST API.
   - Views compute germination/maturity dates (using variety/plant metadata) and return JSON summaries without double-counting legacy and individual transplant representations.
 
+- Nursery planning feedback
+  - Planning assumptions are effective-dated, and each version is compared with the batches sown under it: assumed and observed germination rate, stage durations, stage loss rates, and clusters per tray, each with the sample size behind it.
+  - A batch is measured against the assumption its approved plan requirement names, or failing that the version in force on the day it was first sown.
+  - Only closed sowings count towards germination, only fills a variety had to itself count towards tray density, and only intervals a later observation closed count towards stage duration, so a figure that can still move is never read as a result.
+  - A divergence beyond the workspace tolerance is flagged on the assumption, published as `/reports/assumption-variance/` with a CSV export, and projected as a review task until somebody revises the assumption.
+  - Revision is offered pre-filled with the observed values and written only when an operator accepts it. Nothing is auto-tuned: the new version is created, the one it replaces is closed the day before, and every plan snapshot calculated under it is left as recorded.
+
 - REST API (Django REST Framework)
   - REST viewsets / routers for seeds, seed packets, plantings and varieties.
   - Plantings router exposes direct-sow, seed-tray, read-only legacy transplant, specific-plant, and specific-plant-location resources.
@@ -52,6 +59,7 @@ Features
   - One configured workspace owns every catalog, garden, tray, and planting record.
   - The workspace can switch between Garden and Nursery presentation without converting or deleting data.
   - Workspace settings include currency, default tax percentage, IANA timezone, and metric or imperial display preferences.
+  - Nursery workspaces also set how far an observed planning figure may drift from the assumption that predicted it, and how many batches have to sit behind an observation before that drift is flagged.
   - Nursery mode adds a plant register that searches current plants as operational inventory. Its counts describe the whole filter rather than the visible page, and it is the one paginated collection in the API; every other list still returns a bare array.
   - Nursery mode also adds a Work screen. Germination, approved-plan milestone, stage-age, recorded readiness, and maturity facts project into the queue without copying source dates; manual and recurring work retains assignment, snooze, completion, skip, and reopen history.
 

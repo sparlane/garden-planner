@@ -8,6 +8,7 @@ import {
   addPlanningAssumption,
   addPlanningStageAssumption,
   addProductionPlan,
+  getAssumptionVariance,
   getGrowthStages,
   getPlanningAssumptions,
   getPlanVariance,
@@ -17,6 +18,7 @@ import {
 } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
 import { queryKeys } from '../query'
+import { AssumptionVariancePanel, ReviseAssumptionForm } from './assumption_variance'
 import { NurseryPlanningAssumption, NurseryProductionPlan } from '../types/plantings'
 import { PlantVariety } from '../types/plants'
 
@@ -171,6 +173,12 @@ function StageAssumptionForm({ assumption }: { assumption: NurseryPlanningAssump
 }
 
 function Assumptions({ values, varieties }: { values: Array<NurseryPlanningAssumption>; varieties: Array<PlantVariety> }) {
+  // What actually happened, fetched once for every version rather than per
+  // row: the comparison is the reason to keep or change a figure, so it
+  // belongs beside the figure rather than only in the report.
+  const variance = useQuery({ queryKey: queryKeys.plantings.assumptionVariance, queryFn: ({ signal }) => getAssumptionVariance(signal) })
+  const [revising, setRevising] = React.useState<number | null>(null)
+  const observed = new Map((variance.data ?? []).map((row) => [row.assumption_id, row]))
   return (
     <Card className="mb-3">
       <Card.Header>Yield and stage assumptions</Card.Header>
@@ -181,11 +189,17 @@ function Assumptions({ values, varieties }: { values: Array<NurseryPlanningAssum
             <Accordion.Item eventKey={String(value.pk)} key={value.pk}>
               <Accordion.Header>
                 {value.variety_name} · from {value.effective_from} · {Number(value.germination_rate) * 100}% germination
+                {observed.get(value.pk)?.diverged && (
+                  <Badge bg="warning" text="dark" className="ms-2">
+                    Diverged from what happened
+                  </Badge>
+                )}
               </Accordion.Header>
               <Accordion.Body>
                 <div>
                   {value.seeds_per_cluster} seed(s) per cluster · {value.tray_density} clusters per tray
                 </div>
+                <AssumptionVariancePanel variance={observed.get(value.pk)} />
                 {value.stages.length === 0 ? (
                   <Alert variant="warning" className="mt-2 mb-0">
                     Add at least one stage before calculating demand.
@@ -217,6 +231,13 @@ function Assumptions({ values, varieties }: { values: Array<NurseryPlanningAssum
                   </Table>
                 )}
                 <StageAssumptionForm assumption={value} />
+                {revising === value.pk ? (
+                  <ReviseAssumptionForm assumption={value} onDone={() => setRevising(null)} />
+                ) : (
+                  <Button className="mt-2" size="sm" variant="outline-primary" onClick={() => setRevising(value.pk)}>
+                    Revise from what happened
+                  </Button>
+                )}
               </Accordion.Body>
             </Accordion.Item>
           ))}

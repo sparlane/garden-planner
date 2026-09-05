@@ -1181,6 +1181,87 @@ interface NurseryPlanningAssumption {
   created: string
 }
 
+interface NurseryAssumptionStageVariance {
+  stage_id: number
+  stage_name: string
+  sequence: number
+  assumed_lead_days: number
+  observed_lead_days: string | null
+  lead_days_variance: string | null
+  lead_days_samples: number
+  lead_days_diverged: boolean
+  assumed_loss_rate: string
+  observed_loss_rate: string | null
+  loss_rate_variance: string | null
+  entered_units: number
+  lost_units: number
+  loss_rate_diverged: boolean
+}
+
+interface NurseryAssumptionVariance {
+  assumption_id: number
+  variety_id: number
+  variety_name: string
+  effective_from: string
+  effective_until: string | null
+  superseded_by: number | null
+  batches: number
+  first_sown: string | null
+  last_sown: string | null
+  minimum_samples: number
+  sample_sufficient: boolean
+  tolerance_percent: string
+  assumed_germination_rate: string
+  observed_germination_rate: string | null
+  germination_variance: string | null
+  germination_diverged: boolean
+  germination_sown: number
+  germination_observed: number
+  germination_sowings: number
+  germination_open_sowings: number
+  assumed_tray_density: number
+  observed_tray_density: string | null
+  tray_density_variance: string | null
+  tray_density_diverged: boolean
+  tray_fills: number
+  tray_fills_shared: number
+  unstaged_losses: number
+  mixed_population_batches: number
+  stages: Array<NurseryAssumptionStageVariance>
+  diverged: boolean
+  divergences: Array<string>
+}
+
+interface NurseryAssumptionRevisionStage {
+  stage: number
+  stage_name: string
+  sequence: number
+  lead_days: number
+  lead_days_source: 'observed' | 'assumed'
+  lead_days_samples: number
+  loss_rate: string
+  loss_rate_source: 'observed' | 'assumed'
+  loss_rate_samples: number
+  location: number | null
+  capacity_basis: string
+  capacity_per_plant: string
+}
+
+interface NurseryAssumptionRevisionDraft {
+  assumption: number
+  variety: number
+  variety_name: string
+  effective_from: string
+  germination_rate: string
+  germination_rate_source: 'observed' | 'assumed'
+  germination_rate_capped: boolean
+  seeds_per_cluster: number
+  tray_density: number
+  tray_density_source: 'observed' | 'assumed'
+  stages: Array<NurseryAssumptionRevisionStage>
+  variance: NurseryAssumptionVariance
+}
+
 interface NurseryPlanVariance {
   demand: number
   batch: number | null
@@ -1311,6 +1392,10 @@ export {
   NurseryPlanMilestone,
   NurseryPlanRequirement,
   NurseryPlanVariance,
+  NurseryAssumptionRevisionDraft,
+  NurseryAssumptionRevisionStage,
+  NurseryAssumptionStageVariance,
+  NurseryAssumptionVariance,
   NurseryPlanningAssumption,
   NurseryPlanningStageAssumption,
   NurseryProductionPlan
