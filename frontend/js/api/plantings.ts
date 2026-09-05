@@ -56,6 +56,8 @@ import {
   GrowthCatalogValue,
   NurseryPlanDemand,
   NurseryPlanVariance,
+  NurseryAssumptionRevisionDraft,
+  NurseryAssumptionVariance,
   NurseryPlanningAssumption,
   NurseryPlanningStageAssumption,
   NurseryProductionPlan
@@ -302,6 +304,21 @@ function addPlanningAssumption(data: object): Promise<NurseryPlanningAssumption>
   return csrfPost('/plantings/planning-assumptions/', data).then((response) => response.json() as Promise<NurseryPlanningAssumption>)
 }
 
+// The comparison is fetched for every version at once rather than per row:
+// the server reads the whole workspace's batches either way, and asking once
+// per assumption on screen would run that work again for each of them.
+function getAssumptionVariance(signal?: AbortSignal): Promise<Array<NurseryAssumptionVariance>> {
+  return fetchAsJson<Array<NurseryAssumptionVariance>>('/plantings/planning-assumptions/variance/', signal)
+}
+
+function getAssumptionRevisionDraft(assumptionPk: number, signal?: AbortSignal): Promise<NurseryAssumptionRevisionDraft> {
+  return fetchAsJson<NurseryAssumptionRevisionDraft>(`/plantings/planning-assumptions/${assumptionPk}/revision-draft/`, signal)
+}
+
+function reviseAssumption(assumptionPk: number, data: object): Promise<NurseryPlanningAssumption> {
+  return csrfPost(`/plantings/planning-assumptions/${assumptionPk}/revise/`, data).then((response) => response.json() as Promise<NurseryPlanningAssumption>)
+}
+
 function addPlanningStageAssumption(data: object): Promise<NurseryPlanningStageAssumption> {
   return csrfPost('/plantings/planning-stage-assumptions/', data).then((response) => response.json() as Promise<NurseryPlanningStageAssumption>)
 }
@@ -474,6 +491,9 @@ export {
   saveGrowthCatalog,
   getPlanningAssumptions,
   addPlanningAssumption,
+  getAssumptionVariance,
+  getAssumptionRevisionDraft,
+  reviseAssumption,
   addPlanningStageAssumption,
   getProductionPlans,
   addProductionPlan,

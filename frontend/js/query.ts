@@ -153,6 +153,8 @@ const queryKeys = {
     cohort: (cohortPk: number) => ['plantings', 'cohorts', 'detail', cohortPk] as const,
     cohortAvailability: (filters: CohortFilters) => ['plantings', 'cohorts', 'availability', filters] as const,
     planningAssumptions: ['plantings', 'planningAssumptions'] as const,
+    assumptionVariance: ['plantings', 'planningAssumptions', 'variance'] as const,
+    assumptionRevisionDraft: (assumptionPk: number) => ['plantings', 'planningAssumptions', assumptionPk, 'revision-draft'] as const,
     productionPlans: ['plantings', 'productionPlans'] as const,
     productionPlanVariance: (planPk: number) => ['plantings', 'productionPlans', planPk, 'variance'] as const,
     harvestReportAll: ['plantings', 'harvestReport'] as const,

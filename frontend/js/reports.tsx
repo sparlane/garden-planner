@@ -10,7 +10,7 @@ import { DashboardRow, LossByCause, ProductionTotals, ProfitabilityTotals, Repor
 import { CohortLossCause } from './types/plantings'
 import { formatDateTime, formatMoney } from './utils'
 
-type ReportPage = 'dashboard' | 'inventory' | 'production' | 'germination' | 'orders' | 'profitability' | 'traceability' | 'gst'
+type ReportPage = 'dashboard' | 'inventory' | 'production' | 'germination' | 'assumptions' | 'orders' | 'profitability' | 'traceability' | 'gst'
 
 // The period totals and the rows every total is the sum of. They are two
 // reports rather than one because the second is the evidence for the first,
@@ -48,7 +48,7 @@ function QualityWarnings({ report }: { report: ReportEnvelope }) {
 function ResultTable({ report }: { report: ReportEnvelope }) {
   const rows = report.results
   if (rows.length === 0) return <Alert variant="secondary">No source records match these filters.</Alert>
-  const columns = Object.keys(rows[0]).filter((column) => !['input_layers', 'reconciliation', 'remaining_balances', 'commerce', 'fulfillments'].includes(column))
+  const columns = Object.keys(rows[0]).filter((column) => !['input_layers', 'reconciliation', 'remaining_balances', 'commerce', 'fulfillments', 'stages'].includes(column))
   return (
     <div className="table-responsive">
       <Table striped hover size="sm">
@@ -61,7 +61,7 @@ function ResultTable({ report }: { report: ReportEnvelope }) {
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={String(row.source_id ?? row.movement_id ?? row.batch_id ?? row.order_id ?? row.lot_id ?? index)}>
+            <tr key={String(row.source_id ?? row.movement_id ?? row.batch_id ?? row.assumption_id ?? row.order_id ?? row.lot_id ?? index)}>
               {columns.map((column) => (
                 <td key={column}>{displayValue(row[column])}</td>
               ))}
@@ -124,14 +124,16 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
     updated.delete('page')
     setParams(updated)
   }
-  const dated = ['dashboard', 'production', 'germination', 'orders', 'profitability', 'gst'].includes(page)
+  const dated = ['dashboard', 'production', 'germination', 'assumptions', 'orders', 'profitability', 'gst'].includes(page)
   const gstEntries = page === 'gst' && params.get('section') === 'entries'
   return (
     <Card body className="mb-3">
       <Row className="g-2">
         {dated && <FilterField label="From" name="date_from" type="date" params={params} update={update} />}
         {dated && <FilterField label="To" name="date_to" type="date" params={params} update={update} />}
-        {['production', 'germination', 'profitability'].includes(page) && <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />}
+        {['production', 'germination', 'assumptions', 'profitability'].includes(page) && (
+          <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />
+        )}
         {['production', 'germination', 'profitability'].includes(page) && <FilterField label="Batch ID" name="batch" type="number" params={params} update={update} />}
         {page === 'germination' && <FilterField label="Tray ID" name="seed_tray" type="number" params={params} update={update} />}
         {page === 'germination' && (
@@ -141,6 +143,17 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
               <option value="">Every sowing</option>
               <option value="false">Closed sowings only</option>
               <option value="true">Still germinating</option>
+            </Form.Select>
+          </Col>
+        )}
+        {page === 'assumptions' && <FilterField label="Assumption ID" name="assumption" type="number" params={params} update={update} />}
+        {page === 'assumptions' && (
+          <Col md={3}>
+            <Form.Label>Diverged from what happened</Form.Label>
+            <Form.Select value={params.get('diverged') ?? ''} onChange={(event) => update('diverged', event.target.value)}>
+              <option value="">Every assumption</option>
+              <option value="true">Beyond tolerance only</option>
+              <option value="false">Within tolerance only</option>
             </Form.Select>
           </Col>
         )}
@@ -335,11 +348,13 @@ function ReportsView({ page }: { page: ReportPage }) {
         ? INVENTORY_SECTIONS[section]
         : page === 'production'
           ? 'production-batches'
-          : page === 'traceability'
-            ? traceId
-              ? `traceability/${traceType === 'lot' ? 'lots' : 'plants'}/${traceId}`
-              : ''
-            : page
+          : page === 'assumptions'
+            ? 'assumption-variance'
+            : page === 'traceability'
+              ? traceId
+                ? `traceability/${traceType === 'lot' ? 'lots' : 'plants'}/${traceId}`
+                : ''
+              : page
   const apiParams = new URLSearchParams(params)
   ;['section', 'trace_type', 'trace_id'].forEach((key) => apiParams.delete(key))
   const query = useQuery({
