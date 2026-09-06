@@ -18,7 +18,7 @@ from locations.occupancy import check_capacity, container_contribution, tray_con
 from plantings.models import SeedTrayPlanting, SpecificPlantLocation
 from seedtrays.services import create_tray_for_unit
 from labels.models import LabelPrintItem
-from sales.models import SalesOrderAllocation
+from sales.models import FulfillmentLine, SalesOrderAllocation
 from .models import (
     COST_DECIMAL_PLACES,
     MONEY_DECIMAL_PLACES,
@@ -280,12 +280,16 @@ def promised_bulk(lot, location):
     does for a plant.
     """
 
-    total = SalesOrderAllocation.objects.filter(
-        stock_lot=lot,
-        source_location=location,
+    allocations = SalesOrderAllocation.objects.filter(
+        stock_lot=lot, source_location=location,
         status=SalesOrderAllocation.Status.RESERVED,
-    ).aggregate(total=Sum('quantity'))['total']
-    return Decimal(total or 0)
+    )
+    promised = allocations.aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+    shipped = FulfillmentLine.objects.filter(
+        allocation__in=allocations, fulfillment__reversal_of__isnull=True,
+        fulfillment__reversal__isnull=True,
+    ).aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+    return promised - shipped
 
 
 def unpromised_bulk(lot, location):

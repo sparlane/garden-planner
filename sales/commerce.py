@@ -29,6 +29,7 @@ from inventory.ledger import (
     post_stock_movement,
     post_unit_movement,
     reverse_movement,
+    unpromised_bulk,
 )
 from inventory.models import InventoryItem, StockMovement
 from plantings.movement import move_specific_plant
@@ -42,7 +43,7 @@ from plantings.lifecycle import (
 )
 from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
 
-from .calculations import line_position_amounts, money, proportional_refund
+from .calculations import line_position_amounts, measured_amounts, money, proportional_refund
 from .cohort_stock import (
     dispatch_cohort_stock,
     recost_cohort_batches,
@@ -74,6 +75,7 @@ from .models import (
     SalesReturn,
     SalesReturnLine,
 )
+from .quantities import measured, positive_quantity, remaining_quantity, returned_quantity, shipped_quantity
 
 
 def request_fingerprint(values):
@@ -130,13 +132,7 @@ def _effective_return_line_ids(order):
 
 
 def dispatched_quantity(allocation):
-    """Return how many of a line's units one allocation ships.
-
-    Deriving it from the allocation rather than snapshotting a column on
-    `FulfillmentLine` keeps the promise and the dispatch the same figure —
-    which is why this is `promised_units` read from the dispatch side rather
-    than a second count of its own.
-    """
+    """Return the promised units; dispatch snapshots carry what actually left."""
     return allocation.promised_units
 
 
@@ -154,10 +150,9 @@ def outstanding_quantity(order):
     unit and a shortfall says one will never be supplied, and an order with
     neither left outstanding is finished whichever way its units went.
     """
-    returned = _effective_return_line_ids(order)
     fulfilled = sum(
-        dispatched_quantity(row.allocation)
-        for row in _effective_fulfillment_lines(order).exclude(pk__in=returned)
+        row.quantity - returned_quantity(row)
+        for row in _effective_fulfillment_lines(order)
     )
     requested = sum(order.lines.values_list('quantity', flat=True))
     return requested - shortfall_quantity(order) - fulfilled, fulfilled
@@ -194,22 +189,24 @@ def _occupied_positions(row):
     the run is derived from where it started and how many it shipped.
     """
     start = row.commercial_position
-    return set(range(start, start + dispatched_quantity(row.allocation)))
+    return set(range(start, start + int(row.quantity)))
 
 
 def _available_positions(order):
     returned = _effective_return_line_ids(order)
     occupied = {}
     for row in _effective_fulfillment_lines(order).exclude(pk__in=returned):
+        if measured(row):
+            continue
         occupied.setdefault(row.allocation.line_id, set()).update(
             _occupied_positions(row),
         )
     return {
         line.pk: [
-            position for position in range(1, line.quantity + 1)
+            position for position in range(1, int(line.quantity) + 1)
             if position not in occupied.get(line.pk, set())
         ]
-        for line in order.lines.all()
+        for line in order.lines.all() if not measured(line)
     }
 
 
@@ -279,7 +276,7 @@ def _require_ready_cohorts(allocations, cohorts):
     })
 
 
-def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfilled_at):
+def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfilled_at, quantity):
     """Ship anonymous stock by the count and value it from its own lot.
 
     One `SALE` movement for the whole allocation, not one per pot: the stock
@@ -291,7 +288,7 @@ def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfil
         order.workspace, user,
         MovementRequest(
             lot=lot, movement_type=StockMovement.MovementType.SALE,
-            quantity=Decimal(allocation.quantity),
+            quantity=quantity,
             source=allocation.source_location,
             occurred_at=fulfilled_at, reason='Order fulfillment',
             reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
@@ -299,19 +296,26 @@ def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfil
     )
     if lot.base_unit_cost is None:
         return movement, None, True
-    return movement, money(Decimal(allocation.quantity) * lot.base_unit_cost), False
+    return movement, money(quantity * lot.base_unit_cost), False
 
 
 @transaction.atomic
 def post_fulfillment(order, user, *, operation_key, allocation_ids,
-                     packaging=(), fulfilled_at=None, notes=''):
+                     packaging=(), fulfilled_at=None, notes='', quantities=None):
     """Dispatch exact reserved stock and recognize its revenue and direct cost."""
+    try:
+        quantities = {int(key): positive_quantity(value).normalize() for key, value in (quantities or {}).items()}
+    except (ValueError, TypeError) as exc:
+        raise ValidationError({'quantities': 'Quantity keys must be allocation IDs.'}) from exc
+    if set(quantities) - set(allocation_ids):
+        raise ValidationError({'quantities': 'Quantities must name selected allocations.'})
     requested_at = fulfilled_at
     fulfilled_at = fulfilled_at or timezone.now()
     payload = {
         'order': order.pk, 'allocations': sorted(set(allocation_ids)),
         'packaging': sorted(packaging, key=lambda row: (row['lot'].pk, row['source'].pk)),
         'fulfilled_at': requested_at, 'notes': notes,
+        **({'quantities': quantities} if quantities else {}),
     }
     fingerprint = request_fingerprint(payload)
     existing = _existing(Fulfillment, order.workspace, operation_key, fingerprint)
@@ -365,12 +369,28 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         request_fingerprint=fingerprint, created_by=_actor(user),
     )
     for allocation in allocations:
-        needed = dispatched_quantity(allocation)
-        taken = _take_positions(positions[allocation.line_id], needed)
-        if taken is None:
-            raise ValidationError({'allocations': 'A line has no remaining quantity to fulfill.'})
-        amounts = _position_amounts(allocation.line, taken)
-        position = taken[0]
+        remaining = remaining_quantity(allocation)
+        needed = quantities.get(allocation.pk, remaining)
+        if needed <= 0 or needed > remaining:
+            raise ValidationError({'quantities': 'Dispatch exceeds the remaining reservation.'})
+        if measured(allocation):
+            prior = sum(
+                row.quantity - returned_quantity(row)
+                for row in _effective_fulfillment_lines(order).filter(allocation__line=allocation.line)
+            )
+            short = allocation.line.shortfalls.aggregate(total=Sum('quantity'))['total'] or 0
+            if prior + short + needed > allocation.line.quantity:
+                raise ValidationError({'quantities': 'Dispatch exceeds the outstanding line quantity.'})
+            amounts = measured_amounts(allocation.line, prior, needed)
+            position = 1
+        else:
+            if needed != allocation.promised_units:
+                raise ValidationError({'quantities': 'Counted allocations must be dispatched whole.'})
+            taken = _take_positions(positions[allocation.line_id], int(needed))
+            if taken is None:
+                raise ValidationError({'allocations': 'A line has no remaining quantity to fulfill.'})
+            amounts = _position_amounts(allocation.line, taken)
+            position = taken[0]
         lifecycle_event = None
         stock_movement = None
         cohort_event = None
@@ -387,7 +407,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         elif allocation.stock_lot_id:
             stock_movement, cogs_amount, provisional = _dispatch_counted_stock(
                 order, user, allocation, lots[allocation.stock_lot_id],
-                fulfillment=fulfillment, fulfilled_at=fulfilled_at,
+                fulfillment=fulfillment, fulfilled_at=fulfilled_at, quantity=needed,
             )
         elif allocation.plant_cohort_id:
             cohort_event, cogs_amount, provisional = dispatch_cohort_stock(
@@ -416,6 +436,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             provisional = provisional or any(flag for _, flag in rider_costs)
         line = FulfillmentLine.objects.create(
             fulfillment=fulfillment, allocation=allocation,
+            quantity=needed, unit=allocation.unit,
             commercial_position=position, cogs_amount=cogs_amount,
             cogs_provisional=provisional, currency_code=order.currency_code,
             tax_treatment=allocation.line.tax_treatment,
@@ -427,7 +448,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             sell_rider(line, placement, user, fulfilled_at, rider_cost)
             passengers.append(placement.specific_plant)
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
-            status=SalesOrderAllocation.Status.FULFILLED, updated=timezone.now(),
+            status=(SalesOrderAllocation.Status.FULFILLED if needed == remaining
+                    else SalesOrderAllocation.Status.RESERVED), updated=timezone.now(),
         )
         ReservationEvent.objects.create(
             allocation=allocation, event_type=ReservationEvent.EventType.FULFILLED,
@@ -506,7 +528,12 @@ def record_shortfall(order, user, *, allocation_id, quantity, reason, recorded_a
             'allocation': 'Select an active reservation on this order.',
         })
     promised = allocation.promised_units
-    if not 1 <= quantity <= promised:
+    quantity = positive_quantity(quantity)
+    if (not measured(allocation) and quantity != quantity.to_integral_value()):
+        raise ValidationError({'quantity': 'Counted shortfalls must be whole numbers.'})
+    if shipped_quantity(allocation):
+        raise ValidationError({'allocation': 'A partly dispatched allocation cannot be short-supplied.'})
+    if not 0 < quantity <= promised:
         raise ValidationError({
             'quantity': f'A shortfall covers between 1 and {promised} of this promise.',
         })
@@ -530,7 +557,7 @@ def record_shortfall(order, user, *, allocation_id, quantity, reason, recorded_a
             plant_cohort=allocation.plant_cohort,
             stock_lot=allocation.stock_lot,
             source_location=allocation.source_location,
-            quantity=promised - quantity,
+            quantity=promised - quantity, unit=allocation.unit,
             status=SalesOrderAllocation.Status.RESERVED,
             expires_at=allocation.expires_at,
             created_by=_actor(user),
@@ -576,18 +603,15 @@ def record_payment(order, user, *, operation_key, paid_on, amount, method,
 
 
 def _validate_whole_allocation_returns(items, lines):
-    """Refuse a part-return of a counted dispatch, naming what it must be.
-
-    A partial return would have to split one fulfillment line's recognised
-    money and its cost of sale, which is precisely the rewrite task 114 exists
-    to do; inventing it here would put a migration over posted money inside a
-    feature. Refusing with the number in hand beats silently returning the lot.
-    """
+    """Enforce whole counted returns and the measured unreturned ceiling."""
     for item in items:
         line = lines[item['fulfillment_line'].pk]
         wanted = item.get('quantity')
-        shipped = dispatched_quantity(line.allocation)
-        if wanted is not None and wanted != shipped:
+        shipped = line.quantity
+        wanted = positive_quantity(wanted if wanted is not None else shipped - returned_quantity(line))
+        if wanted > shipped - returned_quantity(line):
+            raise ValidationError({'items': 'Returned quantity exceeds the unreturned dispatch.'})
+        if not measured(line) and wanted != shipped:
             raise ValidationError({
                 'items': (
                     f'Fulfillment line {line.pk} shipped {shipped} and can only '
@@ -597,7 +621,7 @@ def _validate_whole_allocation_returns(items, lines):
 
 
 def _return_counted_stock(order, user, line, sales_return, *, returned_at,
-                          reason, outcome, destination):
+                          reason, outcome, destination, quantity):
     """Bring back a whole counted dispatch, and write off what is unsaleable.
 
     The stock comes back to where it was shipped from unless the operator
@@ -606,7 +630,6 @@ def _return_counted_stock(order, user, line, sales_return, *, returned_at,
     facts rather than quietly never taking the stock back.
     """
     allocation = line.allocation
-    quantity = Decimal(allocation.quantity)
     lot = allocation.stock_lot
     return_movement = post_stock_movement(
         order.workspace, user,
@@ -653,6 +676,9 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
     if not reason.strip() or not items:
         raise ValidationError({'reason': 'A reason and at least one returned item are required.'})
     order = SalesOrder.objects.select_for_update(of=('self',)).get(pk=order.pk)
+    existing = _existing(SalesReturn, order.workspace, operation_key, fingerprint)
+    if existing:
+        return existing
     line_ids = [row['fulfillment_line'].pk for row in items]
     lines = {
         row.pk: row for row in FulfillmentLine.objects.select_for_update(of=('self',))
@@ -662,7 +688,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         .filter(fulfillment__order=order, fulfillment__reversal__isnull=True,
                 pk__in=line_ids).order_by('pk')
     }
-    if len(lines) != len(set(line_ids)):
+    if len(lines) != len(line_ids):
         raise ValidationError({'items': 'One or more fulfillment lines are unavailable.'})
     _validate_whole_allocation_returns(items, lines)
     lock_lots(order.workspace, [
@@ -674,7 +700,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         if row.allocation.plant_cohort_id
     ])
     already = _effective(SalesReturn.objects.filter(order=order)).filter(
-        lines__fulfillment_line_id__in=line_ids,
+        lines__fulfillment_line_id__in=[pk for pk, row in lines.items() if not measured(row)],
     ).exists()
     if already:
         raise ValidationError({'items': 'One or more items were already returned.'})
@@ -691,6 +717,8 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         line = lines[item['fulfillment_line'].pk]
         allocation = line.allocation
         outcome = item['outcome']
+        quantity = positive_quantity(item.get('quantity') if item.get('quantity') is not None
+                                     else line.quantity - returned_quantity(line))
         destination = item.get('destination')
         if outcome != SalesReturnLine.Outcome.DISCARDED and destination is None:
             raise ValidationError({'destination': 'Available and quarantined returns need a destination.'})
@@ -711,7 +739,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
             return_movement, discard_movement = _return_counted_stock(
                 order, user, line, sales_return,
                 returned_at=returned_at, reason=reason, outcome=outcome,
-                destination=destination,
+                destination=destination, quantity=quantity,
             )
         elif allocation.plant_id:
             lifecycle_event = record_lifecycle_event(
@@ -761,12 +789,18 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
                 )
         SalesReturnLine.objects.create(
             sales_return=sales_return, fulfillment_line=line, outcome=outcome,
+            quantity=quantity, unit=line.unit,
+            cogs_amount=(
+                None if line.cogs_amount is None else
+                money(line.cogs_amount * (returned_quantity(line) + quantity) / line.quantity) - money(line.cogs_amount * returned_quantity(line) / line.quantity)
+            ),
             destination=destination, lifecycle_event=lifecycle_event,
             cohort_event=cohort_event,
             return_movement=return_movement, discard_movement=discard_movement,
         )
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
-            status=SalesOrderAllocation.Status.RETURNED, updated=timezone.now(),
+            status=(SalesOrderAllocation.Status.RESERVED if remaining_quantity(allocation) > 0
+                    else SalesOrderAllocation.Status.RETURNED), updated=timezone.now(),
         )
     if quarantined_plants or quarantined_cohorts:
         if observation_type is None or severity is None:
@@ -876,7 +910,6 @@ def _refund_line(refund, share):
 def order_commerce_summary(order):
     """Return separate physical, revenue, refund, and cash totals."""
     fulfilled = list(_effective_fulfillment_lines(order))
-    returned_ids = _effective_return_line_ids(order)
     refunds = _effective(order.refunds.all())
     payments = _effective(order.payments.all())
     fulfilled_total = sum((row.total_incl_tax for row in fulfilled), Decimal('0'))
@@ -901,7 +934,7 @@ def order_commerce_summary(order):
         # it as a single reservation beside a requested fifty would say the
         # order was barely started when it is completely covered.
         'reserved_quantity': sum(
-            dispatched_quantity(row) for row in SalesOrderAllocation.objects.filter(
+            remaining_quantity(row) for row in SalesOrderAllocation.objects.filter(
                 line__order=order, status=SalesOrderAllocation.Status.RESERVED,
             )
         ),
@@ -910,7 +943,7 @@ def order_commerce_summary(order):
         # the reservation rather than folded into it, because a salesperson
         # answering "when can you deliver?" needs the two figures apart.
         'committed_forward_quantity': sum(
-            dispatched_quantity(row) for row in SalesOrderAllocation.objects.filter(
+            remaining_quantity(row) for row in SalesOrderAllocation.objects.filter(
                 line__order=order,
                 status=SalesOrderAllocation.Status.RESERVED,
                 plant_cohort__lifecycle_state=PlantCohort.LifecycleState.GROWING,
@@ -918,11 +951,10 @@ def order_commerce_summary(order):
         ),
         'short_quantity': shortfall_quantity(order),
         'fulfilled_quantity': sum(
-            dispatched_quantity(row.allocation) for row in fulfilled
+            row.quantity for row in fulfilled
         ),
         'returned_quantity': sum(
-            dispatched_quantity(row.allocation)
-            for row in fulfilled if row.pk in returned_ids
+            returned_quantity(row) for row in fulfilled
         ),
         'fulfilled_total_incl_tax': f'{money(fulfilled_total):f}',
         'refunded_total_incl_tax': f'{money(refunded_total):f}',
@@ -949,6 +981,13 @@ def _refuse_reversed(original, field, label):
         raise ValidationError({field: f'This {label} is already reversed.'})
 
 
+def _check_restored_reservations(sources):
+    """A reversal must leave enough physical stock for every remaining hold."""
+    for lot, location in sources:
+        if unpromised_bulk(lot, location) < 0:
+            raise ValidationError({'reversal': 'This reversal would consume stock reserved by another sale.'})
+
+
 @transaction.atomic
 def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=None):
     """Append a fulfillment reversal and restore its exact reservations."""
@@ -959,6 +998,7 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
     existing = _existing(Fulfillment, original.workspace, operation_key, fingerprint)
     if existing:
         return existing
+    SalesOrder.objects.select_for_update().get(pk=original.order_id)
     original = Fulfillment.objects.select_for_update(of=('self',)).prefetch_related(
         'lines__allocation', 'packaging_lines',
     ).get(pk=original.pk)
@@ -969,6 +1009,12 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
     if _effective(Refund.objects.filter(
             lines__fulfillment_line__fulfillment=original)).exists():
         raise ValidationError({'fulfillment': 'Reverse linked refunds first.'})
+    sources = [
+        (line.allocation.stock_lot, line.stock_movement.source)
+        for line in original.lines.all()
+        if line.allocation.stock_lot_id and line.stock_movement_id
+    ]
+    lock_lots(original.workspace, [lot.pk for lot, _location in sources])
     lock_cohorts(original.workspace, [
         line.allocation.plant_cohort_id for line in original.lines.all()
         if line.allocation.plant_cohort_id
@@ -994,6 +1040,7 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
         )
     for packaging in original.packaging_lines.all():
         reverse_movement(packaging.stock_movement, user, reason, occurred_at)
+    _check_restored_reservations(sources)
     recost_container_plants(
         [rider.plant for rider in riders_of(original)], user, reason,
     )
@@ -1012,6 +1059,7 @@ def reverse_payment(original, user, *, operation_key, reason, occurred_at=None):
     existing = _existing(Payment, original.workspace, operation_key, fingerprint)
     if existing:
         return existing
+    SalesOrder.objects.select_for_update().get(pk=original.order_id)
     original = Payment.objects.select_for_update(of=('self',)).get(pk=original.pk)
     _refuse_reversed(original, 'payment', 'payment')
     if _effective(original.refunds.all()).exists():
@@ -1037,6 +1085,7 @@ def reverse_refund(original, user, *, operation_key, reason, occurred_at=None):
     existing = _existing(Refund, original.workspace, operation_key, fingerprint)
     if existing:
         return existing
+    SalesOrder.objects.select_for_update().get(pk=original.order_id)
     original = Refund.objects.select_for_update(of=('self',)).get(pk=original.pk)
     _refuse_reversed(original, 'refund', 'refund')
     return Refund.objects.create(
@@ -1060,12 +1109,19 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
     existing = _existing(SalesReturn, original.workspace, operation_key, fingerprint)
     if existing:
         return existing
+    SalesOrder.objects.select_for_update().get(pk=original.order_id)
     original = SalesReturn.objects.select_for_update(of=('self',)).prefetch_related(
         'lines__fulfillment_line__allocation',
     ).get(pk=original.pk)
     _refuse_reversed(original, 'sales_return', 'return')
     if _effective(original.refunds.all()).exists():
         raise ValidationError({'sales_return': 'Reverse linked refunds first.'})
+    sources = [
+        (line.fulfillment_line.allocation.stock_lot, line.return_movement.destination)
+        for line in original.lines.all()
+        if line.fulfillment_line.allocation.stock_lot_id and line.return_movement_id
+    ]
+    lock_lots(original.workspace, [lot.pk for lot, _location in sources])
     lock_cohorts(original.workspace, [
         line.fulfillment_line.allocation.plant_cohort_id
         for line in original.lines.all()
@@ -1101,7 +1157,12 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
             reverse_lifecycle_event(line.lifecycle_event, user, reason, occurred_at)
         SalesOrderAllocation.objects.filter(
             pk=line.fulfillment_line.allocation_id,
-        ).update(status=SalesOrderAllocation.Status.FULFILLED, updated=timezone.now())
+        ).update(
+            status=(SalesOrderAllocation.Status.RESERVED
+                    if remaining_quantity(line.fulfillment_line.allocation) > 0
+                    else SalesOrderAllocation.Status.FULFILLED), updated=timezone.now(),
+        )
+    _check_restored_reservations(sources)
     # Closing the case comes last on purpose. A release records the fact that a
     # quarantined plant recovered, and this reversal says the return that
     # quarantined it never happened at all. Reversing the return facts first

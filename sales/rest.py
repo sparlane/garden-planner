@@ -3,6 +3,8 @@
 # pylint: disable=too-many-ancestors,missing-class-docstring
 # pylint: disable=missing-function-docstring,abstract-method
 
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import QueryDict
 from rest_framework import mixins, routers, serializers, status, viewsets
@@ -94,6 +96,17 @@ def _cohort_requests(data):
     ]
 
 
+class CommerceQuantityField(serializers.DecimalField):
+    """Keep whole-number clients compatible and fractional quantities exact."""
+
+    def __init__(self, **kwargs):
+        super().__init__(max_digits=20, decimal_places=9, min_value=Decimal('0.000000001'), **kwargs)
+
+    def to_representation(self, value):
+        value = Decimal(value)
+        return int(value) if value == value.to_integral_value() else format(value, 'f')
+
+
 class CustomerSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Editable customer details without exposing workspace ownership."""
 
@@ -115,13 +128,15 @@ class ReservationEventSerializer(serializers.ModelSerializer):
 class AllocationSerializer(serializers.ModelSerializer):
     """One pending or historical promise: an identity, or a count on a pool."""
 
+    quantity = CommerceQuantityField()
+
     events = ReservationEventSerializer(many=True, read_only=True)
     asset_code = serializers.CharField(source='inventory_unit.asset_code', read_only=True, allow_null=True)
     competing_claims = serializers.SerializerMethodField()
 
     class Meta:
         model = SalesOrderAllocation
-        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'stock_lot', 'plant_cohort', 'source_location', 'quantity', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
+        fields = ['pk', 'plant', 'inventory_unit', 'asset_code', 'stock_lot', 'plant_cohort', 'source_location', 'quantity', 'unit', 'status', 'expires_at', 'created_by', 'created', 'updated', 'events', 'competing_claims']
         read_only_fields = fields
 
     def get_competing_claims(self, allocation):
@@ -152,7 +167,7 @@ class AllocationSerializer(serializers.ModelSerializer):
                 'order': claim.line.order_id,
                 'order_number': claim.line.order.order_number,
                 'status': claim.status,
-                'quantity': claim.quantity,
+                'quantity': CommerceQuantityField().to_representation(claim.quantity),
             }
             for claim in claims
         ]
@@ -160,6 +175,8 @@ class AllocationSerializer(serializers.ModelSerializer):
 
 class ShortfallSerializer(serializers.ModelSerializer):
     """One commitment the nursery gave up unsupplied, and what replaced it."""
+
+    quantity = CommerceQuantityField()
 
     class Meta:
         model = SalesOrderShortfall
@@ -170,6 +187,8 @@ class ShortfallSerializer(serializers.ModelSerializer):
 class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Editable commercial terms and read-only concrete allocations."""
 
+    quantity = CommerceQuantityField()
+
     allocations = AllocationSerializer(many=True, read_only=True)
     shortfalls = ShortfallSerializer(many=True, read_only=True)
     prices_include_tax = serializers.BooleanField(source='order.prices_include_tax', read_only=True)
@@ -178,7 +197,7 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
         model = SalesOrderLine
         fields = [
             'pk', 'order', 'line_type', 'variety', 'item', 'description',
-            'quantity', 'unit_price', 'tax_rate', 'tax_treatment',
+            'quantity', 'unit', 'unit_price', 'tax_rate', 'tax_treatment',
             'discount_type', 'discount_value',
             'prices_include_tax', 'gross_ex_tax', 'discount_ex_tax',
             'subtotal_ex_tax', 'tax_total', 'total_incl_tax', 'allocations',
@@ -280,7 +299,7 @@ class LotRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-
 
     lot = serializers.IntegerField(min_value=1)
     location = serializers.IntegerField(min_value=1)
-    quantity = serializers.IntegerField(min_value=1)
+    quantity = CommerceQuantityField()
 
 
 class CohortRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
@@ -351,7 +370,7 @@ class ShortfallRequestSerializer(ActionSerializer):  # pylint: disable=abstract-
     """
 
     allocation = serializers.IntegerField(min_value=1)
-    quantity = serializers.IntegerField(min_value=1)
+    quantity = CommerceQuantityField()
     reason = serializers.CharField(allow_blank=False)
     recorded_at = serializers.DateTimeField(required=False)
 
@@ -376,10 +395,12 @@ class CommerceRecordSerializer(serializers.ModelSerializer):
 
 
 class FulfillmentLineSerializer(serializers.ModelSerializer):
+    quantity = CommerceQuantityField()
+
     class Meta:
         model = FulfillmentLine
         fields = [
-            'pk', 'allocation', 'commercial_position', 'gross_ex_tax',
+            'pk', 'allocation', 'quantity', 'unit', 'commercial_position', 'gross_ex_tax',
             'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
             'total_incl_tax', 'tax_treatment', 'cogs_amount', 'cogs_provisional',
             'currency_code', 'lifecycle_event', 'stock_movement',
@@ -419,10 +440,12 @@ class PaymentSerializer(CommerceRecordSerializer):
 
 
 class SalesReturnLineSerializer(serializers.ModelSerializer):
+    quantity = CommerceQuantityField()
+
     class Meta:
         model = SalesReturnLine
         fields = [
-            'pk', 'fulfillment_line', 'outcome', 'destination',
+            'pk', 'fulfillment_line', 'quantity', 'unit', 'cogs_amount', 'outcome', 'destination',
             'lifecycle_event', 'return_movement', 'discard_movement',
         ]
 
@@ -472,6 +495,7 @@ class FulfillmentWriteSerializer(ActionSerializer):
     allocation_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1), allow_empty=False,
     )
+    quantities = serializers.DictField(child=CommerceQuantityField(), required=False)
     packaging = PackagingWriteSerializer(many=True, required=False, default=list)
     fulfilled_at = serializers.DateTimeField(required=False)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
@@ -488,13 +512,7 @@ class PaymentWriteSerializer(ActionSerializer):
 
 
 class ReturnItemWriteSerializer(serializers.Serializer):  # pylint: disable=abstract-method
-    """One dispatched item coming back, with what physically happens to it.
-
-    `quantity` is optional and exists to be checked rather than obeyed: a
-    counted dispatch returns whole or not at all, so naming a smaller figure
-    earns a refusal that says how many actually shipped instead of a silent
-    return of the lot.
-    """
+    """Physical disposition and optional measured quantity to return."""
 
     fulfillment_line = serializers.PrimaryKeyRelatedField(
         queryset=FulfillmentLine.objects.all(),
@@ -503,7 +521,7 @@ class ReturnItemWriteSerializer(serializers.Serializer):  # pylint: disable=abst
     destination = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(), required=False, allow_null=True,
     )
-    quantity = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    quantity = CommerceQuantityField(required=False, allow_null=True)
 
 
 class ReturnWriteSerializer(ActionSerializer):

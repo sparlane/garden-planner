@@ -10,6 +10,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
+from django.db.models.functions import Floor
 
 from inventory.models import InventoryItem, InventoryUnit, MONEY_DECIMAL_PLACES, MONEY_MAX_DIGITS
 from inventory.models import StockLot, StockMovement
@@ -37,20 +38,18 @@ LOT_BACKED_TRACKING_MODES = frozenset({
 #: generated identity constraint says, and the columns listed against it are
 #: filled with it and null against every other target.
 #:
-#: An identity is one thing standing somewhere known, so naming a place and a
-#: count for it would be two ways to say the same figure, and they would be
-#: free to disagree. A lot is one pool spread over many places, so a counted
-#: draw on it has to say which place as well as how many. A cohort stands in
-#: exactly one place of its own, so a draw on it says only how many.
+#: Every target carries a quantity. Identity quantities are constrained to
+#: exactly one each. A lot is spread over places, so its draw also names a
+#: source location; identities and cohorts already have their own location.
 ALLOCATION_TARGET_FIELDS = {
-    'plant': (),
-    'inventory_unit': (),
+    'plant': ('quantity',),
+    'inventory_unit': ('quantity',),
     'stock_lot': ('source_location', 'quantity'),
     'plant_cohort': ('quantity',),
 }
 
-#: Every column that only a counted draw uses, in one place, so the generated
-#: condition can null out the ones the chosen target does not fill.
+#: Auxiliary target columns, so the generated condition can null out the
+#: location when the target already identifies its own place.
 COUNTED_ALLOCATION_FIELDS = ('source_location', 'quantity')
 
 
@@ -246,7 +245,8 @@ class SalesOrderLine(models.Model):
     variety = models.ForeignKey(PlantVariety, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
     item = models.ForeignKey(InventoryItem, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
     description = models.CharField(max_length=255)
-    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    quantity = models.DecimalField(max_digits=20, decimal_places=9, validators=[MinValueValidator(Decimal('0.000000001'))])
+    unit = models.CharField(max_length=16, choices=UnitCode.choices, default=UnitCode.EACH)
     unit_price = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, validators=[MinValueValidator(ZERO_MONEY)])
     tax_rate = models.DecimalField(max_digits=7, decimal_places=4, validators=[MinValueValidator(Decimal('0')), MaxValueValidator(Decimal('100'))])
     # Left blank on the way in and derived in clean(): a rate above zero is a
@@ -271,7 +271,10 @@ class SalesOrderLine(models.Model):
                 condition=(models.Q(line_type__in=('seedling', 'cohort_quantity'), variety__isnull=False, item__isnull=True) | models.Q(line_type__in=('unit', 'lot_quantity'), variety__isnull=True, item__isnull=False)),
                 name='sales_line_target_matches_type',
             ),
-            models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_line_quantity_positive'),
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name='sales_line_quantity_positive'),
+            models.CheckConstraint(condition=models.Q(unit__in=UnitCode.values), name='sales_line_unit_controlled'),
+            models.CheckConstraint(condition=(models.Q(line_type='lot_quantity') | models.Q(unit='each')), name='sales_line_identity_unit'),
+            models.CheckConstraint(condition=(~models.Q(unit='each') | models.Q(quantity=Floor('quantity'))), name='sales_line_each_whole'),
             # A standard-rated supply at a zero rate, or a zero-rated one at 15%,
             # would each put the wrong figure in a different box of the return.
             models.CheckConstraint(
@@ -313,9 +316,9 @@ class SalesOrderLine(models.Model):
     def _lot_item_target_errors(self):
         """A counted line promises an item by the count, not by identity.
 
-        Anonymous stock is only countable if the item is lot-controlled, and
-        only sellable a whole one at a time if it is counted in `each`. A
-        purely serialized item has no anonymous pool to draw from at all.
+        The inventory base unit is also the commercial unit, so reservations
+        and ledger movements compare the same quantities without conversion.
+        A serialized item has no anonymous pool to draw from.
         """
         if not self.item_id or self.variety_id:
             return {'item': 'A counted line requires one inventory item.'}
@@ -323,8 +326,8 @@ class SalesOrderLine(models.Model):
             return {'item': 'The item belongs to a different workspace.'}
         if self.item.tracking_mode not in LOT_BACKED_TRACKING_MODES:
             return {'item': 'Select a lot-tracked or mixed inventory item.'}
-        if self.item.base_unit != UnitCode.EACH:
-            return {'item': 'Counted stock is sold in each.'}
+        if self.unit != self.item.base_unit:
+            return {'unit': 'Use the inventory item base unit for lot stock.'}
         return {}
 
     def clean(self):
@@ -334,6 +337,8 @@ class SalesOrderLine(models.Model):
         if self.order.status not in EDITABLE_ORDER_STATUSES:
             errors['order'] = 'Confirmed commercial terms are immutable.'
         errors.update(self._target_errors())
+        if self.line_type != self.LineType.LOT_QUANTITY and self.unit != UnitCode.EACH:
+            errors['unit'] = 'Identified and cohort stock is sold in each.'
         entered_gross = Decimal(self.quantity or 0) * Decimal(self.unit_price or 0)
         if self.discount_type == self.DiscountType.NONE and self.discount_value != ZERO_MONEY:
             errors['discount_value'] = 'No-discount lines require a zero value.'
@@ -414,6 +419,12 @@ class SalesOrderAllocation(models.Model):
     second answer to a question the cohort already answers.
     """
 
+    def __init__(self, *args, **kwargs):
+        pool = any(kwargs.get(field) for field in ('stock_lot', 'stock_lot_id', 'plant_cohort', 'plant_cohort_id'))
+        if not args and 'quantity' not in kwargs and pool:
+            kwargs['quantity'] = None
+        super().__init__(*args, **kwargs)
+
     class Status(models.TextChoices):
         """Reservation state, including task 45's future fulfillment state."""
 
@@ -435,9 +446,8 @@ class SalesOrderAllocation(models.Model):
     stock_lot = models.ForeignKey(StockLot, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
     plant_cohort = models.ForeignKey(PlantCohort, on_delete=models.PROTECT, null=True, blank=True, related_name='sales_allocations')
     source_location = models.ForeignKey(Location, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
-    # Null for an identity target, whose quantity is always exactly one. Task
-    # 114 widens this to a decimal rather than inventing a column.
-    quantity = models.PositiveIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    quantity = models.DecimalField(max_digits=20, decimal_places=9, default=1, validators=[MinValueValidator(Decimal('0.000000001'))])
+    unit = models.CharField(max_length=16, choices=UnitCode.choices, default=UnitCode.EACH)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, editable=False)
     expires_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
@@ -452,9 +462,13 @@ class SalesOrderAllocation(models.Model):
                 name='sales_allocation_exactly_one_target',
             ),
             models.CheckConstraint(
-                condition=(models.Q(quantity__isnull=True) | models.Q(quantity__gte=1)),
+                condition=models.Q(quantity__gt=0),
                 name='sales_allocation_quantity_positive',
             ),
+            models.CheckConstraint(condition=models.Q(unit__in=UnitCode.values), name='sales_allocation_unit_controlled'),
+            models.CheckConstraint(condition=(models.Q(stock_lot__isnull=False) | models.Q(unit='each')), name='sales_allocation_identity_unit'),
+            models.CheckConstraint(condition=(~models.Q(unit='each') | models.Q(quantity=Floor('quantity'))), name='sales_allocation_each_whole'),
+            models.CheckConstraint(condition=(models.Q(plant__isnull=True, inventory_unit__isnull=True) | models.Q(quantity=1)), name='sales_allocation_identity_quantity'),
             models.UniqueConstraint(fields=['plant'], condition=models.Q(status='reserved'), name='sales_one_active_plant_reservation'),
             models.UniqueConstraint(fields=['inventory_unit'], condition=models.Q(status='reserved'), name='sales_one_active_unit_reservation'),
         ]
@@ -471,13 +485,10 @@ class SalesOrderAllocation(models.Model):
     def promised_units(self):
         """Return how many of its line's units this one allocation covers.
 
-        An identity is exactly one, which is why `quantity` is null on it
-        rather than stored as a one nothing may contradict. It lives here
-        because every reader of an allocation needs the same answer: a row is
-        not a unit once one allocation can promise fifty pots, and a screen or
-        a projection counting rows would call a covered line barely started.
+        Counted callers retain integers; measured callers retain decimals.
+        Database constraints require an identity to carry exactly one each.
         """
-        return 1 if self.quantity is None else self.quantity
+        return int(self.quantity) if self.unit == UnitCode.EACH else self.quantity
 
     def clean(self):
         super().clean()
@@ -495,6 +506,8 @@ class SalesOrderAllocation(models.Model):
             'stock_lot': self._lot_errors,
             'plant_cohort': self._cohort_errors,
         }[self.target_kind]()
+        if self.unit != self.line.unit:
+            errors['unit'] = 'An allocation must use its order line unit.'
         if errors:
             raise ValidationError(errors)
 
@@ -558,7 +571,7 @@ class SalesOrderAllocation(models.Model):
     def save(self, *args, **kwargs):
         if self.pk:
             previous = type(self).objects.get(pk=self.pk)
-            identity = ('line_id', 'plant_id', 'inventory_unit_id', 'stock_lot_id', 'plant_cohort_id', 'source_location_id', 'quantity')
+            identity = ('line_id', 'plant_id', 'inventory_unit_id', 'stock_lot_id', 'plant_cohort_id', 'source_location_id', 'quantity', 'unit')
             if any(getattr(previous, name) != getattr(self, name) for name in identity):
                 raise ValidationError('Allocation identities are immutable.')
         self.full_clean()
@@ -647,7 +660,7 @@ class SalesOrderShortfall(models.Model):
         blank=True,
         related_name='replaced_commitment',
     )
-    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    quantity = models.DecimalField(max_digits=20, decimal_places=9, validators=[MinValueValidator(Decimal('0.000000001'))])
     reason = models.TextField()
     recorded_at = models.DateTimeField()
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
@@ -656,7 +669,7 @@ class SalesOrderShortfall(models.Model):
     class Meta:
         ordering = ['recorded_at', 'pk']
         constraints = [
-            models.CheckConstraint(condition=models.Q(quantity__gte=1), name='sales_shortfall_quantity_positive'),
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name='sales_shortfall_quantity_positive'),
         ]
 
     def __str__(self):
@@ -802,9 +815,16 @@ class FulfillmentLine(models.Model):
         related_name='fulfillment_line',
     )
 
+    quantity = models.DecimalField(max_digits=20, decimal_places=9, default=1)
+    unit = models.CharField(max_length=16, choices=UnitCode.choices, default=UnitCode.EACH)
+
     class Meta:
         ordering = ['pk']
         constraints = [
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name='sales_fulfilled_quantity_positive'),
+            models.CheckConstraint(condition=models.Q(unit__in=UnitCode.values), name='sales_fulfilled_unit_controlled'),
+            models.CheckConstraint(condition=(~models.Q(unit='each') | models.Q(quantity=Floor('quantity'))), name='sales_fulfilled_each_whole'),
+
             models.UniqueConstraint(
                 fields=['fulfillment', 'allocation'],
                 name='sales_fulfillment_line_allocation_unique',
@@ -1014,12 +1034,31 @@ class SalesReturnLine(models.Model):
         related_name='sales_return_discard_line',
     )
 
+    cogs_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+    quantity = models.DecimalField(max_digits=20, decimal_places=9, default=1)
+    unit = models.CharField(max_length=16, choices=UnitCode.choices, default=UnitCode.EACH)
+
+    def save(self, *args, **kwargs):
+        if not self.pk and self.cogs_amount is None and self.unit == UnitCode.EACH:
+            source = self.fulfillment_line
+            if self.quantity == source.quantity:
+                self.cogs_amount = source.cogs_amount
+        super().save(*args, **kwargs)
+
     class Meta:
         ordering = ['pk']
-        constraints = [models.UniqueConstraint(
-            fields=['sales_return', 'fulfillment_line'],
-            name='sales_return_line_fulfillment_unique',
-        )]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(quantity__gt=0), name='sales_returned_quantity_positive'),
+            models.CheckConstraint(condition=models.Q(unit__in=UnitCode.values), name='sales_returned_unit_controlled'),
+            models.CheckConstraint(condition=(~models.Q(unit='each') | models.Q(quantity=Floor('quantity'))), name='sales_returned_each_whole'),
+            models.UniqueConstraint(
+                fields=['sales_return', 'fulfillment_line'],
+                name='sales_return_line_fulfillment_unique',
+            ),
+        ]
 
 
 class Refund(ImmutableCommerceModel):
