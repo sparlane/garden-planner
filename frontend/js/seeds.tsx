@@ -23,12 +23,14 @@ import {
   getSeeds,
   postSeedPacketReceipt,
   reconcileSeedPacket,
+  updateSeed,
   updateSeedPacketReceipt
 } from './api/seeds'
-import { addSupplier, getSuppliers } from './api/supplies'
+import { addSupplier, getSuppliers, updateSupplier } from './api/supplies'
+import { RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { ReceiptSettlement } from './inventory/settlement'
 import { queryKeys } from './query'
-import { ApiError, formatQuantity } from './utils'
+import { ApiError, errorsByField, formatQuantity } from './utils'
 
 interface NewSeedSupplierRowProps {
   done: () => void
@@ -129,73 +131,99 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
 
 interface SeedSupplierRowProps {
   supplier: Supplier
+  onRetire: (active: boolean) => void
 }
 
-class SeedSupplierRow extends React.Component<SeedSupplierRowProps> {
-  render() {
-    return (
-      <tr>
-        <td>
-          {this.props.supplier.name}
-          {this.props.supplier.is_system_default && (
-            <Badge className="ms-2" bg="secondary">
-              System default
-            </Badge>
-          )}
-        </td>
-        <td>
-          <a href={this.props.supplier.website}>{this.props.supplier.website}</a>
-        </td>
-        <td>
-          <div>{this.props.supplier.address || '—'}</div>
-          <div>{this.props.supplier.gst_status === 'registered' ? `GST ${this.props.supplier.gst_number}` : this.props.supplier.gst_status}</div>
-        </td>
-        <td>{this.props.supplier.notes}</td>
-      </tr>
-    )
-  }
+function SeedSupplierRow({ supplier, onRetire }: SeedSupplierRowProps) {
+  return (
+    <tr className={retiredRowClass(supplier.active)}>
+      <td>
+        {supplier.name}
+        {supplier.is_system_default && (
+          <Badge className="ms-2" bg="secondary">
+            System default
+          </Badge>
+        )}
+        <RetiredBadge active={supplier.active} />
+      </td>
+      <td>
+        <a href={supplier.website}>{supplier.website}</a>
+      </td>
+      <td>
+        <div>{supplier.address || '—'}</div>
+        <div>{supplier.gst_status === 'registered' ? `GST ${supplier.gst_number}` : supplier.gst_status}</div>
+      </td>
+      <td>{supplier.notes}</td>
+      <td>{!supplier.is_system_default && <RetireButton active={supplier.active} onChange={onRetire} />}</td>
+    </tr>
+  )
 }
 
 function SeedSuppliersTable() {
   const queryClient = useQueryClient()
   const [showSupplierAdd, setShowSupplierAdd] = React.useState(false)
+  const [showRetired, setShowRetired] = React.useState(false)
+  const [retireError, setRetireError] = React.useState<string | null>(null)
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,
     queryFn: ({ signal }) => getSuppliers(signal)
   })
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all })
   const supplierMutation = useMutation({
     mutationFn: addSupplier,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all })
+    onSuccess: invalidate
+  })
+  const retireMutation = useMutation({
+    mutationFn: ({ pk, active }: { pk: number; active: boolean }) => updateSupplier(pk, { active }),
+    onSuccess: invalidate
   })
 
   async function createSupplier(data: SupplierCreate) {
     await supplierMutation.mutateAsync(data)
   }
 
+  async function retire(pk: number, active: boolean) {
+    setRetireError(null)
+    try {
+      await retireMutation.mutateAsync({ pk, active })
+    } catch (error) {
+      setRetireError(errorsByField(error).active ?? 'The supplier could not be changed.')
+    }
+  }
+
   const rows = []
   if (showSupplierAdd) {
     rows.push(<NewSeedSupplierRow key="new" createSupplier={createSupplier} done={() => setShowSupplierAdd(false)} />)
   }
-  for (const supplier of suppliers) {
-    rows.push(<SeedSupplierRow key={supplier.pk} supplier={supplier} />)
+  for (const supplier of suppliers.filter((candidate) => candidate.active || showRetired)) {
+    rows.push(<SeedSupplierRow key={supplier.pk} supplier={supplier} onRetire={(active) => retire(supplier.pk, active)} />)
   }
   return (
-    <Table>
-      <thead>
-        <tr>
-          <td>
-            Name{' '}
-            <Button variant="link" className="p-0 align-baseline" aria-label="Add supplier" onClick={() => setShowSupplierAdd(true)}>
-              +
-            </Button>
-          </td>
-          <td>Website</td>
-          <td>Tax identity</td>
-          <td>Notes</td>
-        </tr>
-      </thead>
-      <tbody>{rows}</tbody>
-    </Table>
+    <>
+      {retireError && (
+        <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
+          {retireError}
+        </Alert>
+      )}
+      <Form.Check type="switch" id="show-retired-suppliers" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+      <Table>
+        <thead>
+          <tr>
+            <td>
+              Name{' '}
+              <Button variant="link" className="p-0 align-baseline" aria-label="Add supplier" onClick={() => setShowSupplierAdd(true)}>
+                +
+              </Button>
+            </td>
+            <td>Website</td>
+            <td>Tax identity</td>
+            <td>Notes</td>
+            <td>Actions</td>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </Table>
+    </>
   )
 }
 
@@ -301,16 +329,8 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
   }
 
   render() {
-    const suppliers = []
-    for (const s in this.props.suppliers) {
-      const supplierData = this.props.suppliers[s]
-      suppliers.push({ value: supplierData.pk, label: supplierData.name })
-    }
-    const varieties = []
-    for (const v in this.props.varieties) {
-      const varietyData = this.props.varieties[v]
-      varieties.push({ value: varietyData.pk, label: varietyData.name })
-    }
+    const suppliers = activeChoices(this.props.suppliers).map((supplier) => ({ value: supplier.pk, label: supplier.name }))
+    const varieties = activeChoices(this.props.varieties).map((variety) => ({ value: variety.pk, label: variety.name }))
     return (
       <tr>
         <td>
@@ -347,30 +367,37 @@ interface SeedRowProps {
   suppliers: Array<Supplier>
   varieties: Array<PlantVariety>
   seed: Seed
+  onRetire: (active: boolean) => void
 }
 
-class SeedRow extends React.Component<SeedRowProps> {
-  render() {
-    const supplier = this.props.suppliers.find((s) => s.pk == this.props.seed.supplier)
-    const variety = this.props.varieties.find((v) => v.pk === this.props.seed.plant_variety)
-    return (
-      <tr>
-        <td>{supplier?.name}</td>
-        <td>{variety?.name}</td>
-        <td>{this.props.seed.supplier_code}</td>
-        <td>
-          <a href={this.props.seed.url}>{this.props.seed.url}</a>
-        </td>
-        <td>{this.props.seed.base_unit === 'seed_cluster' ? 'Seed clusters' : 'Seeds'}</td>
-        <td>{this.props.seed.notes}</td>
-      </tr>
-    )
-  }
+function SeedRow({ suppliers, varieties, seed, onRetire }: SeedRowProps) {
+  const supplier = suppliers.find((candidate) => candidate.pk === seed.supplier)
+  const variety = varieties.find((candidate) => candidate.pk === seed.plant_variety)
+  return (
+    <tr className={retiredRowClass(seed.active)}>
+      <td>{supplier?.name}</td>
+      <td>
+        {variety?.name}
+        <RetiredBadge active={seed.active} />
+      </td>
+      <td>{seed.supplier_code}</td>
+      <td>
+        <a href={seed.url}>{seed.url}</a>
+      </td>
+      <td>{seed.base_unit === 'seed_cluster' ? 'Seed clusters' : 'Seeds'}</td>
+      <td>{seed.notes}</td>
+      <td>
+        <RetireButton active={seed.active} onChange={onRetire} />
+      </td>
+    </tr>
+  )
 }
 
 function SeedTable() {
   const queryClient = useQueryClient()
   const [showSeedAdd, setShowSeedAdd] = React.useState(false)
+  const [showRetired, setShowRetired] = React.useState(false)
+  const [retireError, setRetireError] = React.useState<string | null>(null)
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,
     queryFn: ({ signal }) => getSuppliers(signal)
@@ -383,41 +410,63 @@ function SeedTable() {
     queryKey: queryKeys.seeds.catalog,
     queryFn: ({ signal }) => getSeeds(signal)
   })
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.seeds.catalog })
   const seedMutation = useMutation({
     mutationFn: addSeed,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seeds.catalog })
+    onSuccess: invalidate
+  })
+  const retireMutation = useMutation({
+    mutationFn: ({ pk, active }: { pk: number; active: boolean }) => updateSeed(pk, { active }),
+    onSuccess: invalidate
   })
 
   async function createSeed(data: SeedCreate) {
     await seedMutation.mutateAsync(data)
   }
 
+  async function retire(pk: number, active: boolean) {
+    setRetireError(null)
+    try {
+      await retireMutation.mutateAsync({ pk, active })
+    } catch (error) {
+      setRetireError(errorsByField(error).active ?? 'The seed catalog entry could not be changed.')
+    }
+  }
+
   const rows = []
   if (showSeedAdd) {
     rows.push(<NewSeedRow key="new" suppliers={suppliers} varieties={varieties} createSeed={createSeed} done={() => setShowSeedAdd(false)} />)
   }
-  for (const seed of seeds) {
-    rows.push(<SeedRow key={seed.pk} suppliers={suppliers} varieties={varieties} seed={seed} />)
+  for (const seed of seeds.filter((candidate) => candidate.active || showRetired)) {
+    rows.push(<SeedRow key={seed.pk} suppliers={suppliers} varieties={varieties} seed={seed} onRetire={(active) => retire(seed.pk, active)} />)
   }
   return (
-    <Table>
-      <thead>
-        <tr>
-          <td>Supplier</td>
-          <td>Variety</td>
-          <td>Supplier Code</td>
-          <td>Link</td>
-          <td>Inventory unit</td>
-          <td>Notes</td>
-          <td>
-            <Button variant="link" className="p-0 align-baseline" aria-label="Add seed" onClick={() => setShowSeedAdd(true)}>
-              +
-            </Button>
-          </td>
-        </tr>
-      </thead>
-      <tbody>{rows}</tbody>
-    </Table>
+    <>
+      {retireError && (
+        <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
+          {retireError}
+        </Alert>
+      )}
+      <Form.Check type="switch" id="show-retired-seed-catalog" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+      <Table>
+        <thead>
+          <tr>
+            <td>Supplier</td>
+            <td>Variety</td>
+            <td>Supplier Code</td>
+            <td>Link</td>
+            <td>Inventory unit</td>
+            <td>Notes</td>
+            <td>
+              <Button variant="link" className="p-0 align-baseline" aria-label="Add seed" onClick={() => setShowSeedAdd(true)}>
+                +
+              </Button>
+            </td>
+          </tr>
+        </thead>
+        <tbody>{rows}</tbody>
+      </Table>
+    </>
   )
 }
 

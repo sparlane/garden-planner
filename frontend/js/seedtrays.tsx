@@ -2,16 +2,17 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import { Form, Table } from 'react-bootstrap'
+import { Alert, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
 import { SerializedPhysicalState } from './types/inventory'
 import { Location } from './types/locations'
 import { SeedTrayModel, SeedTrayModelCreate } from './types/seedtrays'
-import { getSeedTrayModels, getSeedTrays, addSeedTrayModel } from './api/seedtrays'
+import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, updateSeedTrayModel } from './api/seedtrays'
 import { getLocations } from './api/locations'
-import { formatDate } from './utils'
+import { RetireButton, RetiredBadge, retiredRowClass } from './catalog'
+import { errorsByField, formatDate } from './utils'
 import { queryKeys } from './query'
 
 interface SeedTrayModelNewProps {
@@ -81,47 +82,80 @@ class SeedTrayModelNew extends React.Component<SeedTrayModelNewProps, SeedTrayMo
 function SeedTrayModelsTable() {
   const queryClient = useQueryClient()
   const [showAddRow, setShowAddRow] = React.useState(false)
+  const [showRetired, setShowRetired] = React.useState(false)
+  const [retireError, setRetireError] = React.useState<string | null>(null)
   const { data: seedTrayModels = [] } = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
   })
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.models })
   const modelMutation = useMutation({
     mutationFn: addSeedTrayModel,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.models })
+    onSuccess: invalidate
+  })
+  const retireMutation = useMutation({
+    mutationFn: ({ pk, active }: { pk: number; active: boolean }) => updateSeedTrayModel(pk, { active }),
+    onSuccess: invalidate
   })
 
   async function createModel(data: SeedTrayModelCreate) {
     await modelMutation.mutateAsync(data)
   }
 
+  async function retire(pk: number, active: boolean) {
+    setRetireError(null)
+    try {
+      await retireMutation.mutateAsync({ pk, active })
+    } catch (error) {
+      setRetireError(errorsByField(error).active ?? 'The tray model could not be changed.')
+    }
+  }
+
   return (
-    <Table>
-      <thead>
-        <tr>
-          <th>
-            ID<button onClick={() => setShowAddRow(true)}>+</button>
-          </th>
-          <th>Name</th>
-          <th>Description</th>
-          <th>Size mm (cells)</th>
-          <th>Cell Size (ml)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {showAddRow && <SeedTrayModelNew key="add" createModel={createModel} done={() => setShowAddRow(false)} />}
-        {seedTrayModels.map((model) => (
-          <tr key={model.pk}>
-            <td>{model.pk}</td>
-            <td>{model.identifier}</td>
-            <td>{model.description}</td>
-            <td>
-              {model.x_size}x{model.y_size}x{model.height} ({model.x_cells}x{model.y_cells})
-            </td>
-            <td>{model.cell_size_ml}</td>
+    <>
+      {retireError && (
+        <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
+          {retireError}
+        </Alert>
+      )}
+      <Form.Check type="switch" id="show-retired-tray-models" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+      <Table>
+        <thead>
+          <tr>
+            <th>
+              ID<button onClick={() => setShowAddRow(true)}>+</button>
+            </th>
+            <th>Name</th>
+            <th>Description</th>
+            <th>Size mm (cells)</th>
+            <th>Cell Size (ml)</th>
+            <th>Actions</th>
           </tr>
-        ))}
-      </tbody>
-    </Table>
+        </thead>
+        <tbody>
+          {showAddRow && <SeedTrayModelNew key="add" createModel={createModel} done={() => setShowAddRow(false)} />}
+          {seedTrayModels
+            .filter((model) => model.active || showRetired)
+            .map((model) => (
+              <tr key={model.pk} className={retiredRowClass(model.active)}>
+                <td>{model.pk}</td>
+                <td>
+                  {model.identifier}
+                  <RetiredBadge active={model.active} />
+                </td>
+                <td>{model.description}</td>
+                <td>
+                  {model.x_size}x{model.y_size}x{model.height} ({model.x_cells}x{model.y_cells})
+                </td>
+                <td>{model.cell_size_ml}</td>
+                <td>
+                  <RetireButton active={model.active} onChange={(active) => retire(model.pk, active)} />
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </Table>
+    </>
   )
 }
 

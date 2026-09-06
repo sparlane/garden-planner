@@ -2,11 +2,13 @@ interface PlantFamily {
   pk: number
   name: string
   notes: string | null
+  active: boolean
 }
 
 interface PlantFamilyCreate {
   name: string
   notes?: string
+  active?: boolean
 }
 
 interface PlantingDetails {
@@ -27,6 +29,7 @@ interface Plant extends PlantingDetails {
   name: string
   notes: string | null
   maturity_basis: MaturityBasis
+  active: boolean
 }
 
 interface PlantCreate extends PlantingDetails {
@@ -34,6 +37,7 @@ interface PlantCreate extends PlantingDetails {
   name: string
   notes?: string
   maturity_basis?: MaturityBasis
+  active?: boolean
 }
 
 interface PlantVariety extends PlantingDetails {
@@ -43,6 +47,7 @@ interface PlantVariety extends PlantingDetails {
   notes: string | null
   maturity_basis: MaturityBasis | null
   effective_maturity_basis: MaturityBasis
+  active: boolean
 }
 
 interface PlantVarietyCreate extends PlantingDetails {
@@ -50,6 +55,7 @@ interface PlantVarietyCreate extends PlantingDetails {
   name: string
   notes?: string
   maturity_basis?: MaturityBasis | null
+  active?: boolean
 }
 
 export { MaturityBasis, PlantFamily, Plant, PlantVariety, PlantingDetails, PlantFamilyCreate, PlantCreate, PlantVarietyCreate }

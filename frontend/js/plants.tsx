@@ -6,6 +6,7 @@ import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties, updatePlant, updatePlantFamily, updatePlantVariety } from './api/plants'
+import { RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { queryKeys } from './query'
 import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
 import { ApiError } from './utils'
@@ -263,7 +264,7 @@ function PlantEditor({ plant, families, initialFamily, onSave, onDone }: PlantEd
       <td>
         <Form onSubmit={submit} id={formId}></Form>
         <Form.Select size="sm" form={formId} value={family} isInvalid={'family' in errors} onChange={(event) => setFamily(event.target.value)}>
-          {families.map((value) => (
+          {activeChoices(families, plant?.family).map((value) => (
             <option key={value.pk} value={value.pk}>
               {value.name}
             </option>
@@ -355,7 +356,7 @@ function VarietyEditor({ variety, plants, families, initialPlant, onSave, onDone
       <td>
         <Form onSubmit={submit} id={formId}></Form>
         <Form.Select size="sm" form={formId} value={plant} isInvalid={'plant' in errors} onChange={(event) => setPlant(event.target.value)}>
-          {plants.map((value) => (
+          {activeChoices(plants, variety?.plant).map((value) => (
             <option key={value.pk} value={value.pk}>
               {value.name}
             </option>
@@ -410,38 +411,61 @@ function VarietyEditor({ variety, plants, families, initialPlant, onSave, onDone
 function PlantsView() {
   const queryClient = useQueryClient()
   const [editor, setEditor] = React.useState<Editor | null>(null)
+  const [showRetired, setShowRetired] = React.useState(false)
+  const [retireError, setRetireError] = React.useState<string | null>(null)
   const { data: families = [] } = useQuery({ queryKey: queryKeys.plants.families, queryFn: ({ signal }) => getPlantFamilies(signal) })
   const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.all })
   const createFamily = useMutation({ mutationFn: addPlantFamily, onSuccess: refresh })
-  const editFamily = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: PlantFamilyCreate }) => updatePlantFamily(pk, data), onSuccess: refresh })
+  const editFamily = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: Partial<PlantFamilyCreate> }) => updatePlantFamily(pk, data), onSuccess: refresh })
   const createPlant = useMutation({ mutationFn: addPlant, onSuccess: refresh })
-  const editPlant = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: PlantCreate }) => updatePlant(pk, data), onSuccess: refresh })
+  const editPlant = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: Partial<PlantCreate> }) => updatePlant(pk, data), onSuccess: refresh })
   const createVariety = useMutation({ mutationFn: addPlantVariety, onSuccess: refresh })
-  const editVariety = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: PlantVarietyCreate }) => updatePlantVariety(pk, data), onSuccess: refresh })
+  const editVariety = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: Partial<PlantVarietyCreate> }) => updatePlantVariety(pk, data), onSuccess: refresh })
   const done = () => setEditor(null)
+  // Retirement is refused while something active still hangs off the record,
+  // and the refusal names what is in the way, so it belongs on the screen
+  // rather than only in the global alert.
+  async function retire(save: () => Promise<unknown>) {
+    setRetireError(null)
+    try {
+      await save()
+    } catch (error) {
+      const fields = errorsByField(error)
+      setRetireError(fields.active ?? fields.form ?? 'The change could not be saved.')
+    }
+  }
+  const visibleFamilies = families.filter((family) => family.active || showRetired)
   const rows: Array<React.ReactNode> = []
 
   if (editor?.kind === 'family' && editor.pk === undefined) {
     rows.push(<FamilyEditor key="new-family" onSave={(data) => createFamily.mutateAsync(data)} onDone={done} />)
   }
-  for (const family of families) {
+  for (const family of visibleFamilies) {
     if (editor?.kind === 'family' && editor.pk === family.pk) {
       rows.push(<FamilyEditor key={`family-${family.pk}`} family={family} onSave={(data) => editFamily.mutateAsync({ pk: family.pk, data })} onDone={done} />)
     } else {
       rows.push(
-        <tr key={`family-${family.pk}`}>
-          <td>{family.name}</td>
+        <tr key={`family-${family.pk}`} className={retiredRowClass(family.active)}>
+          <td>
+            {family.name}
+            <RetiredBadge active={family.active} />
+          </td>
           <td colSpan={8}></td>
           <td>{family.notes || '—'}</td>
           <td>
-            <Button size="sm" variant="outline-primary" onClick={() => setEditor({ kind: 'plant', parentPk: family.pk })}>
-              Add plant
-            </Button>{' '}
+            {family.active && (
+              <>
+                <Button size="sm" variant="outline-primary" onClick={() => setEditor({ kind: 'plant', parentPk: family.pk })}>
+                  Add plant
+                </Button>{' '}
+              </>
+            )}
             <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'family', pk: family.pk })}>
               Edit
-            </Button>
+            </Button>{' '}
+            <RetireButton active={family.active} onChange={(active) => retire(() => editFamily.mutateAsync({ pk: family.pk, data: { active } }))} />
           </td>
         </tr>
       )
@@ -449,7 +473,7 @@ function PlantsView() {
     if (editor?.kind === 'plant' && editor.pk === undefined && editor.parentPk === family.pk) {
       rows.push(<PlantEditor key="new-plant" families={families} initialFamily={family.pk} onSave={(data) => createPlant.mutateAsync(data)} onDone={done} />)
     }
-    for (const plant of plants.filter((value) => value.family === family.pk)) {
+    for (const plant of plants.filter((value) => value.family === family.pk && (value.active || showRetired))) {
       if (editor?.kind === 'plant' && editor.pk === plant.pk) {
         rows.push(
           <PlantEditor
@@ -463,9 +487,12 @@ function PlantsView() {
         )
       } else {
         rows.push(
-          <tr key={`plant-${plant.pk}`}>
+          <tr key={`plant-${plant.pk}`} className={retiredRowClass(plant.active)}>
             <td>{family.name}</td>
-            <td>{plant.name}</td>
+            <td>
+              {plant.name}
+              <RetiredBadge active={plant.active} />
+            </td>
             <td></td>
             <td>{displayNumber(plant.spacing)}</td>
             <td>{displayNumber(plant.inter_row_spacing)}</td>
@@ -475,12 +502,17 @@ function PlantsView() {
             <td>{BASIS_LABELS[plant.maturity_basis]}</td>
             <td>{plant.notes || '—'}</td>
             <td>
-              <Button size="sm" variant="outline-primary" onClick={() => setEditor({ kind: 'variety', parentPk: plant.pk })}>
-                Add variety
-              </Button>{' '}
+              {plant.active && (
+                <>
+                  <Button size="sm" variant="outline-primary" onClick={() => setEditor({ kind: 'variety', parentPk: plant.pk })}>
+                    Add variety
+                  </Button>{' '}
+                </>
+              )}
               <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'plant', pk: plant.pk })}>
                 Edit
-              </Button>
+              </Button>{' '}
+              <RetireButton active={plant.active} onChange={(active) => retire(() => editPlant.mutateAsync({ pk: plant.pk, data: { active } }))} />
             </td>
           </tr>
         )
@@ -488,7 +520,7 @@ function PlantsView() {
       if (editor?.kind === 'variety' && editor.pk === undefined && editor.parentPk === plant.pk) {
         rows.push(<VarietyEditor key="new-variety" plants={plants} families={families} initialPlant={plant.pk} onSave={(data) => createVariety.mutateAsync(data)} onDone={done} />)
       }
-      for (const variety of varieties.filter((value) => value.plant === plant.pk)) {
+      for (const variety of varieties.filter((value) => value.plant === plant.pk && (value.active || showRetired))) {
         if (editor?.kind === 'variety' && editor.pk === variety.pk) {
           rows.push(
             <VarietyEditor
@@ -503,10 +535,13 @@ function PlantsView() {
           )
         } else {
           rows.push(
-            <tr key={`variety-${variety.pk}`}>
+            <tr key={`variety-${variety.pk}`} className={retiredRowClass(variety.active)}>
               <td>{family.name}</td>
               <td>{plant.name}</td>
-              <td>{variety.name}</td>
+              <td>
+                {variety.name}
+                <RetiredBadge active={variety.active} />
+              </td>
               <td>{displayNumber(variety.spacing)}</td>
               <td>{displayNumber(variety.inter_row_spacing)}</td>
               <td>{displayNumber(variety.plants_per_square_foot)}</td>
@@ -517,7 +552,8 @@ function PlantsView() {
               <td>
                 <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'variety', pk: variety.pk })}>
                   Edit
-                </Button>
+                </Button>{' '}
+                <RetireButton active={variety.active} onChange={(active) => retire(() => editVariety.mutateAsync({ pk: variety.pk, data: { active } }))} />
               </td>
             </tr>
           )
@@ -533,8 +569,16 @@ function PlantsView() {
           <h2 className="mb-1">Plants</h2>
           <div className="text-muted">Variety values override plant defaults when provided.</div>
         </div>
-        <Button onClick={() => setEditor({ kind: 'family' })}>Add family</Button>
+        <div className="d-flex align-items-center gap-3">
+          <Form.Check type="switch" id="show-retired-catalog" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+          <Button onClick={() => setEditor({ kind: 'family' })}>Add family</Button>
+        </div>
       </div>
+      {retireError && (
+        <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
+          {retireError}
+        </Alert>
+      )}
       <Table responsive hover size="sm" className="align-middle">
         <thead>
           <tr>

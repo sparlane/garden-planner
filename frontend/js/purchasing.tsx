@@ -25,6 +25,7 @@ import {
 } from './api/purchasing'
 import { getInventoryItems, getStockReceipts } from './api/inventory'
 import { getSuppliers } from './api/supplies'
+import { activeChoices } from './catalog'
 import { queryKeys } from './query'
 import { InventoryItem, PurchaseTaxTreatment, StockReceipt, StockReceiptLine } from './types/inventory'
 import { PurchaseOrder, PurchaseOrderLine, SupplierInvoice } from './types/purchasing'
@@ -371,7 +372,7 @@ function Invoices({
             <Form.Label>Supplier</Form.Label>
             <Form.Select value={supplier} onChange={(event) => chooseSupplier(event.target.value)} isInvalid={'supplier' in fieldErrors}>
               <option value="">Select…</option>
-              {suppliers.map((entry) => (
+              {activeChoices(suppliers).map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
                   {entry.name}
                 </option>
@@ -627,7 +628,7 @@ function Requisitions({ suppliers, items }: { suppliers: Awaited<ReturnType<type
           <Col md={3}>
             <Form.Select value={supplier} onChange={(event) => setSupplier(Number(event.target.value))}>
               <option value="">Preferred supplier…</option>
-              {suppliers.map((entry) => (
+              {activeChoices(suppliers).map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
                   {entry.name}
                 </option>
@@ -814,7 +815,7 @@ function Orders({
           <Col md={2}>
             <Form.Select value={supplier} onChange={(event) => setSupplier(Number(event.target.value))}>
               <option value="">Supplier…</option>
-              {suppliers.map((entry) => (
+              {activeChoices(suppliers).map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
                   {entry.name}
                 </option>
@@ -1008,7 +1009,7 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
             <Form.Label htmlFor="expense-supplier">Supplier</Form.Label>
             <Form.Select id="expense-supplier" value={supplier} onChange={(event) => setSupplier(Number(event.target.value))}>
               <option value="">Supplier (optional)…</option>
-              {suppliers.map((entry) => (
+              {activeChoices(suppliers).map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
                   {entry.name}
                 </option>

@@ -17,6 +17,7 @@ import {
   postPlanAction
 } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
+import { activeChoices } from '../catalog'
 import { queryKeys } from '../query'
 import { AssumptionVariancePanel, ReviseAssumptionForm } from './assumption_variance'
 import { NurseryPlanningAssumption, NurseryProductionPlan } from '../types/plantings'
@@ -55,7 +56,7 @@ function AssumptionForm({ varieties }: { varieties: Array<PlantVariety> }) {
           <Form.Label>Variety</Form.Label>
           <Form.Select required value={variety} onChange={(event) => setVariety(event.target.value)}>
             <option value="">Choose…</option>
-            {varieties.map((value) => (
+            {activeChoices(varieties, Number(variety) || undefined).map((value) => (
               <option key={value.pk} value={value.pk}>
                 {value.name}
               </option>
@@ -337,7 +338,7 @@ function DemandForm({ plan, varieties }: { plan: NurseryProductionPlan; varietie
           <Form.Label>Variety</Form.Label>
           <Form.Select required value={variety} onChange={(event) => setVariety(event.target.value)}>
             <option value="">Choose…</option>
-            {varieties.map((value) => (
+            {activeChoices(varieties, Number(variety) || undefined).map((value) => (
               <option key={value.pk} value={value.pk}>
                 {value.name}
               </option>

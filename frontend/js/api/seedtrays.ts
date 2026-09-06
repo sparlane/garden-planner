@@ -13,7 +13,7 @@ import {
   SeedTrayReceiptCreate,
   SeedTrayReceiptResponse
 } from '../types/seedtrays'
-import { csrfPost, fetchAsJson } from '../utils'
+import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 function getSeedTrayModels(signal?: AbortSignal): Promise<Array<SeedTrayModel>> {
   return fetchAsJson<Array<SeedTrayModel>>('/seedtrays/seedtraymodels/', signal)
@@ -21,6 +21,11 @@ function getSeedTrayModels(signal?: AbortSignal): Promise<Array<SeedTrayModel>> 
 
 function addSeedTrayModel(model: SeedTrayModelCreate) {
   return csrfPost('/seedtrays/seedtraymodels/', model)
+}
+
+async function updateSeedTrayModel(pk: number, model: Partial<SeedTrayModelCreate> & { active?: boolean }): Promise<SeedTrayModel> {
+  const response = await csrfPatch(`/seedtrays/seedtraymodels/${pk}/`, model)
+  return response.json() as Promise<SeedTrayModel>
 }
 
 function getSeedTrays(signal?: AbortSignal, filters: SeedTrayFilters = {}): Promise<Array<SeedTray>> {
@@ -96,5 +101,6 @@ export {
   postSerializedUnitAction,
   receiveSeedTrays,
   reopenSeedTrayGeneration,
-  reviewSeedTrayGeneration
+  reviewSeedTrayGeneration,
+  updateSeedTrayModel
 }

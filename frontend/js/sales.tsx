@@ -35,6 +35,7 @@ import { getLocations } from './api/locations'
 import { getHealthObservationTypes } from './api/health'
 import { getCohorts } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
+import { activeChoices } from './catalog'
 import { queryClient, queryKeys } from './query'
 import { CohortFilters, PlantCohort } from './types/plantings'
 import {
@@ -279,7 +280,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
       }),
     onSuccess: () => invalidateSales(order.pk)
   })
-  const targets = namesAVariety(lineType) ? (varieties.data ?? []) : itemsForLineType(items.data ?? [], lineType)
+  const targets = namesAVariety(lineType) ? activeChoices(varieties.data ?? []) : itemsForLineType(items.data ?? [], lineType)
   return (
     <Card body className="mb-3">
       <Card.Title>Add line</Card.Title>

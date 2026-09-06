@@ -7,6 +7,7 @@ import { getInventoryItems, getInventoryUnits, getStockReceipts } from '../api/i
 import { getLocations } from '../api/locations'
 import { getSeedTrayModels } from '../api/seedtrays'
 import { getSuppliers } from '../api/supplies'
+import { activeChoices } from '../catalog'
 import { queryKeys } from '../query'
 import { StockReceiptStatus } from '../types/inventory'
 import { ReceiptEditor } from './receipt_editor'
@@ -67,7 +68,7 @@ function InventoryReceiptsView() {
           receipt={editingReceipt}
           items={items}
           locations={locations}
-          suppliers={suppliers}
+          suppliers={activeChoices(suppliers, editingReceipt?.supplier)}
           units={units}
           seedTrayItemIds={seedTrayItemIds}
           onClosed={closeEditor}

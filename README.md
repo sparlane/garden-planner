@@ -24,6 +24,7 @@ Features
   - Families, plants, varieties, suppliers, seed catalog entries, and tray models are retired rather than deleted: a retired record stops being offered as a choice everywhere, and still reads the same from every planting, harvest, and receipt that already names it.
   - Retiring never cascades. A record is retired only once nothing active hangs off it, and restored only once everything it hangs off is back, so an entry leaving a selector is always something somebody chose.
   - Catalog collections return active and retired records together, because the same list names historical records; `?active=true` narrows one to the choices worth offering.
+  - The Plants, Seeds, and Seed tray screens retire and restore their own records, hide retired ones behind a `Show retired` switch, and say what is in the way when a retirement is refused. Every other screen's write picker offers only what is still in use, through `activeChoices` in `frontend/js/catalog.tsx`; filter dropdowns keep the whole list, because narrowing a register to a retired variety is how somebody reads its history.
 
 - Plants and varieties
   - PlantFamily, Plant and PlantVariety models.

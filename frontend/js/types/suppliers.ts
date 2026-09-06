@@ -7,6 +7,7 @@ interface Supplier {
   website: string
   notes: string
   is_system_default: boolean
+  active: boolean
 }
 
 interface SupplierCreate {
@@ -16,6 +17,7 @@ interface SupplierCreate {
   gst_number?: string
   website?: string
   notes?: string
+  active?: boolean
 }
 
 export { Supplier, SupplierCreate }

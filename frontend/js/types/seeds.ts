@@ -11,6 +11,7 @@ interface Seed {
   notes: string
   inventory_item: number | null
   base_unit: 'seed' | 'seed_cluster' | null
+  active: boolean
 }
 
 interface SeedCreate {
@@ -22,6 +23,7 @@ interface SeedCreate {
   supplier_code?: string
   url?: string
   notes?: string
+  active?: boolean
 }
 
 interface SeedPacketInventory {
