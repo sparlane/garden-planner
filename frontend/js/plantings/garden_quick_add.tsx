@@ -70,7 +70,7 @@ function GardenQuickAddModal({ show, onClose, initialSquare }: GardenQuickAddMod
     queryFn: ({ signal }) => getProductionBatches({ status: 'active' }, signal)
   })
   const { data: seedCatalog = [] } = useQuery({ queryKey: queryKeys.seeds.catalog, queryFn: ({ signal }) => getSeeds(signal) })
-  const { data: seedPackets = [] } = useQuery({ queryKey: queryKeys.seeds.packets.raw, queryFn: ({ signal }) => getSeedPackets(signal) })
+  const { data: seedPackets = [] } = useQuery({ queryKey: queryKeys.seeds.packets.usable, queryFn: ({ signal }) => getSeedPackets(signal) })
   const { data: suppliers = [] } = useQuery({ queryKey: queryKeys.suppliers.all, queryFn: ({ signal }) => getSuppliers(signal) })
   const matchingVarieties = activeChoices(varieties, draft.variety).filter((variety) => variety.plant === draft.plant)
   const matchingBatches = batches.filter((batch) => batch.variety === draft.variety)

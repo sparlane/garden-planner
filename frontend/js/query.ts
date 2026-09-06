@@ -104,8 +104,13 @@ const queryKeys = {
     all: ['seeds'] as const,
     catalog: ['seeds', 'catalog'] as const,
     packets: {
+      // `all` is the invalidation prefix over the three packet lists below it,
+      // which are separate endpoints: `usable` is what a new sowing can be
+      // recorded against, `everyState` keeps the packets that have run out, and
+      // `current` is the summarised form.
       all: ['seeds', 'packets'] as const,
-      raw: ['seeds', 'packets', 'raw'] as const,
+      usable: ['seeds', 'packets', 'usable'] as const,
+      everyState: ['seeds', 'packets', 'every-state'] as const,
       current: ['seeds', 'packets', 'current'] as const
     },
     packetReceipts: ['seeds', 'packetReceipts'] as const
