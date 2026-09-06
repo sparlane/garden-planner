@@ -30,7 +30,7 @@ import {
   postSpecificPlantOutcome
 } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
-import { getSeedPackets, getSeeds } from './api/seeds'
+import { getAllSeedPackets, getSeedPackets, getSeeds } from './api/seeds'
 import { getSeedTrayModels, getSeedTrays, getSeedTrayCells } from './api/seedtrays'
 import { SeedTrayCell } from './types/seedtrays'
 import { getSuppliers } from './api/supplies'
@@ -86,6 +86,12 @@ function packetSelectOptions(packets: Array<SeedPacket>, seeds: Array<Seed>, sup
   })
 }
 
+// Options for every packet whatever its state, keyed by pk. A sowing can name a
+// packet that has since run out, and only this list still describes that packet.
+function indexPacketOptions(packets: Array<SeedPacket>, seeds: Array<Seed>, suppliers: Array<Supplier>, varieties: Array<PlantVariety>): Map<number, PacketOption> {
+  return new Map(packetSelectOptions(packets, seeds, suppliers, varieties).map((option) => [Number(option.value), option]))
+}
+
 function formatPacketOption(option: PacketOption, meta: { context: string }) {
   // formatOptionLabel also renders the chosen value inside the closed control,
   // where a second line would stretch the table row. Codes belong in the menu.
@@ -118,6 +124,7 @@ function selectOptionToPk(option: SelectOption | null): number | undefined {
 
 interface SowingCorrectionPanelProps {
   packetOptions: Array<PacketOption>
+  packetOptionsByPk: Map<number, PacketOption>
   // A garden square row can be a transplant, which carries no packet of its own.
   packet: number | undefined
   sownQuantity: number
@@ -127,10 +134,22 @@ interface SowingCorrectionPanelProps {
 
 // Every sowing is corrected the same way whatever it was sown into, so both
 // planting screens share this panel rather than keeping the fields in step by hand.
-function SowingCorrectionPanel({ packetOptions, packet, sownQuantity, apply, done }: SowingCorrectionPanelProps) {
+function SowingCorrectionPanel({ packetOptions, packetOptionsByPk, packet, sownQuantity, apply, done }: SowingCorrectionPanelProps) {
   const [packetPk, setPacketPk] = React.useState(packet)
   const [quantity, setQuantity] = React.useState(sownQuantity)
   const [reason, setReason] = React.useState('')
+
+  // The packet a sowing came from is often empty by the time anyone corrects
+  // the sowing, and an empty packet is rightly kept out of the options a new
+  // sowing is recorded against. Put that one packet back at the head of the
+  // list so the panel opens naming what was actually sown.
+  const options = React.useMemo(() => {
+    if (packet === undefined || packetOptions.some((option) => option.value === packet)) {
+      return packetOptions
+    }
+    const sownFrom = packetOptionsByPk.get(packet)
+    return sownFrom === undefined ? packetOptions : [sownFrom, ...packetOptions]
+  }, [packet, packetOptions, packetOptionsByPk])
 
   // A correction always replaces one packet with another, so there is no empty
   // state to fall back to: backspace clearing the box must keep the current pick
@@ -154,8 +173,8 @@ function SowingCorrectionPanel({ packetOptions, packet, sownQuantity, apply, don
       <div style={{ minWidth: '280px' }}>
         <Select
           onChange={updatePacketPk}
-          options={packetOptions}
-          value={packetOptions.find((option) => option.value === packetPk) ?? null}
+          options={options}
+          value={options.find((option) => option.value === packetPk) ?? null}
           formatOptionLabel={formatPacketOption}
           filterOption={filterPacketOption}
         />
@@ -385,11 +404,12 @@ function NewSeedTrayPlantingRow({ seeds, seedPackets, packetOptions, seedTrays, 
 interface SeedTrayPlantingRowProps {
   planting: SeedTrayPlantingDetails
   packetOptions: Array<PacketOption>
+  packetOptionsByPk: Map<number, PacketOption>
   completePlanting: (plantingPk: number) => Promise<void>
   correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
+function SeedTrayPlantingRow({ planting, packetOptions, packetOptionsByPk, completePlanting, correctPlanting }: SeedTrayPlantingRowProps) {
   const [correcting, setCorrecting] = React.useState(false)
 
   return (
@@ -426,6 +446,7 @@ function SeedTrayPlantingRow({ planting, packetOptions, completePlanting, correc
         {correcting && (
           <SowingCorrectionPanel
             packetOptions={packetOptions}
+            packetOptionsByPk={packetOptionsByPk}
             packet={planting.seeds_used}
             sownQuantity={planting.quantity}
             apply={(data) => correctPlanting(planting.pk, data)}
@@ -453,8 +474,12 @@ function SeedTrayPlantingTable({ workspace }: { workspace: Workspace }) {
     queryFn: ({ signal }) => getSeeds(signal)
   })
   const { data: seedPackets = [] } = useQuery({
-    queryKey: queryKeys.seeds.packets.raw,
+    queryKey: queryKeys.seeds.packets.usable,
     queryFn: ({ signal }) => getSeedPackets(signal)
+  })
+  const { data: everySeedPacket = [] } = useQuery({
+    queryKey: queryKeys.seeds.packets.everyState,
+    queryFn: ({ signal }) => getAllSeedPackets(signal)
   })
   const { data: plantings = [] } = useQuery({
     queryKey: queryKeys.plantings.currentSeedTrays,
@@ -500,6 +525,7 @@ function SeedTrayPlantingTable({ workspace }: { workspace: Workspace }) {
   // Every row's correction picker offers the same packets, so build the options
   // once here rather than once per row, and only when the source data changes.
   const packetOptions = React.useMemo(() => packetSelectOptions(seedPackets, seeds, suppliers, varieties), [seedPackets, seeds, suppliers, varieties])
+  const everyPacketOptions = React.useMemo(() => indexPacketOptions(everySeedPacket, seeds, suppliers, varieties), [everySeedPacket, seeds, suppliers, varieties])
 
   const rows = []
   if (showPlantingAdd) {
@@ -518,7 +544,16 @@ function SeedTrayPlantingTable({ workspace }: { workspace: Workspace }) {
     )
   }
   for (const planting of plantings) {
-    rows.push(<SeedTrayPlantingRow key={planting.pk} planting={planting} packetOptions={packetOptions} completePlanting={completePlanting} correctPlanting={correctPlanting} />)
+    rows.push(
+      <SeedTrayPlantingRow
+        key={planting.pk}
+        planting={planting}
+        packetOptions={packetOptions}
+        packetOptionsByPk={everyPacketOptions}
+        completePlanting={completePlanting}
+        correctPlanting={correctPlanting}
+      />
+    )
   }
   return (
     <Table>
@@ -651,11 +686,12 @@ function NewGardenSquarePlantingRow({ seeds, seedPackets, packetOptions, gardenB
 interface GardenSquarePlantingRowProps {
   planting: GardenSquarePlanting
   packetOptions: Array<PacketOption>
+  packetOptionsByPk: Map<number, PacketOption>
   completePlanting: (planting: GardenSquarePlanting) => Promise<void>
   correctPlanting: (plantingPk: number, data: SowingCorrection) => Promise<void>
 }
 
-function GardenSquarePlantingRow({ planting, packetOptions, completePlanting, correctPlanting }: GardenSquarePlantingRowProps) {
+function GardenSquarePlantingRow({ planting, packetOptions, packetOptionsByPk, completePlanting, correctPlanting }: GardenSquarePlantingRowProps) {
   const [correcting, setCorrecting] = React.useState(false)
   const planted = planting.transplanted ? `${formatDate(planting.transplanted)} (S: ${formatDate(planting.planted)})` : formatDate(planting.planted)
   const directSowing = !planting.transplanted && planting.specific_plant_pk === undefined
@@ -686,6 +722,7 @@ function GardenSquarePlantingRow({ planting, packetOptions, completePlanting, co
         {correcting && (
           <SowingCorrectionPanel
             packetOptions={packetOptions}
+            packetOptionsByPk={packetOptionsByPk}
             packet={planting.seeds_used}
             sownQuantity={planting.quantity}
             apply={(data) => correctPlanting(planting.planting_pk, data)}
@@ -715,8 +752,12 @@ function GardenSquarePlantingTable({ workspace }: { workspace: Workspace }) {
     queryFn: ({ signal }) => getSeeds(signal)
   })
   const { data: seedPackets = [] } = useQuery({
-    queryKey: queryKeys.seeds.packets.raw,
+    queryKey: queryKeys.seeds.packets.usable,
     queryFn: ({ signal }) => getSeedPackets(signal)
+  })
+  const { data: everySeedPacket = [] } = useQuery({
+    queryKey: queryKeys.seeds.packets.everyState,
+    queryFn: ({ signal }) => getAllSeedPackets(signal)
   })
   const { data: plantings = [] } = useQuery({
     queryKey: queryKeys.plantings.currentGardenSquares,
@@ -826,6 +867,7 @@ function GardenSquarePlantingTable({ workspace }: { workspace: Workspace }) {
   // Every row's correction picker offers the same packets, so build the options
   // once here rather than once per row, and only when the source data changes.
   const packetOptions = React.useMemo(() => packetSelectOptions(seedPackets, seeds, suppliers, varieties), [seedPackets, seeds, suppliers, varieties])
+  const everyPacketOptions = React.useMemo(() => indexPacketOptions(everySeedPacket, seeds, suppliers, varieties), [everySeedPacket, seeds, suppliers, varieties])
 
   const rows = []
   if (showPlantingAdd) {
@@ -853,6 +895,7 @@ function GardenSquarePlantingTable({ workspace }: { workspace: Workspace }) {
           key={planting.transplanting_pk ? 't' + planting.transplanting_pk : planting.planting_pk}
           planting={planting}
           packetOptions={packetOptions}
+          packetOptionsByPk={everyPacketOptions}
           completePlanting={completePlanting}
           correctPlanting={correctPlanting}
         />

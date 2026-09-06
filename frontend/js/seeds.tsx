@@ -958,7 +958,7 @@ function SeedStockTable({ workspace }: { workspace: Workspace }) {
   const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
   const { data: seeds = [] } = useQuery({ queryKey: queryKeys.seeds.catalog, queryFn: ({ signal }) => getSeeds(signal) })
-  const { data: packets = [] } = useQuery({ queryKey: queryKeys.seeds.packets.raw, queryFn: ({ signal }) => getAllSeedPackets(signal) })
+  const { data: packets = [] } = useQuery({ queryKey: queryKeys.seeds.packets.everyState, queryFn: ({ signal }) => getAllSeedPackets(signal) })
   const { data: drafts = [] } = useQuery({ queryKey: queryKeys.seeds.packetReceipts, queryFn: ({ signal }) => getSeedPacketReceipts(signal) })
 
   const invalidateStock = () =>
