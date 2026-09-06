@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework_nested import routers
 
+from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from inventory.ledger import post_receipt, unit_is_in_use, unit_physical_state
 from inventory.models import (
     InventoryItem,
@@ -30,19 +31,20 @@ from .generations import open_generation_for
 from .models import SeedTrayModel, SeedTray, SeedTrayCell, SeedTrayGeneration
 
 
-class SeedTrayModelSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedTrayModelSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a SeedTrayModel
     """
     class Meta:
         model = SeedTrayModel
-        fields = ['pk', 'identifier', 'inventory_item', 'description', 'height', 'x_size', 'y_size', 'x_cells', 'y_cells', 'cell_size_ml']
+        fields = ['pk', 'identifier', 'inventory_item', 'description', 'height', 'x_size', 'y_size', 'x_cells', 'y_cells', 'cell_size_ml', 'active']
         extra_kwargs = {'inventory_item': {'required': False}}
 
     workspace_field_lookups = {'inventory_item': 'workspace'}
 
     def validate(self, data):  # pylint: disable=arguments-renamed
         """Keep cell-grid dimensions stable after trays have been created."""
+        data = super().validate(data)
         errors = {}
         if self.instance is not None and self.instance.seedtray_set.exists():
             for field in ('x_cells', 'y_cells'):
@@ -190,7 +192,7 @@ class NestedSeedTrayCellSerializer(SeedTrayCellSerializer):
         extra_kwargs = {'tray': {'read_only': True}}
 
 
-class SeedTrayModelsViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayModelsViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayModels
     """

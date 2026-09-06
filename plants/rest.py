@@ -3,32 +3,33 @@ Rest access for plants
 """
 from rest_framework import routers, serializers, viewsets
 
+from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .models import PlantFamily, Plant, PlantVariety
 
 
-class PlantFamilySerializer(serializers.ModelSerializer):
+class PlantFamilySerializer(RetirementSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Plant Family
     """
     class Meta:
         model = PlantFamily
-        fields = ['pk', 'name', 'notes']
+        fields = ['pk', 'name', 'notes', 'active']
 
 
-class PlantSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class PlantSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Plant
     """
     class Meta:
         model = Plant
-        fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max', 'maturity_basis']
+        fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max', 'maturity_basis', 'active']
 
     workspace_field_lookups = {'family': 'workspace'}
 
 
-class PlantVarietySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class PlantVarietySerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for Plant Variety
     """
@@ -38,14 +39,14 @@ class PlantVarietySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelS
             'pk', 'plant', 'name', 'notes', 'spacing', 'inter_row_spacing',
             'plants_per_square_foot', 'germination_days_min',
             'germination_days_max', 'maturity_days_min', 'maturity_days_max',
-            'maturity_basis', 'effective_maturity_basis',
+            'maturity_basis', 'effective_maturity_basis', 'active',
         ]
         read_only_fields = ['effective_maturity_basis']
 
     workspace_field_lookups = {'plant': 'workspace'}
 
 
-class PlantFamilyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantFamilyViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Family
     """
@@ -54,7 +55,7 @@ class PlantFamilyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  
     pagination_class = None
 
 
-class PlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plants
     """
@@ -63,7 +64,7 @@ class PlantViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pyli
     pagination_class = None
 
 
-class PlantVarietyViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantVarietyViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Varieties
     """

@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models, transaction
 
+from common.retirement import RetirableModel
 from inventory.models import (
     COST_DECIMAL_PLACES,
     COST_MAX_DIGITS,
@@ -22,7 +23,7 @@ from inventory.units import UnitCode
 from workspaces.models import WorkspaceOwnedModel
 
 
-class SeedTrayModel(WorkspaceOwnedModel):
+class SeedTrayModel(RetirableModel, WorkspaceOwnedModel):
     """
     A seed tray model used for starting seeds
     """

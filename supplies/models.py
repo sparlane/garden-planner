@@ -2,11 +2,12 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
+from common.retirement import RetirableModel
 from tax.ird import normalize_ird_number, validate_ird_number
 from workspaces.models import WorkspaceOwnedModel
 
 
-class Supplier(WorkspaceOwnedModel):
+class Supplier(RetirableModel, WorkspaceOwnedModel):
     """
     A seed supplier
     """
@@ -36,6 +37,8 @@ class Supplier(WorkspaceOwnedModel):
         ),
     )
 
+    retirement_dependants = (('seeds_set', 'seed catalog entries'),)
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -47,6 +50,12 @@ class Supplier(WorkspaceOwnedModel):
 
     def __str__(self):
         return self.name
+
+    def retirement_extra_errors(self):
+        """Keep the fallback a Basic Garden purchase lands on available."""
+        if self.is_system_default and not self.active:
+            return ['The stand-in supplier cannot be retired.']
+        return []
 
     def clean(self):
         """Keep the GST number consistent with the stated registration."""

@@ -1,6 +1,9 @@
 """Reusable REST helpers for the single-workspace deployment boundary."""
 
+from django.db.models import Q
 from rest_framework.exceptions import PermissionDenied
+
+from common.retirement import RetirableModel
 
 from .models import Workspace, get_current_workspace
 
@@ -18,10 +21,25 @@ class CurrentWorkspaceSerializerMixin:  # pylint: disable=too-few-public-methods
             field = fields[field_name]
             queryset = getattr(field, 'queryset', None)
             if queryset is not None:
-                field.queryset = queryset.filter(
-                    **{workspace_lookup: workspace},
-                )
+                queryset = queryset.filter(**{workspace_lookup: workspace})
+                field.queryset = self._offerable(queryset, field_name)
         return fields
+
+    def _offerable(self, queryset, field_name):
+        """Stop a retired catalog record being chosen again.
+
+        Retirement is what takes a record out of the selectors, so the rule
+        belongs beside the workspace filter rather than in each of the fifty
+        serializers that name one. A record already pointing at a retired
+        entry keeps it, because saving an unrelated correction must not
+        silently repoint the record at something else.
+        """
+        if not issubclass(queryset.model, RetirableModel):
+            return queryset
+        current = getattr(self.instance, f'{field_name}_id', None)
+        if current is None:
+            return queryset.filter(active=True)
+        return queryset.filter(Q(active=True) | Q(pk=current))
 
 
 class CurrentWorkspaceViewSetMixin:

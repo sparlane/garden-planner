@@ -10,7 +10,7 @@ module import cycle: neither model module imports the occupancy projection.
 
 | Caller | Intended dependencies |
 | --- | --- |
-| `common` utilities | Python and framework primitives only; no application modules. Shared query parsers live in `common.rest_query`. |
+| `common` utilities | Python and framework primitives only; no application modules. Shared query parsers live in `common.rest_query`, and the catalog retirement rule in `common.retirement`. |
 | Workspace, location, catalog, and stock models | Foundational models and pure validation helpers. No command services, REST endpoints, or router registration. |
 | Cultivation, sales, application, and accounting models | Other models needed to describe their facts. Use string relations where Django requires delayed model resolution. |
 | Read projections (`locations.occupancy`, availability, costing sources, reporting, work projections) | Models and other read projections. Reading another app's facts does not require importing its commands or endpoints. |
