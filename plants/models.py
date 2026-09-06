@@ -3,7 +3,7 @@ Models for plants
 """
 from django.db import models
 
-from common.retirement import RetirableModel
+from common.merging import MergeableModel
 from workspaces.models import WorkspaceOwnedModel
 
 
@@ -14,7 +14,7 @@ class MaturityBasis(models.TextChoices):
     TRANSPLANTING = 'transplanting', 'From transplanting'
 
 
-class PlantFamily(RetirableModel, WorkspaceOwnedModel):
+class PlantFamily(MergeableModel, WorkspaceOwnedModel):
     """
     Plant Family
     """
@@ -27,7 +27,7 @@ class PlantFamily(RetirableModel, WorkspaceOwnedModel):
         return self.name
 
 
-class Plant(RetirableModel, WorkspaceOwnedModel):
+class Plant(MergeableModel, WorkspaceOwnedModel):
     """
     A Plant
     """
@@ -54,7 +54,7 @@ class Plant(RetirableModel, WorkspaceOwnedModel):
         return self.name
 
 
-class PlantVariety(RetirableModel, WorkspaceOwnedModel):
+class PlantVariety(MergeableModel, WorkspaceOwnedModel):
     """
     A Specific Variety of a Plant
     """

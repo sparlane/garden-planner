@@ -2,12 +2,12 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 
-from common.retirement import RetirableModel
+from common.merging import MergeableModel
 from tax.ird import normalize_ird_number, validate_ird_number
 from workspaces.models import WorkspaceOwnedModel
 
 
-class Supplier(RetirableModel, WorkspaceOwnedModel):
+class Supplier(MergeableModel, WorkspaceOwnedModel):
     """
     A seed supplier
     """
@@ -50,6 +50,12 @@ class Supplier(RetirableModel, WorkspaceOwnedModel):
 
     def __str__(self):
         return self.name
+
+    def merge_extra_errors(self, target):
+        """Refuse to retire the fallback by merging it into something else."""
+        if self.is_system_default:
+            return ['The stand-in supplier cannot be merged away.']
+        return []
 
     def retirement_extra_errors(self):
         """Keep the fallback a Basic Garden purchase lands on available."""
