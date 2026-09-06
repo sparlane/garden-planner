@@ -3,6 +3,7 @@ Models for plants
 """
 from django.db import models
 
+from common.retirement import RetirableModel
 from workspaces.models import WorkspaceOwnedModel
 
 
@@ -13,18 +14,20 @@ class MaturityBasis(models.TextChoices):
     TRANSPLANTING = 'transplanting', 'From transplanting'
 
 
-class PlantFamily(WorkspaceOwnedModel):
+class PlantFamily(RetirableModel, WorkspaceOwnedModel):
     """
     Plant Family
     """
     name = models.CharField(max_length=1024)
     notes = models.TextField(null=True, blank=True)
 
+    retirement_dependants = (('plant_set', 'plants'),)
+
     def __str__(self):
         return self.name
 
 
-class Plant(WorkspaceOwnedModel):
+class Plant(RetirableModel, WorkspaceOwnedModel):
     """
     A Plant
     """
@@ -44,11 +47,14 @@ class Plant(WorkspaceOwnedModel):
         default=MaturityBasis.SEED,
     )
 
+    retirement_parents = ('family',)
+    retirement_dependants = (('plantvariety_set', 'varieties'),)
+
     def __str__(self):
         return self.name
 
 
-class PlantVariety(WorkspaceOwnedModel):
+class PlantVariety(RetirableModel, WorkspaceOwnedModel):
     """
     A Specific Variety of a Plant
     """
@@ -70,6 +76,9 @@ class PlantVariety(WorkspaceOwnedModel):
         default=None,
         help_text='Leave blank to inherit the plant default.',
     )
+
+    retirement_parents = ('plant',)
+    retirement_dependants = (('seeds_set', 'seed catalog entries'),)
 
     @property
     def effective_maturity_basis(self):

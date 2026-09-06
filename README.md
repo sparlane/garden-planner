@@ -20,6 +20,11 @@ Features
   - GardenArea, GardenBed, GardenRow, and GardenSquare models to represent garden areas, beds, rows and squares.
   - GardenSquare includes an `as_json()` helper for serialising position/size and bed/area metadata.
 
+- Catalog maintenance
+  - Families, plants, varieties, suppliers, seed catalog entries, and tray models are retired rather than deleted: a retired record stops being offered as a choice everywhere, and still reads the same from every planting, harvest, and receipt that already names it.
+  - Retiring never cascades. A record is retired only once nothing active hangs off it, and restored only once everything it hangs off is back, so an entry leaving a selector is always something somebody chose.
+  - Catalog collections return active and retired records together, because the same list names historical records; `?active=true` narrows one to the choices worth offering.
+
 - Plants and varieties
   - PlantFamily, Plant and PlantVariety models.
   - Plants and varieties store editable planning metadata: spacing, inter-row spacing, plants per square foot, germination and maturity ranges, maturity counted from seed or transplanting, and notes.

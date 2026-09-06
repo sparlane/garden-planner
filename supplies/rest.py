@@ -2,13 +2,14 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import routers, serializers, viewsets
 
+from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from tax.ird import normalize_ird_number, validate_ird_number
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
 
 from .models import Supplier
 
 
-class SupplierSerializer(serializers.ModelSerializer):
+class SupplierSerializer(RetirementSerializerMixin, serializers.ModelSerializer):
     """
     Serializer for a Supplier
     """
@@ -16,12 +17,13 @@ class SupplierSerializer(serializers.ModelSerializer):
         model = Supplier
         fields = [
             'pk', 'name', 'address', 'gst_status', 'gst_number',
-            'website', 'notes', 'is_system_default',
+            'website', 'notes', 'is_system_default', 'active',
         ]
         read_only_fields = ['is_system_default']
 
     def validate(self, attrs):
         """Return GST identity contradictions as ordinary API field errors."""
+        attrs = super().validate(attrs)
         status = attrs.get(
             'gst_status', getattr(self.instance, 'gst_status', Supplier.GstStatus.UNKNOWN),
         )
@@ -48,6 +50,7 @@ class SupplierSerializer(serializers.ModelSerializer):
 
 
 class SupplierViewSet(
+    RetirableViewSetMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
 ):  # pylint: disable=too-many-ancestors

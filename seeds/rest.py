@@ -11,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
+from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from inventory.models import QuantityCertainty, StockReceipt, StockReceiptLine
 from inventory.units import UnitCode
 from workspaces.scoping import (
@@ -55,7 +56,7 @@ def _model_errors(error):
     return error.messages
 
 
-class SeedsSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedsSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     """Serialize one supplier/variety seed catalog and its semantic unit."""
 
     base_unit = serializers.ChoiceField(
@@ -76,6 +77,7 @@ class SeedsSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializ
             'notes',
             'inventory_item',
             'base_unit',
+            'active',
         ]
         extra_kwargs = {
             # A Basic Garden workflow may not have a supplier to name; a
@@ -381,6 +383,7 @@ class PacketReconciliationSerializer(serializers.Serializer):
 
 
 class SeedsViewSet(
+    RetirableViewSetMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
 ):  # pylint: disable=too-many-ancestors

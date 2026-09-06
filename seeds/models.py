@@ -7,6 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
+from common.retirement import RetirableModel
 from inventory.models import (
     InventoryItem,
     QUANTITY_DECIMAL_PLACES,
@@ -22,7 +23,7 @@ from supplies.models import Supplier
 from workspaces.models import WorkspaceOwnedModel
 
 
-class Seeds(WorkspaceOwnedModel):
+class Seeds(RetirableModel, WorkspaceOwnedModel):
     """
     Seeds for a specific plant
     """
@@ -38,6 +39,8 @@ class Seeds(WorkspaceOwnedModel):
     supplier_code = models.CharField(max_length=32, blank=True, null=True)
     url = models.CharField(max_length=1024, blank=True, null=True)
     notes = models.TextField(null=True, blank=True)
+
+    retirement_parents = ('supplier', 'plant_variety')
 
     def __str__(self):
         return f"{self.plant_variety} from {self.supplier} ({self.supplier_code})"
