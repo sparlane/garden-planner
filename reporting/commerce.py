@@ -499,8 +499,8 @@ def _return_rows(workspace, filters, start, end):
             'provisional': line.cogs_provisional,
             'unvalued': line.cogs_amount is None,
         })
-        if line.cogs_amount is not None:
-            row[_cogs_bucket(line.allocation)] = decimal_string(-line.cogs_amount, 4)
+        if return_line.cogs_amount is not None:
+            row[_cogs_bucket(line.allocation)] = decimal_string(-return_line.cogs_amount, 4)
         rows.append(row)
     return rows
 

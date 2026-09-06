@@ -156,8 +156,8 @@ class CountedLineTargetTests(CountedStockTestCase):
             self.build().full_clean()
         self.assertIn('item', context.exception.message_dict)
 
-    def test_an_item_measured_by_weight_is_refused(self):
-        """Counting is whole units; measured stock is task 114's problem."""
+    def test_an_item_measured_by_weight_requires_its_base_unit(self):
+        """The default each unit cannot silently stand for a measured unit."""
         media = InventoryItem.objects.create(
             workspace=self.workspace,
             name='Potting mix',
@@ -168,7 +168,7 @@ class CountedLineTargetTests(CountedStockTestCase):
 
         with self.assertRaises(ValidationError) as context:
             self.build(item=media).full_clean()
-        self.assertIn('item', context.exception.message_dict)
+        self.assertIn('unit', context.exception.message_dict)
 
     def test_a_variety_is_refused_on_a_counted_line(self):
         """A pot is not a plant, so there is no variety to promise."""
@@ -251,8 +251,8 @@ class CountedAllocationShapeTests(CountedStockTestCase):
             SalesOrderAllocation.objects.create(line=line, inventory_unit=pot)
         self.assertIn('inventory_unit', context.exception.message_dict)
 
-    def test_an_identity_allocation_still_carries_no_quantity(self):
-        """The existing invariant stays literally true, not merely implied."""
+    def test_an_identity_allocation_carries_exactly_one_each(self):
+        """An identity has an explicit quantity without permitting two plants."""
         lot = self.receive()
         pot = self.number(lot, 1)[0]
         line = self.counted_line(
@@ -261,8 +261,12 @@ class CountedAllocationShapeTests(CountedStockTestCase):
 
         with self.assertRaises(ValidationError):
             SalesOrderAllocation.objects.create(
-                line=line, inventory_unit=pot, quantity=1,
+                line=line, inventory_unit=pot, quantity=2,
             )
+
+        allocation = SalesOrderAllocation.objects.create(line=line, inventory_unit=pot)
+        self.assertEqual(allocation.quantity, 1)
+        self.assertEqual(allocation.unit, UnitCode.EACH)
 
     def test_a_counted_allocation_is_immutable_once_written(self):
         """Rewriting a promised count would rewrite what was reserved."""

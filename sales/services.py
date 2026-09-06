@@ -21,7 +21,9 @@ from plantings.lifecycle import SELLABLE_STATES, plant_lifecycle_summary
 from plantings.models import PlantCohort, SpecificPlant
 
 from .calculations import money
+from .quantities import positive_quantity, remaining_quantity, returned_quantity
 from .models import (
+    FulfillmentLine,
     ReservationEvent,
     SalesOrder,
     SalesOrderAllocation,
@@ -219,6 +221,9 @@ def _lot_request_error(line, lot, location, request, taken):
         return 'wrong_item', None
     if location is None or location.workspace_id != line.order.workspace_id:
         return 'unknown_location', None
+    quantity = positive_quantity(request.quantity)
+    if line.unit == 'each' and quantity != quantity.to_integral_value():
+        raise ValidationError({'quantity': 'Counted stock requires whole quantities.'})
     available = unpromised_bulk(lot, location) - taken
     if Decimal(request.quantity) > available:
         return 'insufficient_stock', available
@@ -350,7 +355,7 @@ def _preview_lot_requests(line, lot_requests):
     against the pool for the ones after it, so a basket asking twice for the
     same lot is told the truth the second time too.
     """
-    requests = [LotRequest(*row) for row in lot_requests]
+    requests = [LotRequest(row[0], row[1], positive_quantity(row[2])) for row in lot_requests]
     lots = {
         row.pk: row for row in StockLot.objects.filter(
             pk__in={request.lot for request in requests},
@@ -374,7 +379,7 @@ def _preview_lot_requests(line, lot_requests):
         row = {
             'id': request.lot,
             'location': request.location,
-            'quantity': request.quantity,
+            'quantity': int(request.quantity) if request.quantity == request.quantity.to_integral_value() else f'{request.quantity:f}',
             # Fixed at the quantity column's own precision, because a bare
             # `:f` renders whatever precision the backend's aggregate happened
             # to return — '500' on SQLite and '500.000000000' on PostgreSQL for
@@ -434,18 +439,18 @@ def _preview_identities(line, plant_ids, unit_ids):
 
 
 def _promised_quantity(line):
-    """Total what this line's live allocations already promise.
-
-    An identity allocation is worth exactly one, which is why `quantity` is
-    null on it rather than stored as a one nothing may contradict.
-    """
-    total = Decimal('0')
+    """Count live holds, supplied stock net of returns, and closed shortfalls."""
     active = line.allocations.filter(
         status__in=[SalesOrderAllocation.Status.PENDING, SalesOrderAllocation.Status.RESERVED],
-    ).values_list('quantity', flat=True)
-    for quantity in active:
-        total += Decimal(quantity if quantity is not None else 1)
-    return total
+    )
+    holds = sum((remaining_quantity(row) for row in active), Decimal('0'))
+    dispatched = FulfillmentLine.objects.filter(
+        allocation__line=line, fulfillment__reversal_of__isnull=True,
+        fulfillment__reversal__isnull=True,
+    )
+    supplied = sum((row.quantity - returned_quantity(row) for row in dispatched), Decimal('0'))
+    short = line.shortfalls.aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+    return holds + supplied + short
 
 
 def _next_status(order):
@@ -508,7 +513,7 @@ def _allocate_cohort_requests(line, order, user, cohort_requests, expires_at):
         allocation = SalesOrderAllocation.objects.create(
             line=line,
             plant_cohort=cohorts[request.cohort],
-            quantity=request.quantity,
+            quantity=request.quantity, unit=line.unit,
             status=status,
             expires_at=expires_at,
             created_by=user,
@@ -560,7 +565,7 @@ def _allocate_lot_requests(line, order, user, lot_requests, expires_at):
     reservation and against `inventory.ledger.individualize_lot_units` drawing
     on the very same pots.
     """
-    requests = [LotRequest(*row) for row in lot_requests]
+    requests = [LotRequest(row[0], row[1], positive_quantity(row[2])) for row in lot_requests]
     if not requests:
         raise ValidationError({'lots': 'Select at least one quantity to draw.'})
     lots = lock_lots(order.workspace, [request.lot for request in requests])
@@ -589,7 +594,7 @@ def _allocate_lot_requests(line, order, user, lot_requests, expires_at):
             line=line,
             stock_lot=lots[request.lot],
             source_location=location,
-            quantity=request.quantity,
+            quantity=request.quantity, unit=line.unit,
             status=status,
             expires_at=expires_at,
             created_by=user,

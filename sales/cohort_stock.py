@@ -60,7 +60,7 @@ def dispatch_cohort_stock(order, user, allocation, cohort, *, fulfillment, fulfi
     event = sell_cohort(
         order.workspace, user,
         cohort_id=cohort.pk,
-        quantity=allocation.quantity,
+        quantity=int(allocation.quantity),
         idempotency_key=uuid5(fulfillment.operation_key, f'sell:{allocation.pk}'),
         occurred_at=fulfilled_at,
         reason='Order fulfillment',
@@ -83,7 +83,7 @@ def return_cohort_stock(order, user, line, sales_return, *, returned_at,
     event = return_cohort(
         order.workspace, user,
         source_cohort_id=allocation.plant_cohort_id,
-        quantity=allocation.quantity,
+        quantity=int(allocation.quantity),
         idempotency_key=uuid5(sales_return.operation_key, f'return:{line.pk}'),
         location=destination,
         occurred_at=returned_at,
@@ -99,7 +99,7 @@ def return_cohort_stock(order, user, line, sales_return, *, returned_at,
             idempotency_key=uuid5(sales_return.operation_key, f'discard:{line.pk}'),
             occurred_at=returned_at,
             reason=reason,
-            quantity=allocation.quantity,
+            quantity=int(allocation.quantity),
             loss_cause=LossCause.CULLED,
         )
     return event

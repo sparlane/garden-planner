@@ -195,6 +195,10 @@ def invoiceable(order):
     dispatched, returned = _dispatch_state(order)
     rows = []
     for line in order.lines.all().order_by('pk'):
+        if line.unit != 'each':
+            # Position-based documents cannot represent a measured quantity.
+            # Do not offer a truncated count as an invoice for this line.
+            continue
         amounts = line_position_amounts(line)
         held = covered.get(line.pk, {})
         shipped = dispatched.get(line.pk, {})
@@ -206,7 +210,7 @@ def invoiceable(order):
                 'fulfillment_line': shipped.get(position),
                 'total_incl_tax': amounts[position]['total_incl_tax'],
             }
-            for position in range(1, line.quantity + 1)
+            for position in range(1, int(line.quantity) + 1)
             if position not in unavailable
         ]
         rows.append({
@@ -237,6 +241,8 @@ def _selected_positions(order, requested):
             raise ValidationError({'lines': f'Line {line.pk} selects no items to invoice.'})
         if line.pk in chosen:
             raise ValidationError({'lines': f'Line {line.pk} appears twice in one document.'})
+        if line.pk not in available:
+            raise ValidationError({'lines': 'Measured lines do not have invoiceable item positions.'})
         offered = {row['position']: row for row in available[line.pk]['positions']}
         unavailable = [position for position in positions if position not in offered]
         if unavailable:

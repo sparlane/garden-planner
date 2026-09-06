@@ -87,6 +87,9 @@ def distribute_money(total, count):
     total = money(total)
     if count < 1:
         raise ValueError('A money distribution needs at least one position.')
+    if count != int(count):
+        raise ValueError('Item positions require a whole count.')
+    count = int(count)
     share = money(total / count)
     values = [share] * count
     # The last position absorbs the rounding residual, which is what makes the
@@ -120,7 +123,7 @@ def line_position_amounts(line):
             field: distributed[field][position - 1]
             for field in fields
         }
-        for position in range(1, line.quantity + 1)
+        for position in range(1, int(line.quantity) + 1)
     }
 
 
@@ -195,3 +198,16 @@ def _refund_components(source, total):
         'tax_total': money(total - subtotal),
         'total_incl_tax': total,
     }
+
+
+def measured_amounts(line, start, quantity):
+    """Price an interval of a decimal line, giving the final part the residual.
+
+    Differences of rounded cumulative amounts telescope to the stored totals.
+    Counted sales retain their historical per-position rounding convention.
+    """
+    def share(field):
+        total = getattr(line, field)
+        return money(total * (start + quantity) / line.quantity) - money(total * start / line.quantity)
+
+    return {field: share(field) for field in LineAmounts._fields}

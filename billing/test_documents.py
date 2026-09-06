@@ -223,7 +223,7 @@ class RefusalTests(DocumentScenarioMixin, TestCase):
         """Issue every position of one line."""
         values = {
             'operation_key': uuid4(),
-            'lines': [{'order_line': line, 'positions': list(range(1, line.quantity + 1))}],
+            'lines': [{'order_line': line, 'positions': list(range(1, int(line.quantity) + 1))}],
             'issued_on': date(2026, 5, 4),
         }
         values.update(overrides)
