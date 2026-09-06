@@ -189,6 +189,10 @@ interface GerminationClose {
 }
 
 interface SeedTrayPlanting extends Planting {
+  // Named on the sowing rather than looked up through the packet, so a sowing
+  // from a packet that is now empty still shows what was sown.
+  plant: string
+  variety: string
   seed_tray?: number
   location?: string
   planted: string

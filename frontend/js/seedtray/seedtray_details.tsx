@@ -43,8 +43,6 @@ import { GerminationSummary } from '../plantings/germination'
 import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
 import { CohortLossCause } from '../types/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
-import { SeedPacketDetails } from '../types/seeds'
-import { getSeedPacketsCurrent } from '../api/seeds'
 import { GardenSquare } from '../types/garden'
 import { getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
@@ -646,10 +644,6 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     queryKey: queryKeys.plantings.seedTray(seedTrayPk),
     queryFn: ({ signal }) => getPlantingSeedTray(seedTrayPk, signal)
   })
-  const seedPacketsQuery = useQuery({
-    queryKey: queryKeys.seeds.packets.current,
-    queryFn: ({ signal }) => getSeedPacketsCurrent(signal)
-  })
   const specificPlantsQuery = useQuery({
     queryKey: queryKeys.plantings.specificPlants(seedTrayPk),
     queryFn: ({ signal }) => getSpecificPlantsBySeedTray(seedTrayPk, signal)
@@ -760,7 +754,6 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const seedTrays = seedTraysQuery.data ?? []
   const allCells = seedTrayCellsQuery.data ?? []
   const plantings = plantingsQuery.data ?? []
-  const seedPacketDetails = seedPacketsQuery.data ?? []
   const specificPlants = specificPlantsQuery.data ?? []
   const gardenSquares = gardenSquaresQuery.data ?? []
   const inventoryLocations = inventoryLocationsQuery.data ?? []
@@ -773,10 +766,6 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const seedTray = selectedSeedTray
   const seedTrayModel = seedTrayModels.find((model) => model.pk === seedTray?.model)
   const seedTrayCells = buildSeedTrayCellGrid(seedTrayModel, allCells)
-  const seeds = seedPacketDetails.reduce<Record<number, SeedPacketDetails>>((packets, packet) => {
-    packets[packet.pk] = packet
-    return packets
-  }, {})
   const { cellCurrentPlantMap, cellPlantingMap, germinatedByCellPlanting, cellTotals } = computeCellData(specificPlants, plantings)
   const selectedCellPlantingPks = germinationSelections.map((selection) => selection.cellPlantingPk)
   const allGerminationSelections = seedTrayCells.flatMap((row) =>
@@ -799,16 +788,9 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return sowings
   }, {})
   const selectionIsLate = germinationSelections.some((selection) => sowingOfCellPlanting[selection.cellPlantingPk]?.germination?.provisional === false)
-  const isLoading = [
-    seedTrayModelsQuery,
-    seedTraysQuery,
-    seedTrayCellsQuery,
-    plantingsQuery,
-    seedPacketsQuery,
-    specificPlantsQuery,
-    gardenSquaresQuery,
-    inventoryLocationsQuery
-  ].some((query) => query.isPending)
+  const isLoading = [seedTrayModelsQuery, seedTraysQuery, seedTrayCellsQuery, plantingsQuery, specificPlantsQuery, gardenSquaresQuery, inventoryLocationsQuery].some(
+    (query) => query.isPending
+  )
 
   async function handleRecordGermination() {
     if (germinationSelections.length === 0) return
@@ -1207,35 +1189,32 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           </tr>
         </thead>
         <tbody>
-          {plantings.map((planting) => {
-            const packet = seeds[planting.seeds_used]
-            return (
-              <tr key={planting.pk}>
-                <td>{planting.pk}</td>
-                <td>{formatDate(planting.planted)}</td>
-                <td>{planting.quantity} sown</td>
-                <td>
-                  {packet?.plant} - {packet?.variety}
-                </td>
-                <td>
-                  <GerminationSummary germination={planting.germination} />
-                  <div className="mt-1">
-                    {planting.germination?.provisional ? (
-                      <Button size="sm" variant="outline-secondary" onClick={() => setClosingSowing(planting)} disabled={germinationClosureMutation.isPending}>
-                        Finished germinating
-                      </Button>
-                    ) : (
-                      <Button size="sm" variant="outline-secondary" onClick={() => handleReopenGermination(planting)} disabled={germinationReopenMutation.isPending}>
-                        Correct this close
-                      </Button>
-                    )}
-                  </div>
-                </td>
-                <td>{planting.notes}</td>
-                <td>{planting.removed ? 'Yes' : ''}</td>
-              </tr>
-            )
-          })}
+          {plantings.map((planting) => (
+            <tr key={planting.pk}>
+              <td>{planting.pk}</td>
+              <td>{formatDate(planting.planted)}</td>
+              <td>{planting.quantity} sown</td>
+              <td>
+                {planting.plant} - {planting.variety}
+              </td>
+              <td>
+                <GerminationSummary germination={planting.germination} />
+                <div className="mt-1">
+                  {planting.germination?.provisional ? (
+                    <Button size="sm" variant="outline-secondary" onClick={() => setClosingSowing(planting)} disabled={germinationClosureMutation.isPending}>
+                      Finished germinating
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline-secondary" onClick={() => handleReopenGermination(planting)} disabled={germinationReopenMutation.isPending}>
+                      Correct this close
+                    </Button>
+                  )}
+                </div>
+              </td>
+              <td>{planting.notes}</td>
+              <td>{planting.removed ? 'Yes' : ''}</td>
+            </tr>
+          ))}
         </tbody>
       </Table>
       {closingSowing && (
