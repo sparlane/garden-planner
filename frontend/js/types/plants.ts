@@ -3,6 +3,7 @@ interface PlantFamily {
   name: string
   notes: string | null
   active: boolean
+  merged_into: number | null
 }
 
 interface PlantFamilyCreate {
@@ -30,6 +31,7 @@ interface Plant extends PlantingDetails {
   notes: string | null
   maturity_basis: MaturityBasis
   active: boolean
+  merged_into: number | null
 }
 
 interface PlantCreate extends PlantingDetails {
@@ -48,6 +50,7 @@ interface PlantVariety extends PlantingDetails {
   maturity_basis: MaturityBasis | null
   effective_maturity_basis: MaturityBasis
   active: boolean
+  merged_into: number | null
 }
 
 interface PlantVarietyCreate extends PlantingDetails {

@@ -6,13 +6,36 @@ import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties, updatePlant, updatePlantFamily, updatePlantVariety } from './api/plants'
-import { RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { queryKeys } from './query'
+import { CatalogRecordLabel } from './types/catalog'
 import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
 import { ApiError } from './utils'
 
 type Editor = { kind: 'family' | 'plant' | 'variety'; pk?: number; parentPk?: number }
 type FieldErrors = Record<string, string>
+type Merging = { collection: string; source: CatalogRecordLabel; choices: Array<CatalogRecordLabel> }
+
+const COLLECTIONS = {
+  family: '/plants/family/',
+  plant: '/plants/plant/',
+  variety: '/plants/variety/'
+}
+
+function nameOf(records: Array<{ pk: number; name: string }>, pk: number | null): string | null {
+  if (pk == null) return null
+  return records.find((record) => record.pk === pk)?.name ?? null
+}
+
+// A duplicate can only be merged onto a record it is interchangeable with, so
+// each caller passes the records still in use beside it — under the same parent,
+// where it has one. The server refuses the rest, but a picker that offers them
+// makes the refusal the operator's problem rather than the screen's.
+function mergeChoices<Record extends { pk: number; name: string; active: boolean }>(records: Array<Record>, source: Record): Array<CatalogRecordLabel> {
+  return activeChoices(records)
+    .filter((record) => record.pk !== source.pk)
+    .map((record) => ({ pk: record.pk, label: record.name }))
+}
 
 const BASIS_LABELS: Record<MaturityBasis, string> = {
   seed: 'From seed',
@@ -413,6 +436,7 @@ function PlantsView() {
   const [editor, setEditor] = React.useState<Editor | null>(null)
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
+  const [merging, setMerging] = React.useState<Merging | null>(null)
   const { data: families = [] } = useQuery({ queryKey: queryKeys.plants.families, queryFn: ({ signal }) => getPlantFamilies(signal) })
   const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
@@ -451,6 +475,7 @@ function PlantsView() {
           <td>
             {family.name}
             <RetiredBadge active={family.active} />
+            <MergedIntoNote into={nameOf(families, family.merged_into)} />
           </td>
           <td colSpan={8}></td>
           <td>{family.notes || '—'}</td>
@@ -465,6 +490,17 @@ function PlantsView() {
             <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'family', pk: family.pk })}>
               Edit
             </Button>{' '}
+            {family.merged_into === null && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline-secondary"
+                  onClick={() => setMerging({ collection: COLLECTIONS.family, source: { pk: family.pk, label: family.name }, choices: mergeChoices(families, family) })}
+                >
+                  Merge
+                </Button>{' '}
+              </>
+            )}
             <RetireButton active={family.active} onChange={(active) => retire(() => editFamily.mutateAsync({ pk: family.pk, data: { active } }))} />
           </td>
         </tr>
@@ -492,6 +528,7 @@ function PlantsView() {
             <td>
               {plant.name}
               <RetiredBadge active={plant.active} />
+              <MergedIntoNote into={nameOf(plants, plant.merged_into)} />
             </td>
             <td></td>
             <td>{displayNumber(plant.spacing)}</td>
@@ -512,6 +549,26 @@ function PlantsView() {
               <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'plant', pk: plant.pk })}>
                 Edit
               </Button>{' '}
+              {plant.merged_into === null && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    onClick={() =>
+                      setMerging({
+                        collection: COLLECTIONS.plant,
+                        source: { pk: plant.pk, label: plant.name },
+                        choices: mergeChoices(
+                          plants.filter((value) => value.family === plant.family),
+                          plant
+                        )
+                      })
+                    }
+                  >
+                    Merge
+                  </Button>{' '}
+                </>
+              )}
               <RetireButton active={plant.active} onChange={(active) => retire(() => editPlant.mutateAsync({ pk: plant.pk, data: { active } }))} />
             </td>
           </tr>
@@ -541,6 +598,7 @@ function PlantsView() {
               <td>
                 {variety.name}
                 <RetiredBadge active={variety.active} />
+                <MergedIntoNote into={nameOf(varieties, variety.merged_into)} />
               </td>
               <td>{displayNumber(variety.spacing)}</td>
               <td>{displayNumber(variety.inter_row_spacing)}</td>
@@ -553,6 +611,26 @@ function PlantsView() {
                 <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'variety', pk: variety.pk })}>
                   Edit
                 </Button>{' '}
+                {variety.merged_into === null && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline-secondary"
+                      onClick={() =>
+                        setMerging({
+                          collection: COLLECTIONS.variety,
+                          source: { pk: variety.pk, label: variety.name },
+                          choices: mergeChoices(
+                            varieties.filter((value) => value.plant === variety.plant),
+                            variety
+                          )
+                        })
+                      }
+                    >
+                      Merge
+                    </Button>{' '}
+                  </>
+                )}
                 <RetireButton active={variety.active} onChange={(active) => retire(() => editVariety.mutateAsync({ pk: variety.pk, data: { active } }))} />
               </td>
             </tr>
@@ -578,6 +656,18 @@ function PlantsView() {
         <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
           {retireError}
         </Alert>
+      )}
+      {merging && (
+        <MergeDialog
+          collection={merging.collection}
+          source={merging.source}
+          choices={merging.choices}
+          onMerged={() => {
+            setMerging(null)
+            refresh()
+          }}
+          onCancel={() => setMerging(null)}
+        />
       )}
       <Table responsive hover size="sm" className="align-middle">
         <thead>

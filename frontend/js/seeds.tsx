@@ -27,7 +27,7 @@ import {
   updateSeedPacketReceipt
 } from './api/seeds'
 import { addSupplier, getSuppliers, updateSupplier } from './api/supplies'
-import { RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { ReceiptSettlement } from './inventory/settlement'
 import { queryKeys } from './query'
 import { ApiError, errorsByField, formatQuantity } from './utils'
@@ -131,10 +131,12 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
 
 interface SeedSupplierRowProps {
   supplier: Supplier
+  mergedInto: string | null
   onRetire: (active: boolean) => void
+  onMerge: () => void
 }
 
-function SeedSupplierRow({ supplier, onRetire }: SeedSupplierRowProps) {
+function SeedSupplierRow({ supplier, mergedInto, onRetire, onMerge }: SeedSupplierRowProps) {
   return (
     <tr className={retiredRowClass(supplier.active)}>
       <td>
@@ -145,6 +147,7 @@ function SeedSupplierRow({ supplier, onRetire }: SeedSupplierRowProps) {
           </Badge>
         )}
         <RetiredBadge active={supplier.active} />
+        <MergedIntoNote into={mergedInto} />
       </td>
       <td>
         <a href={supplier.website}>{supplier.website}</a>
@@ -154,7 +157,16 @@ function SeedSupplierRow({ supplier, onRetire }: SeedSupplierRowProps) {
         <div>{supplier.gst_status === 'registered' ? `GST ${supplier.gst_number}` : supplier.gst_status}</div>
       </td>
       <td>{supplier.notes}</td>
-      <td>{!supplier.is_system_default && <RetireButton active={supplier.active} onChange={onRetire} />}</td>
+      <td>
+        {!supplier.is_system_default && supplier.merged_into === null && (
+          <>
+            <Button size="sm" variant="outline-secondary" onClick={onMerge}>
+              Merge
+            </Button>{' '}
+          </>
+        )}
+        {!supplier.is_system_default && <RetireButton active={supplier.active} onChange={onRetire} />}
+      </td>
     </tr>
   )
 }
@@ -164,6 +176,7 @@ function SeedSuppliersTable() {
   const [showSupplierAdd, setShowSupplierAdd] = React.useState(false)
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
+  const [merging, setMerging] = React.useState<Supplier | null>(null)
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,
     queryFn: ({ signal }) => getSuppliers(signal)
@@ -196,7 +209,15 @@ function SeedSuppliersTable() {
     rows.push(<NewSeedSupplierRow key="new" createSupplier={createSupplier} done={() => setShowSupplierAdd(false)} />)
   }
   for (const supplier of suppliers.filter((candidate) => candidate.active || showRetired)) {
-    rows.push(<SeedSupplierRow key={supplier.pk} supplier={supplier} onRetire={(active) => retire(supplier.pk, active)} />)
+    rows.push(
+      <SeedSupplierRow
+        key={supplier.pk}
+        supplier={supplier}
+        mergedInto={suppliers.find((candidate) => candidate.pk === supplier.merged_into)?.name ?? null}
+        onRetire={(active) => retire(supplier.pk, active)}
+        onMerge={() => setMerging(supplier)}
+      />
+    )
   }
   return (
     <>
@@ -204,6 +225,20 @@ function SeedSuppliersTable() {
         <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
           {retireError}
         </Alert>
+      )}
+      {merging && (
+        <MergeDialog
+          collection="/supplies/supplier/"
+          source={{ pk: merging.pk, label: merging.name }}
+          choices={activeChoices(suppliers)
+            .filter((candidate) => candidate.pk !== merging.pk)
+            .map((candidate) => ({ pk: candidate.pk, label: candidate.name }))}
+          onMerged={() => {
+            setMerging(null)
+            invalidate()
+          }}
+          onCancel={() => setMerging(null)}
+        />
       )}
       <Form.Check type="switch" id="show-retired-suppliers" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
       <Table>
