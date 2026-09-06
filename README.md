@@ -25,6 +25,10 @@ Features
   - Retiring never cascades. A record is retired only once nothing active hangs off it, and restored only once everything it hangs off is back, so an entry leaving a selector is always something somebody chose.
   - Catalog collections return active and retired records together, because the same list names historical records; `?active=true` narrows one to the choices worth offering.
   - The Plants, Seeds, and Seed tray screens retire and restore their own records, hide retired ones behind a `Show retired` switch, and say what is in the way when a retirement is refused. Every other screen's write picker offers only what is still in use, through `activeChoices` in `frontend/js/catalog.tsx`; filter dropdowns keep the whole list, because narrowing a register to a retired variety is how somebody reads its history.
+  - A duplicate family, plant, variety, or supplier is merged into the record it duplicates: everything naming it moves across, and it is kept and retired pointing at where it went, so the split history adds up again without anything already written changing.
+  - A merge moves references and never changes what one of them means. It is refused when the two records sit under different parents, because that would refile the history rather than join it, and when a moving reference would collide with one the survivor already holds, because the only alternative would be to drop it. What a posted document says about a supplier is its own snapshot, taken when it was issued, so merging corrects the catalog and leaves the document alone.
+  - Seed catalog entries and tray models are not merged. Each owns an inventory item, so joining two would have to move stock as well, which is an inventory operation rather than a catalog correction.
+  - `GET /plants/variety/<pk>/merge/?into=<pk>` previews what a merge would move and what stands in its way; `POST` with `{"into": <pk>}` carries it out. The same action is on `/plants/family/`, `/plants/plant/`, and `/supplies/supplier/`.
 
 - Plants and varieties
   - PlantFamily, Plant and PlantVariety models.

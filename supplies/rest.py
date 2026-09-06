@@ -2,6 +2,7 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import routers, serializers, viewsets
 
+from common.merging import MergeableViewSetMixin
 from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from tax.ird import normalize_ird_number, validate_ird_number
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
@@ -17,7 +18,7 @@ class SupplierSerializer(RetirementSerializerMixin, serializers.ModelSerializer)
         model = Supplier
         fields = [
             'pk', 'name', 'address', 'gst_status', 'gst_number',
-            'website', 'notes', 'is_system_default', 'active',
+            'website', 'notes', 'is_system_default', 'active', 'merged_into',
         ]
         read_only_fields = ['is_system_default']
 
@@ -50,6 +51,7 @@ class SupplierSerializer(RetirementSerializerMixin, serializers.ModelSerializer)
 
 
 class SupplierViewSet(
+    MergeableViewSetMixin,
     RetirableViewSetMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,

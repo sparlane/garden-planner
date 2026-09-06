@@ -3,6 +3,7 @@ Rest access for plants
 """
 from rest_framework import routers, serializers, viewsets
 
+from common.merging import MergeableViewSetMixin
 from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
@@ -15,7 +16,7 @@ class PlantFamilySerializer(RetirementSerializerMixin, serializers.ModelSerializ
     """
     class Meta:
         model = PlantFamily
-        fields = ['pk', 'name', 'notes', 'active']
+        fields = ['pk', 'name', 'notes', 'active', 'merged_into']
 
 
 class PlantSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -24,7 +25,12 @@ class PlantSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin
     """
     class Meta:
         model = Plant
-        fields = ['pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing', 'plants_per_square_foot', 'germination_days_min', 'germination_days_max', 'maturity_days_min', 'maturity_days_max', 'maturity_basis', 'active']
+        fields = [
+            'pk', 'family', 'name', 'notes', 'spacing', 'inter_row_spacing',
+            'plants_per_square_foot', 'germination_days_min',
+            'germination_days_max', 'maturity_days_min', 'maturity_days_max',
+            'maturity_basis', 'active', 'merged_into',
+        ]
 
     workspace_field_lookups = {'family': 'workspace'}
 
@@ -40,13 +46,14 @@ class PlantVarietySerializer(RetirementSerializerMixin, CurrentWorkspaceSerializ
             'plants_per_square_foot', 'germination_days_min',
             'germination_days_max', 'maturity_days_min', 'maturity_days_max',
             'maturity_basis', 'effective_maturity_basis', 'active',
+            'merged_into',
         ]
         read_only_fields = ['effective_maturity_basis']
 
     workspace_field_lookups = {'plant': 'workspace'}
 
 
-class PlantFamilyViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantFamilyViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Family
     """
@@ -55,7 +62,7 @@ class PlantFamilyViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, vi
     pagination_class = None
 
 
-class PlantViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plants
     """
@@ -64,7 +71,7 @@ class PlantViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets
     pagination_class = None
 
 
-class PlantVarietyViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantVarietyViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Varieties
     """
