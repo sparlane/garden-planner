@@ -171,13 +171,18 @@ class SeedTrayPlantingSerializer(TrayGenerationSowingSerializerMixin, BatchedSow
     cell_plantings = SeedTrayCellPlantingNestedSerializer(many=True, required=False)
     new_batch = InlineBatchSerializer(required=False, write_only=True)
     germination = serializers.SerializerMethodField()
+    # What was sown, named on the sowing itself: a screen that only had the
+    # packet id would lose the name as soon as that packet went empty and
+    # dropped out of the usable-packet selectors.
+    plant = serializers.CharField(source='seeds_used.seeds.plant_variety.plant.name', read_only=True)
+    variety = serializers.CharField(source='seeds_used.seeds.plant_variety.name', read_only=True)
 
     class Meta:
         model = SeedTrayPlanting
         fields = [
-            'pk', 'planted', 'seeds_used', 'batch', 'new_batch', 'quantity',
-            'seed_tray', 'generation', 'location', 'removed', 'notes',
-            'cell_plantings', 'germination',
+            'pk', 'planted', 'seeds_used', 'plant', 'variety', 'batch',
+            'new_batch', 'quantity', 'seed_tray', 'generation', 'location',
+            'removed', 'notes', 'cell_plantings', 'germination',
         ]
         extra_kwargs = {
             'batch': {'required': False},
@@ -865,7 +870,9 @@ class SeedTrayPlantingViewSet(
     """
     ViewSet of SeedTrayPlanting
     """
-    queryset = SeedTrayPlanting.objects.order_by('pk')
+    queryset = SeedTrayPlanting.objects.select_related(
+        'seeds_used__seeds__plant_variety__plant',
+    ).order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
 
 
@@ -880,7 +887,9 @@ class SeedTrayPlantingViewSeedTraySet(
     """
     ViewSet of SeedTrayPlanting filtered by SeedTray
     """
-    queryset = SeedTrayPlanting.objects.order_by('pk')
+    queryset = SeedTrayPlanting.objects.select_related(
+        'seeds_used__seeds__plant_variety__plant',
+    ).order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
 
     def get_queryset(self):

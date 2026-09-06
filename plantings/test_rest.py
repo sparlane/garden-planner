@@ -247,3 +247,18 @@ class PlantingRESTContractTests(RESTContractTestCase):
                 self.assertEqual(response.status_code, 200)
                 response = self.client.get(f'{url}{excluded_pk}/')
                 self.assertEqual(response.status_code, 404)
+
+    def test_tray_sowings_name_the_crop_from_an_empty_packet(self):
+        """A sowing keeps naming its crop after its packet runs out."""
+        self.packet.empty = True
+        self.packet.save(update_fields=['empty'])
+        variety = self.packet.seeds.plant_variety
+
+        response = self.client.get(
+            f'/plantings/seedtray-data/{self.tray.pk}/plantings/'
+            f'{self.tray_planting.pk}/',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['plant'], variety.plant.name)
+        self.assertEqual(response.data['variety'], variety.name)
