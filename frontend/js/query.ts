@@ -91,6 +91,13 @@ const queryKeys = {
     rows: ['garden', 'rows'] as const,
     squares: ['garden', 'squares'] as const
   },
+  catalog: {
+    all: ['catalog'] as const,
+    // The merge preview is keyed by both records because it describes the pair,
+    // not the record being merged away: what moves depends on which survivor it
+    // is going onto, and which unique keys that survivor already holds.
+    mergePreview: (collection: string, pk: number, into: number) => ['catalog', 'merge', collection, pk, into] as const
+  },
   plants: {
     all: ['plants'] as const,
     families: ['plants', 'families'] as const,

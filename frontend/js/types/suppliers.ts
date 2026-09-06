@@ -8,6 +8,7 @@ interface Supplier {
   notes: string
   is_system_default: boolean
   active: boolean
+  merged_into: number | null
 }
 
 interface SupplierCreate {
