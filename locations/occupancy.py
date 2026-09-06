@@ -17,6 +17,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
+from django.db.models import Count, Sum
 
 from .models import Location
 
@@ -55,14 +56,17 @@ def tray_contribution(plant_count):
     return Occupancy(trays=1, plants=plant_count, containers=0)
 
 
-def container_contribution(plant_count):
+def container_contribution(plant_count, item):
     """Return what standing one numbered container holding plants adds.
 
     One pot is one container however many plants ride in it, which is the
     same shape as `tray_contribution` and the reason three bulbs in one
     container do not read as three containers on the bench.
     """
-    return Occupancy(trays=0, plants=plant_count, containers=1)
+    return Occupancy(
+        trays=0, plants=plant_count, containers=1,
+        area=item.container_footprint_m2 or Decimal('0'),
+    )
 
 
 def plant_contribution(plant=None):
@@ -152,7 +156,7 @@ def location_occupancy(location, subtree=False):  # pylint: disable=too-many-loc
         item__tracking_mode=InventoryItem.TrackingMode.MIXED,
         active=True,
         **{f'current_location__{lookup}': value},
-    ).count()
+    ).aggregate(count=Count('pk'), area=Sum('item__container_footprint_m2'))
     plants_in_pots = SpecificPlantLocation.objects.filter(
         ended__isnull=True,
         **{f'container_unit__current_location__{lookup}': value},
@@ -172,8 +176,8 @@ def location_occupancy(location, subtree=False):  # pylint: disable=too-many-loc
     return Occupancy(
         trays=tray_count,
         plants=plants_in_trays + plants_in_pots + len(standing) + cohort_plants,
-        containers=containers + pots,
-        area=area,
+        containers=containers + pots['count'],
+        area=area + (pots['area'] or Decimal('0')),
     )
 
 

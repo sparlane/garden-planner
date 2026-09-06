@@ -1051,11 +1051,11 @@ def _latest_effective_unit_movement(unit):
 
 
 def _check_unit_destination_capacity(unit, destination, reason):
-    """Refuse to put a tray somewhere that has no room left for it.
+    """Refuse to put a container somewhere that has no room left for it.
 
-    Only trays occupy growing space; any other serialized asset simply sits
-    where it is put. The plants riding in the tray count too, because a bench
-    measured in plants is just as full whether they arrived loose or in a tray.
+    Trays and numbered pots occupy growing space. Their plants count too,
+    because a bench measured in plants is just as full whether they arrived
+    loose or in a container.
 
     An overrun is allowed when the caller gave a reason, which the movement
     already records — that is the audited override, not a separate field.
@@ -1079,7 +1079,7 @@ def _check_unit_destination_capacity(unit, destination, reason):
             container_unit=unit,
             ended__isnull=True,
         ).count()
-        check_capacity(destination, container_contribution(riding), reason)
+        check_capacity(destination, container_contribution(riding, unit.item), reason)
         return
 
     riding = SpecificPlantLocation.objects.filter(
