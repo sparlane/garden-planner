@@ -540,7 +540,7 @@ function ScannerView() {
                   orderMode === 'allocate'
                     ? !chosenLine ||
                       orderScanned.length + (chosenLine?.allocations.filter((allocation) => ['pending', 'reserved'].includes(allocation.status)).length ?? 0) >
-                        (chosenLine?.quantity ?? 0)
+                        Number(chosenLine?.quantity ?? 0)
                     : orderMode === 'return' && returnDestination === ''
                 }
                 onClick={() => (orderMode === 'allocate' ? saveOrderAllocation.mutate() : saveCommerceScans.mutate())}

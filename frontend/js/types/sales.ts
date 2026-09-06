@@ -1,3 +1,8 @@
+import type { UnitCode } from './inventory'
+
+// Whole counts retain JSON numbers; fractional quantities use exact decimal strings.
+type CommerceQuantity = number | string
+
 type Customer = {
   pk: number
   name: string
@@ -41,6 +46,7 @@ interface ReservationEvent {
 }
 
 interface SalesAllocation {
+  unit: UnitCode
   pk: number
   plant: number | null
   inventory_unit: number | null
@@ -48,8 +54,8 @@ interface SalesAllocation {
   stock_lot: number | null
   plant_cohort: number | null
   source_location: number | null
-  // Null for a plant or a numbered unit, each of which is exactly one thing.
-  quantity: number | null
+  // A plant or numbered unit always carries exactly one each.
+  quantity: CommerceQuantity
   status: SalesAllocationStatus
   expires_at: string | null
   created_by: number | null
@@ -65,7 +71,7 @@ interface SalesShortfall {
   // The reserved remainder this shortfall re-promised, when only part of the
   // commitment failed. Null when the whole promise was given up.
   replacement: number | null
-  quantity: number
+  quantity: CommerceQuantity
   reason: string
   recorded_at: string
   created_by: number | null
@@ -76,17 +82,18 @@ interface AllocationOrderReference {
   order: number
   order_number: string
   status: 'pending' | 'reserved'
-  quantity?: number | null
+  quantity?: CommerceQuantity
 }
 
 interface SalesOrderLine {
+  unit: UnitCode
   pk: number
   order: number
   line_type: SalesLineType
   variety: number | null
   item: number | null
   description: string
-  quantity: number
+  quantity: CommerceQuantity
   unit_price: string
   tax_rate: string
   tax_treatment: SalesTaxTreatment
@@ -159,6 +166,8 @@ interface SalesCommerceSummary {
 }
 
 interface FulfillmentLine {
+  quantity: CommerceQuantity
+  unit: UnitCode
   pk: number
   allocation: number
   commercial_position: number
@@ -213,6 +222,9 @@ interface SalesPayment {
 }
 
 interface SalesReturnLine {
+  cogs_amount: string | null
+  quantity: CommerceQuantity
+  unit: UnitCode
   pk: number
   fulfillment_line: number
   outcome: 'available' | 'quarantined' | 'discarded'
@@ -266,7 +278,8 @@ interface SalesOrderLineWrite {
   variety: number | null
   item: number | null
   description: string
-  quantity: number
+  quantity: CommerceQuantity
+  unit?: UnitCode
   unit_price: string
   tax_rate?: string
   // Omitted for a rated line: the server derives 'standard' from the rate.
@@ -282,7 +295,7 @@ interface SalesOrderLineWrite {
 interface LotDraw {
   lot: number
   location: number
-  quantity: number
+  quantity: CommerceQuantity
 }
 
 // What a counted preview says can be had. `id` is the lot, and `available` is
@@ -291,7 +304,7 @@ interface LotDraw {
 interface LotDrawPreview {
   id: number
   location: number
-  quantity: number
+  quantity: CommerceQuantity
   available: string | null
 }
 
@@ -316,7 +329,7 @@ interface CohortDrawPreview {
 
 interface SalesShortfallWrite {
   allocation: number
-  quantity: number
+  quantity: CommerceQuantity
   reason: string
 }
 

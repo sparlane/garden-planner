@@ -73,7 +73,7 @@ const TAX_TREATMENT_LABELS: Record<SalesTaxTreatment, string> = {
 const LINE_TYPE_LABELS: Record<SalesLineType, string> = {
   seedling: 'Seedling',
   unit: 'Numbered unit',
-  lot_quantity: 'Counted stock',
+  lot_quantity: 'Stock from a lot',
   cohort_quantity: 'Counted seedlings'
 }
 
@@ -97,10 +97,10 @@ function namesAVariety(lineType: SalesLineType): boolean {
 
 // A unit line sells anything individually identified — a tray or a numbered
 // pot. A counted line sells anonymous stock, which only a lot-backed item
-// counted in whole units has any of.
+// sold by identity has any of.
 function itemsForLineType(items: Array<InventoryItem>, lineType: SalesLineType): Array<InventoryItem> {
   if (lineType === 'unit') return items.filter((item) => item.tracking_mode !== 'lot' && item.base_unit === 'each')
-  return items.filter((item) => item.tracking_mode !== 'serialized' && item.base_unit === 'each')
+  return items.filter((item) => item.tracking_mode !== 'serialized')
 }
 
 function invalidateSales(orderPk?: number) {
@@ -254,7 +254,8 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
   const [lineType, setLineType] = React.useState<SalesLineType>('seedling')
   const [target, setTarget] = React.useState<number | ''>('')
   const [description, setDescription] = React.useState('')
-  const [quantity, setQuantity] = React.useState(1)
+  const [quantity, setQuantity] = React.useState('1')
+  const unit = lineType === 'lot_quantity' ? (items.data?.find((item) => item.pk === target)?.base_unit ?? 'each') : 'each'
   const [unitPrice, setUnitPrice] = React.useState('')
   const [taxRate, setTaxRate] = React.useState(workspace.default_tax_rate)
   // Only asked for when the rate is zero. A rate above zero is a standard-rated
@@ -272,6 +273,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
         item: namesAVariety(lineType) ? null : Number(target),
         description,
         quantity,
+        unit,
         unit_price: unitPrice,
         tax_rate: taxRate,
         tax_treatment: Number(taxRate) > 0 ? undefined : taxTreatment,
@@ -318,7 +320,14 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
         </Col>
         <Col md={1}>
           <Form.Label>Quantity</Form.Label>
-          <Form.Control type="number" min={1} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+          <Form.Control
+            type="number"
+            min={unit === 'each' ? 1 : 0.000000001}
+            step={unit === 'each' ? 1 : '0.000000001'}
+            value={quantity}
+            onChange={(event) => setQuantity(event.target.value)}
+          />
+          <Form.Text>{unit}</Form.Text>
         </Col>
         <Col md={1}>
           <Form.Label>Unit price</Form.Label>
@@ -375,7 +384,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
 // instead: how many, out of which lot, standing where.
 function allocationTarget(allocation: SalesAllocation): string {
   if (allocation.plant) return `Plant #${allocation.plant}`
-  if (allocation.stock_lot) return `${allocation.quantity ?? 0} from lot #${allocation.stock_lot}`
+  if (allocation.stock_lot) return `${allocation.quantity} ${allocation.unit} from lot #${allocation.stock_lot}`
   if (allocation.plant_cohort) return `${allocation.quantity ?? 0} from cohort #${allocation.plant_cohort}`
   return allocation.asset_code ?? 'Unknown'
 }
@@ -411,7 +420,7 @@ function selectedCohortDraws(preview: AllocationPreview | undefined): Array<Coho
 // per entry; a counted one is whatever each draw asked for, so counting rows
 // would let a draw of fifty look like a single pot against the line quantity.
 function previewedQuantity(preview: AllocationPreview): number {
-  return preview.selected.reduce<number>((total, entry) => total + (typeof entry === 'number' ? 1 : entry.quantity), 0)
+  return preview.selected.reduce<number>((total, entry) => total + (typeof entry === 'number' ? 1 : Number(entry.quantity)), 0)
 }
 
 function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderLine }) {
@@ -421,14 +430,14 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   const [location, setLocation] = React.useState('')
   const [readyTo, setReadyTo] = React.useState('')
   const [selectedUnits, setSelectedUnits] = React.useState<Array<number>>([])
-  const [draw, setDraw] = React.useState<{ balance: string; quantity: number }>({ balance: '', quantity: 1 })
+  const [draw, setDraw] = React.useState<{ balance: string; quantity: string }>({ balance: '', quantity: '1' })
   const [cohortDraw, setCohortDraw] = React.useState<{ cohort: number | ''; quantity: number }>({ cohort: '', quantity: 1 })
   const [expiresAt, setExpiresAt] = React.useState('')
   const [preview, setPreview] = React.useState<AllocationPreview>()
   // Which standing promise is being written off, and by how much. Held apart
   // from the release buttons because a shortfall is a different statement: the
   // stock is not going back to the pool, it never grew.
-  const [shortfall, setShortfall] = React.useState<{ allocation: number; quantity: number; reason: string }>()
+  const [shortfall, setShortfall] = React.useState<{ allocation: number; quantity: string; reason: string }>()
   const units = useQuery({
     queryKey: queryKeys.sales.availableUnits(line.item ?? 0),
     queryFn: ({ signal }) => getAvailableSerializedUnits(line.item as number, signal),
@@ -523,14 +532,14 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   // fifty pots, and a line showing 1/50 would read as barely started.
   const active = line.allocations
     .filter((allocation) => allocation.status === 'pending' || allocation.status === 'reserved')
-    .reduce((total, allocation) => total + (allocation.quantity ?? 1), 0)
+    .reduce((total, allocation) => total + Number(allocation.quantity), 0)
   return (
     <Card body className="mt-2">
       <div className="d-flex justify-content-between">
         <strong>
           Allocations {active}/{line.quantity}
         </strong>
-        {active === line.quantity && <Badge bg="success">Complete</Badge>}
+        {active === Number(line.quantity) && <Badge bg="success">Complete</Badge>}
       </div>
       {line.shortfalls.length > 0 && (
         <div className="text-danger mb-2">
@@ -563,7 +572,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                     size="sm"
                     variant="link"
                     className="text-danger"
-                    onClick={() => setShortfall({ allocation: allocation.pk, quantity: allocation.quantity ?? 1, reason: '' })}
+                    onClick={() => setShortfall({ allocation: allocation.pk, quantity: String(allocation.quantity), reason: '' })}
                   >
                     Short-supply
                   </Button>
@@ -576,10 +585,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                   <Form.Label>How many are short</Form.Label>
                   <Form.Control
                     type="number"
-                    min={1}
-                    max={allocation.quantity ?? 1}
+                    min={line.unit === 'each' ? 1 : 0.000000001}
+                    step={line.unit === 'each' ? 1 : '0.000000001'}
+                    max={allocation.quantity}
                     value={shortfall.quantity}
-                    onChange={(event) => setShortfall({ ...shortfall, quantity: Number(event.target.value) })}
+                    onChange={(event) => setShortfall({ ...shortfall, quantity: event.target.value })}
                   />
                 </Col>
                 <Col md={6}>
@@ -605,7 +615,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
           </li>
         ))}
       </ul>
-      {active < line.quantity && order.status !== 'cancelled' && order.status !== 'fulfilled' && (
+      {active < Number(line.quantity) && order.status !== 'cancelled' && order.status !== 'fulfilled' && (
         <>
           {line.line_type === 'seedling' ? (
             <Row className="g-2">
@@ -648,7 +658,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                 <Form.Control
                   type="number"
                   min={1}
-                  max={line.quantity - active}
+                  max={Number(line.quantity) - active}
                   value={cohortDraw.quantity}
                   onChange={(event) => setCohortDraw({ ...cohortDraw, quantity: Number(event.target.value) })}
                 />
@@ -672,10 +682,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                 <Form.Label>How many</Form.Label>
                 <Form.Control
                   type="number"
-                  min={1}
-                  max={line.quantity - active}
+                  min={line.unit === 'each' ? 1 : 0.000000001}
+                  max={Number(line.quantity) - active}
+                  step={line.unit === 'each' ? 1 : '0.000000001'}
                   value={draw.quantity}
-                  onChange={(event) => setDraw({ ...draw, quantity: Number(event.target.value) })}
+                  onChange={(event) => setDraw({ ...draw, quantity: event.target.value })}
                 />
               </Col>
             </Row>
@@ -725,7 +736,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
                   #{warning.id}: tentatively claimed by <Link to={`/sales/orders/${warning.order}`}>{warning.order_number}</Link>; allocation is still allowed.
                 </div>
               ))}
-              <Button className="mt-2" disabled={previewedQuantity(preview) === 0 || active + previewedQuantity(preview) > line.quantity} onClick={() => allocate.mutate()}>
+              <Button className="mt-2" disabled={previewedQuantity(preview) === 0 || active + previewedQuantity(preview) > Number(line.quantity)} onClick={() => allocate.mutate()}>
                 Allocate eligible stock
               </Button>
             </Alert>
@@ -788,6 +799,8 @@ function CommercePanel({ order }: { order: SalesOrder }) {
     queryFn: ({ signal }) => getInventoryItems({ category: 'packaging', tracking_mode: 'lot', active: true }, signal)
   })
   const [selectedAllocations, setSelectedAllocations] = React.useState<Array<number>>([])
+  const [dispatchQuantities, setDispatchQuantities] = React.useState<Record<number, string>>({})
+  const [returnQuantity, setReturnQuantity] = React.useState('')
   const [packagingItem, setPackagingItem] = React.useState<number | ''>('')
   const packagingBalances = useQuery({
     queryKey: ['inventory', 'sales-packaging-balances', packagingItem],
@@ -826,11 +839,13 @@ function CommercePanel({ order }: { order: SalesOrder }) {
       return postFulfillment(order.pk, {
         operation_key: crypto.randomUUID(),
         allocation_ids: selectedAllocations,
+        quantities: Object.fromEntries(selectedAllocations.filter((pk) => dispatchQuantities[pk]).map((pk) => [pk, dispatchQuantities[pk]])),
         packaging: balance && Number(packagingQuantity) > 0 ? [{ lot: balance.lot, source: balance.location, quantity: packagingQuantity }] : []
       })
     },
     onSuccess: () => {
       setSelectedAllocations([])
+      setDispatchQuantities({})
       setPackagingQuantity('')
       refreshCommerce()
     }
@@ -856,6 +871,7 @@ function CommercePanel({ order }: { order: SalesOrder }) {
         items: [
           {
             fulfillment_line: returnLine,
+            ...(returnQuantity && activeFulfillmentLines.find((line) => line.pk === returnLine)?.unit !== 'each' ? { quantity: returnQuantity } : {}),
             outcome: returnOutcome,
             destination: returnOutcome === 'discarded' ? null : returnDestination
           }
@@ -864,6 +880,7 @@ function CommercePanel({ order }: { order: SalesOrder }) {
       }),
     onSuccess: () => {
       setReturnLine('')
+      setReturnQuantity('')
       setReturnReason('')
       refreshCommerce()
     }
@@ -955,12 +972,25 @@ function CommercePanel({ order }: { order: SalesOrder }) {
         <Card body className="mb-3">
           <Card.Title>Post fulfillment</Card.Title>
           {reserved.map((allocation) => (
-            <Form.Check
-              key={allocation.pk}
-              label={allocation.plant ? `Plant #${allocation.plant}` : (allocation.asset_code ?? `Unit #${allocation.inventory_unit}`)}
-              checked={selectedAllocations.includes(allocation.pk)}
-              onChange={() => setSelectedAllocations((current) => (current.includes(allocation.pk) ? current.filter((pk) => pk !== allocation.pk) : [...current, allocation.pk]))}
-            />
+            <div key={allocation.pk}>
+              <Form.Check
+                key={allocation.pk}
+                label={allocationTarget(allocation)}
+                checked={selectedAllocations.includes(allocation.pk)}
+                onChange={() => setSelectedAllocations((current) => (current.includes(allocation.pk) ? current.filter((pk) => pk !== allocation.pk) : [...current, allocation.pk]))}
+              />
+              {allocation.unit !== 'each' && selectedAllocations.includes(allocation.pk) && (
+                <Form.Control
+                  aria-label={`Dispatch quantity in ${allocation.unit}`}
+                  type="number"
+                  min="0.000000001"
+                  step="0.000000001"
+                  placeholder={`Quantity (${allocation.unit}); blank ships remainder`}
+                  value={dispatchQuantities[allocation.pk] ?? ''}
+                  onChange={(event) => setDispatchQuantities({ ...dispatchQuantities, [allocation.pk]: event.target.value })}
+                />
+              )}
+            </div>
           ))}
           <Row className="g-2 align-items-end mt-1">
             <Col md={3}>
@@ -1076,6 +1106,18 @@ function CommercePanel({ order }: { order: SalesOrder }) {
                   <option value="critical">Critical</option>
                 </Form.Select>
               </>
+            )}
+            {activeFulfillmentLines.find((line) => line.pk === returnLine)?.unit !== 'each' && returnLine !== '' && (
+              <Form.Control
+                className="mb-2"
+                aria-label="Returned quantity"
+                type="number"
+                min="0.000000001"
+                step="0.000000001"
+                placeholder="Returned quantity; blank returns remainder"
+                value={returnQuantity}
+                onChange={(event) => setReturnQuantity(event.target.value)}
+              />
             )}
             <Form.Control className="mb-2" placeholder="Return reason" value={returnReason} onChange={(event) => setReturnReason(event.target.value)} />
             <Button
@@ -1216,7 +1258,7 @@ function SalesOrderDetailView({ orderPk, workspace }: { orderPk: number; workspa
           <div className="d-flex justify-content-between">
             <strong>{line.description}</strong>
             <span>
-              {line.quantity} × {formatMoney(line.unit_price, order.currency_code)} ({line.prices_include_tax ? 'incl' : 'excl'} tax)
+              {line.quantity} {line.unit} × {formatMoney(line.unit_price, order.currency_code)} ({line.prices_include_tax ? 'incl' : 'excl'} tax)
             </span>
           </div>
           <div className="text-muted">
