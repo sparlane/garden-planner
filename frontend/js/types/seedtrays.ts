@@ -13,6 +13,7 @@ interface SeedTrayModelCreate {
 interface SeedTrayModel extends SeedTrayModelCreate {
   pk: number
   inventory_item: number
+  active: boolean
 }
 
 interface SeedTrayReceiptCreate {

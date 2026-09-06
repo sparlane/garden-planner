@@ -9,7 +9,7 @@ function addPlantFamily(data: PlantFamilyCreate) {
   return csrfPost('/plants/family/', data)
 }
 
-async function updatePlantFamily(pk: number, data: PlantFamilyCreate): Promise<PlantFamily> {
+async function updatePlantFamily(pk: number, data: Partial<PlantFamilyCreate>): Promise<PlantFamily> {
   const response = await csrfPatch(`/plants/family/${pk}/`, data)
   return response.json() as Promise<PlantFamily>
 }
@@ -22,7 +22,7 @@ function addPlantVariety(data: PlantVarietyCreate) {
   return csrfPost('/plants/variety/', data)
 }
 
-async function updatePlantVariety(pk: number, data: PlantVarietyCreate): Promise<PlantVariety> {
+async function updatePlantVariety(pk: number, data: Partial<PlantVarietyCreate>): Promise<PlantVariety> {
   const response = await csrfPatch(`/plants/variety/${pk}/`, data)
   return response.json() as Promise<PlantVariety>
 }
@@ -35,7 +35,7 @@ function addPlant(data: PlantCreate) {
   return csrfPost('/plants/plant/', data)
 }
 
-async function updatePlant(pk: number, data: PlantCreate): Promise<Plant> {
+async function updatePlant(pk: number, data: Partial<PlantCreate>): Promise<Plant> {
   const response = await csrfPatch(`/plants/plant/${pk}/`, data)
   return response.json() as Promise<Plant>
 }

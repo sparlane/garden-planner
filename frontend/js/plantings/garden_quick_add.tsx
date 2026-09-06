@@ -8,6 +8,7 @@ import { getLocations } from '../api/locations'
 import { getPlants, getPlantVarieties } from '../api/plants'
 import { getSeedPackets, getSeeds } from '../api/seeds'
 import { getSuppliers } from '../api/supplies'
+import { activeChoices } from '../catalog'
 import { GardenQuickAddEntry, GardenQuickAddReview, GardenPlantingSource, GardenPlantingTracking } from '../types/plantings'
 import { queryKeys } from '../query'
 
@@ -71,7 +72,7 @@ function GardenQuickAddModal({ show, onClose, initialSquare }: GardenQuickAddMod
   const { data: seedCatalog = [] } = useQuery({ queryKey: queryKeys.seeds.catalog, queryFn: ({ signal }) => getSeeds(signal) })
   const { data: seedPackets = [] } = useQuery({ queryKey: queryKeys.seeds.packets.raw, queryFn: ({ signal }) => getSeedPackets(signal) })
   const { data: suppliers = [] } = useQuery({ queryKey: queryKeys.suppliers.all, queryFn: ({ signal }) => getSuppliers(signal) })
-  const matchingVarieties = varieties.filter((variety) => variety.plant === draft.plant)
+  const matchingVarieties = activeChoices(varieties, draft.variety).filter((variety) => variety.plant === draft.plant)
   const matchingBatches = batches.filter((batch) => batch.variety === draft.variety)
   const matchingPackets = useMemo(() => {
     const seedIds = new Set(seedCatalog.filter((seed) => seed.plant_variety === draft.variety).map((seed) => seed.pk))
@@ -186,7 +187,7 @@ function GardenQuickAddModal({ show, onClose, initialSquare }: GardenQuickAddMod
               }
             >
               <option value="">Choose a crop</option>
-              {plants.map((plant) => (
+              {activeChoices(plants, draft.plant).map((plant) => (
                 <option key={plant.pk} value={plant.pk}>
                   {plant.name}
                 </option>
@@ -378,7 +379,7 @@ function GardenQuickAddModal({ show, onClose, initialSquare }: GardenQuickAddMod
                       <Form.Label>Supplier</Form.Label>
                       <Form.Select value={draft.supplier ?? ''} onChange={(event) => update('supplier', event.target.value ? Number(event.target.value) : undefined)}>
                         <option value="">Unknown or not applicable</option>
-                        {suppliers.map((supplier) => (
+                        {activeChoices(suppliers, draft.supplier).map((supplier) => (
                           <option key={supplier.pk} value={supplier.pk}>
                             {supplier.name}
                           </option>

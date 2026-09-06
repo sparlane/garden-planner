@@ -9,6 +9,11 @@ function addSeed(seed: SeedCreate) {
   return csrfPost('/seeds/seeds/', seed)
 }
 
+async function updateSeed(pk: number, seed: Partial<SeedCreate>): Promise<Seed> {
+  const response = await csrfPatch(`/seeds/seeds/${pk}/`, seed)
+  return response.json() as Promise<Seed>
+}
+
 function getSeedPackets(signal?: AbortSignal): Promise<Array<SeedPacket>> {
   return fetchAsJson<Array<SeedPacket>>('/seeds/packets/', signal)
 }
@@ -60,5 +65,6 @@ export {
   getSeeds,
   postSeedPacketReceipt,
   reconcileSeedPacket,
+  updateSeed,
   updateSeedPacketReceipt
 }

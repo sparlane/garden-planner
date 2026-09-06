@@ -5,6 +5,7 @@ import { Link } from 'react-router'
 
 import { addProductionBatch, getHarvests, getProductionBatch, getProductionBatches, postProductionBatchAction, updateProductionBatch } from '../api/plantings'
 import { getPlantVarieties } from '../api/plants'
+import { activeChoices } from '../catalog'
 import { queryKeys } from '../query'
 import { formatDate, formatDateTime } from '../utils'
 import { CohortLifecycleState, PlantLifecycleState, ProductionBatch, ProductionBatchDetail, ProductionBatchStatus } from '../types/plantings'
@@ -93,7 +94,7 @@ function NewBatchForm({ done, workspace }: NewBatchFormProps) {
                 <Form.Label>Variety</Form.Label>
                 <Form.Select required value={variety ?? ''} onChange={(event) => setVariety(event.target.value ? Number(event.target.value) : undefined)}>
                   <option value="">Choose a variety…</option>
-                  {varieties.map((option) => (
+                  {activeChoices(varieties, variety).map((option) => (
                     <option key={option.pk} value={option.pk}>
                       {option.name}
                     </option>
