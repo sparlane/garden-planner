@@ -638,6 +638,9 @@ class PottedPlantPlacementTests(MixedTrackingTestCase):
 
     def test_a_shared_pot_is_one_container_and_all_of_its_plants(self):
         """Three bulbs in one pot must not read as three pots on the bench."""
+        self.item.refresh_from_db()
+        self.item.container_footprint_m2 = Decimal('0.04')
+        self.item.save()
         for _ in range(3):
             self.stand_in_pot(make_specific_plant())
 
@@ -645,6 +648,43 @@ class PottedPlantPlacementTests(MixedTrackingTestCase):
 
         self.assertEqual(occupancy.containers, 1)
         self.assertEqual(occupancy.plants, 3)
+        self.assertEqual(occupancy.area, Decimal('0.04'))
+
+    def test_numbered_pots_use_area_capacity_even_when_empty(self):
+        """The destination counts both the arriving pot and pots already there."""
+        self.item.refresh_from_db()
+        self.item.container_footprint_m2 = Decimal('0.04')
+        self.item.save()
+        self.pot.refresh_from_db()
+        bench = Location.objects.create(
+            workspace=self.workspace,
+            name='Small specimen bench', code='SMALL-BENCH',
+            location_type=Location.LocationType.GROWING,
+            capacity_basis=Location.CapacityBasis.AREA,
+            capacity_value=Decimal('0.06'),
+        )
+        post_unit_movement(
+            self.workspace, self.user,
+            UnitMovementRequest(
+                unit=self.pot, movement_type=StockMovement.MovementType.TRANSFER,
+                destination=bench,
+            ),
+        )
+        second = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=self.lot, location=self.store, count=1),
+        )[0]
+        with self.assertRaises(ValidationError):
+            post_unit_movement(
+                self.workspace, self.user,
+                UnitMovementRequest(
+                    unit=second, movement_type=StockMovement.MovementType.TRANSFER,
+                    destination=bench,
+                ),
+            )
+        second.refresh_from_db()
+        self.assertEqual(second.current_location, self.store)
+        self.assertEqual(location_occupancy(bench).area, Decimal('0.04'))
 
     def test_a_potted_plant_is_found_at_the_bench_its_pot_stands_on(self):
         """The pot carries the location, exactly as a tray does for its cells."""
