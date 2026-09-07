@@ -27,7 +27,7 @@ import {
   updateSeedPacketReceipt
 } from './api/seeds'
 import { addSupplier, getSuppliers, updateSupplier } from './api/supplies'
-import { MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { CatalogValues, CorrectionDialog, MergeDialog, MergedIntoNote, ReplacedByNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { ReceiptSettlement } from './inventory/settlement'
 import { queryKeys } from './query'
 import { ApiError, errorsByField, formatQuantity } from './utils'
@@ -398,14 +398,106 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
   }
 }
 
+// The fields a correction sends, in the form the API names them. Nulls become
+// empty strings so an untouched control reads as unchanged rather than as a
+// cleared field, and a missing unit keeps whatever the entry already counts in.
+function seedValues(seed: Seed): CatalogValues {
+  return {
+    supplier: seed.supplier,
+    plant_variety: seed.plant_variety,
+    supplier_code: seed.supplier_code ?? '',
+    url: seed.url ?? '',
+    base_unit: seed.base_unit ?? 'seed',
+    notes: seed.notes ?? ''
+  }
+}
+
+interface SeedCorrectionDialogProps {
+  seed: Seed
+  suppliers: Array<Supplier>
+  varieties: Array<PlantVariety>
+  onSaved: () => void
+  onCancel: () => void
+}
+
+function SeedCorrectionDialog({ seed, suppliers, varieties, onSaved, onCancel }: SeedCorrectionDialogProps) {
+  const original = seedValues(seed)
+  const [values, setValues] = React.useState<CatalogValues>(original)
+  const variety = varieties.find((candidate) => candidate.pk === seed.plant_variety)
+  const update = (name: string, value: unknown) => setValues((current) => ({ ...current, [name]: value }))
+  return (
+    <CorrectionDialog
+      collection="/seeds/seeds/"
+      source={{ pk: seed.pk, label: variety?.name ?? `Seed catalog entry ${seed.pk}` }}
+      original={original}
+      values={values}
+      title={`Correct ${variety?.name ?? 'seed catalog entry'}`}
+      onSaved={() => onSaved()}
+      onCancel={onCancel}
+    >
+      {(fieldErrors) => (
+        <>
+          <Form.Group className="mb-3" controlId="seed-correction-supplier">
+            <Form.Label>Supplier</Form.Label>
+            <Form.Select value={String(values.supplier)} isInvalid={'supplier' in fieldErrors} onChange={(event) => update('supplier', Number(event.target.value))}>
+              {activeChoices(suppliers, seed.supplier).map((candidate) => (
+                <option key={candidate.pk} value={candidate.pk}>
+                  {candidate.name}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Control.Feedback type="invalid">{fieldErrors.supplier}</Form.Control.Feedback>
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="seed-correction-variety">
+            <Form.Label>Variety</Form.Label>
+            <Form.Select value={String(values.plant_variety)} isInvalid={'plant_variety' in fieldErrors} onChange={(event) => update('plant_variety', Number(event.target.value))}>
+              {activeChoices(varieties, seed.plant_variety).map((candidate) => (
+                <option key={candidate.pk} value={candidate.pk}>
+                  {candidate.name}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Control.Feedback type="invalid">{fieldErrors.plant_variety}</Form.Control.Feedback>
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="seed-correction-unit">
+            <Form.Label>Inventory unit</Form.Label>
+            <Form.Select value={String(values.base_unit)} isInvalid={'base_unit' in fieldErrors} onChange={(event) => update('base_unit', event.target.value)}>
+              <option value="seed">Individual seeds</option>
+              <option value="seed_cluster">Multigerm seed clusters</option>
+            </Form.Select>
+            <Form.Control.Feedback type="invalid">{fieldErrors.base_unit}</Form.Control.Feedback>
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="seed-correction-code">
+            <Form.Label>Supplier code</Form.Label>
+            <Form.Control value={String(values.supplier_code)} isInvalid={'supplier_code' in fieldErrors} onChange={(event) => update('supplier_code', event.target.value)} />
+            <Form.Control.Feedback type="invalid">{fieldErrors.supplier_code}</Form.Control.Feedback>
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="seed-correction-url">
+            <Form.Label>Link</Form.Label>
+            <Form.Control value={String(values.url)} isInvalid={'url' in fieldErrors} onChange={(event) => update('url', event.target.value)} />
+            <Form.Control.Feedback type="invalid">{fieldErrors.url}</Form.Control.Feedback>
+          </Form.Group>
+          <Form.Group controlId="seed-correction-notes">
+            <Form.Label>Notes</Form.Label>
+            <Form.Control as="textarea" value={String(values.notes)} isInvalid={'notes' in fieldErrors} onChange={(event) => update('notes', event.target.value)} />
+            <Form.Control.Feedback type="invalid">{fieldErrors.notes}</Form.Control.Feedback>
+          </Form.Group>
+        </>
+      )}
+    </CorrectionDialog>
+  )
+}
+
 interface SeedRowProps {
   suppliers: Array<Supplier>
   varieties: Array<PlantVariety>
   seed: Seed
+  replacedBy: string | null
   onRetire: (active: boolean) => void
+  onCorrect: () => void
 }
 
-function SeedRow({ suppliers, varieties, seed, onRetire }: SeedRowProps) {
+function SeedRow({ suppliers, varieties, seed, replacedBy, onRetire, onCorrect }: SeedRowProps) {
   const supplier = suppliers.find((candidate) => candidate.pk === seed.supplier)
   const variety = varieties.find((candidate) => candidate.pk === seed.plant_variety)
   return (
@@ -414,6 +506,7 @@ function SeedRow({ suppliers, varieties, seed, onRetire }: SeedRowProps) {
       <td>
         {variety?.name}
         <RetiredBadge active={seed.active} />
+        <ReplacedByNote by={replacedBy} />
       </td>
       <td>{seed.supplier_code}</td>
       <td>
@@ -422,6 +515,13 @@ function SeedRow({ suppliers, varieties, seed, onRetire }: SeedRowProps) {
       <td>{seed.base_unit === 'seed_cluster' ? 'Seed clusters' : 'Seeds'}</td>
       <td>{seed.notes}</td>
       <td>
+        {seed.replaced_by === null && (
+          <>
+            <Button size="sm" variant="outline-secondary" onClick={onCorrect}>
+              Correct
+            </Button>{' '}
+          </>
+        )}
         <RetireButton active={seed.active} onChange={onRetire} />
       </td>
     </tr>
@@ -433,6 +533,7 @@ function SeedTable() {
   const [showSeedAdd, setShowSeedAdd] = React.useState(false)
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
+  const [correcting, setCorrecting] = React.useState<Seed | null>(null)
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,
     queryFn: ({ signal }) => getSuppliers(signal)
@@ -445,7 +546,13 @@ function SeedTable() {
     queryKey: queryKeys.seeds.catalog,
     queryFn: ({ signal }) => getSeeds(signal)
   })
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.seeds.catalog })
+  // A correction can rename the paired inventory item and a replacement creates
+  // a second one, so the item lists go with the catalog rather than waiting for
+  // whichever screen happens to be opened next.
+  const invalidate = async () => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.seeds.catalog })
+    await queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all })
+  }
   const seedMutation = useMutation({
     mutationFn: addSeed,
     onSuccess: invalidate
@@ -473,7 +580,18 @@ function SeedTable() {
     rows.push(<NewSeedRow key="new" suppliers={suppliers} varieties={varieties} createSeed={createSeed} done={() => setShowSeedAdd(false)} />)
   }
   for (const seed of seeds.filter((candidate) => candidate.active || showRetired)) {
-    rows.push(<SeedRow key={seed.pk} suppliers={suppliers} varieties={varieties} seed={seed} onRetire={(active) => retire(seed.pk, active)} />)
+    const replacement = seeds.find((candidate) => candidate.pk === seed.replaced_by)
+    rows.push(
+      <SeedRow
+        key={seed.pk}
+        suppliers={suppliers}
+        varieties={varieties}
+        seed={seed}
+        replacedBy={replacement ? (varieties.find((candidate) => candidate.pk === replacement.plant_variety)?.name ?? `entry ${replacement.pk}`) : null}
+        onRetire={(active) => retire(seed.pk, active)}
+        onCorrect={() => setCorrecting(seed)}
+      />
+    )
   }
   return (
     <>
@@ -481,6 +599,18 @@ function SeedTable() {
         <Alert variant="danger" onClose={() => setRetireError(null)} dismissible>
           {retireError}
         </Alert>
+      )}
+      {correcting && (
+        <SeedCorrectionDialog
+          seed={correcting}
+          suppliers={suppliers}
+          varieties={varieties}
+          onSaved={() => {
+            setCorrecting(null)
+            invalidate()
+          }}
+          onCancel={() => setCorrecting(null)}
+        />
       )}
       <Form.Check type="switch" id="show-retired-seed-catalog" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
       <Table>

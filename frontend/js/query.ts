@@ -96,7 +96,11 @@ const queryKeys = {
     // The merge preview is keyed by both records because it describes the pair,
     // not the record being merged away: what moves depends on which survivor it
     // is going onto, and which unique keys that survivor already holds.
-    mergePreview: (collection: string, pk: number, into: number) => ['catalog', 'merge', collection, pk, into] as const
+    mergePreview: (collection: string, pk: number, into: number) => ['catalog', 'merge', collection, pk, into] as const,
+    // The replacement preview describes one record on its own, because nothing
+    // moves onto a second one: it reports what stays where it is, and whether
+    // posted stock has frozen what the record names.
+    replacementPreview: (collection: string, pk: number) => ['catalog', 'replace', collection, pk] as const
   },
   plants: {
     all: ['plants'] as const,
