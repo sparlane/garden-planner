@@ -197,6 +197,14 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
         on_delete=models.PROTECT,
         related_name='generations',
     )
+    # The shared container identity; tray remains the compatibility relationship
+    # while the fill workflows are generalized to numbered and counted pots.
+    inventory_unit = models.ForeignKey(
+        InventoryUnit,
+        on_delete=models.PROTECT,
+        related_name='container_fills',
+        editable=False,
+    )
     code = models.CharField(max_length=64)
     sequence = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     status = models.CharField(
@@ -284,15 +292,24 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
             errors['code'] = 'A generation code is required.'
         if self.tray_id and self.tray.workspace_id != self.workspace_id:
             errors['tray'] = 'The tray belongs to a different workspace.'
+        if self.inventory_unit_id:
+            if self.inventory_unit.workspace_id != self.workspace_id:
+                errors['inventory_unit'] = 'The container belongs to a different workspace.'
+            if self.tray_id and self.inventory_unit_id != self.tray.inventory_unit_id:
+                errors['inventory_unit'] = 'The container does not match the tray.'
         if errors:
             raise ValidationError(errors)
 
     def save(self, *args, **kwargs):
+        if not self.inventory_unit_id and self.tray_id:
+            self.inventory_unit = self.tray.inventory_unit
         if self.pk:
-            previous = type(self).objects.filter(pk=self.pk).only('tray_id', 'sequence').first()
+            previous = type(self).objects.filter(pk=self.pk).only('tray_id', 'inventory_unit_id', 'sequence').first()
             errors = {}
             if previous and previous.tray_id != self.tray_id:
                 errors['tray'] = 'Cannot move a generation to another tray.'
+            if previous and previous.inventory_unit_id != self.inventory_unit_id:
+                errors['inventory_unit'] = 'Cannot move a fill to another container.'
             if previous and previous.sequence != self.sequence:
                 errors['sequence'] = 'Cannot renumber an existing generation.'
             if errors:

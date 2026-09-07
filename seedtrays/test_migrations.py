@@ -17,6 +17,7 @@ from plantings.models import SeedTrayPlanting
 from tests.factories import (
     make_seed_tray,
     make_seed_tray_cell,
+    make_seed_tray_generation,
     make_seed_tray_planting,
 )
 from workspaces.models import Workspace
@@ -100,6 +101,7 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
             SeedTrayGeneration.ReviewState.NEEDS_REVIEW,
         )
         self.assertEqual(generation.workspace_id, earlier.workspace_id)
+        self.assertEqual(generation.inventory_unit_id, tray.inventory_unit_id)
         self.assertIsNone(generation.created_by)
         earlier.refresh_from_db()
         later.refresh_from_db()
@@ -193,3 +195,24 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
             SeedTrayGenerationEvent.objects.filter(generation=generation).count(),
             1,
         )
+
+    def test_container_backfill_preserves_open_and_closed_fill_history(self):
+        """Linking a physical container changes neither fill identity nor events."""
+        first = make_seed_tray_generation()
+        SeedTrayGeneration.objects.filter(pk=first.pk).update(
+            status=SeedTrayGeneration.Status.CLOSED,
+            closed_at=first.opened_at,
+            close_reason='Cleaned before container fills.',
+        )
+        make_seed_tray_generation(tray=first.tray, sequence=2)
+        fields = [field.attname for field in SeedTrayGeneration._meta.fields
+                  if field.name != 'inventory_unit']
+        before = list(SeedTrayGeneration.objects.order_by('pk').values(*fields))
+        events = list(SeedTrayGenerationEvent.objects.order_by('pk').values())
+
+        self._migrate([('seedtrays', '0007_retire_tray_models')])
+        self._migrate(latest_seedtrays_state())
+
+        self.assertEqual(list(SeedTrayGeneration.objects.order_by('pk').values(*fields)), before)
+        self.assertEqual(list(SeedTrayGenerationEvent.objects.order_by('pk').values()), events)
+        self.assertEqual(first.tray.inventory_unit.container_fills.count(), 2)
