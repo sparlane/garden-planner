@@ -48,6 +48,7 @@ class SeedTrayGenerationConstraintTests(TestCase):
         values = {
             'workspace_id': self.tray.workspace_id,
             'tray': self.tray,
+            'inventory_unit': self.tray.inventory_unit,
             'code': f'TRAY-{self.tray.pk}-x',
             'sequence': 9,
             'opened_at': timezone.now(),
@@ -117,6 +118,37 @@ class SeedTrayGenerationConstraintTests(TestCase):
         with self.assertRaises(ValidationError) as caught:
             generation.save()
         self.assertIn('tray', caught.exception.message_dict)
+
+    def test_tray_fill_is_accessible_from_its_container(self):
+        """Existing tray callers also create the common container relationship."""
+        generation = make_seed_tray_generation(tray=self.tray)
+
+        self.assertEqual(self.tray.inventory_unit.container_fills.get(), generation)
+        self.assertEqual(generation.tray, self.tray)
+
+    def test_a_fill_cannot_name_another_trays_container(self):
+        """A fill must not give two answers about which container holds it."""
+        other = make_seed_tray()
+        with self.assertRaises(ValidationError) as caught:
+            SeedTrayGeneration.objects.create(
+                workspace=self.tray.workspace,
+                tray=self.tray,
+                inventory_unit=other.inventory_unit,
+                code='MISMATCHED-FILL',
+                sequence=1,
+                opened_at=timezone.now(),
+            )
+        self.assertIn('inventory_unit', caught.exception.message_dict)
+
+    def test_a_fill_cannot_change_its_container(self):
+        """Changing the container would silently move its media and history."""
+        generation = make_seed_tray_generation(tray=self.tray)
+        generation.inventory_unit = make_seed_tray().inventory_unit
+        with self.assertRaises(ValidationError) as caught:
+            generation.save()
+        self.assertIn('inventory_unit', caught.exception.message_dict)
+        generation.refresh_from_db()
+        self.assertEqual(generation.inventory_unit_id, self.tray.inventory_unit_id)
 
     def test_a_generation_requires_a_tray_in_its_own_workspace(self):
         """Cross-workspace tray ownership is refused before it is stored."""
