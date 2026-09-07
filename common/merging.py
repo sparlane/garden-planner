@@ -35,11 +35,9 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as RestValidationError
 from rest_framework.response import Response
 
+from .references import incoming_references, incoming_relations, pointing_at, rows
 from .retirement import RetirableModel, retirement_errors
 from .rest_query import parse_integer
-
-#: How many affected records a preview names before it just counts them.
-PREVIEW_EXAMPLES = 5
 
 
 class MergeableModel(RetirableModel):
@@ -96,49 +94,30 @@ def _reparenting_errors(source, target):
     return errors
 
 
-def merge_references(record):
-    """Return what points at this record, one entry per incoming relation.
-
-    Entries are keyed by the field rather than the model, because a model may
-    name the same catalog record twice — a requisition's preferred supplier is
-    not the supplier it was ordered from — and the two move separately.
-    """
-    references = []
-    for relation in _incoming_relations(record):
-        related = _pointing_at(relation, record)
-        count = related.count()
-        if not count:
-            continue
-        meta = relation.related_model._meta  # pylint: disable=protected-access
-        references.append({
-            'relation': f'{meta.label_lower}.{relation.field.name}',
-            'noun': str(meta.verbose_name if count == 1 else meta.verbose_name_plural),
-            'count': count,
-            'examples': [str(entry) for entry in related[:PREVIEW_EXAMPLES]],
-        })
-    return references
-
-
 def merge_preview(source, target):
     """Describe what a merge would move, and what stands in its way."""
     return {
         'source': {'pk': source.pk, 'label': str(source)},
         'target': {'pk': target.pk, 'label': str(target)},
-        'references': merge_references(source),
+        'references': incoming_references(source),
         'blockers': merge_errors(source, target),
     }
 
 
 @transaction.atomic
 def merge_records(source, target):
-    """Move everything naming the duplicate onto the survivor and retire it."""
+    """Move everything naming the duplicate onto the survivor and retire it.
+
+    ``merged_into`` is one of the relations walked, so a duplicate merged into
+    this record earlier moves on with the rest and the trail stays one hop.
+    """
     source, target = _locked(source, target)
     errors = merge_errors(source, target)
     if errors:
         raise RestValidationError({'into': errors})
-    moved = merge_references(source)
-    for relation in _incoming_relations(source):
-        _pointing_at(relation, source).update(**{relation.field.name: target})
+    moved = incoming_references(source)
+    for relation in incoming_relations(source):
+        pointing_at(relation, source).update(**{relation.field.name: target})
     source.merged_into = target
     source.active = False
     remaining = retirement_errors(source)
@@ -157,25 +136,6 @@ def _locked(source, target):
     return locked[source.pk], locked[target.pk]
 
 
-def _incoming_relations(record):
-    """Return every relation that points at this kind of catalog record.
-
-    ``merged_into`` is one of them, so a duplicate merged into this record
-    earlier moves on with the rest and the trail stays one hop long.
-    """
-    return list(record._meta.related_objects)  # pylint: disable=protected-access
-
-
-def _pointing_at(relation, record):
-    """Return the related records naming this one through this relation."""
-    return _rows(relation.related_model).filter(**{relation.field.name: record})
-
-
-def _rows(model):
-    """Return every row of a model, past whatever its default manager hides."""
-    return model._base_manager.all()  # pylint: disable=protected-access
-
-
 def _collision_errors(source, target):
     """Refuse a merge that would land two records on one unique key.
 
@@ -185,7 +145,7 @@ def _collision_errors(source, target):
     honest as models gain them.
     """
     errors = []
-    for relation in _incoming_relations(source):
+    for relation in incoming_relations(source):
         field = relation.field.name
         model = relation.related_model
         for key in _unique_keys(model, field, relation.one_to_one):
@@ -227,7 +187,7 @@ def _beside(fields, field):
 
 def _key_collisions(model, field, key, source, target):
     """Name each moving record whose unique key the survivor already holds."""
-    candidates = _rows(model)
+    candidates = rows(model)
     if key.condition is not None:
         candidates = candidates.filter(key.condition)
     errors = []
