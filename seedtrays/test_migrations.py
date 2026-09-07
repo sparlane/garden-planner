@@ -13,8 +13,13 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
 from applications.models import InputApplicationTarget
+from inventory.models import InventoryItem
+from inventory.units import UnitCode
 from plantings.models import SeedTrayPlanting
 from tests.factories import (
+    make_inventory_item,
+    make_location,
+    make_stock_lot,
     make_seed_tray,
     make_seed_tray_cell,
     make_seed_tray_generation,
@@ -216,3 +221,21 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
         self.assertEqual(list(SeedTrayGeneration.objects.order_by('pk').values(*fields)), before)
         self.assertEqual(list(SeedTrayGenerationEvent.objects.order_by('pk').values()), events)
         self.assertEqual(first.tray.inventory_unit.container_fills.count(), 2)
+
+    def test_target_migration_refuses_to_discard_nontray_history(self):
+        """Rollback stops before removing the only identity of a counted fill."""
+        tray_fill = make_seed_tray_generation()
+        lot = make_stock_lot(item=make_inventory_item(
+            category=InventoryItem.Category.POT_CONTAINER, base_unit=UnitCode.EACH,
+        ))
+        fill = SeedTrayGeneration.objects.create(
+            workspace=lot.workspace, stock_lot=lot, source_location=make_location(),
+            container_count=50, code='COUNTED-POTS', sequence=1, opened_at=tray_fill.opened_at,
+        )
+        with self.assertRaisesMessage(RuntimeError, 'while non-tray fills exist'):
+            self._migrate([('seedtrays', '0008_generation_inventory_unit')])
+        fill.refresh_from_db()
+        self.assertEqual(fill.stock_lot, lot)
+        self.assertEqual(fill.container_count, 50)
+        self.assertEqual(SeedTrayGeneration.objects.get(pk=tray_fill.pk).inventory_unit_id,
+                         tray_fill.inventory_unit_id)

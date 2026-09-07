@@ -2,6 +2,8 @@
 Models for seed trays
 """
 # pylint: disable=duplicate-code
+from decimal import Decimal, InvalidOperation
+
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
@@ -161,17 +163,12 @@ class SeedTrayCell(models.Model):
 
 
 class SeedTrayGeneration(WorkspaceOwnedModel):
-    """One fill of one physical tray, and the cultivation cycle it carries.
+    """One fill of an identified container or a counted lot at a place.
 
-    A cell says where something is, not which crop is using it. Emptying a tray
-    and sowing it again reuses the same cells, so without a generation the media
-    applied to the first crop cannot be told apart from the media applied to the
-    second, and a whole-tray fill reads as though it belongs to every plant ever
-    raised in those cells.
-
-    A generation owns the media applied to its cells and the sowings made into
-    them. It is closed by an explicit clean, never deleted, and reusing the tray
-    opens the next one.
+    The original model name and tray relationship remain for existing callers.
+    Media, lifecycle events and residuals belong to this same record for every
+    container. The count is fixed when filled; later exits must not change the
+    basis on which plants share its media.
     """
 
     class Status(models.TextChoices):
@@ -196,6 +193,8 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
         SeedTray,
         on_delete=models.PROTECT,
         related_name='generations',
+        null=True,
+        blank=True,
     )
     # The shared container identity; tray remains the compatibility relationship
     # while the fill workflows are generalized to numbered and counted pots.
@@ -203,8 +202,19 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
         InventoryUnit,
         on_delete=models.PROTECT,
         related_name='container_fills',
+        null=True,
+        blank=True,
         editable=False,
     )
+    stock_lot = models.ForeignKey(
+        StockLot, on_delete=models.PROTECT, related_name='container_fills',
+        null=True, blank=True,
+    )
+    source_location = models.ForeignKey(
+        'locations.Location', on_delete=models.PROTECT, related_name='container_fills',
+        null=True, blank=True,
+    )
+    container_count = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
     code = models.CharField(max_length=64)
     sequence = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     status = models.CharField(
@@ -276,6 +286,28 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
                 name='tray_generation_close_stamp',
             ),
             models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(inventory_unit__isnull=False, stock_lot__isnull=True,
+                             source_location__isnull=True, container_count=1),
+                    models.Q(inventory_unit__isnull=True, tray__isnull=True,
+                             stock_lot__isnull=False, source_location__isnull=False),
+                    _connector=models.Q.OR,
+                ),
+                name='container_fill_exactly_one_target',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(container_count__gte=1),
+                name='container_fill_positive_count',
+            ),
+            models.UniqueConstraint(
+                fields=['inventory_unit', 'sequence'],
+                name='container_fill_unit_sequence_unique',
+            ),
+            models.UniqueConstraint(
+                fields=['inventory_unit'], condition=models.Q(status='open'),
+                name='container_fill_single_open_unit',
+            ),
+            models.CheckConstraint(
                 condition=models.Q(sequence__gte=1),
                 name='tray_generation_sequence_gte_1',
             ),
@@ -284,34 +316,68 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
     def __str__(self):
         return self.code
 
+    def clean_fields(self, exclude=None):
+        """Reject fractional counts before IntegerField can truncate them."""
+        if 'container_count' not in (exclude or ()):
+            try:
+                count = Decimal(str(self.container_count))
+                if not count.is_finite() or count != count.to_integral_value():
+                    raise InvalidOperation
+            except InvalidOperation as exc:
+                raise ValidationError({'container_count': 'Container counts must be whole numbers.'}) from exc
+        super().clean_fields(exclude=exclude)
+
     def clean(self):
-        """Require a usable code and a tray inside this workspace."""
+        """Keep the fill's physical target and count inside one workspace."""
         super().clean()
         errors = {}
         if not self.code.strip():
             errors['code'] = 'A generation code is required.'
-        if self.tray_id and self.tray.workspace_id != self.workspace_id:
-            errors['tray'] = 'The tray belongs to a different workspace.'
-        if self.inventory_unit_id:
-            if self.inventory_unit.workspace_id != self.workspace_id:
-                errors['inventory_unit'] = 'The container belongs to a different workspace.'
-            if self.tray_id and self.inventory_unit_id != self.tray.inventory_unit_id:
-                errors['inventory_unit'] = 'The container does not match the tray.'
+        for field in ('tray', 'inventory_unit', 'stock_lot', 'source_location'):
+            if getattr(self, f'{field}_id') and getattr(self, field).workspace_id != self.workspace_id:
+                errors[field] = 'The fill target belongs to a different workspace.'
+        self._validate_container_target(errors)
         if errors:
             raise ValidationError(errors)
+
+    def _validate_container_target(self, errors):
+        """Only actual trays and whole pots can carry a fill."""
+        if self.inventory_unit_id:
+            item = self.inventory_unit.item
+            if self.tray_id and self.inventory_unit_id != self.tray.inventory_unit_id:
+                errors['inventory_unit'] = 'The container does not match the tray.'
+            if item.category == InventoryItem.Category.TRAY and not self.tray_id:
+                errors['tray'] = 'A tray fill must retain its tray relationship.'
+            if item.category not in (InventoryItem.Category.TRAY, InventoryItem.Category.POT_CONTAINER):
+                errors['inventory_unit'] = 'Fills require a tray or pot container.'
+            if item.base_unit != UnitCode.EACH:
+                errors['inventory_unit'] = 'Containers must be counted in each.'
+        if self.stock_lot_id:
+            item = self.stock_lot.item
+            if item.category != InventoryItem.Category.POT_CONTAINER or item.base_unit != UnitCode.EACH:
+                errors['stock_lot'] = 'Counted fills require pot containers measured in each.'
+            if item.tracking_mode == InventoryItem.TrackingMode.SERIALIZED:
+                errors['stock_lot'] = 'Serialized containers must name an inventory unit.'
 
     def save(self, *args, **kwargs):
         if not self.inventory_unit_id and self.tray_id:
             self.inventory_unit = self.tray.inventory_unit
         if self.pk:
-            previous = type(self).objects.filter(pk=self.pk).only('tray_id', 'inventory_unit_id', 'sequence').first()
-            errors = {}
-            if previous and previous.tray_id != self.tray_id:
-                errors['tray'] = 'Cannot move a generation to another tray.'
-            if previous and previous.inventory_unit_id != self.inventory_unit_id:
-                errors['inventory_unit'] = 'Cannot move a fill to another container.'
-            if previous and previous.sequence != self.sequence:
-                errors['sequence'] = 'Cannot renumber an existing generation.'
+            immutable = {
+                'tray': ('tray_id', 'Cannot move a generation to another tray.'),
+                'inventory_unit': ('inventory_unit_id', 'Cannot move a fill to another container.'),
+                'stock_lot': ('stock_lot_id', 'Cannot change the lot a fill was opened for.'),
+                'source_location': ('source_location_id', "Cannot change a fill's original location."),
+                'container_count': ('container_count', "Cannot change a fill's share basis."),
+                'sequence': ('sequence', 'Cannot renumber an existing generation.'),
+            }
+            previous = type(self).objects.filter(pk=self.pk).only(
+                *(attribute for attribute, _ in immutable.values()),
+            ).first()
+            errors = {
+                field: message for field, (attribute, message) in immutable.items()
+                if previous and getattr(previous, attribute) != getattr(self, attribute)
+            }
             if errors:
                 raise ValidationError(errors)
         self.full_clean()
