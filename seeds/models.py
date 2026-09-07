@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
-from common.retirement import RetirableModel
+from common.replacement import ReplaceableModel
 from inventory.models import (
     InventoryItem,
     QUANTITY_DECIMAL_PLACES,
@@ -23,7 +23,7 @@ from supplies.models import Supplier
 from workspaces.models import WorkspaceOwnedModel
 
 
-class Seeds(RetirableModel, WorkspaceOwnedModel):
+class Seeds(ReplaceableModel, WorkspaceOwnedModel):
     """
     Seeds for a specific plant
     """
@@ -41,6 +41,40 @@ class Seeds(RetirableModel, WorkspaceOwnedModel):
     notes = models.TextField(null=True, blank=True)
 
     retirement_parents = ('supplier', 'plant_variety')
+
+    #: What a packet of this seed *is*: whose catalog it came out of, which
+    #: variety it grows, and what one of it counts as. A receipt is posted
+    #: against all three at once, which is why they stop being editable
+    #: together rather than one rule per field.
+    identity_fields = ('supplier', 'plant_variety', 'base_unit')
+
+    @property
+    def base_unit(self):
+        """Return what stock of this seed is counted in, or None until paired.
+
+        The unit lives on the paired inventory item, because that is what a
+        receipt line and every movement after it are measured in. Reading it
+        from here lets one entry answer for its own identity.
+        """
+        if not self.inventory_item_id:
+            return None
+        return self.inventory_item.base_unit
+
+    def identity_locked(self):
+        """Say whether posted packet stock has frozen what this entry names.
+
+        Once a packet has been received, sown from, or counted, what it holds
+        was received as this supplier's variety measured in this unit. Editing
+        any of the three afterwards would rewrite that receipt rather than
+        correct the catalog, so the entry is replaced instead.
+        """
+        if not self.inventory_item_id:
+            return False
+        if self.inventory_item.stock_history_started_at:
+            return True
+        return self.seedpacket_set.filter(
+            quantity_reconciliations__isnull=False,
+        ).exists()
 
     def __str__(self):
         return f"{self.plant_variety} from {self.supplier} ({self.supplier_code})"

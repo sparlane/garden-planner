@@ -11,6 +11,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
+from common.replacement import ReplaceableViewSetMixin, ReplacementSerializerMixin
 from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from inventory.models import QuantityCertainty, StockReceipt, StockReceiptLine
 from inventory.units import UnitCode
@@ -33,6 +34,7 @@ from .services import (
     packet_provenance,
     post_packet_receipt,
     reconcile_packet_quantity,
+    rename_seed_inventory_item,
     set_seed_inventory_unit,
     update_packet_receipt_draft,
 )
@@ -56,7 +58,12 @@ def _model_errors(error):
     return error.messages
 
 
-class SeedsSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedsSerializer(
+    ReplacementSerializerMixin,
+    RetirementSerializerMixin,
+    CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Serialize one supplier/variety seed catalog and its semantic unit."""
 
     base_unit = serializers.ChoiceField(
@@ -78,6 +85,7 @@ class SeedsSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin
             'inventory_item',
             'base_unit',
             'active',
+            'replaced_by',
         ]
         extra_kwargs = {
             # A Basic Garden workflow may not have a supplier to name; a
@@ -92,11 +100,9 @@ class SeedsSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        data['base_unit'] = (
-            instance.inventory_item.base_unit
-            if instance.inventory_item_id
-            else None
-        )
+        # An entry with no paired item is not counted in anything yet, which is
+        # a fact rather than a default: it reads as null instead of guessing.
+        data['base_unit'] = instance.base_unit
         return data
 
     @transaction.atomic
@@ -116,11 +122,12 @@ class SeedsSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin
     def update(self, instance, validated_data):
         base_unit = validated_data.pop('base_unit', None)
         instance = super().update(instance, validated_data)
-        if base_unit and instance.inventory_item.base_unit != base_unit:
+        if base_unit and instance.base_unit != base_unit:
             try:
                 set_seed_inventory_unit(instance, base_unit)
             except DjangoValidationError as exc:
                 raise ValidationError(_model_errors(exc)) from exc
+        rename_seed_inventory_item(instance)
         return instance
 
 
@@ -383,6 +390,7 @@ class PacketReconciliationSerializer(serializers.Serializer):
 
 
 class SeedsViewSet(
+    ReplaceableViewSetMixin,
     RetirableViewSetMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,

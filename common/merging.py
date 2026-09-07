@@ -25,35 +25,29 @@ rather than by guessing which references used to be somewhere else. Merging is
 offered only for records that describe something. A record that owns a stock
 identity of its own -- a seed catalog entry or a tray model, each holding an
 inventory item -- would need its stock moved as well, which is an inventory
-operation and not a catalog correction.
+operation and not a catalog correction; those are corrected by replacement
+instead, in ``common.replacement``.
 """
 
 from typing import NamedTuple
 
-from django.db import models, transaction
+from django.db import transaction
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as RestValidationError
 from rest_framework.response import Response
 
 from .references import incoming_references, incoming_relations, pointing_at, rows
-from .retirement import RetirableModel, retirement_errors
+from .retirement import RetirableModel, handoff_field, retirement_errors
 from .rest_query import parse_integer
 
 
 class MergeableModel(RetirableModel):
     """Abstract catalog identity that can absorb a duplicate of itself."""
 
-    merged_into = models.ForeignKey(
-        'self',
-        on_delete=models.PROTECT,
-        null=True,
-        blank=True,
-        editable=False,
-        related_name='merged_from',
-        help_text=(
-            'The record this duplicate was merged into. It keeps its own '
-            'identity so anything written against it still resolves.'
-        ),
+    merged_into = handoff_field(
+        'merged_from',
+        'The record this duplicate was merged into. It keeps its own '
+        'identity so anything written against it still resolves.',
     )
 
     class Meta:

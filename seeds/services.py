@@ -11,6 +11,7 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from common.replacement import LOCKED_IDENTITY_MESSAGE
 from purchasing.services import receipt_paid_on
 from inventory.ledger import (
     COST_QUANTUM,
@@ -55,14 +56,32 @@ def create_seed_inventory_item(workspace, seeds, base_unit):
 def set_seed_inventory_unit(seeds, base_unit):
     """Change semantic seed units only before packet stock history exists."""
     item = seeds.inventory_item
-    if item.stock_history_started_at or seeds.seedpacket_set.filter(
-        quantity_reconciliations__isnull=False,
-    ).exists():
+    if item is None:
         raise ValidationError({
-            'base_unit': 'Seed units cannot change after packet stock history exists.',
+            'base_unit': 'The seed catalog entry has no inventory item.',
         })
+    if seeds.identity_locked():
+        raise ValidationError({'base_unit': LOCKED_IDENTITY_MESSAGE})
     item.base_unit = base_unit
     item.save(update_fields=['base_unit', 'updated'])
+    return item
+
+
+def rename_seed_inventory_item(seeds):
+    """Keep the paired item named after the entry it belongs to.
+
+    The item is what the rest of the stock screens call this seed, so a
+    correction that moves the entry to another supplier or variety has to reach
+    it as well; leaving it behind would have the catalog and the inventory
+    disagree about the same packet. Only reachable before anything is posted,
+    which is the whole reason the name is safe to change.
+    """
+    item = seeds.inventory_item
+    name = str(seeds)
+    if item is None or item.name == name:
+        return None
+    item.name = name
+    item.save(update_fields=['name', 'updated'])
     return item
 
 
