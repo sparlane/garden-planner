@@ -1,5 +1,5 @@
-import { CatalogMergePreview, CatalogMergeResult } from '../types/catalog'
-import { csrfPost, fetchAsJson } from '../utils'
+import { CatalogMergePreview, CatalogMergeResult, CatalogReplacementPreview, CatalogReplacementResult } from '../types/catalog'
+import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 // Families, plants, varieties and suppliers all merge through the one action
 // the server puts on every mergeable collection, so these take the collection
@@ -13,4 +13,21 @@ async function mergeCatalogRecords(collection: string, pk: number, into: number)
   return response.json() as Promise<CatalogMergeResult>
 }
 
-export { mergeCatalogRecords, previewCatalogMerge }
+function previewCatalogReplacement(collection: string, pk: number, signal?: AbortSignal): Promise<CatalogReplacementPreview> {
+  return fetchAsJson<CatalogReplacementPreview>(`${collection}${pk}/replace/`, signal)
+}
+
+// Both corrections send only the fields that should read differently: the
+// server carries the rest of the record over, so a screen cannot drop the half
+// of it that has no control on the form.
+async function replaceCatalogRecord<Record>(collection: string, pk: number, changes: object): Promise<CatalogReplacementResult<Record>> {
+  const response = await csrfPost(`${collection}${pk}/replace/`, changes)
+  return response.json() as Promise<CatalogReplacementResult<Record>>
+}
+
+async function correctCatalogRecord<Record>(collection: string, pk: number, changes: object): Promise<Record> {
+  const response = await csrfPatch(`${collection}${pk}/`, changes)
+  return response.json() as Promise<Record>
+}
+
+export { correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord }

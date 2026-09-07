@@ -12,6 +12,9 @@ interface Seed {
   inventory_item: number | null
   base_unit: 'seed' | 'seed_cluster' | null
   active: boolean
+  // The entry that supersedes this one. Everything already received stays on
+  // this entry, because it was received as what this entry said.
+  replaced_by: number | null
 }
 
 interface SeedCreate {

@@ -2,9 +2,9 @@ import React from 'react'
 import { Alert, Badge, Button, Form, Modal, Spinner } from 'react-bootstrap'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { mergeCatalogRecords, previewCatalogMerge } from './api/catalog'
+import { correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord } from './api/catalog'
 import { queryKeys } from './query'
-import { CatalogMergeReference, CatalogRecordLabel } from './types/catalog'
+import { CatalogRecordLabel, CatalogReference } from './types/catalog'
 import { errorsByField } from './utils'
 
 interface CatalogRecord {
@@ -52,7 +52,12 @@ function MergedIntoNote({ into }: { into: string | null }) {
   return <div className="small text-body-secondary">Merged into {into}</div>
 }
 
-function referenceSummary(reference: CatalogMergeReference): string {
+function ReplacedByNote({ by }: { by: string | null }) {
+  if (!by) return null
+  return <div className="small text-body-secondary">Replaced by {by}</div>
+}
+
+function referenceSummary(reference: CatalogReference): string {
   const examples = reference.examples.join(', ')
   if (reference.count > reference.examples.length) return `${examples}, and ${reference.count - reference.examples.length} more`
   return examples
@@ -170,4 +175,142 @@ function MergeDialog({ collection, source, choices, onMerged, onCancel }: MergeD
   )
 }
 
-export { CatalogRecord, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass }
+type CatalogValues = Record<string, unknown>
+
+interface CorrectionDialogProps {
+  collection: string
+  source: CatalogRecordLabel
+  //: What the record says now, keyed by the field names the API uses.
+  original: CatalogValues
+  //: What the form says. Only the difference between the two is sent.
+  values: CatalogValues
+  title: string
+  onSaved: (replaced: boolean) => void
+  onCancel: () => void
+  children: (fieldErrors: Record<string, string>) => React.ReactNode
+}
+
+function changedValues(original: CatalogValues, values: CatalogValues): CatalogValues {
+  const changes: CatalogValues = {}
+  for (const [name, value] of Object.entries(values)) {
+    if (value !== original[name]) changes[name] = value
+  }
+  return changes
+}
+
+// One control for both ways of correcting a catalog record, because an operator
+// fixing a wrong entry should not have to know which one they are owed. The
+// server decides: it says which fields the record's posted stock has frozen,
+// and a change to one of those supersedes the record instead of rewriting it.
+// The dialog says which is about to happen before the button is pressed, since
+// the two leave the catalog looking very different afterwards.
+function CorrectionDialog({ collection, source, original, values, title, onSaved, onCancel, children }: CorrectionDialogProps) {
+  const queryClient = useQueryClient()
+  const [saving, setSaving] = React.useState(false)
+  const [failure, setFailure] = React.useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  const preview = useQuery({
+    queryKey: queryKeys.catalog.replacementPreview(collection, source.pk),
+    queryFn: ({ signal }) => previewCatalogReplacement(collection, source.pk, signal)
+  })
+  const changes = changedValues(original, values)
+  const identityFields = preview.data?.identity_fields ?? []
+  const blockers = preview.data?.blockers ?? []
+  const stays = preview.data?.stays ?? []
+  const replacing = (preview.data?.identity_locked ?? false) && identityFields.some((field) => field in changes)
+  const nothingChanged = Object.keys(changes).length === 0
+
+  async function save() {
+    setSaving(true)
+    setFailure(null)
+    setFieldErrors({})
+    try {
+      if (replacing) {
+        await replaceCatalogRecord(collection, source.pk, changes)
+      } else {
+        await correctCatalogRecord(collection, source.pk, changes)
+      }
+      // A replacement leaves a second record behind and a correction can change
+      // what a record is called, so every preview taken against this collection
+      // now describes a catalog that has moved on.
+      await queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all })
+      onSaved(replacing)
+    } catch (error) {
+      const fields = errorsByField(error)
+      const { replacement, non_field_errors: nonFieldErrors, ...rest } = fields
+      setFieldErrors(rest)
+      setFailure(replacement ?? nonFieldErrors ?? (Object.keys(rest).length ? null : 'The record could not be changed.'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal show onHide={onCancel} size="lg">
+      <Modal.Header closeButton>
+        <Modal.Title>{title}</Modal.Title>
+      </Modal.Header>
+      <Modal.Body>
+        {children(fieldErrors)}
+        {preview.isLoading && (
+          <div className="mt-3">
+            <Spinner animation="border" size="sm" /> Checking what has been recorded against it…
+          </div>
+        )}
+        {preview.isSuccess && (
+          <Alert variant={replacing ? 'warning' : 'secondary'} className="mt-3 mb-0">
+            {replacing ? (
+              <>
+                <p>
+                  Stock has been posted against {source.label}, so this saves a new entry carrying the change. {source.label} is kept and retired pointing at it, and everything
+                  below stays there — it was recorded against what that entry said.
+                </p>
+                {stays.length === 0 ? (
+                  <p className="mb-0">Nothing is recorded against it yet.</p>
+                ) : (
+                  <ul className="mb-0">
+                    {stays.map((reference) => (
+                      <li key={reference.relation}>
+                        {reference.count} {reference.noun}: {referenceSummary(reference)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <p className="mb-0">
+                {preview.data.identity_locked
+                  ? `Stock has been posted against ${source.label}, so changing what it names would save a new entry instead. These changes do not.`
+                  : `Nothing has been posted against ${source.label} yet, so this corrects it in place.`}
+              </p>
+            )}
+          </Alert>
+        )}
+        {blockers.length > 0 && (
+          <Alert variant="warning" className="mt-3 mb-0">
+            <ul className="mb-0">
+              {blockers.map((blocker) => (
+                <li key={blocker}>{blocker}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
+        {failure && (
+          <Alert variant="danger" className="mt-3 mb-0">
+            {failure}
+          </Alert>
+        )}
+      </Modal.Body>
+      <Modal.Footer>
+        <Button variant="secondary" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button onClick={save} disabled={saving || nothingChanged || !preview.isSuccess || (replacing && blockers.length > 0)}>
+          {saving ? 'Saving…' : replacing ? 'Save as a new entry' : 'Save'}
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+export { CatalogRecord, CatalogValues, CorrectionDialog, MergeDialog, MergedIntoNote, ReplacedByNote, RetireButton, RetiredBadge, activeChoices, changedValues, retiredRowClass }
