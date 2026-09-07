@@ -285,7 +285,7 @@ def _close_request(values):
 class SeedTrayGenerationViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """Fill a tray, clean it, and correct a clean that should not have happened."""
 
-    queryset = SeedTrayGeneration.objects.select_related('tray').prefetch_related(
+    queryset = SeedTrayGeneration.objects.filter(tray__isnull=False).select_related('tray').prefetch_related(
         'events',
         'residuals',
     )

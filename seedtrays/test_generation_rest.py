@@ -87,6 +87,21 @@ class GenerationRESTTestCase(RESTContractTestCase):
 class GenerationContractTests(GenerationRESTTestCase):
     """Filling, listing, and reading one fill of a tray."""
 
+    def test_counted_fills_are_not_exposed_to_tray_actions(self):
+        """The tray API must not offer cell-based clean actions for pots."""
+        lot = make_stock_lot(item=make_inventory_item(
+            category=InventoryItem.Category.POT_CONTAINER, base_unit=UnitCode.EACH,
+        ))
+        fill = SeedTrayGeneration.objects.create(
+            workspace=lot.workspace, stock_lot=lot, source_location=make_location(),
+            container_count=50, sequence=1, code='COUNTED-POTS', opened_at=timezone.now(),
+        )
+        response = self.client.get('/seedtrays/seedtraygenerations/')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(fill.pk, [row['pk'] for row in response.data['results']])
+        response = self.client.get(f'/seedtrays/seedtraygenerations/{fill.pk}/contents/')
+        self.assertEqual(response.status_code, 404)
+
     @property
     def list_urls(self):
         """Return the generation collection route."""
