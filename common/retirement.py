@@ -23,6 +23,26 @@ from rest_framework.exceptions import ValidationError as RestValidationError
 from .rest_query import parse_boolean
 
 
+def handoff_field(related_name, help_text):
+    """Return the pointer a retired record leaves saying where to read instead.
+
+    Merging and replacing both end by retiring a record, and both owe a reader
+    who arrives at it the same thing: which record carries on from here. So
+    they leave the same kind of note — a nullable pointer at another record of
+    the same kind, never edited directly, and protected so the record it names
+    cannot be deleted out from under the trail.
+    """
+    return models.ForeignKey(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name=related_name,
+        help_text=help_text,
+    )
+
+
 class RetirableModel(models.Model):
     """Abstract catalog identity that is retired rather than deleted."""
 
@@ -59,7 +79,7 @@ class RetirableModel(models.Model):
 
 def retirement_errors(record):
     """Return why this record cannot hold the activation state it carries."""
-    chain = _restore_errors(record) if record.active else _retire_errors(record)
+    chain = _restore_errors(record) if record.active else retire_errors(record)
     return chain + record.retirement_extra_errors()
 
 
@@ -77,8 +97,12 @@ def _restore_errors(record):
     return [f"Restore {', '.join(retired)} first."]
 
 
-def _retire_errors(record):
-    """Refuse retiring a record that active catalog records still hang off."""
+def retire_errors(record):
+    """Refuse retiring a record that active catalog records still hang off.
+
+    Asked in the retire direction on its own by a replacement, which retires
+    the record it supersedes and has to say up front whether it can.
+    """
     if record.pk is None:
         return []
     errors = []
