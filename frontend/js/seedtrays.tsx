@@ -2,7 +2,7 @@ import 'bootstrap'
 import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
-import { Alert, Form, Table } from 'react-bootstrap'
+import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
@@ -11,7 +11,7 @@ import { Location } from './types/locations'
 import { SeedTrayModel, SeedTrayModelCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, updateSeedTrayModel } from './api/seedtrays'
 import { getLocations } from './api/locations'
-import { RetireButton, RetiredBadge, retiredRowClass } from './catalog'
+import { CatalogValues, CorrectionDialog, ReplacedByNote, RetireButton, RetiredBadge, retiredRowClass } from './catalog'
 import { errorsByField, formatDate } from './utils'
 import { queryKeys } from './query'
 
@@ -79,16 +79,114 @@ class SeedTrayModelNew extends React.Component<SeedTrayModelNewProps, SeedTrayMo
   }
 }
 
+// The dimensions a tray model records are not all the same kind of fact. The
+// cell grid is built into every tray received against the model — its cells sit
+// at those coordinates and sowings name them — so the server freezes it once a
+// tray exists and a change supersedes the model instead. The outer measurements
+// and the cell volume describe those same trays, so they stay editable.
+const TRAY_MODEL_MEASUREMENTS: Array<{ name: keyof SeedTrayModelCreate; label: string }> = [
+  { name: 'x_size', label: 'Width (mm)' },
+  { name: 'y_size', label: 'Depth (mm)' },
+  { name: 'height', label: 'Height (mm)' },
+  { name: 'cell_size_ml', label: 'Cell volume (ml)' }
+]
+
+function trayModelValues(model: SeedTrayModel): CatalogValues {
+  return {
+    identifier: model.identifier,
+    description: model.description ?? '',
+    x_size: model.x_size,
+    y_size: model.y_size,
+    height: model.height,
+    cell_size_ml: model.cell_size_ml,
+    x_cells: model.x_cells,
+    y_cells: model.y_cells
+  }
+}
+
+interface SeedTrayModelCorrectionDialogProps {
+  model: SeedTrayModel
+  onSaved: () => void
+  onCancel: () => void
+}
+
+function SeedTrayModelCorrectionDialog({ model, onSaved, onCancel }: SeedTrayModelCorrectionDialogProps) {
+  const original = trayModelValues(model)
+  const [values, setValues] = React.useState<CatalogValues>(original)
+  const update = (name: string, value: unknown) => setValues((current) => ({ ...current, [name]: value }))
+  const updateNumber = (name: string) => (event: React.ChangeEvent<HTMLInputElement>) => update(name, parseInt(event.target.value, 10) || 0)
+  return (
+    <CorrectionDialog
+      collection="/seedtrays/seedtraymodels/"
+      source={{ pk: model.pk, label: model.identifier }}
+      original={original}
+      values={values}
+      title={`Correct ${model.identifier}`}
+      onSaved={() => onSaved()}
+      onCancel={onCancel}
+    >
+      {(fieldErrors, replacing) => (
+        <>
+          <Form.Group className="mb-3" controlId="tray-model-correction-identifier">
+            <Form.Label>Name</Form.Label>
+            <Form.Control value={String(values.identifier)} isInvalid={'identifier' in fieldErrors} onChange={(event) => update('identifier', event.target.value)} />
+            <Form.Control.Feedback type="invalid">{fieldErrors.identifier}</Form.Control.Feedback>
+            {replacing && <Form.Text>The new grid saves a second model, so give it a name of its own — {model.identifier} keeps the one its trays were received under.</Form.Text>}
+          </Form.Group>
+          <Form.Group className="mb-3" controlId="tray-model-correction-description">
+            <Form.Label>Description</Form.Label>
+            <Form.Control
+              as="textarea"
+              value={String(values.description)}
+              isInvalid={'description' in fieldErrors}
+              onChange={(event) => update('description', event.target.value)}
+            />
+            <Form.Control.Feedback type="invalid">{fieldErrors.description}</Form.Control.Feedback>
+          </Form.Group>
+          <div className="row">
+            {TRAY_MODEL_MEASUREMENTS.map((measurement) => (
+              <Form.Group key={measurement.name} className="mb-3 col-6 col-md-3" controlId={`tray-model-correction-${measurement.name}`}>
+                <Form.Label>{measurement.label}</Form.Label>
+                <Form.Control type="number" value={String(values[measurement.name])} isInvalid={measurement.name in fieldErrors} onChange={updateNumber(measurement.name)} />
+                <Form.Control.Feedback type="invalid">{fieldErrors[measurement.name]}</Form.Control.Feedback>
+              </Form.Group>
+            ))}
+          </div>
+          <div className="row">
+            <Form.Group className="mb-3 col-6" controlId="tray-model-correction-x-cells">
+              <Form.Label>Cells across</Form.Label>
+              <Form.Control type="number" value={String(values.x_cells)} isInvalid={'x_cells' in fieldErrors} onChange={updateNumber('x_cells')} />
+              <Form.Control.Feedback type="invalid">{fieldErrors.x_cells}</Form.Control.Feedback>
+            </Form.Group>
+            <Form.Group className="mb-3 col-6" controlId="tray-model-correction-y-cells">
+              <Form.Label>Cells down</Form.Label>
+              <Form.Control type="number" value={String(values.y_cells)} isInvalid={'y_cells' in fieldErrors} onChange={updateNumber('y_cells')} />
+              <Form.Control.Feedback type="invalid">{fieldErrors.y_cells}</Form.Control.Feedback>
+            </Form.Group>
+          </div>
+        </>
+      )}
+    </CorrectionDialog>
+  )
+}
+
 function SeedTrayModelsTable() {
   const queryClient = useQueryClient()
   const [showAddRow, setShowAddRow] = React.useState(false)
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
+  const [correcting, setCorrecting] = React.useState<SeedTrayModel | null>(null)
   const { data: seedTrayModels = [] } = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
   })
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.models })
+  // A correction renames the paired inventory item and a replacement creates a
+  // second one, so the item lists go with the catalog rather than waiting for
+  // whichever screen happens to be opened next.
+  const invalidate = async () => {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.seedTrays.models })
+    await queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all })
+  }
   const modelMutation = useMutation({
     mutationFn: addSeedTrayModel,
     onSuccess: invalidate
@@ -118,6 +216,16 @@ function SeedTrayModelsTable() {
           {retireError}
         </Alert>
       )}
+      {correcting && (
+        <SeedTrayModelCorrectionDialog
+          model={correcting}
+          onSaved={() => {
+            setCorrecting(null)
+            invalidate()
+          }}
+          onCancel={() => setCorrecting(null)}
+        />
+      )}
       <Form.Check type="switch" id="show-retired-tray-models" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
       <Table>
         <thead>
@@ -142,6 +250,7 @@ function SeedTrayModelsTable() {
                 <td>
                   {model.identifier}
                   <RetiredBadge active={model.active} />
+                  <ReplacedByNote by={seedTrayModels.find((candidate) => candidate.pk === model.replaced_by)?.identifier ?? null} />
                 </td>
                 <td>{model.description}</td>
                 <td>
@@ -149,6 +258,13 @@ function SeedTrayModelsTable() {
                 </td>
                 <td>{model.cell_size_ml}</td>
                 <td>
+                  {model.replaced_by === null && (
+                    <>
+                      <Button size="sm" variant="outline-secondary" onClick={() => setCorrecting(model)}>
+                        Correct
+                      </Button>{' '}
+                    </>
+                  )}
                   <RetireButton active={model.active} onChange={(active) => retire(model.pk, active)} />
                 </td>
               </tr>

@@ -2,8 +2,9 @@
 
 from inventory.models import InventoryItem, QuantityCertainty
 from seeds.models import Seeds
+from seedtrays.models import SeedTrayModel
 from tests.api import RESTContractTestCase
-from tests.factories import make_plant_variety, make_supplier
+from tests.factories import make_location, make_plant_variety, make_supplier
 
 
 class SeedCatalogTestCase(RESTContractTestCase):
@@ -337,6 +338,268 @@ class SeedCatalogReplacementTrailTests(SeedCatalogTestCase):
         response = self.client.post(
             f'/seeds/seeds/{self.seeds_pk}/merge/',
             {'into': self.seeds_pk},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+
+class TrayModelTestCase(RESTContractTestCase):
+    """One tray model, created the way the Seed tray screen creates it."""
+
+    identifier = '72-cell propagator'
+    #: Whether the model starts with a physical tray received against it,
+    #: which is what freezes the grid its cells were built to.
+    received = False
+
+    def setUp(self):
+        super().setUp()
+        self.store = make_location(name='Potting shed')
+        self.model_pk = self.create_model()
+        self.tray = self.receive_tray() if self.received else None
+
+    def create_model(self, **overrides):
+        """Create one tray model through the public workflow."""
+        payload = {
+            'identifier': self.identifier,
+            'description': 'Rigid propagation tray',
+            'height': 60,
+            'x_size': 300,
+            'y_size': 500,
+            'x_cells': 8,
+            'y_cells': 9,
+            'cell_size_ml': 40,
+        }
+        payload.update(overrides)
+        response = self.client.post(
+            '/seedtrays/seedtraymodels/', payload, format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data['pk']
+
+    def receive_tray(self, model_pk=None):
+        """Receive one physical tray, which builds its cells from the grid."""
+        response = self.client.post(
+            f'/seedtrays/seedtraymodels/{model_pk or self.model_pk}/receive/',
+            {
+                'received_date': '2026-08-02',
+                'quantity': 1,
+                'line_cost_ex_tax': '12.5000',
+                'destination': self.store.pk,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data['trays'][0]
+
+    def correct(self, changes, model_pk=None):
+        """Ask for an ordinary in-place edit of the model."""
+        return self.client.patch(
+            f'/seedtrays/seedtraymodels/{model_pk or self.model_pk}/',
+            changes,
+            format='json',
+        )
+
+    def preview(self, model_pk=None):
+        """Ask what replacing the model would leave where it is."""
+        return self.client.get(
+            f'/seedtrays/seedtraymodels/{model_pk or self.model_pk}/replace/',
+        )
+
+    def replace(self, changes, model_pk=None):
+        """Ask for the replacement itself."""
+        return self.client.post(
+            f'/seedtrays/seedtraymodels/{model_pk or self.model_pk}/replace/',
+            changes,
+            format='json',
+        )
+
+
+class TrayModelCorrectionTests(TrayModelTestCase):
+    """A model with no trays against it is corrected in place."""
+
+    def test_the_grid_of_an_unused_model_is_corrected_in_place(self):
+        """Until a tray is built to it, a wrong grid is simply wrong."""
+        response = self.correct({'x_cells': 6, 'y_cells': 12})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['x_cells'], 6)
+        self.assertEqual(response.data['y_cells'], 12)
+        self.assertIsNone(response.data['replaced_by'])
+
+    def test_an_unused_model_reports_its_grid_as_editable(self):
+        """The screen asks before it offers to correct or to replace."""
+        response = self.preview()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['identity_locked'])
+        self.assertEqual(response.data['identity_fields'], ['x_cells', 'y_cells'])
+        self.assertEqual(response.data['blockers'], [])
+
+    def test_a_rename_reaches_the_item_it_is_paired_with(self):
+        """The catalog and the stock screens name the same tray."""
+        self.correct({'identifier': '72-cell plug tray'})
+
+        model = SeedTrayModel.objects.get(pk=self.model_pk)
+        self.assertEqual(model.inventory_item.name, 'Tray model: 72-cell plug tray')
+
+    def test_a_name_another_model_already_holds_is_refused(self):
+        """A duplicate name used to reach the database as a 500."""
+        other = self.create_model(identifier='104-cell propagator')
+
+        response = self.correct({'identifier': self.identifier}, model_pk=other)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data['identifier'],
+            [f'Another tray model is already called {self.identifier}.'],
+        )
+
+
+class TrayModelReplacementTests(TrayModelTestCase):
+    """A received tray freezes the grid its cells were built to."""
+
+    received = True
+
+    def test_a_received_tray_freezes_the_grid_it_was_built_to(self):
+        """Editing it would say the tray on the shelf was always something else."""
+        response = self.correct({'x_cells': 6, 'y_cells': 12})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data['x_cells'],
+            ['Replace the record instead of changing this after stock has been posted.'],
+        )
+
+    def test_the_measurements_stay_editable_after_a_tray_is_received(self):
+        """A corrected measurement still describes the same tray."""
+        response = self.correct({'height': 65, 'cell_size_ml': 45})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['height'], 65)
+        self.assertEqual(response.data['cell_size_ml'], 45)
+
+    def test_a_preview_names_the_trays_that_would_stay_where_they_are(self):
+        """Nobody should have to replace a model to find out what is on it."""
+        response = self.preview()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['identity_locked'])
+        self.assertEqual(response.data['blockers'], [])
+        relations = {entry['relation'] for entry in response.data['stays']}
+        self.assertIn('seedtrays.seedtray.model', relations)
+
+    def test_a_replacement_carries_the_corrected_grid(self):
+        """The whole point is a model the next delivery is cut to."""
+        response = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        replacement = response.data['replacement']
+        self.assertEqual((replacement['x_cells'], replacement['y_cells']), (6, 12))
+        self.assertTrue(replacement['active'])
+
+    def test_a_replacement_inherits_everything_it_was_not_asked_to_change(self):
+        """A correction names what is wrong, not the whole record again."""
+        response = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        )
+
+        replacement = response.data['replacement']
+        self.assertEqual(replacement['height'], 60)
+        self.assertEqual(replacement['x_size'], 300)
+        self.assertEqual(replacement['cell_size_ml'], 40)
+        self.assertEqual(replacement['description'], 'Rigid propagation tray')
+
+    def test_the_replaced_model_is_retired_pointing_at_its_successor(self):
+        """A reader who searches for the old model finds where it went."""
+        response = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        )
+
+        source = response.data['source']
+        self.assertFalse(source['active'])
+        self.assertEqual(source['replaced_by'], response.data['replacement']['pk'])
+
+    def test_a_replacement_leaves_the_tray_on_the_model_it_was_built_to(self):
+        """Its cells are at the coordinates the old grid gave them."""
+        response = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        )
+
+        tray = self.client.get(f"/seedtrays/seedtrays/{self.tray['pk']}/")
+        self.assertEqual(tray.data['model'], self.model_pk)
+        stayed = {entry['relation'] for entry in response.data['stayed']}
+        self.assertIn('seedtrays.seedtray.model', stayed)
+
+    def test_the_replacement_gets_a_tray_item_of_its_own(self):
+        """A tray of the corrected grid is a different unit of a different item."""
+        response = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        )
+
+        source_item = response.data['source']['inventory_item']
+        replacement_item = response.data['replacement']['inventory_item']
+        self.assertNotEqual(replacement_item, source_item)
+        item = InventoryItem.objects.get(pk=replacement_item)
+        self.assertEqual(item.name, 'Tray model: 72-cell (6x12)')
+        self.assertEqual(item.category, InventoryItem.Category.TRAY)
+        self.assertEqual(item.tracking_mode, InventoryItem.TrackingMode.SERIALIZED)
+
+    def test_a_replacement_must_be_given_a_name_of_its_own(self):
+        """The model it supersedes keeps the name its trays were received under."""
+        response = self.replace({'x_cells': 6, 'y_cells': 12})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data['identifier'],
+            [f'Another tray model is already called {self.identifier}.'],
+        )
+        self.assertEqual(SeedTrayModel.objects.count(), 1)
+
+    def test_a_replaced_model_is_no_longer_offered_as_a_choice(self):
+        """Retirement is what takes it out of the selectors, and it applies."""
+        response = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        )
+
+        offerable = self.client.get(
+            '/seedtrays/seedtraymodels/', {'active': 'true'},
+        ).data
+
+        self.assertEqual(
+            {row['pk'] for row in offerable['results']},
+            {response.data['replacement']['pk']},
+        )
+
+    def test_the_successor_receives_the_next_delivery(self):
+        """The replacement is a working model, not just a note in the trail."""
+        replacement = self.replace(
+            {'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12},
+        ).data['replacement']
+
+        tray = self.receive_tray(model_pk=replacement['pk'])
+
+        self.assertEqual(tray['model'], replacement['pk'])
+        cells = self.client.get(f"/seedtrays/seedtrays/{tray['pk']}/cells/")
+        self.assertEqual(len(cells.data), 72)
+        self.assertEqual(max(cell['x_position'] for cell in cells.data), 5)
+
+    def test_a_model_that_was_already_replaced_cannot_be_replaced_again(self):
+        """The trail stays readable by saying where the catalog went."""
+        self.replace({'identifier': '72-cell (6x12)', 'x_cells': 6, 'y_cells': 12})
+
+        response = self.replace({'identifier': '72-cell (4x18)', 'x_cells': 4, 'y_cells': 18})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('was already replaced by', response.data['replacement'][0])
+
+    def test_a_tray_model_still_has_no_merge_route(self):
+        """Replacement is what a stock-owning record gets instead."""
+        response = self.client.post(
+            f'/seedtrays/seedtraymodels/{self.model_pk}/merge/',
+            {'into': self.model_pk},
             format='json',
         )
 
