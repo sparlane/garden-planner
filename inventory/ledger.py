@@ -16,6 +16,7 @@ from django.utils import timezone
 from purchasing.models import SupplierInvoiceLine
 from locations.occupancy import check_capacity, container_contribution, tray_contribution
 from plantings.models import SeedTrayPlanting, SpecificPlantLocation
+from seedtrays.models import SeedTrayGeneration
 from seedtrays.services import create_tray_for_unit
 from labels.models import LabelPrintItem
 from sales.models import FulfillmentLine, SalesOrderAllocation
@@ -292,8 +293,32 @@ def promised_bulk(lot, location):
     return promised - shipped
 
 
+def filled_bulk(lot, location):
+    """Count anonymous pots held by open fills at their original location.
+
+    These containers remain physical stock. Until fill departures and moves
+    can carry their history, ordinary stock actions may draw only empty pots.
+    Read under the lot lock when making a new claim on the pool.
+    """
+    if lot.item.category != InventoryItem.Category.POT_CONTAINER:
+        return 0
+    return SeedTrayGeneration.objects.filter(
+        stock_lot=lot, source_location=location,
+        status=SeedTrayGeneration.Status.OPEN,
+    ).aggregate(total=Sum('container_count'))['total'] or 0
+
+
+def unit_has_open_pot_fill(unit):
+    """Whether removing this pot would strand a fill's contents and history."""
+    if unit.item.category != InventoryItem.Category.POT_CONTAINER:
+        return False
+    return unit.container_fills.filter(
+        tray__isnull=True, status=SeedTrayGeneration.Status.OPEN,
+    ).exists()
+
+
 def unpromised_bulk(lot, location):
-    """Return anonymous stock on hand that nothing has been promised out of.
+    """Return anonymous stock available after sales reservations and fills.
 
     This, not `bulk_balance`, is what a new claim on the pool is measured
     against, and it is only trustworthy while the caller holds the lot lock
@@ -302,7 +327,7 @@ def unpromised_bulk(lot, location):
     against a figure that already excludes that reservation would have it
     refuse its own promise.
     """
-    return bulk_balance(lot, location) - promised_bulk(lot, location)
+    return bulk_balance(lot, location) - promised_bulk(lot, location) - filled_bulk(lot, location)
 
 
 def lock_lots(workspace, lot_ids):
@@ -371,6 +396,8 @@ def _validate_source_balance(lot, source, quantity, unit=None):
         available = bulk_balance(lot, source)
     else:
         available = physical_balance(lot, source)
+    if unit is None:
+        available -= filled_bulk(lot, source)
     if quantity > available:
         raise ValidationError(
             {
@@ -385,8 +412,12 @@ def _validate_source_balance(lot, source, quantity, unit=None):
 def _create_movement(entry):
     """Create a validated movement after callers acquire the lot lock."""
     quantity = quantize_quantity(entry.quantity)
-    if entry.source and entry.enforce_source_balance:
+    if entry.source and (
+        entry.enforce_source_balance or (entry.unit is None and filled_bulk(entry.lot, entry.source))
+    ):
         _validate_source_balance(entry.lot, entry.source, quantity, entry.unit)
+    if entry.unit and entry.source and not entry.destination and unit_has_open_pot_fill(entry.unit):
+        raise ValidationError({'unit': 'Clean the open pot fill before removing this container.'})
     movement = StockMovement.objects.create(
         workspace=entry.workspace,
         created_by=entry.user,
@@ -674,6 +705,8 @@ def individualize_lot_units(workspace, user, request):
 
 def _numbering_is_unused(unit):
     """Return why a numbered unit is not safe to discard, or None."""
+    if unit.container_fills.exists():
+        return 'The unit has fill history.'
     if unit.movements.exists():
         return 'The unit has stock history.'
     if unit_is_in_use(unit):

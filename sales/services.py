@@ -12,7 +12,7 @@ from django.utils import timezone
 
 from costing.services import cohort_cost_breakdown, plant_cost_breakdown
 from health.availability import is_quarantined
-from inventory.ledger import lock_lots, lock_units, unit_physical_state, unpromised_bulk
+from inventory.ledger import lock_lots, lock_units, unit_has_open_pot_fill, unit_physical_state, unpromised_bulk
 from inventory.models import InventoryUnit, StockLot
 from locations.models import Location
 from plantings.cohort_availability import COMMITTABLE_STATES, available_quantity
@@ -174,7 +174,7 @@ def _unit_target_error(line, target):
     """Return why a locked numbered unit cannot currently satisfy a unit line."""
     if target.item_id != line.item_id:
         return 'wrong_item'
-    if unit_physical_state(target) != 'available':
+    if unit_physical_state(target) != 'available' or unit_has_open_pot_fill(target):
         return 'not_available'
     if _held_elsewhere(line, inventory_unit=target):
         return 'already_reserved'
