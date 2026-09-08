@@ -187,7 +187,11 @@ interface CorrectionDialogProps {
   title: string
   onSaved: (replaced: boolean) => void
   onCancel: () => void
-  children: (fieldErrors: Record<string, string>) => React.ReactNode
+  // `replacing` is what the dialog itself is about to do, so a form can say
+  // something about a field that only holds on the replacement path — a
+  // successor needing a name of its own, say — without asking the server the
+  // same question a second time.
+  children: (fieldErrors: Record<string, string>, replacing: boolean) => React.ReactNode
 }
 
 function changedValues(original: CatalogValues, values: CatalogValues): CatalogValues {
@@ -251,7 +255,7 @@ function CorrectionDialog({ collection, source, original, values, title, onSaved
         <Modal.Title>{title}</Modal.Title>
       </Modal.Header>
       <Modal.Body>
-        {children(fieldErrors)}
+        {children(fieldErrors, replacing)}
         {preview.isLoading && (
           <div className="mt-3">
             <Spinner animation="border" size="sm" /> Checking what has been recorded against it…

@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models, transaction
 
-from common.retirement import RetirableModel
+from common.replacement import ReplaceableModel
 from inventory.models import (
     COST_DECIMAL_PLACES,
     COST_MAX_DIGITS,
@@ -25,7 +25,7 @@ from inventory.units import UnitCode
 from workspaces.models import WorkspaceOwnedModel
 
 
-class SeedTrayModel(RetirableModel, WorkspaceOwnedModel):
+class SeedTrayModel(ReplaceableModel, WorkspaceOwnedModel):
     """
     A seed tray model used for starting seeds
     """
@@ -46,8 +46,44 @@ class SeedTrayModel(RetirableModel, WorkspaceOwnedModel):
     y_cells = models.PositiveIntegerField()
     cell_size_ml = models.PositiveIntegerField(help_text='Volume of each cell in milliliters')
 
+    #: What a tray of this model *is*. The grid is the one part of the spec
+    #: that has already been written down elsewhere: every tray received
+    #: against the model has a cell at each of those coordinates, and sowings,
+    #: plants and media applications name those cells. The outer measurements
+    #: and the cell volume describe the same trays rather than materialize
+    #: anything, and what a posted document worked out from a cell volume was
+    #: frozen when it was posted, so correcting one of those stays a
+    #: correction.
+    identity_fields = ('x_cells', 'y_cells')
+
     def __str__(self):
         return self.identifier
+
+    @property
+    def inventory_item_name(self):
+        """Return what the paired stock identity is called after this model."""
+        return f'Tray model: {self.identifier}'
+
+    def has_history(self):
+        """Say whether physical trays or posted stock hang off this model."""
+        if self.pk is None:
+            return False
+        if self.seedtray_set.exists():
+            return True
+        return bool(
+            self.inventory_item_id and self.inventory_item.stock_history_started_at
+        )
+
+    def identity_locked(self):
+        """Say whether received trays have frozen the grid this model names.
+
+        A tray is received as a physical object with cells at the coordinates
+        this grid gave it, and every sowing, plant and application names one of
+        them. Re-cutting the grid afterwards would say those trays were always
+        something else, so the model is replaced instead and the trays already
+        on the shelf keep the one they were built to.
+        """
+        return self.has_history()
 
     def clean(self):
         """Require a compatible serialized tray catalog identity."""
@@ -72,15 +108,14 @@ class SeedTrayModel(RetirableModel, WorkspaceOwnedModel):
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
             if previous and previous.inventory_item_id != self.inventory_item_id:
-                has_history = previous.seedtray_set.exists() or previous.inventory_item.stock_history_started_at
-                if has_history:
+                if previous.has_history():
                     raise ValidationError({
                         'inventory_item': 'Cannot change the inventory item after tray or stock history exists.',
                     })
         if not self.inventory_item_id:
             self.inventory_item = InventoryItem.objects.create(
                 workspace=self.workspace,
-                name=f'Tray model: {self.identifier}',
+                name=self.inventory_item_name,
                 category=InventoryItem.Category.TRAY,
                 base_unit='each',
                 tracking_mode=InventoryItem.TrackingMode.SERIALIZED,

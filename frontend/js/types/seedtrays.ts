@@ -14,6 +14,9 @@ interface SeedTrayModel extends SeedTrayModelCreate {
   pk: number
   inventory_item: number
   active: boolean
+  // Set once a received tray has frozen this model's cell grid and a correction
+  // to it has saved a successor. The superseded model keeps its own trays.
+  replaced_by: number | null
 }
 
 interface SeedTrayReceiptCreate {

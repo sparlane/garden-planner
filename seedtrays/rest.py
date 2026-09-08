@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework_nested import routers
 
+from common.replacement import ReplaceableViewSetMixin, ReplacementSerializerMixin
 from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from inventory.ledger import post_receipt, unit_is_in_use, unit_physical_state
 from inventory.models import (
@@ -25,46 +26,86 @@ from inventory.units import UnitCode
 from locations.models import Location
 from supplies.defaults import ensure_default_supplier
 from supplies.models import Supplier
+from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .generations import open_generation_for
 from .models import SeedTrayModel, SeedTray, SeedTrayCell, SeedTrayGeneration
+from .services import rename_tray_inventory_item
 
 
-class SeedTrayModelSerializer(RetirementSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SeedTrayModelSerializer(
+    ReplacementSerializerMixin,
+    RetirementSerializerMixin,
+    CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """
     Serializer for a SeedTrayModel
     """
     class Meta:
         model = SeedTrayModel
-        fields = ['pk', 'identifier', 'inventory_item', 'description', 'height', 'x_size', 'y_size', 'x_cells', 'y_cells', 'cell_size_ml', 'active']
+        fields = ['pk', 'identifier', 'inventory_item', 'description', 'height', 'x_size', 'y_size', 'x_cells', 'y_cells', 'cell_size_ml', 'active', 'replaced_by']
         extra_kwargs = {'inventory_item': {'required': False}}
 
     workspace_field_lookups = {'inventory_item': 'workspace'}
 
     def validate(self, data):  # pylint: disable=arguments-renamed
-        """Keep cell-grid dimensions stable after trays have been created."""
+        """Check the name and the stock identity this payload would save.
+
+        The grid is checked by ``ReplacementSerializerMixin`` above, because a
+        received tray freezing it is what the replacement route exists for.
+        """
         data = super().validate(data)
-        errors = {}
-        if self.instance is not None and self.instance.seedtray_set.exists():
-            for field in ('x_cells', 'y_cells'):
-                if field in data and data[field] != getattr(self.instance, field):
-                    errors[field] = 'Cannot change cell dimensions after trays have been created.'
-        item = data.get('inventory_item')
-        if item:
-            if item.category != InventoryItem.Category.TRAY:
-                errors['inventory_item'] = 'Select a tray-category inventory item.'
-            elif item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
-                errors['inventory_item'] = 'Select a serialized inventory item.'
-            elif item.base_unit != UnitCode.EACH:
-                errors['inventory_item'] = 'Tray inventory items must use each.'
-            if self.instance and item.pk != self.instance.inventory_item_id:
-                has_history = self.instance.seedtray_set.exists() or self.instance.inventory_item.stock_history_started_at
-                if has_history:
-                    errors['inventory_item'] = 'Cannot change the inventory item after tray or stock history exists.'
+        errors = self._identifier_errors(data)
+        errors.update(self._inventory_item_errors(data))
         if errors:
             raise serializers.ValidationError(errors)
         return data
+
+    def _identifier_errors(self, data):
+        """Refuse a name another tray model in this workspace already holds.
+
+        A replacement meets this too, and should: the model it supersedes keeps
+        the name its trays were received under, so the successor needs one of
+        its own to be tellable apart from it on the same screen.
+        """
+        identifier = data.get('identifier')
+        if identifier is None:
+            return {}
+        workspace = self.instance.workspace if self.instance else get_current_workspace()
+        taken = SeedTrayModel.objects.filter(
+            workspace=workspace, identifier=identifier,
+        )
+        if self.instance is not None:
+            taken = taken.exclude(pk=self.instance.pk)
+        if not taken.exists():
+            return {}
+        return {'identifier': f'Another tray model is already called {identifier}.'}
+
+    def _inventory_item_errors(self, data):
+        """Require a compatible item, and keep it once trays exist."""
+        item = data.get('inventory_item')
+        if not item:
+            return {}
+        if item.category != InventoryItem.Category.TRAY:
+            return {'inventory_item': 'Select a tray-category inventory item.'}
+        if item.tracking_mode != InventoryItem.TrackingMode.SERIALIZED:
+            return {'inventory_item': 'Select a serialized inventory item.'}
+        if item.base_unit != UnitCode.EACH:
+            return {'inventory_item': 'Tray inventory items must use each.'}
+        if self.instance and item.pk != self.instance.inventory_item_id and self.instance.has_history():
+            return {
+                'inventory_item': 'Cannot change the inventory item after tray or stock history exists.',
+            }
+        return {}
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        """Keep the paired stock identity named after the model it belongs to."""
+        instance = super().update(instance, validated_data)
+        rename_tray_inventory_item(instance)
+        return instance
 
 
 class SeedTraySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -192,12 +233,23 @@ class NestedSeedTrayCellSerializer(SeedTrayCellSerializer):
         extra_kwargs = {'tray': {'read_only': True}}
 
 
-class SeedTrayModelsViewSet(RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class SeedTrayModelsViewSet(
+    ReplaceableViewSetMixin,
+    RetirableViewSetMixin,
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
+):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayModels
     """
-    queryset = SeedTrayModel.objects.order_by('pk')
+    queryset = SeedTrayModel.objects.select_related('inventory_item').order_by('pk')
     serializer_class = SeedTrayModelSerializer
+
+    #: The successor never shares the serialized stock identity of the model it
+    #: supersedes. A tray unit is one physical tray of one grid, so trays of
+    #: the corrected model are different units of a different item, and
+    #: ``save()`` gives the new model an item of its own.
+    replacement_ignored_fields = ('active', 'inventory_item')
 
     @action(detail=True, methods=['post'])
     @transaction.atomic
