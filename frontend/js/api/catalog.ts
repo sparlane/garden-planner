@@ -1,4 +1,4 @@
-import { CatalogMergePreview, CatalogMergeResult, CatalogReplacementPreview, CatalogReplacementResult } from '../types/catalog'
+import { CatalogDuplicateCheck, CatalogMergePreview, CatalogMergeResult, CatalogReplacementPreview, CatalogReplacementResult } from '../types/catalog'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 // Families, plants, varieties and suppliers all merge through the one action
@@ -30,4 +30,24 @@ async function correctCatalogRecord<Record>(collection: string, pk: number, chan
   return response.json() as Promise<Record>
 }
 
-export { correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord }
+// The name goes under the field the collection calls it, because a tray model
+// is named by an `identifier` and everything else by a `name`, and the scope is
+// the parents a duplicate has to share — the server refuses the check without
+// them rather than answering from another crop.
+function checkCatalogDuplicates(
+  collection: string,
+  field: string,
+  name: string,
+  scope: Record<string, number | undefined>,
+  exclude: number | undefined,
+  signal?: AbortSignal
+): Promise<CatalogDuplicateCheck> {
+  const params = new URLSearchParams({ [field]: name })
+  for (const [key, value] of Object.entries(scope)) {
+    if (value !== undefined) params.set(key, String(value))
+  }
+  if (exclude !== undefined) params.set('exclude', String(exclude))
+  return fetchAsJson<CatalogDuplicateCheck>(`${collection}duplicates/?${params.toString()}`, signal)
+}
+
+export { checkCatalogDuplicates, correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord }

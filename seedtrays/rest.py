@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework_nested import routers
 
+from common.duplicates import DuplicateWarningViewSetMixin
 from common.replacement import ReplaceableViewSetMixin, ReplacementSerializerMixin
 from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
 from inventory.ledger import post_receipt, unit_is_in_use, unit_physical_state
@@ -234,6 +235,7 @@ class NestedSeedTrayCellSerializer(SeedTrayCellSerializer):
 
 
 class SeedTrayModelsViewSet(
+    DuplicateWarningViewSetMixin,
     ReplaceableViewSetMixin,
     RetirableViewSetMixin,
     CurrentWorkspaceViewSetMixin,
@@ -244,6 +246,11 @@ class SeedTrayModelsViewSet(
     """
     queryset = SeedTrayModel.objects.select_related('inventory_item').order_by('pk')
     serializer_class = SeedTrayModelSerializer
+
+    #: A tray model is named by an identifier rather than a name, and it is the
+    #: one catalog name the database also holds to, so the warning arrives
+    #: before the uniqueness refusal rather than instead of it.
+    duplicate_name_field = 'identifier'
 
     #: The successor never shares the serialized stock identity of the model it
     #: supersedes. A tray unit is one physical tray of one grid, so trays of

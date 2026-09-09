@@ -11,7 +11,7 @@ import { Location } from './types/locations'
 import { SeedTrayModel, SeedTrayModelCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, updateSeedTrayModel } from './api/seedtrays'
 import { getLocations } from './api/locations'
-import { CatalogValues, CorrectionDialog, ReplacedByNote, RetireButton, RetiredBadge, retiredRowClass } from './catalog'
+import { CatalogValues, CorrectionDialog, DuplicateWarning, ReplacedByNote, RetireButton, RetiredBadge, retiredRowClass } from './catalog'
 import { errorsByField, formatDate } from './utils'
 import { queryKeys } from './query'
 
@@ -55,6 +55,7 @@ class SeedTrayModelNew extends React.Component<SeedTrayModelNewProps, SeedTrayMo
         <td></td>
         <td>
           <input type="text" name="identifier" onChange={this.updateText('identifier')} />
+          <DuplicateWarning collection="/seedtrays/seedtraymodels/" field="identifier" name={this.state.identifier} />
         </td>
         <td>
           <input type="text" name="description" onChange={this.updateText('description')} />
@@ -132,6 +133,7 @@ function SeedTrayModelCorrectionDialog({ model, onSaved, onCancel }: SeedTrayMod
             <Form.Control value={String(values.identifier)} isInvalid={'identifier' in fieldErrors} onChange={(event) => update('identifier', event.target.value)} />
             <Form.Control.Feedback type="invalid">{fieldErrors.identifier}</Form.Control.Feedback>
             {replacing && <Form.Text>The new grid saves a second model, so give it a name of its own — {model.identifier} keeps the one its trays were received under.</Form.Text>}
+            <DuplicateWarning collection="/seedtrays/seedtraymodels/" field="identifier" name={String(values.identifier)} exclude={replacing ? undefined : model.pk} />
           </Form.Group>
           <Form.Group className="mb-3" controlId="tray-model-correction-description">
             <Form.Label>Description</Form.Label>

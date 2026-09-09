@@ -2,9 +2,9 @@ import React from 'react'
 import { Alert, Badge, Button, Form, Modal, Spinner } from 'react-bootstrap'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord } from './api/catalog'
+import { checkCatalogDuplicates, correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord } from './api/catalog'
 import { queryKeys } from './query'
-import { CatalogRecordLabel, CatalogReference } from './types/catalog'
+import { CatalogDuplicate, CatalogRecordLabel, CatalogReference } from './types/catalog'
 import { errorsByField } from './utils'
 
 interface CatalogRecord {
@@ -61,6 +61,66 @@ function referenceSummary(reference: CatalogReference): string {
   const examples = reference.examples.join(', ')
   if (reference.count > reference.examples.length) return `${examples}, and ${reference.count - reference.examples.length} more`
   return examples
+}
+
+// Held back until the typing stops, so the check runs on a name rather than on
+// every prefix of one. A short delay also keeps the answer from arriving while
+// the operator is still mid-word and reading as a verdict on half a name.
+function useSettledValue<Value>(value: Value, delay = 300): Value {
+  const [settled, setSettled] = React.useState(value)
+  React.useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delay)
+    return () => clearTimeout(timer)
+  }, [value, delay])
+  return settled
+}
+
+function duplicateSummary(candidate: CatalogDuplicate): string {
+  if (candidate.handoff) {
+    const verb = candidate.handoff.relation === 'merged_into' ? 'was merged into' : 'was replaced by'
+    return `${candidate.label} has ${candidate.reason} and ${verb} ${candidate.handoff.label}.`
+  }
+  if (!candidate.active) return `${candidate.label} has ${candidate.reason} and is retired.`
+  return `${candidate.label} has ${candidate.reason}.`
+}
+
+interface DuplicateWarningProps {
+  collection: string
+  name: string
+  //: The parents a duplicate has to share. The check is skipped until every one
+  //: of them is known, because the server answers within them or not at all.
+  scope?: Record<string, number | undefined>
+  //: The record being renamed, which is not a duplicate of itself.
+  exclude?: number
+  //: The field the collection calls its name.
+  field?: string
+}
+
+// A warning, never a refusal: these catalogs carry no unique constraint on a
+// name on purpose, so what the catalog already holds is reported and what to do
+// about it stays with the operator. It says nothing at all when there is
+// nothing to say, because a control that is usually empty is one an operator
+// reads when it is not.
+function DuplicateWarning({ collection, name, scope = {}, exclude, field = 'name' }: DuplicateWarningProps) {
+  const settled = useSettledValue(name.trim())
+  // A picker that has not been chosen yet reads as `Number('')`, which is NaN
+  // rather than undefined, and sending that would earn a 400 and a global error
+  // alert for a check nobody asked for out loud.
+  const scoped = Object.values(scope).every((value) => value !== undefined && Number.isFinite(value))
+  const check = useQuery({
+    queryKey: queryKeys.catalog.duplicates(collection, settled, scope, exclude),
+    queryFn: ({ signal }) => checkCatalogDuplicates(collection, field, settled, scope, exclude, signal),
+    enabled: settled.length > 0 && scoped
+  })
+  const candidates = check.data?.candidates ?? []
+  if (candidates.length === 0) return null
+  return (
+    <div className="small text-warning-emphasis mt-1">
+      {candidates.map((candidate) => (
+        <div key={candidate.pk}>{duplicateSummary(candidate)}</div>
+      ))}
+    </div>
+  )
 }
 
 interface MergeDialogProps {
@@ -317,4 +377,17 @@ function CorrectionDialog({ collection, source, original, values, title, onSaved
   )
 }
 
-export { CatalogRecord, CatalogValues, CorrectionDialog, MergeDialog, MergedIntoNote, ReplacedByNote, RetireButton, RetiredBadge, activeChoices, changedValues, retiredRowClass }
+export {
+  CatalogRecord,
+  CatalogValues,
+  CorrectionDialog,
+  DuplicateWarning,
+  MergeDialog,
+  MergedIntoNote,
+  ReplacedByNote,
+  RetireButton,
+  RetiredBadge,
+  activeChoices,
+  changedValues,
+  retiredRowClass
+}

@@ -3,8 +3,8 @@ Rest access for plants
 """
 from rest_framework import routers, serializers, viewsets
 
-from common.merging import MergeableViewSetMixin
-from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
+from common.catalog import CatalogViewSetMixin
+from common.retirement import RetirementSerializerMixin
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .models import PlantFamily, Plant, PlantVariety
@@ -53,7 +53,7 @@ class PlantVarietySerializer(RetirementSerializerMixin, CurrentWorkspaceSerializ
     workspace_field_lookups = {'plant': 'workspace'}
 
 
-class PlantFamilyViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantFamilyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Family
     """
@@ -62,7 +62,7 @@ class PlantFamilyViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWo
     pagination_class = None
 
 
-class PlantViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plants
     """
@@ -71,7 +71,7 @@ class PlantViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspac
     pagination_class = None
 
 
-class PlantVarietyViewSet(MergeableViewSetMixin, RetirableViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
+class PlantVarietyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Plant Varieties
     """

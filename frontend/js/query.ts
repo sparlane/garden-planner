@@ -100,7 +100,12 @@ const queryKeys = {
     // The replacement preview describes one record on its own, because nothing
     // moves onto a second one: it reports what stays where it is, and whether
     // posted stock has frozen what the record names.
-    replacementPreview: (collection: string, pk: number) => ['catalog', 'replace', collection, pk] as const
+    replacementPreview: (collection: string, pk: number) => ['catalog', 'replace', collection, pk] as const,
+    // The duplicate check is keyed by everything that changes its answer: the
+    // name being typed, the parents a duplicate has to share, and the record
+    // being renamed, which is never a duplicate of itself.
+    duplicates: (collection: string, name: string, scope: Record<string, number | undefined>, exclude: number | undefined) =>
+      ['catalog', 'duplicates', collection, name, scope, exclude ?? null] as const
   },
   plants: {
     all: ['plants'] as const,

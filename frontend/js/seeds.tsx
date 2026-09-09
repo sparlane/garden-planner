@@ -27,7 +27,18 @@ import {
   updateSeedPacketReceipt
 } from './api/seeds'
 import { addSupplier, getSuppliers, updateSupplier } from './api/supplies'
-import { CatalogValues, CorrectionDialog, MergeDialog, MergedIntoNote, ReplacedByNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import {
+  CatalogValues,
+  CorrectionDialog,
+  DuplicateWarning,
+  MergeDialog,
+  MergedIntoNote,
+  ReplacedByNote,
+  RetireButton,
+  RetiredBadge,
+  activeChoices,
+  retiredRowClass
+} from './catalog'
 import { ReceiptSettlement } from './inventory/settlement'
 import { queryKeys } from './query'
 import { ApiError, errorsByField, formatQuantity } from './utils'
@@ -104,6 +115,7 @@ class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSee
       <tr>
         <td>
           <input type="text" onChange={this.updateName} />
+          <DuplicateWarning collection="/supplies/supplier/" name={this.state.name} />
         </td>
         <td>
           <input type="text" onChange={this.updateWebsite} />

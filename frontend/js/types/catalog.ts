@@ -34,10 +34,36 @@ interface CatalogReplacementPreview {
   blockers: Array<string>
 }
 
+// What the catalog already holds that means the name being typed. `reason` is
+// how it resembles it, `handoff` is where a superseded record said the catalog
+// carries on — retyping that name recreates the duplicate somebody cleaned up.
+interface CatalogDuplicate {
+  pk: number
+  label: string
+  active: boolean
+  reason: string
+  handoff: { relation: 'merged_into' | 'replaced_by'; pk: number; label: string } | null
+}
+
+interface CatalogDuplicateCheck {
+  name: string
+  normalized: string
+  candidates: Array<CatalogDuplicate>
+}
+
 interface CatalogReplacementResult<Record> {
   source: Record
   replacement: Record
   stayed: Array<CatalogReference>
 }
 
-export { CatalogMergePreview, CatalogMergeResult, CatalogReference, CatalogRecordLabel, CatalogReplacementPreview, CatalogReplacementResult }
+export {
+  CatalogDuplicate,
+  CatalogDuplicateCheck,
+  CatalogMergePreview,
+  CatalogMergeResult,
+  CatalogReference,
+  CatalogRecordLabel,
+  CatalogReplacementPreview,
+  CatalogReplacementResult
+}

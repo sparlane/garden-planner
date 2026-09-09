@@ -2,8 +2,8 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import routers, serializers, viewsets
 
-from common.merging import MergeableViewSetMixin
-from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
+from common.catalog import CatalogViewSetMixin
+from common.retirement import RetirementSerializerMixin
 from tax.ird import normalize_ird_number, validate_ird_number
 from workspaces.scoping import CurrentWorkspaceViewSetMixin
 
@@ -50,12 +50,7 @@ class SupplierSerializer(RetirementSerializerMixin, serializers.ModelSerializer)
         return attrs
 
 
-class SupplierViewSet(
-    MergeableViewSetMixin,
-    RetirableViewSetMixin,
-    CurrentWorkspaceViewSetMixin,
-    viewsets.ModelViewSet,
-):  # pylint: disable=too-many-ancestors
+class SupplierViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of Suppliers
     """
