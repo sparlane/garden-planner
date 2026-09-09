@@ -1,4 +1,4 @@
-"""Everything a descriptive catalog record is corrected by, in one place.
+"""Everything a catalog record is corrected by, in one place.
 
 Retiring, merging and warning about a duplicate are three answers to one
 question -- this record is wrong, or is one too many -- and a collection
@@ -12,14 +12,20 @@ new catalog gets the whole correction vocabulary by saying what it is. The
 workspace scoping stays at the call site, because it is not a catalog rule: it
 is the deployment boundary every collection sits inside, catalog or not.
 
-This is the mixin for a record that only describes something. A record owning a
-stock identity of its own -- a seed catalog entry, a tray model -- is corrected
-by replacement instead of merging, for the reasons ``common.replacement`` gives,
-so it composes ``ReplaceableViewSetMixin`` in place of the merge half.
+There are two of them, because there are two kinds of catalog record. One only
+describes something, and two of those can be found to have always been the same
+thing, so it merges. The other owns a stock identity of its own -- a seed
+catalog entry, a tray model -- and is corrected by replacement instead, for the
+reasons ``common.replacement`` gives.
+
+Both keep the warning, and it is the stock catalogs it matters most on: they
+are the ones with no merge behind them, so a duplicate there cannot be cleaned
+up afterwards at all, only prevented.
 """
 
 from .duplicates import DuplicateWarningViewSetMixin
 from .merging import MergeableViewSetMixin
+from .replacement import ReplaceableViewSetMixin
 from .retirement import RetirableViewSetMixin
 
 
@@ -33,4 +39,16 @@ class CatalogViewSetMixin(  # pylint: disable=too-few-public-methods
     The three parts do not overlap -- two add an action and one narrows the
     collection -- so the order they are written in here carries no meaning
     beyond reading in the order an operator meets them.
+    """
+
+
+class StockCatalogViewSetMixin(  # pylint: disable=too-few-public-methods
+    DuplicateWarningViewSetMixin,
+    ReplaceableViewSetMixin,
+    RetirableViewSetMixin,
+):
+    """Serve one catalog collection that owns a stock identity of its own.
+
+    The same three answers with the merge half swapped for replacement, which
+    is the whole of the difference between the two kinds of record.
     """

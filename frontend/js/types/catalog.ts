@@ -45,9 +45,13 @@ interface CatalogDuplicate {
   handoff: { relation: 'merged_into' | 'replaced_by'; pk: number; label: string } | null
 }
 
+// `name` and `normalized` are what was compared to reach the candidates, so a
+// collection with no name typed on it reports neither: a seed catalog entry is
+// one supplier's variety and no more, and holding those already is the
+// duplicate rather than the scope one is looked for in.
 interface CatalogDuplicateCheck {
-  name: string
-  normalized: string
+  name?: string
+  normalized?: string
   candidates: Array<CatalogDuplicate>
 }
 

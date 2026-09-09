@@ -7,6 +7,7 @@ from tests.factories import (
     make_plant_family,
     make_plant_variety,
     make_seed_tray_model,
+    make_seeds,
     make_supplier,
 )
 
@@ -197,3 +198,106 @@ class TrayModelDuplicateTests(RESTContractTestCase):
             ['72-cell propagator'],
         )
         self.assertEqual(response.data['candidates'][0]['reason'], 'the same name')
+
+
+class SeedCatalogDuplicateTests(RESTContractTestCase):
+    """The catalog with no name typed on it, and no merge behind it."""
+
+    def setUp(self):
+        super().setUp()
+        self.supplier = make_supplier(name='Kings Seeds')
+        self.roma = make_plant_variety(name='Roma')
+
+    def check(self, **params):
+        """Ask the seed catalog what it already holds under these parents."""
+        response = self.client.get('/seeds/seeds/duplicates/', params)
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def test_holding_one_suppliers_variety_twice_is_the_duplicate(self):
+        """There is nothing else an entry could resemble."""
+        held = make_seeds(supplier=self.supplier, plant_variety=self.roma)
+
+        data = self.check(supplier=self.supplier.pk, plant_variety=self.roma.pk)
+
+        self.assertEqual([entry['pk'] for entry in data['candidates']], [held.pk])
+        self.assertEqual(
+            data['candidates'][0]['reason'], 'the same supplier and variety',
+        )
+
+    def test_the_answer_reports_nothing_that_was_compared(self):
+        """No name was typed, so there is no normalized form of one."""
+        data = self.check(supplier=self.supplier.pk, plant_variety=self.roma.pk)
+
+        self.assertEqual(list(data), ['candidates'])
+
+    def test_the_same_variety_from_another_supplier_is_not_a_duplicate(self):
+        """Two suppliers' Roma are two packets and two inventory items."""
+        make_seeds(supplier=make_supplier(name='Egmont Seeds'), plant_variety=self.roma)
+
+        data = self.check(supplier=self.supplier.pk, plant_variety=self.roma.pk)
+
+        self.assertEqual(data['candidates'], [])
+
+    def test_another_variety_from_the_same_supplier_is_not_a_duplicate(self):
+        """A supplier's catalog is most of what the warning has to ignore."""
+        make_seeds(
+            supplier=self.supplier, plant_variety=make_plant_variety(name='Black Krim'),
+        )
+
+        data = self.check(supplier=self.supplier.pk, plant_variety=self.roma.pk)
+
+        self.assertEqual(data['candidates'], [])
+
+    def test_both_parents_have_to_be_named(self):
+        """Half the key answers about entries holding some other variety."""
+        response = self.client.get(
+            '/seeds/seeds/duplicates/', {'supplier': self.supplier.pk},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data['plant_variety'],
+            ['Name the plant_variety to check against.'],
+        )
+
+    def test_an_entry_is_not_a_duplicate_of_itself(self):
+        """Correcting an entry has to be able to leave its identity alone."""
+        held = make_seeds(supplier=self.supplier, plant_variety=self.roma)
+
+        data = self.check(
+            supplier=self.supplier.pk, plant_variety=self.roma.pk, exclude=held.pk,
+        )
+
+        self.assertEqual(data['candidates'], [])
+
+    def test_a_superseded_entry_says_where_the_catalog_went(self):
+        """It is retired, so nothing offers it, and it is still that seed."""
+        created = self.client.post(
+            '/seeds/seeds/',
+            {'supplier': self.supplier.pk, 'plant_variety': self.roma.pk},
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        held = created.data
+        other = make_supplier(name='Egmont Seeds')
+        replaced = self.client.post(
+            f'/seeds/seeds/{held["pk"]}/replace/', {'supplier': other.pk}, format='json',
+        )
+        self.assertEqual(replaced.status_code, 200, replaced.data)
+
+        data = self.check(supplier=self.supplier.pk, plant_variety=self.roma.pk)
+
+        entry = data['candidates'][0]
+        self.assertEqual(entry['pk'], held['pk'])
+        self.assertFalse(entry['active'])
+        self.assertEqual(entry['handoff']['relation'], 'replaced_by')
+        self.assertEqual(
+            entry['handoff']['pk'], replaced.data['replacement']['pk'],
+        )
+
+    def test_a_warning_creates_nothing(self):
+        """It is the question, asked before anything is saved."""
+        self.check(supplier=self.supplier.pk, plant_variety=self.roma.pk)
+
+        self.assertEqual(self.client.get('/seeds/seeds/').data['count'], 0)

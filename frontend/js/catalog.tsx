@@ -86,11 +86,14 @@ function duplicateSummary(candidate: CatalogDuplicate): string {
 
 interface DuplicateWarningProps {
   collection: string
-  name: string
+  //: The name being typed. A collection with no name typed on it leaves this
+  //: out — a seed catalog entry is one supplier's variety and no more — and is
+  //: answered from its scope alone, as soon as that scope is known.
+  name?: string
   //: The parents a duplicate has to share. The check is skipped until every one
   //: of them is known, because the server answers within them or not at all.
   scope?: Record<string, number | undefined>
-  //: The record being renamed, which is not a duplicate of itself.
+  //: The record being corrected, which is not a duplicate of itself.
   exclude?: number
   //: The field the collection calls its name.
   field?: string
@@ -102,15 +105,16 @@ interface DuplicateWarningProps {
 // nothing to say, because a control that is usually empty is one an operator
 // reads when it is not.
 function DuplicateWarning({ collection, name, scope = {}, exclude, field = 'name' }: DuplicateWarningProps) {
-  const settled = useSettledValue(name.trim())
+  const named = name !== undefined
+  const settled = useSettledValue(name?.trim() ?? '')
   // A picker that has not been chosen yet reads as `Number('')`, which is NaN
   // rather than undefined, and sending that would earn a 400 and a global error
   // alert for a check nobody asked for out loud.
   const scoped = Object.values(scope).every((value) => value !== undefined && Number.isFinite(value))
   const check = useQuery({
     queryKey: queryKeys.catalog.duplicates(collection, settled, scope, exclude),
-    queryFn: ({ signal }) => checkCatalogDuplicates(collection, field, settled, scope, exclude, signal),
-    enabled: settled.length > 0 && scoped
+    queryFn: ({ signal }) => checkCatalogDuplicates(collection, named ? field : null, settled, scope, exclude, signal),
+    enabled: scoped && (!named || settled.length > 0)
   })
   const candidates = check.data?.candidates ?? []
   if (candidates.length === 0) return null

@@ -11,8 +11,9 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.response import Response
 
-from common.replacement import ReplaceableViewSetMixin, ReplacementSerializerMixin
-from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
+from common.catalog import StockCatalogViewSetMixin
+from common.replacement import ReplacementSerializerMixin
+from common.retirement import RetirementSerializerMixin
 from inventory.models import QuantityCertainty, StockReceipt, StockReceiptLine
 from inventory.units import UnitCode
 from workspaces.scoping import (
@@ -390,8 +391,7 @@ class PacketReconciliationSerializer(serializers.Serializer):
 
 
 class SeedsViewSet(
-    ReplaceableViewSetMixin,
-    RetirableViewSetMixin,
+    StockCatalogViewSetMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
 ):  # pylint: disable=too-many-ancestors
@@ -399,6 +399,12 @@ class SeedsViewSet(
 
     queryset = Seeds.objects.select_related('inventory_item').order_by('pk')
     serializer_class = SeedsSerializer
+
+    #: Nothing is typed on an entry that could resemble anything: it is one
+    #: supplier's variety and no more, so holding those already is the
+    #: duplicate rather than the scope one is looked for in.
+    duplicate_name_field = None
+    duplicate_key_reason = 'the same supplier and variety'
 
 
 class SeedPacketCurrentViewSet(
