@@ -39,7 +39,6 @@ from workspaces.models import Workspace, get_current_workspace
 
 from .container_fills import clean_empty_fill, open_counted_fill, open_numbered_fill
 from .generations import CloseRequest, close_generation, reopen_generation
-from .models import SeedTrayGeneration
 
 
 class PotFillOpeningTests(CountedStockTestCase):
@@ -292,7 +291,7 @@ class EmptyPotFillCleaningTests(CountedStockTestCase):
         with self.assertRaises(ValidationError):
             clean_empty_fill(self.workspace, self.user, tray_fill, reason='Clean')
         other = Workspace.objects.create(name='Other nursery')
-        with self.assertRaises(SeedTrayGeneration.DoesNotExist):
+        with self.assertRaises(ValidationError):
             clean_empty_fill(other, self.user, self.fill, reason='Clean')
         self.assertEqual(self.fill.events.count(), 1)
 

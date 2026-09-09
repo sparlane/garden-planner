@@ -428,7 +428,7 @@ def _match_plants(contents, dispositions):
     return [(wanted[plant_id], chosen[plant_id]) for plant_id in sorted(chosen)]
 
 
-def _match_quantities(expected, dispositions, key, field, allowed):
+def match_residual_quantities(expected, dispositions, key, field, allowed):
     """Pair every leftover quantity with the disposition an operator recorded.
 
     Both halves are checked. An unlisted leftover would be silently assumed away,
@@ -519,7 +519,7 @@ def _recover_stock(generation, user, values, occurred_at):
     )
 
 
-def _write_residual(generation, user, values, occurred_at):
+def write_residual(generation, user, values, occurred_at):
     """Record one disposition, moving stock only when something came back."""
     movement = None
     if values['disposition'] in SeedTrayGenerationResidual.RECOVERING:
@@ -584,14 +584,14 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
         row['lot'].pk: Decimal(row['base_quantity'])
         for row in contents['media']
     }
-    _match_quantities(
+    match_residual_quantities(
         seed_totals,
         request.seeds,
         'sowing_id',
         'seeds',
         (Disposition.REMOVED, Disposition.RETURNED),
     )
-    _match_quantities(
+    match_residual_quantities(
         media_totals,
         request.media,
         'lot_id',
@@ -606,7 +606,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     lock_lots(generation.workspace, sorted(lots))
     for row in request.seeds:
         sowing = sowings[row.sowing_id]
-        _write_residual(generation, user, {
+        write_residual(generation, user, {
             'kind': Kind.SEED,
             'disposition': row.disposition,
             'lot': _seed_lot(sowing),
@@ -616,7 +616,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
             'reason': row.reason,
         }, occurred_at)
     for row in request.media:
-        _write_residual(generation, user, {
+        write_residual(generation, user, {
             'kind': Kind.MEDIA,
             'disposition': row.disposition,
             'lot': lots[row.lot_id],

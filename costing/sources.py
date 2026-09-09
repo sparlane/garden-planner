@@ -518,6 +518,10 @@ def _line_reach(batch, line, context):
     plant says exactly where the input went; ground says which plants were
     standing there; a document-level batch says only which crop paid for it.
     """
+    # Pot media stays with its fill until a recorded plant departure claims
+    # it. In particular it must never fall back to a document's batch pool.
+    if any(target.container_fill_id for target in line.targets.all()):
+        return None
     for resolve in (
         lambda: _cell_reach(batch, line, context),
         lambda: _plant_reach(batch, line),

@@ -40,6 +40,7 @@ from seedtrays.generations import require_open_generation
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration
 
 from .models import InputApplication, InputApplicationLine, InputApplicationTarget
+from .pot_media import validate_pot_media
 from .usage import TargetInput, UsageInputs, calculate_usage, workspace_override_required
 
 
@@ -457,6 +458,7 @@ def create_application_draft(workspace, user, request):
     application.save()
     for line_request in request.lines:
         _create_line(application, line_request)
+    validate_pot_media(application)
     InputApplication.objects.filter(pk=application.pk).update(
         target_summary=target_summary(application),
     )
@@ -486,6 +488,7 @@ def update_application_draft(application, request, replace_lines=True):
         application.lines.all().delete()
         for line_request in request.lines:
             _create_line(application, line_request)
+    validate_pot_media(application)
     InputApplication.objects.filter(pk=application.pk).update(
         revision=application.revision + 1,
         target_summary=target_summary(application),
@@ -581,6 +584,7 @@ def post_application(application, user, revision=None, digest=None):
     if application.status != InputApplication.Status.DRAFT:
         raise ValidationError({'status': 'Only draft applications can be posted.'})
 
+    validate_pot_media(application, lock=True)
     plant_ids = _plant_ids(application)
     affected = affected_batches(application)
     if affected:
@@ -713,6 +717,9 @@ def reverse_application(application, user, reason):
     ).get(pk=application.pk)
     if application.status != InputApplication.Status.POSTED:
         raise ValidationError({'status': 'Only posted applications can be reversed.'})
+    # Reclaiming media at a clean and reversing its application would return
+    # it twice. Pot corrections must happen before the clean for now.
+    validate_pot_media(application, lock=True)
     affected = [lock_batch_with_plants(row) for row in affected_batches(application)]
     movements = list(
         StockMovement.objects.select_for_update(of=('self',))

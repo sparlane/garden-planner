@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from applications.models import InputApplication
@@ -15,6 +16,7 @@ from inventory.ledger import (
     balance_is_known,
     lock_lots,
     lock_units,
+    quantize_quantity,
     unit_is_in_use,
     unit_physical_state,
     unpromised_bulk,
@@ -23,7 +25,9 @@ from inventory.models import InventoryItem
 from locations.models import Location
 from sales.models import SalesOrderAllocation
 
+from .generations import CloseRequest, contents_digest, match_residual_quantities, write_residual
 from .models import SeedTrayGeneration, SeedTrayGenerationEvent
+from .pot_media import pot_fill_contents
 
 
 def _require_location(workspace, location):
@@ -113,46 +117,83 @@ def open_numbered_fill(workspace, user, unit, *, opened_at=None, notes=''):
     return _record_open(fill, user)
 
 
-@transaction.atomic
-def clean_empty_fill(workspace, user, fill, *, reason, occurred_at=None):
-    """Release an unapplied pot fill, preserving its identity and audit history.
+def lock_pot_fills(workspace, fill_ids):
+    """Lock pot stock, numbered units, then fills, consistently for every writer.
 
-    Take the stock lock before the fill lock, matching opening. This permits
-    refilling or numbering the released pots without either action observing a
-    half-finished clean. Fills with inputs need the residual workflow; this
-    deliberately narrow operation cannot decide what became of their contents.
+    Media lots come afterwards. Pot media documents contain only growing-media
+    lines, so no document can acquire these container locks after a media lock.
     """
-    if not reason or not reason.strip():
+    identifiers = sorted(set(fill_ids))
+    fills = list(SeedTrayGeneration.objects.filter(workspace=workspace, pk__in=identifiers).order_by('pk'))
+    if len(fills) != len(identifiers) or any(fill.tray_id for fill in fills):
+        raise ValidationError({'container_fill': 'Choose pot fills in this workspace.'})
+    lock_lots(workspace, [fill.stock_lot_id for fill in fills if fill.stock_lot_id])
+    lock_units(workspace, [fill.inventory_unit_id for fill in fills if fill.inventory_unit_id])
+    return list(SeedTrayGeneration.objects.select_for_update(of=('self',)).filter(pk__in=identifiers).order_by('pk'))
+
+
+def clean_empty_fill(workspace, user, fill, *, reason, occurred_at=None):
+    """Clean without media dispositions only when no posted media remains."""
+    return clean_pot_fill(workspace, user, fill, CloseRequest(reason=reason, occurred_at=occurred_at))
+
+
+@transaction.atomic
+def clean_pot_fill(workspace, user, fill, request):
+    """Clean unused pots, accounting explicitly for every applied lot of media.
+
+    Plants and their media departures need the later placement workflow. This
+    clean can resolve filled buffers that have not yet served plants. No pot
+    stock movement is posted: closing the fill releases its existing claim.
+    """
+    if not request.reason or not request.reason.strip():
         raise ValidationError({'reason': 'A reason is required.'})
-    fill = SeedTrayGeneration.objects.get(pk=fill.pk, workspace=workspace)
-    if fill.tray_id is not None:
-        raise ValidationError({'fill': 'Use the tray clean workflow for a tray fill.'})
+    if request.plants or request.seeds or request.open_next:
+        raise ValidationError({'fill': 'This clean accepts media dispositions only.'})
+    fill = lock_pot_fills(workspace, [fill.pk])[0]
+    _require_cleanable_pot(fill)
+    occurred_at = request.occurred_at or timezone.now()
+    contents = pot_fill_contents(fill)
+    if request.digest is not None and request.digest != contents_digest({'plants': [], 'seeds': [], 'media': contents}):
+        raise ValidationError({'digest': 'The fill changed after this clean was prepared. Review it again.'})
+    if occurred_at < fill.opened_at or any(occurred_at < row['latest_application'] for row in contents):
+        raise ValidationError({'occurred_at': 'The clean cannot precede opening or media application.'})
+    totals = {row['lot'].pk: row['base_quantity'] for row in contents}
+    match_residual_quantities(totals, request.media, 'lot_id', 'media', ('waste', 'reclaimed'))
+    lots = lock_lots(workspace, totals)
+    for row in request.media:
+        write_residual(fill, user, {
+            'kind': 'media', 'disposition': row.disposition,
+            'lot': lots[row.lot_id], 'quantity': quantize_quantity(row.quantity),
+            'destination': row.destination, 'reason': row.reason,
+        }, occurred_at)
+    actor = user if user is not None and user.is_authenticated else None
+    SeedTrayGeneration.objects.filter(pk=fill.pk).update(
+        status=SeedTrayGeneration.Status.CLOSED, closed_at=occurred_at,
+        close_reason=request.reason.strip(), closed_by=actor, updated=timezone.now(),
+    )
+    SeedTrayGenerationEvent.objects.create(
+        generation=fill, event_type=SeedTrayGenerationEvent.EventType.CLOSED,
+        occurred_at=occurred_at, reason=request.reason.strip(), created_by=actor,
+    )
+    fill.refresh_from_db()
+    return fill
+
+
+def _require_cleanable_pot(fill):
+    """Refuse a clean that would lose unaccounted contents or prior history."""
+    if fill.status != SeedTrayGeneration.Status.OPEN:
+        raise ValidationError({'fill': 'This fill is already closed.'})
+    if fill.review_state != SeedTrayGeneration.ReviewState.NONE:
+        raise ValidationError({'fill': 'Review this fill before cleaning it.'})
+    if fill.application_targets.exists() or fill.residuals.exists() or fill.sowings.exists():
+        raise ValidationError({'fill': 'This fill has recorded contents requiring a different clean workflow.'})
     if fill.inventory_unit_id:
-        unit = lock_units(workspace, [fill.inventory_unit_id])[fill.inventory_unit_id]
+        unit = fill.inventory_unit
         if unit_is_in_use(unit):
             raise ValidationError({'fill': 'Move the plants before cleaning this fill.'})
         if unit.application_targets.exclude(line__application__status=InputApplication.Status.REVERSED).exists():
             raise ValidationError({'fill': 'Resolve the container input applications before cleaning this fill.'})
-    else:
-        lock_lots(workspace, [fill.stock_lot_id])
-    fill = SeedTrayGeneration.objects.select_for_update().get(pk=fill.pk)
-    if fill.status != SeedTrayGeneration.Status.OPEN:
-        raise ValidationError({'fill': 'This fill is already closed.'})
-    if fill.application_targets.exists() or fill.residuals.exists() or fill.sowings.exists():
-        raise ValidationError({'fill': 'This fill has recorded contents and needs the residual clean workflow.'})
-    if fill.review_state != SeedTrayGeneration.ReviewState.NONE:
-        raise ValidationError({'fill': 'Review this fill before cleaning it.'})
-    occurred_at = occurred_at or timezone.now()
-    if occurred_at < fill.opened_at:
-        raise ValidationError({'occurred_at': 'The clean cannot precede the fill opening.'})
-    actor = user if user is not None and user.is_authenticated else None
-    SeedTrayGeneration.objects.filter(pk=fill.pk).update(
-        status=SeedTrayGeneration.Status.CLOSED, closed_at=occurred_at,
-        close_reason=reason.strip(), closed_by=actor, updated=timezone.now(),
-    )
-    SeedTrayGenerationEvent.objects.create(
-        generation=fill, event_type=SeedTrayGenerationEvent.EventType.CLOSED,
-        occurred_at=occurred_at, reason=reason.strip(), created_by=actor,
-    )
-    fill.refresh_from_db()
-    return fill
+        if pot_fill_contents(fill) and unit.standing_plants.filter(
+            Q(ended__isnull=True) | Q(ended__gte=fill.opened_at),
+        ).exists():
+            raise ValidationError({'fill': 'This container has plant history requiring fill departure accounting.'})

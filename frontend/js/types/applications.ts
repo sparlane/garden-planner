@@ -4,7 +4,7 @@ type InputApplicationStatus = 'draft' | 'posted' | 'reversed'
 
 type ApplicationUsageBasis = 'cell_volume' | 'surface_area' | 'per_unit' | 'fixed' | 'manual'
 
-type ApplicationTargetType = 'batch' | 'seed_tray_cell' | 'specific_plant' | 'inventory_unit' | 'garden_area' | 'garden_bed' | 'garden_row' | 'garden_square'
+type ApplicationTargetType = 'batch' | 'container_fill' | 'seed_tray_cell' | 'specific_plant' | 'inventory_unit' | 'garden_area' | 'garden_bed' | 'garden_row' | 'garden_square'
 
 const APPLICATION_STATUS_LABELS: Record<InputApplicationStatus, string> = {
   draft: 'Draft',
@@ -14,6 +14,7 @@ const APPLICATION_STATUS_LABELS: Record<InputApplicationStatus, string> = {
 
 const TARGET_TYPE_LABELS: Record<ApplicationTargetType, string> = {
   batch: 'Production batch',
+  container_fill: 'Container fill',
   seed_tray_cell: 'Tray cell',
   specific_plant: 'Plant',
   inventory_unit: 'Serialized unit',
