@@ -378,6 +378,10 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
   render() {
     const suppliers = activeChoices(this.props.suppliers).map((supplier) => ({ value: supplier.pk, label: supplier.name }))
     const varieties = activeChoices(this.props.varieties).map((variety) => ({ value: variety.pk, label: variety.name }))
+    // The stand-in the server files an unnamed purchase under, so a Basic
+    // Garden entry is checked against what it will actually be filed as rather
+    // than going unchecked for having no supplier typed on it.
+    const fallback = this.props.suppliers.find((supplier) => supplier.is_system_default)
     return (
       <tr>
         <td>
@@ -385,6 +389,7 @@ class NewSeedRow extends React.Component<NewSeedRowProps, NewSeedRowState> {
         </td>
         <td>
           <Select onChange={this.updateVariety} options={varieties} value={varieties.find((o) => o.value === this.state.variety)} />
+          <DuplicateWarning collection="/seeds/seeds/" scope={{ supplier: this.state.supplier ?? fallback?.pk, plant_variety: this.state.variety }} />
         </td>
         <td>
           <input type="text" onChange={this.updateSupplierCode} />
@@ -470,6 +475,7 @@ function SeedCorrectionDialog({ seed, suppliers, varieties, onSaved, onCancel }:
               ))}
             </Form.Select>
             <Form.Control.Feedback type="invalid">{fieldErrors.plant_variety}</Form.Control.Feedback>
+            <DuplicateWarning collection="/seeds/seeds/" scope={{ supplier: Number(values.supplier), plant_variety: Number(values.plant_variety) }} exclude={seed.pk} />
           </Form.Group>
           <Form.Group className="mb-3" controlId="seed-correction-unit">
             <Form.Label>Inventory unit</Form.Label>

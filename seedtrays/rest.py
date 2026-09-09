@@ -13,9 +13,9 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework_nested import routers
 
-from common.duplicates import DuplicateWarningViewSetMixin
-from common.replacement import ReplaceableViewSetMixin, ReplacementSerializerMixin
-from common.retirement import RetirableViewSetMixin, RetirementSerializerMixin
+from common.catalog import StockCatalogViewSetMixin
+from common.replacement import ReplacementSerializerMixin
+from common.retirement import RetirementSerializerMixin
 from inventory.ledger import post_receipt, unit_is_in_use, unit_physical_state
 from inventory.models import (
     InventoryItem,
@@ -235,9 +235,7 @@ class NestedSeedTrayCellSerializer(SeedTrayCellSerializer):
 
 
 class SeedTrayModelsViewSet(
-    DuplicateWarningViewSetMixin,
-    ReplaceableViewSetMixin,
-    RetirableViewSetMixin,
+    StockCatalogViewSetMixin,
     CurrentWorkspaceViewSetMixin,
     viewsets.ModelViewSet,
 ):  # pylint: disable=too-many-ancestors

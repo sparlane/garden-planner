@@ -25,9 +25,16 @@ carries where it handed off to.
 
 Names are compared in a normalized form rather than exactly, because case,
 punctuation, spacing and a trailing plural are how one name gets typed twice.
-A seed catalog entry is deliberately not covered: it has no typed name, and
-what makes two entries the same is holding one supplier's variety twice, which
-is an exact key rather than a resemblance.
+
+Not every catalog has a name to compare. A seed catalog entry is one supplier's
+variety and no more, so there is nothing typed on it that could resemble
+anything: the parents are the whole of what makes two entries the same, and
+sharing them is the duplicate rather than the scope one is looked for in. That
+is the collection this matters most on, because it is the one with no merge
+behind it. Two entries holding one supplier's variety split that seed across
+two inventory items, and joining them afterwards would have to move posted
+stock, which is what ``common.replacement`` refuses. Here the warning is not a
+shortcut to a cleanup, it is the only one there is.
 """
 
 import re
@@ -131,6 +138,17 @@ def _handoff(record):
     return None
 
 
+def _candidate(record, reason):
+    """Return one warning: which record, how it means this, where it went."""
+    return {
+        'pk': record.pk,
+        'label': str(record),
+        'active': record.active,
+        'reason': reason,
+        'handoff': _handoff(record),
+    }
+
+
 def duplicate_candidates(records, name, field='name'):
     """Return the records already meaning this name, closest resemblance first.
 
@@ -148,15 +166,20 @@ def duplicate_candidates(records, name, field='name'):
         reason = duplicate_reason(target, normalized(getattr(record, field)))
         if reason is None:
             continue
-        candidates.append({
-            'pk': record.pk,
-            'label': str(record),
-            'active': record.active,
-            'reason': reason,
-            'handoff': _handoff(record),
-        })
+        candidates.append(_candidate(record, reason))
     candidates.sort(key=lambda entry: (entry['reason'] != 'the same name', entry['label']))
     return candidates
+
+
+def key_duplicate_candidates(records, reason):
+    """Return every record in scope, because the scope is the whole question.
+
+    A collection with nothing typed on it has no resemblance left to measure.
+    Anything already filed under the parents the new record would have means
+    exactly what it means, so they are all reported and there is nothing to
+    rank one above another; they read in the order the collection lists them.
+    """
+    return [_candidate(record, reason) for record in records]
 
 
 def duplicate_scope(model, params):
@@ -176,29 +199,45 @@ def duplicate_scope(model, params):
 
 
 class DuplicateWarningViewSetMixin:  # pylint: disable=too-few-public-methods
-    """Report which records already mean the name an operator is typing."""
+    """Report which records already mean what an operator is entering."""
 
     #: The field holding the name somebody types, which is not always ``name``.
+    #: ``None`` for a collection with no name typed on it, where the parents
+    #: are the whole of what makes two records the same.
     duplicate_name_field = 'name'
+
+    #: What a record already under those parents shares with the one being
+    #: entered, for a collection with no name to compare. Written out rather
+    #: than assembled from ``retirement_parents``, which spells its relations
+    #: the way the database does rather than the way an operator reads them.
+    duplicate_key_reason = 'the same entry'
 
     @action(detail=False, methods=['get'])
     def duplicates(self, request):
         """Name what this catalog already holds that means this.
 
-        ``exclude`` is the record being renamed, which is not a duplicate of
+        ``exclude`` is the record being corrected, which is not a duplicate of
         itself; everything else in scope is compared, retired records included,
         because a retired name is still taken.
 
-        The name is read under whatever the collection calls it and reported
-        back under ``name``, because what the answer is about is a name however
-        the field holding it is spelled.
+        A named collection reads the name under whatever it calls the field and
+        reports it back under ``name``, because what the answer is about is a
+        name however the field holding it is spelled. A collection with no name
+        answers from the scope alone, so it reports the candidates and nothing
+        that was compared to reach them.
         """
         queryset = self.get_queryset()
-        name = request.query_params.get(self.duplicate_name_field, '')
         queryset = queryset.filter(**duplicate_scope(queryset.model, request.query_params))
         exclude = parse_integer(request.query_params.get('exclude'), 'exclude')
         if exclude is not None:
             queryset = queryset.exclude(pk=exclude)
+        if self.duplicate_name_field is None:
+            return Response({
+                'candidates': key_duplicate_candidates(
+                    queryset, self.duplicate_key_reason,
+                ),
+            })
+        name = request.query_params.get(self.duplicate_name_field, '')
         return Response({
             'name': name,
             'normalized': normalized(name),

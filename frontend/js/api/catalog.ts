@@ -33,16 +33,18 @@ async function correctCatalogRecord<Record>(collection: string, pk: number, chan
 // The name goes under the field the collection calls it, because a tray model
 // is named by an `identifier` and everything else by a `name`, and the scope is
 // the parents a duplicate has to share — the server refuses the check without
-// them rather than answering from another crop.
+// them rather than answering from another crop. A `null` field is a collection
+// with no name typed on it, where those parents are the whole question.
 function checkCatalogDuplicates(
   collection: string,
-  field: string,
+  field: string | null,
   name: string,
   scope: Record<string, number | undefined>,
   exclude: number | undefined,
   signal?: AbortSignal
 ): Promise<CatalogDuplicateCheck> {
-  const params = new URLSearchParams({ [field]: name })
+  const params = new URLSearchParams()
+  if (field !== null) params.set(field, name)
   for (const [key, value] of Object.entries(scope)) {
     if (value !== undefined) params.set(key, String(value))
   }
