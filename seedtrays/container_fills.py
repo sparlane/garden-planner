@@ -10,6 +10,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
+from applications.models import InputApplication
 from inventory.ledger import (
     balance_is_known,
     lock_lots,
@@ -110,3 +111,48 @@ def open_numbered_fill(workspace, user, unit, *, opened_at=None, notes=''):
     fill = _new_fill(workspace, user, opened_at, notes, inventory_unit=unit)
     fill.sequence = previous.sequence + 1 if previous else 1
     return _record_open(fill, user)
+
+
+@transaction.atomic
+def clean_empty_fill(workspace, user, fill, *, reason, occurred_at=None):
+    """Release an unapplied pot fill, preserving its identity and audit history.
+
+    Take the stock lock before the fill lock, matching opening. This permits
+    refilling or numbering the released pots without either action observing a
+    half-finished clean. Fills with inputs need the residual workflow; this
+    deliberately narrow operation cannot decide what became of their contents.
+    """
+    if not reason or not reason.strip():
+        raise ValidationError({'reason': 'A reason is required.'})
+    fill = SeedTrayGeneration.objects.get(pk=fill.pk, workspace=workspace)
+    if fill.tray_id is not None:
+        raise ValidationError({'fill': 'Use the tray clean workflow for a tray fill.'})
+    if fill.inventory_unit_id:
+        unit = lock_units(workspace, [fill.inventory_unit_id])[fill.inventory_unit_id]
+        if unit_is_in_use(unit):
+            raise ValidationError({'fill': 'Move the plants before cleaning this fill.'})
+        if unit.application_targets.exclude(line__application__status=InputApplication.Status.REVERSED).exists():
+            raise ValidationError({'fill': 'Resolve the container input applications before cleaning this fill.'})
+    else:
+        lock_lots(workspace, [fill.stock_lot_id])
+    fill = SeedTrayGeneration.objects.select_for_update().get(pk=fill.pk)
+    if fill.status != SeedTrayGeneration.Status.OPEN:
+        raise ValidationError({'fill': 'This fill is already closed.'})
+    if fill.application_targets.exists() or fill.residuals.exists() or fill.sowings.exists():
+        raise ValidationError({'fill': 'This fill has recorded contents and needs the residual clean workflow.'})
+    if fill.review_state != SeedTrayGeneration.ReviewState.NONE:
+        raise ValidationError({'fill': 'Review this fill before cleaning it.'})
+    occurred_at = occurred_at or timezone.now()
+    if occurred_at < fill.opened_at:
+        raise ValidationError({'occurred_at': 'The clean cannot precede the fill opening.'})
+    actor = user if user is not None and user.is_authenticated else None
+    SeedTrayGeneration.objects.filter(pk=fill.pk).update(
+        status=SeedTrayGeneration.Status.CLOSED, closed_at=occurred_at,
+        close_reason=reason.strip(), closed_by=actor, updated=timezone.now(),
+    )
+    SeedTrayGenerationEvent.objects.create(
+        generation=fill, event_type=SeedTrayGenerationEvent.EventType.CLOSED,
+        occurred_at=occurred_at, reason=reason.strip(), created_by=actor,
+    )
+    fill.refresh_from_db()
+    return fill

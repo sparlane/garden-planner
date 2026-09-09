@@ -2,6 +2,7 @@
 # pylint: disable=duplicate-code
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from decimal import Decimal
 from threading import Barrier
 from uuid import uuid4
@@ -12,6 +13,7 @@ from django.db import close_old_connections
 from django.test import skipUnlessDBFeature
 from django.utils import timezone
 
+from applications.services import ApplicationRequest, LineRequest, TargetRequest, create_application_draft
 from inventory.ledger import (
     IndividualizationRequest,
     MovementRequest,
@@ -32,10 +34,11 @@ from sales.models import SalesOrderLine
 from sales.services import LotRequest, allocate_targets, confirm_order
 from sales.test_concurrency import ReservationConcurrencyTestCase
 from sales.test_counted_lines import CountedStockTestCase
-from tests.factories import make_location, make_stock_lot
+from tests.factories import make_location, make_seed_tray_generation, make_specific_plant_location, make_stock_lot
 from workspaces.models import Workspace, get_current_workspace
 
-from .container_fills import open_counted_fill, open_numbered_fill
+from .container_fills import clean_empty_fill, open_counted_fill, open_numbered_fill
+from .generations import CloseRequest, close_generation, reopen_generation
 from .models import SeedTrayGeneration
 
 
@@ -86,7 +89,7 @@ class PotFillOpeningTests(CountedStockTestCase):
         other_lot = make_stock_lot(item=self.item, location=self.store)
         self.assertEqual(filled_bulk(self.lot, elsewhere), 0)
         self.assertEqual(filled_bulk(other_lot, self.store), 0)
-        SeedTrayGeneration.objects.filter(pk=fill.pk).update(status='closed', closed_at=timezone.now())
+        clean_empty_fill(self.workspace, self.user, fill, reason='Empty pots cleaned.')
         self.assertEqual(unpromised_bulk(self.lot, self.store), 100)
         fill.refresh_from_db()
         self.assertEqual(fill.container_count, 50)
@@ -198,7 +201,7 @@ class NumberedPotFillTests(CountedStockTestCase):
     def test_fill_history_prevents_discarding_numbering(self):
         """Even a cleaned fill makes an identity more than a numbering typo."""
         fill = self.fill()
-        SeedTrayGeneration.objects.filter(pk=fill.pk).update(status='closed', closed_at=timezone.now())
+        clean_empty_fill(self.workspace, self.user, fill, reason='Empty pots cleaned.')
         with self.assertRaisesMessage(ValidationError, 'fill history'):
             discard_numbering(self.workspace, self.unit)
         self.assertEqual(self.fill().sequence, 2)
@@ -231,6 +234,87 @@ class NumberedPotFillTests(CountedStockTestCase):
         confirm_order(line.order, self.user)
         with self.assertRaises(ValidationError):
             self.fill()
+
+
+class EmptyPotFillCleaningTests(CountedStockTestCase):
+    """An explicit clean releases only containers whose contents are accounted for."""
+
+    def setUp(self):
+        super().setUp()
+        self.lot = self.receive(quantity='100')
+        self.fill = open_counted_fill(self.workspace, self.user, self.lot, self.store, 50)
+
+    def clean(self, **kwargs):
+        """Clean the fixture's fill with an operator's reason."""
+        return clean_empty_fill(self.workspace, self.user, self.fill, reason='Washed empty pots.', **kwargs)
+
+    def test_clean_releases_stock_without_movements_and_preserves_audit(self):
+        """Released pots can be numbered while the original fill remains on file."""
+        movements = list(self.lot.movements.values_list('pk', flat=True))
+        occurred_at = timezone.now()
+        fill = self.clean(occurred_at=occurred_at)
+        self.assertEqual(fill.status, 'closed')
+        self.assertEqual(fill.closed_at, occurred_at)
+        self.assertEqual(fill.closed_by, self.user)
+        self.assertEqual(fill.close_reason, 'Washed empty pots.')
+        event = fill.events.get(event_type='closed')
+        self.assertEqual(event.occurred_at, occurred_at)
+        self.assertEqual(event.created_by, self.user)
+        self.assertEqual(unpromised_bulk(self.lot, self.store), 100)
+        self.assertEqual(fill.container_count, 50)
+        self.assertEqual(list(self.lot.movements.values_list('pk', flat=True)), movements)
+        self.assertEqual(len(self.number(self.lot, 100)), 100)
+        with self.assertRaises(ValidationError):
+            self.clean()
+        self.assertEqual(fill.events.count(), 2)
+
+    def test_invalid_clean_leaves_claim_and_audit_unchanged(self):
+        """A clean needs a reason and cannot precede opening."""
+        with self.assertRaises(ValidationError):
+            clean_empty_fill(self.workspace, self.user, self.fill, reason='  ')
+        with self.assertRaises(ValidationError):
+            self.clean(occurred_at=self.fill.opened_at - timedelta(seconds=1))
+        self.assertEqual(unpromised_bulk(self.lot, self.store), 50)
+        self.assertEqual(self.fill.events.count(), 1)
+
+    def test_tray_services_cannot_clean_or_reopen_pot_fills(self):
+        """Tray residual accounting cannot substitute for pot stock locking."""
+        with self.assertRaises(ValidationError):
+            close_generation(self.fill, self.user, CloseRequest(reason='Clean'))
+        self.clean()
+        with self.assertRaises(ValidationError):
+            reopen_generation(self.fill, self.user, 'Correction')
+        self.assertEqual(unpromised_bulk(self.lot, self.store), 100)
+
+    def test_pot_service_rejects_trays_and_foreign_fills(self):
+        """The operation is scoped to this workspace's pot fills."""
+        tray_fill = make_seed_tray_generation()
+        with self.assertRaises(ValidationError):
+            clean_empty_fill(self.workspace, self.user, tray_fill, reason='Clean')
+        other = Workspace.objects.create(name='Other nursery')
+        with self.assertRaises(SeedTrayGeneration.DoesNotExist):
+            clean_empty_fill(other, self.user, self.fill, reason='Clean')
+        self.assertEqual(self.fill.events.count(), 1)
+
+    def test_numbered_clean_refuses_plants_and_pending_inputs(self):
+        """An empty-only clean cannot silently discard physical contents."""
+        unit = self.number(self.lot, 1)[0]
+        fill = open_numbered_fill(self.workspace, self.user, unit)
+        placement = make_specific_plant_location(location_type='container_unit', container_unit=unit, seed_tray_cell=None)
+        with self.assertRaisesMessage(ValidationError, 'Move the plants'):
+            clean_empty_fill(self.workspace, self.user, fill, reason='Clean')
+        placement.ended = timezone.now()
+        placement.save()
+        create_application_draft(self.workspace, self.user, ApplicationRequest(
+            applied_at=timezone.now(), source_location=self.store,
+            lines=(LineRequest(
+                item=self.item, lot=self.lot, applied_quantity=1, unit_code='each',
+                usage_basis='manual', targets=(TargetRequest('inventory_unit', unit),),
+            ),),
+        ))
+        with self.assertRaisesMessage(ValidationError, 'input applications'):
+            clean_empty_fill(self.workspace, self.user, fill, reason='Clean')
+        self.assertEqual(fill.events.count(), 1)
 
 
 @skipUnlessDBFeature('has_select_for_update')
@@ -316,3 +400,13 @@ class PotFillConcurrencyTests(ReservationConcurrencyTestCase):
         order, line = self._order_with_line(SalesOrderLine.LineType.UNIT, item=self.lot.item)
         allocate_targets(line, self.user, unit_ids=[unit.pk])
         self.race(lambda: open_numbered_fill(self.workspace, self.user, unit), lambda: confirm_order(order, self.user))
+
+    def test_competing_cleans_record_one_release(self):
+        """The fill is closed only once even when two operators clean it together."""
+        fill = self.fill()
+        self.race(
+            lambda: clean_empty_fill(self.workspace, self.user, fill, reason='Clean'),
+            lambda: clean_empty_fill(self.workspace, self.user, fill, reason='Clean'),
+        )
+        self.assertEqual(fill.events.filter(event_type='closed').count(), 1)
+        self.assertEqual(unpromised_bulk(self.lot, self.store), 100)

@@ -397,6 +397,12 @@ def _require_cleanable(generation):
         })
 
 
+def _require_tray(generation):
+    """Keep tray residuals and corrections from releasing unaccounted pot fills."""
+    if generation.tray_id is None:
+        raise ValidationError({'generation': 'Use the pot fill clean workflow for a pot fill.'})
+
+
 def _match_plants(contents, dispositions):
     """Pair every plant in the tray with the outcome an operator chose."""
     wanted = {plant.pk: plant for plant in contents['plants']}
@@ -561,6 +567,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     """
     _require_reason(request.reason)
     generation = lock_generation(generation)
+    _require_tray(generation)
     _require_cleanable(generation)
     batches = _lock_generation_batches(generation)
     occurred_at = request.occurred_at or timezone.now()
@@ -651,6 +658,7 @@ def reopen_generation(generation, user, reason):
     """
     _require_reason(reason)
     generation = lock_generation(generation)
+    _require_tray(generation)
     if generation.status != SeedTrayGeneration.Status.CLOSED:
         raise ValidationError({'status': 'Only a closed generation can be reopened.'})
     if open_generation_for(generation.tray) is not None:
