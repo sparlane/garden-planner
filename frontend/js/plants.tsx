@@ -6,7 +6,7 @@ import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties, updatePlant, updatePlantFamily, updatePlantVariety } from './api/plants'
-import { MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { queryKeys } from './query'
 import { CatalogRecordLabel } from './types/catalog'
 import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
@@ -161,6 +161,7 @@ function FamilyEditor({ family, onSave, onDone }: FamilyEditorProps) {
       <td>
         <Form onSubmit={submit} id={formId}></Form>
         <EditorInput formId={formId} field="name" errors={errors} value={name} onChange={setName} required />
+        <DuplicateWarning collection={COLLECTIONS.family} name={name} exclude={family?.pk} />
       </td>
       <td colSpan={8}></td>
       <td>
@@ -297,6 +298,7 @@ function PlantEditor({ plant, families, initialFamily, onSave, onDone }: PlantEd
       </td>
       <td>
         <EditorInput formId={formId} field="name" errors={errors} value={form.name} onChange={(value) => update('name', value)} required />
+        <DuplicateWarning collection={COLLECTIONS.plant} name={form.name} scope={{ family: Number(family) }} exclude={plant?.pk} />
       </td>
       <td></td>
       <NumberCell formId={formId} field="spacing" errors={errors} value={form.spacing} onChange={(value) => update('spacing', value)} />
@@ -389,6 +391,7 @@ function VarietyEditor({ variety, plants, families, initialPlant, onSave, onDone
       </td>
       <td>
         <EditorInput formId={formId} field="name" errors={errors} value={form.name} onChange={(value) => update('name', value)} required />
+        <DuplicateWarning collection={COLLECTIONS.variety} name={form.name} scope={{ plant: Number(plant) }} exclude={variety?.pk} />
       </td>
       <NumberCell formId={formId} field="spacing" errors={errors} value={form.spacing} onChange={(value) => update('spacing', value)} />
       <NumberCell formId={formId} field="inter_row_spacing" errors={errors} value={form.interRowSpacing} onChange={(value) => update('interRowSpacing', value)} />
