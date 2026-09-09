@@ -84,6 +84,34 @@ function duplicateSummary(candidate: CatalogDuplicate): string {
   return `${candidate.label} has ${candidate.reason}.`
 }
 
+interface CatalogSearchProps {
+  id: string
+  //: Given the words to search for once the typing has stopped. A state setter
+  //: is what this expects: the control holds what is being typed and reports
+  //: only what settles, so a name costs one request rather than one a letter.
+  onSearch: (search: string) => void
+  label?: string
+}
+
+// Searching is asked of the collection rather than of the list already
+// fetched. The comparison is on the normalized form of a name, which is the
+// same one the duplicate warning makes, and varieties and seed catalog entries
+// are paginated, so a filter written here could neither agree with the warning
+// nor reach the records the page did not carry.
+function CatalogSearch({ id, onSearch, label = 'Search the catalog' }: CatalogSearchProps) {
+  const [typed, setTyped] = React.useState('')
+  const settled = useSettledValue(typed)
+  React.useEffect(() => {
+    onSearch(settled)
+  }, [settled, onSearch])
+  return (
+    <Form.Group controlId={id} className="mb-2">
+      <Form.Label className="visually-hidden">{label}</Form.Label>
+      <Form.Control type="search" value={typed} placeholder={label} onChange={(event) => setTyped(event.target.value)} />
+    </Form.Group>
+  )
+}
+
 interface DuplicateWarningProps {
   collection: string
   //: The name being typed. A collection with no name typed on it leaves this
@@ -383,6 +411,7 @@ function CorrectionDialog({ collection, source, original, values, title, onSaved
 
 export {
   CatalogRecord,
+  CatalogSearch,
   CatalogValues,
   CorrectionDialog,
   DuplicateWarning,

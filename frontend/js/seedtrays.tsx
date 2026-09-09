@@ -11,9 +11,9 @@ import { Location } from './types/locations'
 import { SeedTrayModel, SeedTrayModelCreate } from './types/seedtrays'
 import { getSeedTrayModels, getSeedTrays, addSeedTrayModel, updateSeedTrayModel } from './api/seedtrays'
 import { getLocations } from './api/locations'
-import { CatalogValues, CorrectionDialog, DuplicateWarning, ReplacedByNote, RetireButton, RetiredBadge, retiredRowClass } from './catalog'
+import { CatalogSearch, CatalogValues, CorrectionDialog, DuplicateWarning, ReplacedByNote, RetireButton, RetiredBadge, retiredRowClass } from './catalog'
 import { errorsByField, formatDate } from './utils'
-import { queryKeys } from './query'
+import { queryKeys, searchedKey } from './query'
 
 interface SeedTrayModelNewProps {
   done: () => void
@@ -178,9 +178,17 @@ function SeedTrayModelsTable() {
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
   const [correcting, setCorrecting] = React.useState<SeedTrayModel | null>(null)
+  const [search, setSearch] = React.useState('')
+  // The whole list names the model a row was replaced by, which a search for
+  // the successor's identifier would otherwise leave the row pointing at
+  // nothing; `found` is what the rows themselves are read from.
   const { data: seedTrayModels = [] } = useQuery({
     queryKey: queryKeys.seedTrays.models,
     queryFn: ({ signal }) => getSeedTrayModels(signal)
+  })
+  const { data: found = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.seedTrays.models, search),
+    queryFn: ({ signal }) => getSeedTrayModels(signal, search)
   })
   // A correction renames the paired inventory item and a replacement creates a
   // second one, so the item lists go with the catalog rather than waiting for
@@ -228,6 +236,7 @@ function SeedTrayModelsTable() {
           onCancel={() => setCorrecting(null)}
         />
       )}
+      <CatalogSearch id="tray-model-search" onSearch={setSearch} label="Search tray models" />
       <Form.Check type="switch" id="show-retired-tray-models" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
       <Table>
         <thead>
@@ -244,7 +253,7 @@ function SeedTrayModelsTable() {
         </thead>
         <tbody>
           {showAddRow && <SeedTrayModelNew key="add" createModel={createModel} done={() => setShowAddRow(false)} />}
-          {seedTrayModels
+          {found
             .filter((model) => model.active || showRetired)
             .map((model) => (
               <tr key={model.pk} className={retiredRowClass(model.active)}>

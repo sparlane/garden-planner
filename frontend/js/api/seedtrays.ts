@@ -1,3 +1,4 @@
+import { catalogSearchQuery } from './catalog'
 import { SerializedStockMovement } from '../types/inventory'
 import {
   CleanGenerationRequest,
@@ -15,8 +16,8 @@ import {
 } from '../types/seedtrays'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
-function getSeedTrayModels(signal?: AbortSignal): Promise<Array<SeedTrayModel>> {
-  return fetchAsJson<Array<SeedTrayModel>>('/seedtrays/seedtraymodels/', signal)
+function getSeedTrayModels(signal?: AbortSignal, search?: string): Promise<Array<SeedTrayModel>> {
+  return fetchAsJson<Array<SeedTrayModel>>(`/seedtrays/seedtraymodels/${catalogSearchQuery(search)}`, signal)
 }
 
 function addSeedTrayModel(model: SeedTrayModelCreate) {

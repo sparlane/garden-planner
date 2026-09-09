@@ -61,6 +61,10 @@ class PlantFamilyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, view
     serializer_class = PlantFamilySerializer
     pagination_class = None
 
+    #: A family is found by anything filed under it, which is two levels of
+    #: names rather than one query per family.
+    search_related = ('plant_set__plantvariety_set',)
+
 
 class PlantViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
@@ -70,6 +74,8 @@ class PlantViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.M
     serializer_class = PlantSerializer
     pagination_class = None
 
+    search_related = ('family', 'plantvariety_set')
+
 
 class PlantVarietyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
     """
@@ -77,6 +83,8 @@ class PlantVarietyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, vie
     """
     queryset = PlantVariety.objects.order_by('pk')
     serializer_class = PlantVarietySerializer
+
+    search_related = ('plant__family',)
 
 
 router = routers.DefaultRouter()

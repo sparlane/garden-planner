@@ -28,6 +28,7 @@ import {
 } from './api/seeds'
 import { addSupplier, getSuppliers, updateSupplier } from './api/supplies'
 import {
+  CatalogSearch,
   CatalogValues,
   CorrectionDialog,
   DuplicateWarning,
@@ -40,7 +41,7 @@ import {
   retiredRowClass
 } from './catalog'
 import { ReceiptSettlement } from './inventory/settlement'
-import { queryKeys } from './query'
+import { queryKeys, searchedKey } from './query'
 import { ApiError, errorsByField, formatQuantity } from './utils'
 
 interface NewSeedSupplierRowProps {
@@ -189,9 +190,17 @@ function SeedSuppliersTable() {
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
   const [merging, setMerging] = React.useState<Supplier | null>(null)
+  const [search, setSearch] = React.useState('')
+  // The whole list, which is what a merge may be onto and what names the
+  // record a duplicate handed off to — both reach past whatever is being
+  // searched for.
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,
     queryFn: ({ signal }) => getSuppliers(signal)
+  })
+  const { data: found = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.suppliers.all, search),
+    queryFn: ({ signal }) => getSuppliers(signal, search)
   })
   const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all })
   const supplierMutation = useMutation({
@@ -220,7 +229,7 @@ function SeedSuppliersTable() {
   if (showSupplierAdd) {
     rows.push(<NewSeedSupplierRow key="new" createSupplier={createSupplier} done={() => setShowSupplierAdd(false)} />)
   }
-  for (const supplier of suppliers.filter((candidate) => candidate.active || showRetired)) {
+  for (const supplier of found.filter((candidate) => candidate.active || showRetired)) {
     rows.push(
       <SeedSupplierRow
         key={supplier.pk}
@@ -252,6 +261,7 @@ function SeedSuppliersTable() {
           onCancel={() => setMerging(null)}
         />
       )}
+      <CatalogSearch id="supplier-search" onSearch={setSearch} label="Search suppliers" />
       <Form.Check type="switch" id="show-retired-suppliers" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
       <Table>
         <thead>
@@ -552,6 +562,7 @@ function SeedTable() {
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
   const [correcting, setCorrecting] = React.useState<Seed | null>(null)
+  const [search, setSearch] = React.useState('')
   const { data: suppliers = [] } = useQuery({
     queryKey: queryKeys.suppliers.all,
     queryFn: ({ signal }) => getSuppliers(signal)
@@ -560,9 +571,16 @@ function SeedTable() {
     queryKey: queryKeys.plants.varieties,
     queryFn: ({ signal }) => getPlantVarieties(signal)
   })
+  // The whole catalog names the entry a row was replaced by, which a search
+  // for the successor's variety would otherwise leave the row pointing at
+  // nothing; `found` is what the rows themselves are read from.
   const { data: seeds = [] } = useQuery({
     queryKey: queryKeys.seeds.catalog,
     queryFn: ({ signal }) => getSeeds(signal)
+  })
+  const { data: found = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.seeds.catalog, search),
+    queryFn: ({ signal }) => getSeeds(signal, search)
   })
   // A correction can rename the paired inventory item and a replacement creates
   // a second one, so the item lists go with the catalog rather than waiting for
@@ -597,7 +615,7 @@ function SeedTable() {
   if (showSeedAdd) {
     rows.push(<NewSeedRow key="new" suppliers={suppliers} varieties={varieties} createSeed={createSeed} done={() => setShowSeedAdd(false)} />)
   }
-  for (const seed of seeds.filter((candidate) => candidate.active || showRetired)) {
+  for (const seed of found.filter((candidate) => candidate.active || showRetired)) {
     const replacement = seeds.find((candidate) => candidate.pk === seed.replaced_by)
     rows.push(
       <SeedRow
@@ -630,6 +648,7 @@ function SeedTable() {
           onCancel={() => setCorrecting(null)}
         />
       )}
+      <CatalogSearch id="seed-catalog-search" onSearch={setSearch} label="Search the seed catalog" />
       <Form.Check type="switch" id="show-retired-seed-catalog" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
       <Table>
         <thead>

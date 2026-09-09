@@ -76,6 +76,17 @@ class Seeds(ReplaceableModel, WorkspaceOwnedModel):
             quantity_reconciliations__isnull=False,
         ).exists()
 
+    def search_names(self):
+        """Return the names this entry is found by.
+
+        It has no name of its own, being one supplier's variety, so it answers
+        to the supplier's, to the variety's and to the crop and family above
+        it, and to the code the supplier prints on the packet.
+        """
+        yield self.supplier_code
+        yield self.supplier.name
+        yield from self.plant_variety.search_names()
+
     def __str__(self):
         return f"{self.plant_variety} from {self.supplier} ({self.supplier_code})"
 

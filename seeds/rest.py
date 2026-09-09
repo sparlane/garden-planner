@@ -406,6 +406,8 @@ class SeedsViewSet(
     duplicate_name_field = None
     duplicate_key_reason = 'the same supplier and variety'
 
+    search_related = ('supplier', 'plant_variety__plant__family')
+
 
 class SeedPacketCurrentViewSet(
     CurrentWorkspaceViewSetMixin,

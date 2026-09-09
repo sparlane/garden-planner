@@ -1,8 +1,9 @@
+import { catalogSearchQuery } from './catalog'
 import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
 import { PlantFamily, PlantVariety, Plant, PlantFamilyCreate, PlantCreate, PlantVarietyCreate } from '../types/plants'
 
-function getPlantFamilies(signal?: AbortSignal): Promise<Array<PlantFamily>> {
-  return fetchAsJson<Array<PlantFamily>>('/plants/family/', signal)
+function getPlantFamilies(signal?: AbortSignal, search?: string): Promise<Array<PlantFamily>> {
+  return fetchAsJson<Array<PlantFamily>>(`/plants/family/${catalogSearchQuery(search)}`, signal)
 }
 
 function addPlantFamily(data: PlantFamilyCreate) {
@@ -14,8 +15,8 @@ async function updatePlantFamily(pk: number, data: Partial<PlantFamilyCreate>): 
   return response.json() as Promise<PlantFamily>
 }
 
-function getPlantVarieties(signal?: AbortSignal): Promise<Array<PlantVariety>> {
-  return fetchAsJson<Array<PlantVariety>>('/plants/variety/', signal)
+function getPlantVarieties(signal?: AbortSignal, search?: string): Promise<Array<PlantVariety>> {
+  return fetchAsJson<Array<PlantVariety>>(`/plants/variety/${catalogSearchQuery(search)}`, signal)
 }
 
 function addPlantVariety(data: PlantVarietyCreate) {
@@ -27,8 +28,8 @@ async function updatePlantVariety(pk: number, data: Partial<PlantVarietyCreate>)
   return response.json() as Promise<PlantVariety>
 }
 
-function getPlants(signal?: AbortSignal): Promise<Array<Plant>> {
-  return fetchAsJson<Array<Plant>>('/plants/plant/', signal)
+function getPlants(signal?: AbortSignal, search?: string): Promise<Array<Plant>> {
+  return fetchAsJson<Array<Plant>>(`/plants/plant/${catalogSearchQuery(search)}`, signal)
 }
 
 function addPlant(data: PlantCreate) {

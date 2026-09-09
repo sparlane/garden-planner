@@ -6,8 +6,8 @@ import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties, updatePlant, updatePlantFamily, updatePlantVariety } from './api/plants'
-import { DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
-import { queryKeys } from './query'
+import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
 import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
 import { ApiError } from './utils'
@@ -440,9 +440,29 @@ function PlantsView() {
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
   const [merging, setMerging] = React.useState<Merging | null>(null)
+  const [search, setSearch] = React.useState('')
+  // The whole catalog, which is what a picker offers and what a merge may be
+  // onto: reassigning a crop to a family, or merging a variety into one, has to
+  // reach records a search is deliberately hiding. A blank search shares these
+  // queries, so looking at the screen costs no more than it did.
   const { data: families = [] } = useQuery({ queryKey: queryKeys.plants.families, queryFn: ({ signal }) => getPlantFamilies(signal) })
   const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
   const { data: varieties = [] } = useQuery({ queryKey: queryKeys.plants.varieties, queryFn: ({ signal }) => getPlantVarieties(signal) })
+  // What the rows are read from. One query answered by three collections: a
+  // record is found by every name above and below it, so a variety keeps the
+  // crop and family it hangs off and the tree still reads as a tree.
+  const { data: foundFamilies = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.plants.families, search),
+    queryFn: ({ signal }) => getPlantFamilies(signal, search)
+  })
+  const { data: foundPlants = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.plants.plants, search),
+    queryFn: ({ signal }) => getPlants(signal, search)
+  })
+  const { data: foundVarieties = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.plants.varieties, search),
+    queryFn: ({ signal }) => getPlantVarieties(signal, search)
+  })
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.plants.all })
   const createFamily = useMutation({ mutationFn: addPlantFamily, onSuccess: refresh })
   const editFamily = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: Partial<PlantFamilyCreate> }) => updatePlantFamily(pk, data), onSuccess: refresh })
@@ -463,7 +483,7 @@ function PlantsView() {
       setRetireError(fields.active ?? fields.form ?? 'The change could not be saved.')
     }
   }
-  const visibleFamilies = families.filter((family) => family.active || showRetired)
+  const visibleFamilies = foundFamilies.filter((family) => family.active || showRetired)
   const rows: Array<React.ReactNode> = []
 
   if (editor?.kind === 'family' && editor.pk === undefined) {
@@ -512,7 +532,7 @@ function PlantsView() {
     if (editor?.kind === 'plant' && editor.pk === undefined && editor.parentPk === family.pk) {
       rows.push(<PlantEditor key="new-plant" families={families} initialFamily={family.pk} onSave={(data) => createPlant.mutateAsync(data)} onDone={done} />)
     }
-    for (const plant of plants.filter((value) => value.family === family.pk && (value.active || showRetired))) {
+    for (const plant of foundPlants.filter((value) => value.family === family.pk && (value.active || showRetired))) {
       if (editor?.kind === 'plant' && editor.pk === plant.pk) {
         rows.push(
           <PlantEditor
@@ -580,7 +600,7 @@ function PlantsView() {
       if (editor?.kind === 'variety' && editor.pk === undefined && editor.parentPk === plant.pk) {
         rows.push(<VarietyEditor key="new-variety" plants={plants} families={families} initialPlant={plant.pk} onSave={(data) => createVariety.mutateAsync(data)} onDone={done} />)
       }
-      for (const variety of varieties.filter((value) => value.plant === plant.pk && (value.active || showRetired))) {
+      for (const variety of foundVarieties.filter((value) => value.plant === plant.pk && (value.active || showRetired))) {
         if (editor?.kind === 'variety' && editor.pk === variety.pk) {
           rows.push(
             <VarietyEditor
@@ -651,6 +671,7 @@ function PlantsView() {
           <div className="text-muted">Variety values override plant defaults when provided.</div>
         </div>
         <div className="d-flex align-items-center gap-3">
+          <CatalogSearch id="plant-catalog-search" onSearch={setSearch} label="Search plants and varieties" />
           <Form.Check type="switch" id="show-retired-catalog" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
           <Button onClick={() => setEditor({ kind: 'family' })}>Add family</Button>
         </div>
