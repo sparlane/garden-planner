@@ -1,8 +1,9 @@
+import { catalogSearchQuery } from './catalog'
 import { Seed, SeedCreate, SeedPacket, SeedPacketDetails, SeedPacketReceiptCreate, SeedPacketReceiptDraft, SeedPacketReconciliation } from '../types/seeds'
 import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
-function getSeeds(signal?: AbortSignal): Promise<Array<Seed>> {
-  return fetchAsJson<Array<Seed>>('/seeds/seeds/', signal)
+function getSeeds(signal?: AbortSignal, search?: string): Promise<Array<Seed>> {
+  return fetchAsJson<Array<Seed>>(`/seeds/seeds/${catalogSearchQuery(search)}`, signal)
 }
 
 function addSeed(seed: SeedCreate) {

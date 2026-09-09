@@ -52,4 +52,13 @@ function checkCatalogDuplicates(
   return fetchAsJson<CatalogDuplicateCheck>(`${collection}duplicates/?${params.toString()}`, signal)
 }
 
-export { checkCatalogDuplicates, correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord }
+// Every catalog collection takes the same `?search=`, because the comparison
+// is the server's: it is on the normalized form of a name and it reaches the
+// records a paginated collection did not send, neither of which a filter
+// written in the browser can do. Blank searches for nothing rather than for
+// the empty string, so an untouched box asks for the whole catalog.
+function catalogSearchQuery(search?: string): string {
+  return search ? `?search=${encodeURIComponent(search)}` : ''
+}
+
+export { catalogSearchQuery, checkCatalogDuplicates, correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord }

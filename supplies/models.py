@@ -39,6 +39,15 @@ class Supplier(MergeableModel, WorkspaceOwnedModel):
 
     retirement_dependants = (('seeds_set', 'seed catalog entries'),)
 
+    def search_names(self):
+        """Return the names this supplier is found by.
+
+        Only its own. The seed entries under it hang off a variety as well, so
+        finding a supplier by a crop they once sold would answer a different
+        question from the one that was asked.
+        """
+        yield self.name
+
     class Meta:
         constraints = [
             models.UniqueConstraint(

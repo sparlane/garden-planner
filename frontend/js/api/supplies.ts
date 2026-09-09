@@ -1,8 +1,9 @@
+import { catalogSearchQuery } from './catalog'
 import { Supplier, SupplierCreate } from '../types/suppliers'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
-function getSuppliers(signal?: AbortSignal): Promise<Array<Supplier>> {
-  return fetchAsJson<Array<Supplier>>('/supplies/supplier/', signal)
+function getSuppliers(signal?: AbortSignal, search?: string): Promise<Array<Supplier>> {
+  return fetchAsJson<Array<Supplier>>(`/supplies/supplier/${catalogSearchQuery(search)}`, signal)
 }
 
 function addSupplier(supplier: SupplierCreate) {

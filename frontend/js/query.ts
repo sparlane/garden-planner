@@ -3,6 +3,15 @@ import { QueryClient } from '@tanstack/react-query'
 import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 import { WorkFilters } from './types/work'
 
+// A searched catalog list is a different list and takes a key of its own. The
+// pickers on other screens read the same collections unsearched, and one cache
+// entry serving both would make what a picker offers depend on what somebody
+// last typed into a search box. A blank search is the same list, so an
+// untouched box costs no second request.
+function searchedKey(base: ReadonlyArray<unknown>, search: string): ReadonlyArray<unknown> {
+  return search ? [...base, 'search', search] : base
+}
+
 const queryKeys = {
   reports: {
     all: ['reports'] as const,
@@ -208,4 +217,4 @@ const queryClient = new QueryClient({
   }
 })
 
-export { queryClient, queryKeys }
+export { queryClient, queryKeys, searchedKey }

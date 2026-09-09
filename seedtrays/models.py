@@ -56,6 +56,14 @@ class SeedTrayModel(ReplaceableModel, WorkspaceOwnedModel):
     #: correction.
     identity_fields = ('x_cells', 'y_cells')
 
+    def search_names(self):
+        """Return the names this model is found by.
+
+        Its identifier and no more: the description beside it is prose about a
+        tray rather than another way of naming one.
+        """
+        yield self.identifier
+
     def __str__(self):
         return self.identifier
 
