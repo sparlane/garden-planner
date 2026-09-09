@@ -5,8 +5,30 @@ import React from 'react'
 import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { addPlant, addPlantFamily, addPlantVariety, getPlantFamilies, getPlants, getPlantVarieties, updatePlant, updatePlantFamily, updatePlantVariety } from './api/plants'
-import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import {
+  addPlant,
+  addPlantFamily,
+  addPlantVariety,
+  getPlantFamilies,
+  getPlants,
+  getPlantVarieties,
+  installStarterCrops,
+  updatePlant,
+  updatePlantFamily,
+  updatePlantVariety
+} from './api/plants'
+import {
+  CatalogSearch,
+  DuplicateWarning,
+  MergeDialog,
+  MergedIntoNote,
+  ReferenceBadge,
+  RetireButton,
+  RetiredBadge,
+  activeChoices,
+  referenceFigureClass,
+  retiredRowClass
+} from './catalog'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
 import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
@@ -469,6 +491,10 @@ function PlantsView() {
   const createPlant = useMutation({ mutationFn: addPlant, onSuccess: refresh })
   const editPlant = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: Partial<PlantCreate> }) => updatePlant(pk, data), onSuccess: refresh })
   const createVariety = useMutation({ mutationFn: addPlantVariety, onSuccess: refresh })
+  // Offered whether or not the catalog is empty: installing twice creates
+  // nothing the second time, adopts a crop the gardener already typed rather
+  // than duplicating it, and leaves every figure they have measured alone.
+  const installStarters = useMutation({ mutationFn: installStarterCrops, onSuccess: refresh })
   const editVariety = useMutation({ mutationFn: ({ pk, data }: { pk: number; data: Partial<PlantVarietyCreate> }) => updatePlantVariety(pk, data), onSuccess: refresh })
   const done = () => setEditor(null)
   // Retirement is refused while something active still hangs off the record,
@@ -498,6 +524,7 @@ function PlantsView() {
           <td>
             {family.name}
             <RetiredBadge active={family.active} />
+            <ReferenceBadge record={family} />
             <MergedIntoNote into={nameOf(families, family.merged_into)} />
           </td>
           <td colSpan={8}></td>
@@ -551,15 +578,16 @@ function PlantsView() {
             <td>
               {plant.name}
               <RetiredBadge active={plant.active} />
+              <ReferenceBadge record={plant} />
               <MergedIntoNote into={nameOf(plants, plant.merged_into)} />
             </td>
             <td></td>
-            <td>{displayNumber(plant.spacing)}</td>
-            <td>{displayNumber(plant.inter_row_spacing)}</td>
-            <td>{displayNumber(plant.plants_per_square_foot)}</td>
-            <td>{displayRange(plant.germination_days_min, plant.germination_days_max)}</td>
-            <td>{displayRange(plant.maturity_days_min, plant.maturity_days_max)}</td>
-            <td>{BASIS_LABELS[plant.maturity_basis]}</td>
+            <td className={referenceFigureClass(plant, 'spacing')}>{displayNumber(plant.spacing)}</td>
+            <td className={referenceFigureClass(plant, 'inter_row_spacing')}>{displayNumber(plant.inter_row_spacing)}</td>
+            <td className={referenceFigureClass(plant, 'plants_per_square_foot')}>{displayNumber(plant.plants_per_square_foot)}</td>
+            <td className={referenceFigureClass(plant, 'germination_days_min')}>{displayRange(plant.germination_days_min, plant.germination_days_max)}</td>
+            <td className={referenceFigureClass(plant, 'maturity_days_min')}>{displayRange(plant.maturity_days_min, plant.maturity_days_max)}</td>
+            <td className={referenceFigureClass(plant, 'maturity_basis')}>{BASIS_LABELS[plant.maturity_basis]}</td>
             <td>{plant.notes || '—'}</td>
             <td>
               {plant.active && (
@@ -621,13 +649,14 @@ function PlantsView() {
               <td>
                 {variety.name}
                 <RetiredBadge active={variety.active} />
+                <ReferenceBadge record={variety} />
                 <MergedIntoNote into={nameOf(varieties, variety.merged_into)} />
               </td>
               <td>{displayNumber(variety.spacing)}</td>
               <td>{displayNumber(variety.inter_row_spacing)}</td>
               <td>{displayNumber(variety.plants_per_square_foot)}</td>
-              <td>{displayRange(variety.germination_days_min, variety.germination_days_max)}</td>
-              <td>{displayRange(variety.maturity_days_min, variety.maturity_days_max)}</td>
+              <td className={referenceFigureClass(variety, 'germination_days_min')}>{displayRange(variety.germination_days_min, variety.germination_days_max)}</td>
+              <td className={referenceFigureClass(variety, 'maturity_days_min')}>{displayRange(variety.maturity_days_min, variety.maturity_days_max)}</td>
               <td>{variety.maturity_basis ? BASIS_LABELS[variety.maturity_basis] : `Inherit (${BASIS_LABELS[variety.effective_maturity_basis]})`}</td>
               <td>{variety.notes || '—'}</td>
               <td>
@@ -668,11 +697,14 @@ function PlantsView() {
       <div className="d-flex justify-content-between align-items-center mb-3">
         <div>
           <h2 className="mb-1">Plants</h2>
-          <div className="text-muted">Variety values override plant defaults when provided.</div>
+          <div className="text-muted">Variety values override plant defaults when provided. Figures shown in grey came with the starter set rather than from your garden.</div>
         </div>
         <div className="d-flex align-items-center gap-3">
           <CatalogSearch id="plant-catalog-search" onSearch={setSearch} label="Search plants and varieties" />
           <Form.Check type="switch" id="show-retired-catalog" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+          <Button variant="outline-secondary" disabled={installStarters.isPending} onClick={() => installStarters.mutate()}>
+            {installStarters.isPending ? 'Adding…' : 'Add starter crops'}
+          </Button>
           <Button onClick={() => setEditor({ kind: 'family' })}>Add family</Button>
         </div>
       </div>

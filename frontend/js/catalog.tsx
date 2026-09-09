@@ -57,6 +57,33 @@ function ReplacedByNote({ by }: { by: string | null }) {
   return <div className="small text-body-secondary">Replaced by {by}</div>
 }
 
+interface ReferencedRecord {
+  reference_source: string
+  reference_fields: Array<string>
+}
+
+// Where a record came from, for the screens that maintain the catalog. A
+// record the gardener made carries no source and says nothing here, which is
+// the difference between a catalog somebody built and one that arrived.
+function ReferenceBadge({ record }: { record: ReferencedRecord }) {
+  if (!record.reference_source) return null
+  return (
+    <Badge bg="light" text="dark" className="ms-1" title={`Installed from the ${record.reference_source} set`}>
+      Starter
+    </Badge>
+  )
+}
+
+// A figure a reference set supplied and nobody has changed is not yet a fact
+// about this garden -- reference day counts are printed for somebody else's
+// climate -- so it reads more quietly than one measured here. Which fields
+// those are comes from the server, because it compares what the set holds now
+// against what the record says now, and neither is what the page was built
+// from.
+function referenceFigureClass(record: ReferencedRecord, field: string): string | undefined {
+  return record.reference_fields.includes(field) ? 'text-body-secondary fst-italic' : undefined
+}
+
 function referenceSummary(reference: CatalogReference): string {
   const examples = reference.examples.join(', ')
   if (reference.count > reference.examples.length) return `${examples}, and ${reference.count - reference.examples.length} more`
@@ -417,10 +444,12 @@ export {
   DuplicateWarning,
   MergeDialog,
   MergedIntoNote,
+  ReferenceBadge,
   ReplacedByNote,
   RetireButton,
   RetiredBadge,
   activeChoices,
   changedValues,
+  referenceFigureClass,
   retiredRowClass
 }
