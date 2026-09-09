@@ -1,6 +1,6 @@
 import { catalogSearchQuery } from './catalog'
 import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
-import { PlantFamily, PlantVariety, Plant, PlantFamilyCreate, PlantCreate, PlantVarietyCreate } from '../types/plants'
+import { PlantFamily, PlantVariety, Plant, PlantFamilyCreate, PlantCreate, PlantVarietyCreate, StarterCrops } from '../types/plants'
 
 function getPlantFamilies(signal?: AbortSignal, search?: string): Promise<Array<PlantFamily>> {
   return fetchAsJson<Array<PlantFamily>>(`/plants/family/${catalogSearchQuery(search)}`, signal)
@@ -41,4 +41,13 @@ async function updatePlant(pk: number, data: Partial<PlantCreate>): Promise<Plan
   return response.json() as Promise<Plant>
 }
 
-export { getPlantFamilies, getPlantVarieties, getPlants, addPlantFamily, addPlantVariety, addPlant, updatePlantFamily, updatePlantVariety, updatePlant }
+// Installing the starter crops is a POST because it writes, and asking twice
+// creates nothing the second time and argues with nothing the gardener has
+// done in between, so a screen may offer it whether or not the catalog is
+// empty.
+async function installStarterCrops(): Promise<StarterCrops> {
+  const response = await csrfPost('/plants/starters/', {})
+  return response.json() as Promise<StarterCrops>
+}
+
+export { getPlantFamilies, getPlantVarieties, getPlants, addPlantFamily, addPlantVariety, addPlant, installStarterCrops, updatePlantFamily, updatePlantVariety, updatePlant }

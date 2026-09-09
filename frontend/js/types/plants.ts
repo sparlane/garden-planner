@@ -1,4 +1,12 @@
-interface PlantFamily {
+// Where a catalog record came from, and which of its figures still say
+// exactly what that reference set supplied. Both are read-only: editing a
+// figure is what makes it the gardener's, so there is nothing to set.
+interface ReferencedRecord {
+  reference_source: string
+  reference_fields: Array<string>
+}
+
+interface PlantFamily extends ReferencedRecord {
   pk: number
   name: string
   notes: string | null
@@ -24,7 +32,7 @@ interface PlantingDetails {
 
 type MaturityBasis = 'seed' | 'transplanting'
 
-interface Plant extends PlantingDetails {
+interface Plant extends PlantingDetails, ReferencedRecord {
   pk: number
   family: number
   name: string
@@ -42,7 +50,7 @@ interface PlantCreate extends PlantingDetails {
   active?: boolean
 }
 
-interface PlantVariety extends PlantingDetails {
+interface PlantVariety extends PlantingDetails, ReferencedRecord {
   pk: number
   plant: number
   name: string
@@ -61,4 +69,12 @@ interface PlantVarietyCreate extends PlantingDetails {
   active?: boolean
 }
 
-export { MaturityBasis, PlantFamily, Plant, PlantVariety, PlantingDetails, PlantFamilyCreate, PlantCreate, PlantVarietyCreate }
+// What the starter set covers, whether it was created now, adopted from what
+// the gardener already had, or left alone.
+interface StarterCrops {
+  families: Array<PlantFamily>
+  plants: Array<Plant>
+  varieties: Array<PlantVariety>
+}
+
+export { MaturityBasis, PlantFamily, Plant, PlantVariety, PlantingDetails, PlantFamilyCreate, PlantCreate, PlantVarietyCreate, ReferencedRecord, StarterCrops }
