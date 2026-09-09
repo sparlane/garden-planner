@@ -55,6 +55,7 @@ AREA_DECIMAL_PLACES = 6
 #: `InputApplicationTarget.TargetType` by a test.
 TARGET_FIELDS = (
     'batch',
+    'container_fill',
     'seed_tray_cell',
     'specific_plant',
     'plant_cohort',
@@ -418,6 +419,7 @@ class InputApplicationTarget(models.Model):
         """
 
         BATCH = 'batch', 'Production batch'
+        CONTAINER_FILL = 'container_fill', 'Container fill'
         SEED_TRAY_CELL = 'seed_tray_cell', 'Tray cell'
         SPECIFIC_PLANT = 'specific_plant', 'Plant'
         PLANT_COHORT = 'plant_cohort', 'Plant cohort'
@@ -433,6 +435,10 @@ class InputApplicationTarget(models.Model):
         related_name='targets',
     )
     target_type = models.CharField(max_length=24, choices=TargetType.choices)
+    container_fill = models.ForeignKey(
+        SeedTrayGeneration, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='container_application_targets',
+    )
     batch = models.ForeignKey(
         ProductionBatch,
         on_delete=models.PROTECT,
@@ -599,6 +605,8 @@ class InputApplicationTarget(models.Model):
         else:
             self._add_workspace_error(errors)
         self._add_generation_errors(errors)
+        if self.container_fill_id and self.container_fill.tray_id is not None:
+            errors['container_fill'] = 'Apply tray inputs to the cells of their fill.'
         if errors:
             raise ValidationError(errors)
 

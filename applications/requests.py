@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 from garden.models import GardenArea, GardenBed, GardenRow, GardenSquare
 from inventory.models import InventoryUnit
 from plantings.models import PlantCohort, ProductionBatch, SpecificPlant
-from seedtrays.models import SeedTray, SeedTrayCell
+from seedtrays.models import SeedTray, SeedTrayCell, SeedTrayGeneration
 
 from .models import InputApplicationTarget
 from .services import ApplicationRequest, LineRequest, TargetRequest, cells_for_tray
@@ -18,6 +18,7 @@ TargetType = InputApplicationTarget.TargetType
 #: A tray cell is not workspace owned in its own right, so it is scoped through
 #: the tray that holds it.
 TARGET_SOURCES = {
+    TargetType.CONTAINER_FILL: (SeedTrayGeneration, 'workspace'),
     TargetType.BATCH: (ProductionBatch, 'workspace'),
     TargetType.SEED_TRAY_CELL: (SeedTrayCell, 'tray__workspace'),
     TargetType.SPECIFIC_PLANT: (SpecificPlant, 'workspace'),
