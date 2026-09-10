@@ -1,6 +1,6 @@
 import { catalogSearchQuery } from './catalog'
 import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
-import { PlantFamily, PlantVariety, Plant, PlantFamilyCreate, PlantCreate, PlantVarietyCreate, StarterCrops } from '../types/plants'
+import { PlantFamily, PlantVariety, Plant, PlantFamilyCreate, PlantCreate, PlantVarietyCreate, InstalledCatalog, ReferenceSet } from '../types/plants'
 
 function getPlantFamilies(signal?: AbortSignal, search?: string): Promise<Array<PlantFamily>> {
   return fetchAsJson<Array<PlantFamily>>(`/plants/family/${catalogSearchQuery(search)}`, signal)
@@ -45,9 +45,37 @@ async function updatePlant(pk: number, data: Partial<PlantCreate>): Promise<Plan
 // creates nothing the second time and argues with nothing the gardener has
 // done in between, so a screen may offer it whether or not the catalog is
 // empty.
-async function installStarterCrops(): Promise<StarterCrops> {
+async function installStarterCrops(): Promise<InstalledCatalog> {
   const response = await csrfPost('/plants/starters/', {})
-  return response.json() as Promise<StarterCrops>
+  return response.json() as Promise<InstalledCatalog>
 }
 
-export { getPlantFamilies, getPlantVarieties, getPlants, addPlantFamily, addPlantVariety, addPlant, installStarterCrops, updatePlantFamily, updatePlantVariety, updatePlant }
+// The catalog as a document, to be carried into another garden. It is what
+// this garden now says rather than what any set once said about it, so a
+// figure measured here travels and the provenance stays behind.
+function exportReferenceSet(signal?: AbortSignal): Promise<ReferenceSet> {
+  return fetchAsJson<ReferenceSet>('/plants/reference-set/', signal)
+}
+
+// The same document read the other way. It is checked by the server before
+// anything is written, so a document with one bad crop in it installs none of
+// itself and there is nothing for the browser to validate first.
+async function importReferenceSet(document: ReferenceSet): Promise<InstalledCatalog> {
+  const response = await csrfPost('/plants/reference-set/', document)
+  return response.json() as Promise<InstalledCatalog>
+}
+
+export {
+  getPlantFamilies,
+  getPlantVarieties,
+  getPlants,
+  addPlantFamily,
+  addPlantVariety,
+  addPlant,
+  installStarterCrops,
+  exportReferenceSet,
+  importReferenceSet,
+  updatePlantFamily,
+  updatePlantVariety,
+  updatePlant
+}

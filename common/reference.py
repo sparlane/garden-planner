@@ -22,9 +22,22 @@ says now is always readable next to what the record says.
 
 A record the gardener made carries no source at all, which is the difference
 between a catalog somebody built and one that arrived.
+
+Installing one record is here rather than beside any particular set, because
+the awkward half of it belongs to this idea rather than to what is being
+installed: a set must never make the duplicate the warning would have told a
+person they were typing, so a record is found by the normalized form of its
+name and adopted, and a record somebody retired is left where they put it.
 """
 
 from django.db import models
+
+from .duplicates import normalized
+
+#: How long a set's name may be. Stated here rather than only on the field,
+#: because a document naming the set it carries has to be checked against the
+#: same limit before anything is installed from it.
+SOURCE_MAX_LENGTH = 64
 
 #: Both the empty values a catalog figure can hold. A blank field is not the
 #: gardener disagreeing with the set, it is nobody having said anything yet,
@@ -36,7 +49,7 @@ class ReferencedModel(models.Model):
     """Abstract catalog record whose facts may have come from a reference set."""
 
     reference_source = models.CharField(
-        max_length=64,
+        max_length=SOURCE_MAX_LENGTH,
         blank=True,
         default='',
         editable=False,
@@ -100,3 +113,37 @@ def apply_reference(record, source, values):
     record.reference_source = source
     record.reference_values = dict(values)
     return changed
+
+
+def matching_name(records, name):
+    """Return the record already meaning this name, or None.
+
+    Compared the way two catalog names are compared everywhere else, so a
+    gardener's ``Tomatoes`` is a set's ``Tomato`` rather than a second one.
+    That is the same rule ``common.duplicates`` would have applied had a person
+    been typing the name instead of a set installing it.
+    """
+    wanted = normalized(name)
+    for record in records:
+        if normalized(record.name) == wanted:
+            return record
+    return None
+
+
+def install_record(model, source, name, values, **scope):
+    """Adopt or create one record and write what the set says onto it.
+
+    A retired record is returned untouched. Retiring is something the gardener
+    chose, and a set that quietly refreshed a crop somebody had put away would
+    be arguing with that as surely as one that overwrote a figure they had
+    measured. A caller that walks a hierarchy stops there, which is what keeps
+    a set from leaving an active record under a retired one.
+    """
+    record = matching_name(model.objects.filter(**scope), name)
+    if record is not None and not record.active:
+        return record
+    if record is None:
+        record = model(name=name, **scope)
+    apply_reference(record, source, values)
+    record.save()
+    return record
