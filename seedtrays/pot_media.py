@@ -1,11 +1,28 @@
 """Media still owned by an unused pot fill, separate from container cost."""
 
 from decimal import Decimal
+from fractions import Fraction
 
 from applications.models import InputApplication, InputApplicationLine
 from inventory.ledger import quantize_quantity
 
 from .generation_costs import quantize_cost
+
+
+def numbered_fill_shares(fill):
+    """Return exact fixed shares, distinguishing held plants from departures.
+
+    A missing denominator means participation is still open or the fill has
+    legacy departures. It must not be inferred from the remaining plants.
+    This reports allocation bases only; it does not post plant cost layers.
+    """
+    fill.refresh_from_db(fields=['plant_share_count'])
+    share = Fraction(1, fill.plant_share_count) if fill.plant_share_count else None
+    return [
+        {'placement': placement.pk, 'plant': placement.specific_plant_id,
+         'share': share, 'departed_at': placement.ended}
+        for placement in fill.plant_locations.order_by('pk')
+    ]
 
 
 def pot_fill_contents(fill):

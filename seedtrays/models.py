@@ -258,6 +258,10 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
         null=True, blank=True,
     )
     container_count = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
+    plant_share_count = models.PositiveIntegerField(
+        null=True, blank=True, editable=False,
+        help_text='Numbered-pot participants fixed at the first recorded departure.',
+    )
     code = models.CharField(max_length=64)
     sequence = models.PositiveIntegerField(validators=[MinValueValidator(1)])
     status = models.CharField(
@@ -342,6 +346,12 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
                 condition=models.Q(container_count__gte=1),
                 name='container_fill_positive_count',
             ),
+            models.CheckConstraint(
+                condition=models.Q(plant_share_count__isnull=True) | models.Q(
+                    plant_share_count__gte=1, inventory_unit__isnull=False, tray__isnull=True,
+                ),
+                name='pot_fill_positive_share_count',
+            ),
             models.UniqueConstraint(
                 fields=['inventory_unit', 'sequence'],
                 name='container_fill_unit_sequence_unique',
@@ -405,6 +415,8 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
     def save(self, *args, **kwargs):
         if not self.inventory_unit_id and self.tray_id:
             self.inventory_unit = self.tray.inventory_unit
+        if self._state.adding and self.plant_share_count is not None:
+            raise ValidationError({'plant_share_count': 'Plant shares are fixed by the departure workflow.'})
         if self.pk:
             immutable = {
                 'tray': ('tray_id', 'Cannot move a generation to another tray.'),
@@ -412,6 +424,7 @@ class SeedTrayGeneration(WorkspaceOwnedModel):
                 'stock_lot': ('stock_lot_id', 'Cannot change the lot a fill was opened for.'),
                 'source_location': ('source_location_id', "Cannot change a fill's original location."),
                 'container_count': ('container_count', "Cannot change a fill's share basis."),
+                'plant_share_count': ('plant_share_count', 'Plant shares are fixed by the departure workflow.'),
                 'sequence': ('sequence', 'Cannot renumber an existing generation.'),
             }
             previous = type(self).objects.filter(pk=self.pk).only(

@@ -1,11 +1,19 @@
 """Lifecycle hooks for Nursery workspace defaults."""
 
-from django.db.models.signals import post_save
+from django.db.models.deletion import ProtectedError
+from django.db.models.signals import post_save, pre_delete
 from django.dispatch import receiver
 
 from workspaces.models import Workspace
 
-from .models import GrowthStage, PlantGrade
+from .models import GrowthStage, PlantGrade, SpecificPlantLocation
+
+
+@receiver(pre_delete, sender=SpecificPlantLocation)
+def preserve_fill_participant(sender, instance, **kwargs):  # pylint: disable=unused-argument
+    """Deleting a participant would erase its share of the fill's media."""
+    if instance.container_fill_id:
+        raise ProtectedError('Container fill placement history cannot be deleted.', [instance])
 
 
 @receiver(post_save, sender=Workspace)

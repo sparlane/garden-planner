@@ -1922,7 +1922,7 @@ class SpecificPlantLocation(models.Model):
         if self.started < fill.opened_at:
             raise ValidationError({'started': 'Placement cannot precede the fill opening.'})
 
-    def _preserve_fill_history(self):
+    def _preserve_fill_history(self, update_fields=None):
         """Do not let an interval edit change which cultivation cycle a plant used."""
         original = type(self).objects.select_for_update().get(pk=self.pk)
         if original.container_fill_id:
@@ -1931,6 +1931,8 @@ class SpecificPlantLocation(models.Model):
                 raise ValidationError({'container_fill': 'Move the plant to change its fill; recorded fill placements are immutable.'})
             if original.ended is not None and original.ended != self.ended:
                 raise ValidationError({'ended': 'A recorded fill departure cannot be changed.'})
+            if original.ended is None and self.ended is not None and (update_fields is None or 'ended' in update_fields):
+                self._freeze_fill_shares()
         elif self.container_fill_id:
             raise ValidationError({'container_fill': 'Move the plant to join a fill; historical placements are not backfilled.'})
         elif original.container_unit_id != self.container_unit_id and self.container_unit_id:
@@ -1939,6 +1941,24 @@ class SpecificPlantLocation(models.Model):
                 inventory_unit_id=self.container_unit_id, status=SeedTrayGeneration.Status.OPEN,
             ).exists():
                 raise ValidationError({'container_unit': 'Move the plant to join the pot\'s fill.'})
+
+    def _freeze_fill_shares(self):
+        """Fix the denominator once, while arrivals and other exits wait on the pot.
+
+        Do not lock other plants or their placements here: another departing
+        plant may already hold those locks while waiting for this same pot.
+        Earlier departures without a basis remain legacy history.
+        """
+        InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
+        fill = SeedTrayGeneration.objects.select_for_update().get(pk=self.container_fill_id)
+        participants = fill.plant_locations.all()
+        if participants.filter(started__gt=self.ended).exists():
+            raise ValidationError({'ended': 'Departure cannot precede another participant\'s arrival.'})
+        departed = participants.filter(ended__isnull=False)
+        if departed.filter(ended__gt=self.ended).exists():
+            raise ValidationError({'ended': 'Fill departures must be recorded in order.'})
+        if fill.plant_share_count is None and not departed.exists():
+            SeedTrayGeneration.objects.filter(pk=fill.pk).update(plant_share_count=participants.count())
 
     @transaction.atomic
     def save(self, *args, **kwargs):
@@ -1956,13 +1976,18 @@ class SpecificPlantLocation(models.Model):
             ).first()
             if self.container_fill_id and (fill is None or self.container_fill_id != fill.pk):
                 raise ValidationError({'container_fill': 'Place the plant in the pot\'s current open fill.'})
+            if fill is not None:
+                if self.ended is not None:
+                    raise ValidationError({'ended': 'Join an open fill before recording the departure.'})
+                if fill.plant_share_count is not None or fill.plant_locations.filter(ended__isnull=False).exists():
+                    raise ValidationError({'container_fill': 'This fill has begun releasing plants. Clean and refill before adding plants.'})
             if fill is None and SeedTrayGeneration.objects.filter(
                 inventory_unit=unit, closed_at__gt=self.started,
             ).exists():
                 raise ValidationError({'started': 'Placement cannot precede the pot\'s previous clean.'})
             self.container_fill = fill
         elif not self._state.adding:
-            self._preserve_fill_history()
+            self._preserve_fill_history(kwargs.get('update_fields'))
         if self.container_fill_id:
             self.clean()
         super().save(*args, **kwargs)

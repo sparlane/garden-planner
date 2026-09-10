@@ -935,6 +935,14 @@ class SpecificPlantViewSet(PlantTimelineViewSetMixin, PlantOutcomeViewSetMixin, 
     ).order_by('pk')
     serializer_class = SpecificPlantSerializer
 
+    def perform_destroy(self, instance):
+        """Explain why a plant retained by cultivation history cannot be erased."""
+        try:
+            with transaction.atomic():
+                instance.delete()
+        except ProtectedError as exc:
+            raise serializers.ValidationError({'detail': 'This plant has protected cultivation history.'}) from exc
+
     def get_serializer_class(self):
         """Use the richer serializer for a single plant."""
         if self.action == 'retrieve':
@@ -1010,7 +1018,10 @@ class SpecificPlantLocationViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelV
                     instance=location,
                 )
                 location.ended = ended
-                location.save(update_fields=['ended'])
+                try:
+                    location.save(update_fields=['ended'])
+                except DjangoValidationError as exc:
+                    raise serializers.ValidationError(exc.message_dict) from exc
 
         return Response(self.get_serializer(location).data)
 
