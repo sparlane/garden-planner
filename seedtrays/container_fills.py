@@ -155,8 +155,8 @@ def clean_pot_fill(workspace, user, fill, request):
     contents = pot_fill_contents(fill)
     if request.digest is not None and request.digest != contents_digest({'plants': [], 'seeds': [], 'media': contents}):
         raise ValidationError({'digest': 'The fill changed after this clean was prepared. Review it again.'})
-    if occurred_at < fill.opened_at or any(occurred_at < row['latest_application'] for row in contents):
-        raise ValidationError({'occurred_at': 'The clean cannot precede opening or media application.'})
+    if occurred_at < fill.opened_at or any(occurred_at < row['latest_application'] for row in contents) or fill.plant_locations.filter(ended__gt=occurred_at).exists():
+        raise ValidationError({'occurred_at': 'The clean cannot precede opening, media application or a plant departure.'})
     totals = {row['lot'].pk: row['base_quantity'] for row in contents}
     match_residual_quantities(totals, request.media, 'lot_id', 'media', ('waste', 'reclaimed'))
     lots = lock_lots(workspace, totals)

@@ -8,7 +8,7 @@ from uuid import uuid4
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from inventory.models import (
@@ -19,6 +19,7 @@ from inventory.models import (
     QUANTITY_MAX_DIGITS,
     StockMovement,
     InventoryItem,
+    InventoryUnit,
 )
 from inventory.units import UnitCode
 from locations.models import Location
@@ -1863,6 +1864,11 @@ class SpecificPlantLocation(models.Model):
         'inventory.InventoryUnit', on_delete=models.PROTECT, null=True, blank=True,
         related_name='standing_plants',
     )
+    container_fill = models.ForeignKey(
+        SeedTrayGeneration, on_delete=models.PROTECT, null=True, blank=True,
+        related_name='plant_locations',
+        help_text='The numbered pot fill captured when this placement began.',
+    )
     started = models.DateTimeField(default=timezone.now)
     ended = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
@@ -1882,6 +1888,8 @@ class SpecificPlantLocation(models.Model):
 
         if self.container_unit_id is not None:
             self._validate_container_unit()
+        if self.container_fill_id is not None:
+            self._validate_container_fill()
 
         if self.ended is not None and self.ended < self.started:
             raise ValidationError({'ended': 'Must be on or after started.'})
@@ -1904,8 +1912,67 @@ class SpecificPlantLocation(models.Model):
                 'container_unit': 'The container is no longer in stock.',
             })
 
+    def _validate_container_fill(self):
+        """Keep the historical fill tied to the pot and plant that used it."""
+        fill = self.container_fill
+        if self.location_type != self.CONTAINER_UNIT or fill.tray_id or fill.inventory_unit_id != self.container_unit_id:
+            raise ValidationError({'container_fill': 'The fill must belong to this numbered pot.'})
+        if self.specific_plant_id and fill.workspace_id != self.specific_plant.workspace_id:
+            raise ValidationError({'container_fill': 'The fill belongs to a different workspace.'})
+        if self.started < fill.opened_at:
+            raise ValidationError({'started': 'Placement cannot precede the fill opening.'})
+
+    def _preserve_fill_history(self):
+        """Do not let an interval edit change which cultivation cycle a plant used."""
+        original = type(self).objects.select_for_update().get(pk=self.pk)
+        if original.container_fill_id:
+            fields = ('specific_plant_id', 'location_type', 'container_unit_id', 'container_fill_id', 'started')
+            if any(getattr(original, field) != getattr(self, field) for field in fields):
+                raise ValidationError({'container_fill': 'Move the plant to change its fill; recorded fill placements are immutable.'})
+            if original.ended is not None and original.ended != self.ended:
+                raise ValidationError({'ended': 'A recorded fill departure cannot be changed.'})
+        elif self.container_fill_id:
+            raise ValidationError({'container_fill': 'Move the plant to join a fill; historical placements are not backfilled.'})
+        elif original.container_unit_id != self.container_unit_id and self.container_unit_id:
+            InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
+            if SeedTrayGeneration.objects.filter(
+                inventory_unit_id=self.container_unit_id, status=SeedTrayGeneration.Status.OPEN,
+            ).exists():
+                raise ValidationError({'container_unit': 'Move the plant to join the pot\'s fill.'})
+
+    @transaction.atomic
+    def save(self, *args, **kwargs):
+        """Capture the open fill under the same unit lock as opening and cleaning.
+
+        Legacy placements keep their recorded identity. A newly placed plant
+        either joins the pot's current fill or occupies an unfilled pot; it
+        never acquires a later fill simply because the pot was reused.
+        """
+        if self._state.adding and self.container_unit_id:
+            SpecificPlant.objects.select_for_update().get(pk=self.specific_plant_id)
+            unit = InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
+            fill = SeedTrayGeneration.objects.select_for_update().filter(
+                inventory_unit=unit, tray__isnull=True, status=SeedTrayGeneration.Status.OPEN,
+            ).first()
+            if self.container_fill_id and (fill is None or self.container_fill_id != fill.pk):
+                raise ValidationError({'container_fill': 'Place the plant in the pot\'s current open fill.'})
+            if fill is None and SeedTrayGeneration.objects.filter(
+                inventory_unit=unit, closed_at__gt=self.started,
+            ).exists():
+                raise ValidationError({'started': 'Placement cannot precede the pot\'s previous clean.'})
+            self.container_fill = fill
+        elif not self._state.adding:
+            self._preserve_fill_history()
+        if self.container_fill_id:
+            self.clean()
+        super().save(*args, **kwargs)
+
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(container_fill__isnull=True) | models.Q(location_type='container_unit', container_unit__isnull=False),
+                name='plant_location_fill_needs_pot',
+            ),
             models.UniqueConstraint(
                 fields=['specific_plant'],
                 condition=models.Q(ended__isnull=True),

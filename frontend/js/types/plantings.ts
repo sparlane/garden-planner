@@ -445,6 +445,7 @@ interface SpecificPlantLocation {
   // The code printed on the pot, which is how a container is identified in
   // the nursery. Null for every other kind of place.
   container_unit_code?: string | null
+  container_fill?: number | null
   started: string
   ended?: string
   notes?: string
@@ -612,6 +613,7 @@ interface GrowthCatalogValue {
 }
 
 interface NurseryGrowth {
+  container_fill?: number | null
   stage: number | null
   stage_name: string | null
   grade: number | null

@@ -192,6 +192,16 @@ def _current_observation(field, output_field=None, observed_field=None):
     return Subquery(queryset, output_field=output_field)
 
 
+def _container_fact(item_field, observation_field, output_field):
+    """Prefer the occupied pot and retire observations predating its departure."""
+    return Case(
+        When(current_container_unit__isnull=False, then=_current_location(f'container_unit__item{item_field}')),
+        When(container_observed_at__lt=F('last_pot_departure'), then=Value(None)),
+        default=_current_observation(observation_field, output_field, 'container_item'),
+        output_field=output_field,
+    )
+
+
 def register_projection(workspace):
     """Return every plant in the workspace with its register columns."""
     plant_content_type = ContentType.objects.get_for_model(SpecificPlant)
@@ -232,6 +242,11 @@ def register_projection(workspace):
                 status=SalesOrderAllocation.Status.PENDING,
             ),
         ),
+        last_pot_departure=Subquery(
+            SpecificPlantLocation.objects.filter(specific_plant=OuterRef('pk'), container_unit__isnull=False)
+            .order_by('-started', '-pk').values('ended')[:1],
+        ),
+        container_observed_at=_current_observation('occurred_at', DateTimeField(), 'container_item'),
     )
     return queryset.annotate(
         allocation_status=Case(
@@ -279,10 +294,15 @@ def register_projection(workspace):
         current_stage_observed_at=_current_observation('occurred_at', DateTimeField(), 'stage'),
         current_grade=_current_observation('grade_id', IntegerField()),
         current_grade_name=_current_observation('grade__name', TextField()),
-        current_container=_current_observation('container_item_id', IntegerField()),
-        current_container_name=_current_observation('container_name', TextField(), 'container_item'),
-        current_container_size=_current_observation('container_size_label', TextField(), 'container_item'),
-        current_container_count=_current_observation('container_count', IntegerField(), 'container_item'),
+        current_container=_container_fact('_id', 'container_item_id', IntegerField()),
+        current_container_name=_container_fact('__name', 'container_name', TextField()),
+        current_container_size=_container_fact('__container_size_label', 'container_size_label', TextField()),
+        current_container_count=Case(
+            When(current_container_unit__isnull=False, then=Value(1)),
+            When(container_observed_at__lt=F('last_pot_departure'), then=Value(None)),
+            default=_current_observation('container_count', IntegerField(), 'container_item'),
+            output_field=IntegerField(),
+        ),
         current_expected_ready=_current_observation('expected_ready', DateField()),
     ).annotate(
         current_location_label=Coalesce(
