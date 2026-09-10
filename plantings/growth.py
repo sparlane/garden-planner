@@ -124,8 +124,18 @@ def current_growth(target):
     current['container_size_label'] = ''
     current['container_footprint_m2'] = None
     current['container_observation'] = None
+    current['container_fill'] = None
+    placement = None
+    if isinstance(target, SpecificPlant):
+        placement = target.locations.filter(container_unit__isnull=False).select_related(
+            'container_unit__item', 'container_fill',
+        ).order_by('-started', '-pk').first()
     for row in rows:
         for field in OBSERVED_FIELDS:
+            if field == 'container_item' and placement and (
+                placement.ended is None or row.occurred_at < placement.ended
+            ):
+                continue
             if current[field] is None and getattr(row, field) not in (None, ''):
                 current[field] = getattr(row, field)
                 if field == 'stage':
@@ -140,4 +150,12 @@ def current_growth(target):
                     })
         if all(current[field] is not None for field in OBSERVED_FIELDS):
             break
+    if placement and placement.ended is None:
+        item = placement.container_unit.item
+        current.update({
+            'container_item': item, 'container_count': 1,
+            'container_name': item.name, 'container_size_label': item.container_size_label,
+            'container_footprint_m2': item.container_footprint_m2,
+            'container_fill': placement.container_fill,
+        })
     return current

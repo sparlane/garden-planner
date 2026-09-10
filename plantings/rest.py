@@ -407,8 +407,8 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
 
     class Meta:
         model = SpecificPlantLocation
-        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit', 'container_unit_code', 'started', 'ended', 'notes', 'override_reason']
-        read_only_fields = ['override_reason']
+        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit', 'container_unit_code', 'container_fill', 'started', 'ended', 'notes', 'override_reason']
+        read_only_fields = ['override_reason', 'container_fill']
 
     workspace_field_lookups = {
         'specific_plant': 'workspace',
@@ -474,7 +474,10 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
                 pk=validated_data['specific_plant'].pk,
             )
             self._validate_history(validated_data, append_only=True)
-            return super().create(validated_data)
+            try:
+                return super().create(validated_data)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(exc.message_dict) from exc
 
     def update(self, instance, validated_data):
         with transaction.atomic():
@@ -482,7 +485,10 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
             instance = SpecificPlantLocation.objects.select_for_update().get(pk=instance.pk)
             self.instance = instance
             self._validate_history(validated_data, append_only=False)
-            return super().update(instance, validated_data)
+            try:
+                return super().update(instance, validated_data)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(exc.message_dict) from exc
 
 
 class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -639,6 +645,7 @@ class SpecificPlantDetailSerializer(SpecificPlantSerializer):
             'container_name': growth['container_name'] or None,
             'container_size': growth['container_size_label'] or None,
             'container_count': growth['container_count'],
+            'container_fill': growth['container_fill'].pk if growth['container_fill'] else None,
             'height_cm': growth['height_cm'],
             'spread_cm': growth['spread_cm'],
             'root_condition': growth['root_condition'],

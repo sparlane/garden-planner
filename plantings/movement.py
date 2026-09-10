@@ -208,6 +208,8 @@ def move_specific_plant(plant, move_data, user=None):
                 specific_plant=plant,
                 **move_payload,
             )
+        except DjangoValidationError as exc:
+            raise ValidationError(_model_errors(exc)) from exc
         except IntegrityError as exc:
             if not is_active_location_integrity_error(exc):
                 raise
