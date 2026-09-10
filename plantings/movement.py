@@ -11,6 +11,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from inventory.models import InventoryUnit
 from locations.occupancy import check_capacity, plant_contribution
 
 from .lifecycle import record_transplant_event
@@ -188,13 +189,24 @@ def move_specific_plant(plant, move_data, user=None):
                 raise ValidationError(_model_errors(exc)) from exc
         active_location = get_single_active_location_for_update(plant)
 
+        # A move may leave one fill and join another. Acquire both unit locks
+        # in order before either fill, so opposite-direction moves cannot
+        # each hold their source pot while waiting for their destination.
+        unit_ids = {unit.pk for unit in [move_payload.get('container_unit')] if unit is not None}
+        if active_location and active_location.container_unit_id:
+            unit_ids.add(active_location.container_unit_id)
+        list(InventoryUnit.objects.select_for_update(of=('self',)).filter(pk__in=unit_ids).order_by('pk'))
+
         if active_location:
             if started < active_location.started:
                 raise ValidationError({
                     'started': 'Move cannot start before the active location.'
                 })
             active_location.ended = started
-            active_location.save(update_fields=['ended'])
+            try:
+                active_location.save(update_fields=['ended'])
+            except DjangoValidationError as exc:
+                raise ValidationError(_model_errors(exc)) from exc
         else:
             validate_location_history(
                 specific_plant=plant,
