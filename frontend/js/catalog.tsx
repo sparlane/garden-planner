@@ -64,12 +64,15 @@ interface ReferencedRecord {
 
 // Where a record came from, for the screens that maintain the catalog. A
 // record the gardener made carries no source and says nothing here, which is
-// the difference between a catalog somebody built and one that arrived.
+// the difference between a catalog somebody built and one that arrived. The
+// set names itself rather than being labelled generically, because a catalog
+// may arrive from a garden club or from another garden as readily as from the
+// set that ships in the box, and which one it was is the useful half.
 function ReferenceBadge({ record }: { record: ReferencedRecord }) {
   if (!record.reference_source) return null
   return (
-    <Badge bg="light" text="dark" className="ms-1" title={`Installed from the ${record.reference_source} set`}>
-      Starter
+    <Badge bg="light" text="dark" className="ms-1" title={`Installed from the ${record.reference_source} set rather than measured in this garden`}>
+      {record.reference_source}
     </Badge>
   )
 }
@@ -436,6 +439,126 @@ function CorrectionDialog({ collection, source, original, values, title, onSaved
   )
 }
 
+interface ReferenceSetDocument {
+  source: string
+}
+
+interface ReferenceSetControlsProps<Document extends ReferenceSetDocument, Result> {
+  //: What the exported file is called, before the set's own name is put in
+  //: front of it: `crop-catalog` becomes `my-garden-crop-catalog.json`.
+  name: string
+  onExport: () => Promise<Document>
+  onImport: (payload: Document) => Promise<Result>
+  //: What to say once a document is in. It reports what the catalog now holds
+  //: rather than what changed, because installing a set twice is meant to be
+  //: uneventful and a screen saying nothing would read as a failure.
+  describe: (result: Result) => string
+}
+
+// Turn a set's name into something a file system will not argue with.
+function referenceSetFilename(name: string, source: string): string {
+  const stem = source
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+  return `${stem || 'garden'}-${name}.json`
+}
+
+// Carry a catalog out of this garden as a document, or bring one in. Both
+// directions are one shape and one route, so a catalog exported here installs
+// into the next garden along without anything in between having to agree about
+// a format twice.
+//
+// The browser never validates the document and never merges it: the server
+// decides what a set may say, adopts a name the gardener already typed rather
+// than duplicating it, and leaves alone every figure they have measured and
+// every record they have retired. Reading the file and handing it over whole is
+// the whole of what happens here.
+function ReferenceSetControls<Document extends ReferenceSetDocument, Result>({ name, onExport, onImport, describe }: ReferenceSetControlsProps<Document, Result>) {
+  const chooser = React.useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = React.useState<'export' | 'import' | null>(null)
+  const [failure, setFailure] = React.useState<string | null>(null)
+  const [installed, setInstalled] = React.useState<string | null>(null)
+
+  async function exportSet() {
+    setBusy('export')
+    setFailure(null)
+    setInstalled(null)
+    try {
+      const payload = await onExport()
+      // A blob rather than a link to the route itself, because the export is an
+      // authenticated JSON request like every other and a bare anchor would
+      // leave the browser to repeat it without one.
+      const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }))
+      const link = window.document.createElement('a')
+      link.href = url
+      link.download = referenceSetFilename(name, payload.source)
+      link.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function importSet(file: File) {
+    setBusy('import')
+    setFailure(null)
+    setInstalled(null)
+    try {
+      // Parsing here is not validation, it is the difference between a file
+      // that is not JSON at all and one the server has an opinion about: only
+      // the first has nothing to send.
+      const payload = JSON.parse(await file.text()) as Document
+      setInstalled(describe(await onImport(payload)))
+    } catch (error) {
+      const fields = errorsByField(error)
+      setFailure(fields.source ?? fields.form ?? `${file.name} could not be installed. It has to be a catalog exported from a garden.`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    // One slot on the screen that owns it: the two buttons side by side and
+    // whatever they have to say underneath, so a long refusal wraps under the
+    // controls rather than stretching the row they sit in.
+    <div className="d-flex flex-column align-items-end gap-1">
+      <div className="d-flex gap-2">
+        <Button variant="outline-secondary" disabled={busy !== null} onClick={() => void exportSet()}>
+          {busy === 'export' ? 'Exporting…' : 'Export catalog'}
+        </Button>
+        <Button variant="outline-secondary" disabled={busy !== null} onClick={() => chooser.current?.click()}>
+          {busy === 'import' ? 'Installing…' : 'Import catalog'}
+        </Button>
+      </div>
+      <Form.Control
+        ref={chooser}
+        type="file"
+        accept="application/json,.json"
+        className="d-none"
+        onChange={(event) => {
+          const input = event.target as HTMLInputElement
+          const file = input.files?.[0]
+          // Cleared so that choosing the same file twice still reports a
+          // change, which is how a gardener re-installs an edited document.
+          input.value = ''
+          if (file) void importSet(file)
+        }}
+      />
+      {failure && (
+        <Alert variant="danger" className="mb-0 py-1 px-2 small text-end" onClose={() => setFailure(null)} dismissible>
+          {failure}
+        </Alert>
+      )}
+      {installed && (
+        <Alert variant="success" className="mb-0 py-1 px-2 small text-end" onClose={() => setInstalled(null)} dismissible>
+          {installed}
+        </Alert>
+      )}
+    </div>
+  )
+}
+
 export {
   CatalogRecord,
   CatalogSearch,
@@ -445,6 +568,7 @@ export {
   MergeDialog,
   MergedIntoNote,
   ReferenceBadge,
+  ReferenceSetControls,
   ReplacedByNote,
   RetireButton,
   RetiredBadge,

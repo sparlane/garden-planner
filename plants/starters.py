@@ -18,19 +18,24 @@ only what actually differs from the crop above it -- usually its days to
 maturity and nothing more. Repeating the crop's spacing on each of its
 varieties would turn one figure the gardener corrects into four.
 
-Installing is keyed on the name, compared the way ``common.duplicates``
-compares two names, so asking twice changes nothing and a gardener who already
-typed ``Tomatoes`` has it adopted rather than duplicated. That is the same rule
-the duplicate warning would have applied had a person been typing.
+What is written here is the table, and nothing else. Installing it is
+``plants.reference_sets``' job, because a set that ships in the box and one a
+gardener imports from a file are the same thing seen twice, and every rule
+worth having -- adopting a name already typed, leaving a retired crop alone,
+keeping a figure somebody measured -- has to hold whichever route a catalog
+arrived by. So this module says what the household set contains and then hands
+it over as an ordinary document.
 """
 
-from common.duplicates import normalized
-from common.reference import apply_reference
+from .models import MaturityBasis
+from .reference_sets import install_reference_set
 
-from .models import MaturityBasis, Plant, PlantFamily, PlantVariety
-
-#: Names the source on every record this module installs.
-STARTER_SOURCE = 'household-starters'
+#: Names the source on every record this set installs, and is what the catalog
+#: screen shows against them. Written as something a gardener would read rather
+#: than as an identifier, because a catalog may now arrive from a garden club
+#: or another garden as readily as from the set that ships in the box, and one
+#: badge has to name all of them.
+STARTER_SOURCE = 'Household starters'
 
 #: family -> the crops filed under it. Each crop carries the figures a seed
 #: catalogue prints: in-row and between-row spacing in millimetres, how many
@@ -81,49 +86,50 @@ HOUSEHOLD_CROPS = (
 
 
 #: The order the figures are written in above, which is the order they read in
-#: on the screen: how far apart, how many, how long.
+#: on the screen: how far apart, how many, how long. Written out rather than
+#: derived from the document's crop fields, because these name the columns of
+#: the table above: a field inserted into that list would silently re-read
+#: every row here as something else. A test keeps the two in step instead. The
+#: prose field is absent because the table carries no notes -- a starter crop
+#: is one every gardener already knows the name of.
 CROP_FIGURES = (
-    'spacing',
-    'inter_row_spacing',
-    'plants_per_square_foot',
-    'germination_days_min',
-    'germination_days_max',
-    'maturity_days_min',
-    'maturity_days_max',
-    'maturity_basis',
+    'spacing', 'inter_row_spacing', 'plants_per_square_foot',
+    'germination_days_min', 'germination_days_max',
+    'maturity_days_min', 'maturity_days_max', 'maturity_basis',
 )
 
 
-def _existing(records, name):
-    """Return the record already meaning this name, or None.
+def starter_document():
+    """Return the household set as the document any other set would arrive as.
 
-    Compared the way two catalog names are compared everywhere else, so a
-    gardener's ``Tomatoes`` is the set's ``Tomato`` rather than a second one.
+    Building it here rather than writing it out longhand keeps the table above
+    compact enough to read as a table, and keeps the two ways a catalog can be
+    filled from drifting into two different shapes.
     """
-    wanted = normalized(name)
-    for record in records:
-        if normalized(record.name) == wanted:
-            return record
-    return None
-
-
-def _install(model, name, values, **scope):
-    """Adopt or create one record and write what the set says onto it.
-
-    A retired record is left exactly as it is. Retiring is something the
-    gardener chose, and a set that quietly refreshed a crop somebody had put
-    away would be arguing with that as surely as one that overwrote a figure
-    they had measured. Nothing is installed under it either, which is also what
-    keeps the set from leaving an active crop under a retired family.
-    """
-    record = _existing(model.objects.filter(**scope), name)
-    if record is not None and not record.active:
-        return record
-    if record is None:
-        record = model(name=name, **scope)
-    apply_reference(record, STARTER_SOURCE, values)
-    record.save()
-    return record
+    return {
+        'source': STARTER_SOURCE,
+        'families': [
+            {
+                'name': family_name,
+                'plants': [
+                    {
+                        'name': crop[0],
+                        **dict(zip(CROP_FIGURES, crop[1:-1])),
+                        'varieties': [
+                            {
+                                'name': variety_name,
+                                'maturity_days_min': days_min,
+                                'maturity_days_max': days_max,
+                            }
+                            for variety_name, days_min, days_max in crop[-1]
+                        ],
+                    }
+                    for crop in crops
+                ],
+            }
+            for family_name, crops in HOUSEHOLD_CROPS
+        ],
+    }
 
 
 def ensure_starter_crops(workspace):
@@ -133,29 +139,4 @@ def ensure_starter_crops(workspace):
     created now, adopted from what the gardener already had, or left alone, so
     a caller can show what the catalog now holds rather than only what changed.
     """
-    families, plants, varieties = [], [], []
-    for family_name, crops in HOUSEHOLD_CROPS:
-        family = _install(PlantFamily, family_name, {}, workspace=workspace)
-        families.append(family)
-        if not family.active:
-            continue
-        for crop in crops:
-            plant = _install(
-                Plant,
-                crop[0],
-                dict(zip(CROP_FIGURES, crop[1:-1])),
-                workspace=workspace,
-                family=family,
-            )
-            plants.append(plant)
-            if not plant.active:
-                continue
-            for variety_name, days_min, days_max in crop[-1]:
-                varieties.append(_install(
-                    PlantVariety,
-                    variety_name,
-                    {'maturity_days_min': days_min, 'maturity_days_max': days_max},
-                    workspace=workspace,
-                    plant=plant,
-                ))
-    return families, plants, varieties
+    return install_reference_set(workspace, starter_document())

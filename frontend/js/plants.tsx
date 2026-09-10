@@ -9,9 +9,11 @@ import {
   addPlant,
   addPlantFamily,
   addPlantVariety,
+  exportReferenceSet,
   getPlantFamilies,
   getPlants,
   getPlantVarieties,
+  importReferenceSet,
   installStarterCrops,
   updatePlant,
   updatePlantFamily,
@@ -23,6 +25,7 @@ import {
   MergeDialog,
   MergedIntoNote,
   ReferenceBadge,
+  ReferenceSetControls,
   RetireButton,
   RetiredBadge,
   activeChoices,
@@ -31,8 +34,21 @@ import {
 } from './catalog'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
-import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
+import { InstalledCatalog, MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
 import { ApiError } from './utils'
+
+// What a set left behind, counted the way a gardener would read it back: what
+// the catalog now holds from that set, whether each record was created now,
+// adopted from a name they had already typed, or left exactly as it was.
+function describeInstalledCatalog(installed: InstalledCatalog): string {
+  const parts = [
+    [installed.families.length, 'family', 'families'],
+    [installed.plants.length, 'crop', 'crops'],
+    [installed.varieties.length, 'variety', 'varieties']
+  ] as const
+  const counted = parts.map(([count, one, many]) => `${count} ${count === 1 ? one : many}`).join(', ')
+  return `Installed. Your catalog now holds ${counted} from this set.`
+}
 
 type Editor = { kind: 'family' | 'plant' | 'variety'; pk?: number; parentPk?: number }
 type FieldErrors = Record<string, string>
@@ -697,7 +713,9 @@ function PlantsView() {
       <div className="d-flex justify-content-between align-items-center mb-3">
         <div>
           <h2 className="mb-1">Plants</h2>
-          <div className="text-muted">Variety values override plant defaults when provided. Figures shown in grey came with the starter set rather than from your garden.</div>
+          <div className="text-muted">
+            Variety values override plant defaults when provided. Figures shown in grey came with the set a record was installed from rather than from your garden.
+          </div>
         </div>
         <div className="d-flex align-items-center gap-3">
           <CatalogSearch id="plant-catalog-search" onSearch={setSearch} label="Search plants and varieties" />
@@ -705,6 +723,16 @@ function PlantsView() {
           <Button variant="outline-secondary" disabled={installStarters.isPending} onClick={() => installStarters.mutate()}>
             {installStarters.isPending ? 'Adding…' : 'Add starter crops'}
           </Button>
+          <ReferenceSetControls
+            name="crop-catalog"
+            onExport={() => exportReferenceSet()}
+            onImport={async (payload) => {
+              const installed = await importReferenceSet(payload)
+              refresh()
+              return installed
+            }}
+            describe={describeInstalledCatalog}
+          />
           <Button onClick={() => setEditor({ kind: 'family' })}>Add family</Button>
         </div>
       </div>

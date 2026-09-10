@@ -69,12 +69,56 @@ interface PlantVarietyCreate extends PlantingDetails {
   active?: boolean
 }
 
-// What the starter set covers, whether it was created now, adopted from what
-// the gardener already had, or left alone.
-interface StarterCrops {
+// What a reference set covers, whether each record was created now, adopted
+// from what the gardener already had, or left alone. The starter button and an
+// imported document answer the same question, so they answer it the same way.
+interface InstalledCatalog {
   families: Array<PlantFamily>
   plants: Array<Plant>
   varieties: Array<PlantVariety>
 }
 
-export { MaturityBasis, PlantFamily, Plant, PlantVariety, PlantingDetails, PlantFamilyCreate, PlantCreate, PlantVarietyCreate, ReferencedRecord, StarterCrops }
+// A crop catalog as it travels between gardens. Nothing here says where a
+// figure came from: provenance belongs to the garden that measured it, and
+// everything in an arriving document becomes reference data in the catalog
+// that receives it.
+interface ReferenceVarietyEntry extends PlantingDetails {
+  name: string
+  notes?: string | null
+  maturity_basis?: MaturityBasis | null
+}
+
+interface ReferenceCropEntry extends PlantingDetails {
+  name: string
+  notes?: string | null
+  maturity_basis?: MaturityBasis
+  varieties: Array<ReferenceVarietyEntry>
+}
+
+interface ReferenceFamilyEntry {
+  name: string
+  notes?: string | null
+  plants: Array<ReferenceCropEntry>
+}
+
+interface ReferenceSet {
+  source: string
+  families: Array<ReferenceFamilyEntry>
+}
+
+export {
+  MaturityBasis,
+  PlantFamily,
+  Plant,
+  PlantVariety,
+  PlantingDetails,
+  PlantFamilyCreate,
+  PlantCreate,
+  PlantVarietyCreate,
+  ReferencedRecord,
+  InstalledCatalog,
+  ReferenceSet,
+  ReferenceFamilyEntry,
+  ReferenceCropEntry,
+  ReferenceVarietyEntry
+}
