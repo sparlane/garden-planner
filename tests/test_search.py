@@ -26,12 +26,7 @@ class CatalogSearchTestCase(RESTContractTestCase):
 
     def found(self, collection, query):
         """Return the names a search turned up, in the order it returned them."""
-        response = self.client.get(collection, {'search': query})
-        self.assertEqual(response.status_code, 200, response.data)
-        records = response.data
-        if isinstance(records, dict):
-            records = records['results']
-        return [record['name'] for record in records]
+        return self.listed_names(collection, search=query)
 
 
 class NameMatchingTests(CatalogSearchTestCase):

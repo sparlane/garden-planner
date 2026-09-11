@@ -44,6 +44,20 @@ class RESTContractTestCase(APITestCase):
                 )
                 self.assertIsInstance(response.data['results'], list)
 
+    def listed_names(self, url, **params):
+        """Return the names a list route answers with, in the order it gives them.
+
+        A catalog collection is paginated on some routes and a plain list on
+        others, and a test asking what the catalog holds is asking the same
+        question either way.
+        """
+        response = self.client.get(url, params)
+        self.assertEqual(response.status_code, 200, response.data)
+        records = response.data
+        if isinstance(records, dict):
+            records = records['results']
+        return [record['name'] for record in records]
+
     def assert_create_retrieve(self, url, payload, expected_fields=None):
         """Create a resource and verify its fields through the detail route."""
         response = self.client.post(url, payload, format='json')
