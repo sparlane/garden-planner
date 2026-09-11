@@ -11,11 +11,9 @@ from rest_framework.response import Response
 
 from attachments.rest import AttachmentSerializer
 from common.catalog import CatalogViewSetMixin
-from common.coded import StableCodeSerializerMixin, normalize_code
-from common.retirement import RetirementSerializerMixin
 from workspaces.models import Workspace
-from workspaces.models import get_current_workspace
 from workspaces.scoping import (
+    CodedSettingSerializer,
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
     RequireWorkspaceModeMixin,
@@ -29,62 +27,7 @@ def _errors(error):
     return error.message_dict if hasattr(error, 'message_dict') else error.messages
 
 
-class CatalogSerializer(
-    StableCodeSerializerMixin, RetirementSerializerMixin, serializers.ModelSerializer,
-):
-    """Shared validation for stable workspace-owned nursery catalogs.
-
-    The code rule and the activation rule are both the catalog's rather than
-    this app's, so both come from ``common``. What is left here is running the
-    model's own validation against the workspace the record belongs to, which
-    is what turns a second setting under a code somebody already used into a
-    field error rather than a database one.
-    """
-
-    def validate(self, attrs):
-        """Validate the setting this payload would save."""
-        attrs = super().validate(attrs)
-        workspace = self.instance.workspace if self.instance else get_current_workspace()
-        taken = self._taken_code_errors(workspace, attrs)
-        if taken:
-            raise serializers.ValidationError(taken)
-        candidate = self.instance or self.Meta.model(  # pylint: disable=no-member
-            workspace=workspace,
-        )
-        for field, value in attrs.items():
-            setattr(candidate, field, value)
-        try:
-            candidate.full_clean()
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(_errors(exc)) from exc
-        return attrs
-
-    def _taken_code_errors(self, workspace, attrs):
-        """Refuse a code another setting in this workspace already holds.
-
-        The unique constraint refuses it too, but as an error about the whole
-        record rather than about the field somebody typed. It is worth saying
-        properly, because a code already taken is not a resemblance to warn
-        about: it is exactly the record the operator is looking for, and the
-        answer is to merge into that one rather than to add a second.
-        """
-        code = attrs.get('code')
-        if code is None:
-            return {}
-        model = self.Meta.model  # pylint: disable=no-member
-        taken = model.objects.filter(workspace=workspace, code=normalize_code(code))
-        if self.instance is not None:
-            taken = taken.exclude(pk=self.instance.pk)
-        holder = taken.first()
-        if holder is None:
-            return {}
-        return {'code': (
-            f'{holder} already uses the code {holder.code}. Merge into it '
-            f'rather than adding a second.'
-        )}
-
-
-class GrowthStageSerializer(CatalogSerializer):
+class GrowthStageSerializer(CodedSettingSerializer):
     class Meta:
         model = GrowthStage
         fields = [
@@ -93,7 +36,7 @@ class GrowthStageSerializer(CatalogSerializer):
         ]
 
 
-class PlantGradeSerializer(CatalogSerializer):
+class PlantGradeSerializer(CodedSettingSerializer):
     class Meta:
         model = PlantGrade
         fields = ['pk', 'code', 'name', 'display_order', 'active', 'merged_into']

@@ -11,8 +11,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from attachments.rest import AttachmentSerializer
-from workspaces.models import Workspace, get_current_workspace
-from workspaces.scoping import CurrentWorkspaceViewSetMixin, RequireWorkspaceModeMixin
+from common.catalog import CatalogViewSetMixin
+from workspaces.models import Workspace
+from workspaces.scoping import (
+    CodedSettingSerializer,
+    CurrentWorkspaceSerializerMixin,
+    CurrentWorkspaceViewSetMixin,
+    RequireWorkspaceModeMixin,
+)
 
 from .models import (
     HealthDiagnosis,
@@ -39,36 +45,26 @@ def _errors(error):
     return error.message_dict if hasattr(error, 'message_dict') else error.messages
 
 
-class CatalogSerializer(serializers.ModelSerializer):
-    def validate(self, attrs):
-        candidate = self.instance or self.Meta.model(  # pylint: disable=no-member
-            workspace=get_current_workspace(),
-        )
-        if self.instance and 'code' in attrs and attrs['code'] != self.instance.code:
-            raise serializers.ValidationError({'code': 'Stable catalog codes cannot be changed.'})
-        for field, value in attrs.items():
-            setattr(candidate, field, value)
-        try:
-            candidate.full_clean()
-        except DjangoValidationError as exc:
-            raise serializers.ValidationError(_errors(exc)) from exc
-        return attrs
-
-
-class HealthObservationTypeSerializer(CatalogSerializer):
+class HealthObservationTypeSerializer(CodedSettingSerializer):
     class Meta:
         model = HealthObservationType
-        fields = ['pk', 'code', 'name', 'display_order', 'active']
+        fields = ['pk', 'code', 'name', 'display_order', 'active', 'merged_into']
 
 
-class HealthDiagnosisSerializer(CatalogSerializer):
+class HealthDiagnosisSerializer(CodedSettingSerializer):
     class Meta:
         model = HealthDiagnosis
-        fields = ['pk', 'code', 'name', 'category', 'display_order', 'active']
+        fields = [
+            'pk', 'code', 'name', 'category', 'display_order', 'active',
+            'merged_into',
+        ]
 
 
-class CatalogViewSet(
-    RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet,
+class CatalogViewSet(  # pylint: disable=too-many-ancestors
+    CatalogViewSetMixin,
+    RequireWorkspaceModeMixin,
+    CurrentWorkspaceViewSetMixin,
+    viewsets.ModelViewSet,
 ):
     required_workspace_modes = (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
@@ -91,9 +87,13 @@ class ScopeSerializer(serializers.Serializer):
     id = serializers.IntegerField(min_value=1)
 
 
-class DiagnosisAssessmentSerializer(serializers.Serializer):
+class DiagnosisAssessmentSerializer(
+    CurrentWorkspaceSerializerMixin, serializers.Serializer,
+):
     diagnosis = serializers.PrimaryKeyRelatedField(queryset=HealthDiagnosis.objects.all())
     certainty = serializers.ChoiceField(choices=HealthObservationDiagnosis.Certainty.choices)
+
+    workspace_field_lookups = {'diagnosis': 'workspace'}
 
 
 class EvidenceSerializer(serializers.Serializer):
@@ -101,7 +101,14 @@ class EvidenceSerializer(serializers.Serializer):
     label = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
 
 
-class ObservationWriteSerializer(serializers.Serializer):
+# Both write routes scope their two catalog pickers through the shared mixin
+# rather than comparing workspaces by hand afterwards. That is also what keeps
+# a retired type or diagnosis from being recorded against new evidence:
+# retirement takes a record out of the selectors from beside the workspace
+# filter, rather than from each serializer that names one.
+class ObservationWriteSerializer(
+    CurrentWorkspaceSerializerMixin, serializers.Serializer,
+):
     scopes = ScopeSerializer(many=True, allow_empty=False)
     reviewed_digest = serializers.CharField(max_length=64)
     observation_type = serializers.PrimaryKeyRelatedField(
@@ -114,21 +121,12 @@ class ObservationWriteSerializer(serializers.Serializer):
     follow_up_due_at = serializers.DateTimeField(required=False, allow_null=True)
     notes = serializers.CharField(required=False, allow_blank=True, default='')
 
-    def validate(self, attrs):
-        workspace = get_current_workspace()
-        if attrs['observation_type'].workspace_id != workspace.pk:
-            raise serializers.ValidationError({
-                'observation_type': 'Choose a value from this workspace.',
-            })
-        for item in attrs.get('diagnoses', ()):
-            if item['diagnosis'].workspace_id != workspace.pk:
-                raise serializers.ValidationError({
-                    'diagnoses': 'Choose diagnoses from this workspace.',
-                })
-        return attrs
+    workspace_field_lookups = {'observation_type': 'workspace'}
 
 
-class CorrectionWriteSerializer(serializers.Serializer):
+class CorrectionWriteSerializer(
+    CurrentWorkspaceSerializerMixin, serializers.Serializer,
+):
     observation_type = serializers.PrimaryKeyRelatedField(
         queryset=HealthObservationType.objects.all(),
     )
@@ -140,18 +138,7 @@ class CorrectionWriteSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True, default='')
     correction_reason = serializers.CharField(allow_blank=False)
 
-    def validate(self, attrs):
-        workspace = get_current_workspace()
-        if attrs['observation_type'].workspace_id != workspace.pk:
-            raise serializers.ValidationError({
-                'observation_type': 'Choose a value from this workspace.',
-            })
-        for item in attrs.get('diagnoses', ()):
-            if item['diagnosis'].workspace_id != workspace.pk:
-                raise serializers.ValidationError({
-                    'diagnoses': 'Choose diagnoses from this workspace.',
-                })
-        return attrs
+    workspace_field_lookups = {'observation_type': 'workspace'}
 
 
 class HealthObservationSerializer(serializers.ModelSerializer):
@@ -396,7 +383,13 @@ class HealthObservationViewSet(
 
     @action(detail=True, methods=['post'])
     def correct(self, request, pk=None):
-        serializer = CorrectionWriteSerializer(data=request.data)
+        # The observation being corrected is handed over as the instance so the
+        # evidence type it already names stays offerable even once that type is
+        # retired. A correction restates a fact that was already recorded, and
+        # it is the only way to fix one, so retiring a catalog record must not
+        # be what stops somebody fixing a typo in last season's inspection.
+        corrected = self.get_object()
+        serializer = CorrectionWriteSerializer(instance=corrected, data=request.data)
         serializer.is_valid(raise_exception=True)
         values = dict(serializer.validated_data)
         diagnoses = [
@@ -405,7 +398,7 @@ class HealthObservationViewSet(
         ]
         try:
             observation = correct_observation(
-                self.get_current_workspace(), request.user, self.get_object(),
+                self.get_current_workspace(), request.user, corrected,
                 diagnoses=diagnoses, evidence=values.pop('evidence', ()), **values,
             )
         except DjangoValidationError as exc:

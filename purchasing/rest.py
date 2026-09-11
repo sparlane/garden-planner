@@ -9,10 +9,15 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from common.catalog import CatalogViewSetMixin
 from inventory.models import StockReceiptLine
 from supplies.models import Supplier
 from workspaces.models import get_current_workspace
-from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
+from workspaces.scoping import (
+    CurrentWorkspaceCatalogSerializer,
+    CurrentWorkspaceSerializerMixin,
+    CurrentWorkspaceViewSetMixin,
+)
 
 from .models import (
     BusinessExpense,
@@ -235,12 +240,14 @@ class PurchaseOrderCancellationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class ExpenseCategorySerializer(serializers.ModelSerializer):
-    """A workspace expense category."""
+class ExpenseCategorySerializer(CurrentWorkspaceCatalogSerializer):
+    """A workspace expense category, corrected the way a catalog record is."""
+
+    unique_in_workspace = 'name'
 
     class Meta:
         model = ExpenseCategory
-        fields = ['pk', 'name', 'active', 'notes']
+        fields = ['pk', 'name', 'active', 'notes', 'merged_into']
 
 
 class SupplierInvoiceLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
@@ -551,11 +558,19 @@ class PurchaseOrderViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
         return Response(ReceiptMatchSerializer(matched).data, status=201)
 
 
-class ExpenseCategoryViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
-    """Manage reusable non-stock expense categories."""
+class ExpenseCategoryViewSet(  # pylint: disable=too-many-ancestors
+    CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet,
+):
+    """Manage reusable non-stock expense categories.
+
+    A category is retired rather than deleted, because the invoice lines and
+    expenses already filed under it have to keep reading the same, so the
+    route offers no way to remove one.
+    """
 
     queryset = ExpenseCategory.objects.all()
     serializer_class = ExpenseCategorySerializer
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
 
 class SupplierInvoiceViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
