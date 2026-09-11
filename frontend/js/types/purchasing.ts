@@ -103,6 +103,7 @@ interface ExpenseCategory {
   name: string
   active: boolean
   notes: string
+  merged_into: number | null
 }
 
 interface BusinessExpense {

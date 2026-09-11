@@ -36,6 +36,7 @@ import { ProductionPlanningView } from './plantings/production_planning.js'
 import { LabelsView, ScannerView } from './labels.js'
 import { WorkQueueView } from './work.js'
 import { HealthView } from './health.js'
+import { HealthCatalogsView } from './health_catalogs.js'
 import { CustomerListView, SalesOrderDetailView, SalesOrderListView } from './sales.js'
 import { SupplyDocumentListView, SupplyDocumentPrintView } from './billing/documents.js'
 import { ReportsView } from './reports.js'
@@ -282,6 +283,14 @@ function FrontEndPage() {
           element={
             <WorkspaceModeRoute workspace={workspace} enabledModes={['garden', 'nursery']}>
               <HealthView />
+            </WorkspaceModeRoute>
+          }
+        />
+        <Route
+          path="/health/setup"
+          element={
+            <WorkspaceModeRoute workspace={workspace} enabledModes={['garden', 'nursery']}>
+              <HealthCatalogsView />
             </WorkspaceModeRoute>
           }
         />

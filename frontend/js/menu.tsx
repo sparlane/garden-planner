@@ -17,7 +17,7 @@ function GPTopBar({ workspace }: GPTopBarProps) {
   const { pathname } = useLocation()
   const advanced = isAdvanced(workspace)
   const seedsActive = pathname === '/seeds' || pathname.startsWith('/seeds/')
-  const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health'
+  const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health' || pathname.startsWith('/health/')
   const inventoryActive = pathname === '/inventory' || pathname.startsWith('/applications') || pathname.startsWith('/locations')
   const salesActive = pathname === '/sales' || pathname.startsWith('/sales/')
   const purchasingActive = pathname === '/purchasing' || pathname.startsWith('/purchasing/')
@@ -134,11 +134,18 @@ function GPTopBar({ workspace }: GPTopBarProps) {
                 <NavDropdown.Item as={NavLink} to="/plantings/production-planning">
                   Production planning
                 </NavDropdown.Item>
-                <NavDropdown.Item as={NavLink} to="/health">
-                  Plant health
-                </NavDropdown.Item>
               </>
             )}
+            {/* Health belongs to both profiles, because a garden gets pests
+                too: the routes are served in either, and the setup screen is
+                where the evidence types and diagnoses both of them record
+                against are corrected. */}
+            <NavDropdown.Item as={NavLink} to="/health" end>
+              Plant health
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/health/setup">
+              Evidence types and diagnoses
+            </NavDropdown.Item>
             <NavDropdown.Item as={NavLink} to="/plantings/batches">
               {batchNavLabel(workspace)}
             </NavDropdown.Item>

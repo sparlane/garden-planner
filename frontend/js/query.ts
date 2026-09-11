@@ -1,5 +1,6 @@
 import { QueryClient } from '@tanstack/react-query'
 
+import { CatalogScope } from './types/catalog'
 import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 import { WorkFilters } from './types/work'
 
@@ -111,10 +112,9 @@ const queryKeys = {
     // posted stock has frozen what the record names.
     replacementPreview: (collection: string, pk: number) => ['catalog', 'replace', collection, pk] as const,
     // The duplicate check is keyed by everything that changes its answer: the
-    // name being typed, the parents a duplicate has to share, and the record
+    // name being typed, where a duplicate has to be filed too, and the record
     // being renamed, which is never a duplicate of itself.
-    duplicates: (collection: string, name: string, scope: Record<string, number | undefined>, exclude: number | undefined) =>
-      ['catalog', 'duplicates', collection, name, scope, exclude ?? null] as const
+    duplicates: (collection: string, name: string, scope: CatalogScope, exclude: number | undefined) => ['catalog', 'duplicates', collection, name, scope, exclude ?? null] as const
   },
   plants: {
     all: ['plants'] as const,

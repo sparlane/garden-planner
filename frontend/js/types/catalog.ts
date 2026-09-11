@@ -10,6 +10,12 @@ interface CatalogRecordLabel {
   label: string
 }
 
+// Where a duplicate has to be filed too, for the server to look there and
+// nowhere else. A parent arrives as the record it is and a grouping value as
+// the value it is — a health diagnosis is filed under a category that is not a
+// record at all — which is the whole of the difference between the two halves.
+type CatalogScope = Record<string, number | string | undefined>
+
 interface CatalogMergePreview {
   source: CatalogRecordLabel
   target: CatalogRecordLabel
@@ -69,5 +75,6 @@ export {
   CatalogReference,
   CatalogRecordLabel,
   CatalogReplacementPreview,
-  CatalogReplacementResult
+  CatalogReplacementResult,
+  CatalogScope
 }

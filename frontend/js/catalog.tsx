@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { checkCatalogDuplicates, correctCatalogRecord, mergeCatalogRecords, previewCatalogMerge, previewCatalogReplacement, replaceCatalogRecord } from './api/catalog'
 import { queryKeys } from './query'
-import { CatalogDuplicate, CatalogRecordLabel, CatalogReference } from './types/catalog'
+import { CatalogDuplicate, CatalogRecordLabel, CatalogReference, CatalogScope } from './types/catalog'
 import { errorsByField } from './utils'
 
 interface CatalogRecord {
@@ -148,13 +148,22 @@ interface DuplicateWarningProps {
   //: out — a seed catalog entry is one supplier's variety and no more — and is
   //: answered from its scope alone, as soon as that scope is known.
   name?: string
-  //: The parents a duplicate has to share. The check is skipped until every one
-  //: of them is known, because the server answers within them or not at all.
-  scope?: Record<string, number | undefined>
+  //: Where a duplicate has to be filed too: the parents it hangs off, and any
+  //: value it is grouped under that is not a record. The check is skipped until
+  //: all of it is known, because the server answers within it or not at all.
+  scope?: CatalogScope
   //: The record being corrected, which is not a duplicate of itself.
   exclude?: number
   //: The field the collection calls its name.
   field?: string
+}
+
+// A picker nobody has chosen from reads as `Number('')`, which is NaN rather
+// than undefined, and an unchosen select reads as an empty string. Sending
+// either would earn a 400 and a global error alert for a check nobody asked
+// for out loud, so the warning waits until the whole scope is known.
+function scopeIsKnown(scope: CatalogScope): boolean {
+  return Object.values(scope).every((value) => (typeof value === 'number' ? Number.isFinite(value) : Boolean(value)))
 }
 
 // A warning, never a refusal: these catalogs carry no unique constraint on a
@@ -165,10 +174,7 @@ interface DuplicateWarningProps {
 function DuplicateWarning({ collection, name, scope = {}, exclude, field = 'name' }: DuplicateWarningProps) {
   const named = name !== undefined
   const settled = useSettledValue(name?.trim() ?? '')
-  // A picker that has not been chosen yet reads as `Number('')`, which is NaN
-  // rather than undefined, and sending that would earn a 400 and a global error
-  // alert for a check nobody asked for out loud.
-  const scoped = Object.values(scope).every((value) => value !== undefined && Number.isFinite(value))
+  const scoped = scopeIsKnown(scope)
   const check = useQuery({
     queryKey: queryKeys.catalog.duplicates(collection, settled, scope, exclude),
     queryFn: ({ signal }) => checkCatalogDuplicates(collection, named ? field : null, settled, scope, exclude, signal),

@@ -20,6 +20,7 @@ import {
   recordHealthFollowUp
 } from './api/health'
 import { getLocations } from './api/locations'
+import { activeChoices } from './catalog'
 import { queryKeys } from './query'
 import { HealthObservation, HealthPreview, HealthScope, HealthScopeType, HealthSeverity, QuarantineCase } from './types/health'
 import { formatDateTime } from './utils'
@@ -162,13 +163,11 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
         <Col md={4}>
           <Form.Label>Observation type</Form.Label>
           <Form.Select value={observationType} onChange={(event) => setObservationType(Number(event.target.value))}>
-            {types
-              .filter((row) => row.active)
-              .map((row) => (
-                <option key={row.pk} value={row.pk}>
-                  {row.name}
-                </option>
-              ))}
+            {activeChoices(types).map((row) => (
+              <option key={row.pk} value={row.pk}>
+                {row.name}
+              </option>
+            ))}
           </Form.Select>
         </Col>
         <Col md={3}>
@@ -189,13 +188,11 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
           <Form.Label>Diagnosis (optional)</Form.Label>
           <Form.Select value={diagnosis} onChange={(event) => setDiagnosis(event.target.value ? Number(event.target.value) : '')}>
             <option value="">Evidence only — no diagnosis</option>
-            {diagnoses
-              .filter((row) => row.active)
-              .map((row) => (
-                <option key={row.pk} value={row.pk}>
-                  {row.name}
-                </option>
-              ))}
+            {activeChoices(diagnoses).map((row) => (
+              <option key={row.pk} value={row.pk}>
+                {row.name}
+              </option>
+            ))}
           </Form.Select>
         </Col>
         <Col md={3}>
