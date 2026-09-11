@@ -3,13 +3,21 @@ import { ImageAttachment } from './attachments'
 type HealthSeverity = 'low' | 'moderate' | 'high' | 'critical'
 type HealthScopeType = 'plant' | 'cohort' | 'tray' | 'generation' | 'batch' | 'location'
 
+type HealthDiagnosisCategory = 'pest' | 'disease' | 'damage' | 'vigor' | 'other'
+
+// Which of the two health catalogs a maintenance control is acting on. It is
+// the collection's own path segment, because that is what the shared catalog
+// actions are addressed by.
+type HealthCatalogKind = 'observation-types' | 'diagnoses'
+
 interface HealthCatalogValue {
   pk: number
   code: string
   name: string
   display_order: number
   active: boolean
-  category?: 'pest' | 'disease' | 'damage' | 'vigor' | 'other'
+  merged_into: number | null
+  category?: HealthDiagnosisCategory
 }
 
 interface HealthScope {
@@ -111,8 +119,10 @@ interface HealthReport {
 }
 
 export {
+  HealthCatalogKind,
   HealthCatalogValue,
   HealthDiagnosisAssessment,
+  HealthDiagnosisCategory,
   HealthObservation,
   HealthObservationCreate,
   HealthPreview,

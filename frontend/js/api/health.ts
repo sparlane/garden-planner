@@ -1,12 +1,24 @@
-import { csrfPost, fetchAsJson } from '../utils'
-import { HealthCatalogValue, HealthObservation, HealthObservationCreate, HealthPreview, HealthReport, HealthScope, QuarantineCase } from '../types/health'
+import { catalogSearchQuery } from './catalog'
+import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
+import { HealthCatalogKind, HealthCatalogValue, HealthObservation, HealthObservationCreate, HealthPreview, HealthReport, HealthScope, QuarantineCase } from '../types/health'
 
-function getHealthObservationTypes(signal?: AbortSignal): Promise<Array<HealthCatalogValue>> {
-  return fetchAsJson('/health/observation-types/', signal)
+function getHealthObservationTypes(signal?: AbortSignal, search?: string): Promise<Array<HealthCatalogValue>> {
+  return fetchAsJson(`/health/observation-types/${catalogSearchQuery(search)}`, signal)
 }
 
-function getHealthDiagnoses(signal?: AbortSignal): Promise<Array<HealthCatalogValue>> {
-  return fetchAsJson('/health/diagnoses/', signal)
+function getHealthDiagnoses(signal?: AbortSignal, search?: string): Promise<Array<HealthCatalogValue>> {
+  return fetchAsJson(`/health/diagnoses/${catalogSearchQuery(search)}`, signal)
+}
+
+function addHealthCatalogValue(kind: HealthCatalogKind, value: object): Promise<HealthCatalogValue> {
+  return csrfPost(`/health/${kind}/`, value).then((response) => response.json() as Promise<HealthCatalogValue>)
+}
+
+// Only what should read differently is sent. A stable code is not among the
+// things that can, so a screen posting the whole record back would be offering
+// the server a code to refuse on every unrelated edit.
+function updateHealthCatalogValue(kind: HealthCatalogKind, pk: number, changes: Partial<HealthCatalogValue>): Promise<HealthCatalogValue> {
+  return csrfPatch(`/health/${kind}/${pk}/`, changes).then((response) => response.json() as Promise<HealthCatalogValue>)
 }
 
 function getHealthObservations(signal?: AbortSignal): Promise<Array<HealthObservation>> {
@@ -51,6 +63,7 @@ function getHealthReport(signal?: AbortSignal): Promise<HealthReport> {
 
 export {
   actOnQuarantine,
+  addHealthCatalogValue,
   correctHealthObservation,
   createHealthObservation,
   getHealthDiagnoses,
@@ -61,5 +74,6 @@ export {
   linkHealthTreatment,
   previewHealthObservation,
   quarantineHealthObservation,
-  recordHealthFollowUp
+  recordHealthFollowUp,
+  updateHealthCatalogValue
 }

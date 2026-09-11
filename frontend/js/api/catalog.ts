@@ -1,4 +1,4 @@
-import { CatalogDuplicateCheck, CatalogMergePreview, CatalogMergeResult, CatalogReplacementPreview, CatalogReplacementResult } from '../types/catalog'
+import { CatalogDuplicateCheck, CatalogMergePreview, CatalogMergeResult, CatalogReplacementPreview, CatalogReplacementResult, CatalogScope } from '../types/catalog'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
 // Families, plants, varieties and suppliers all merge through the one action
@@ -32,14 +32,14 @@ async function correctCatalogRecord<Record>(collection: string, pk: number, chan
 
 // The name goes under the field the collection calls it, because a tray model
 // is named by an `identifier` and everything else by a `name`, and the scope is
-// the parents a duplicate has to share — the server refuses the check without
-// them rather than answering from another crop. A `null` field is a collection
-// with no name typed on it, where those parents are the whole question.
+// where a duplicate has to be filed too — the server refuses the check without
+// it rather than answering from another crop. A `null` field is a collection
+// with no name typed on it, where that scope is the whole question.
 function checkCatalogDuplicates(
   collection: string,
   field: string | null,
   name: string,
-  scope: Record<string, number | undefined>,
+  scope: CatalogScope,
   exclude: number | undefined,
   signal?: AbortSignal
 ): Promise<CatalogDuplicateCheck> {

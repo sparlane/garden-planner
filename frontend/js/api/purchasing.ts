@@ -1,5 +1,6 @@
+import { catalogSearchQuery } from './catalog'
 import { BusinessExpense, ExpenseCategory, PurchaseOrder, PurchaseRequisition, PurchasingSummary, SupplierInvoice } from '../types/purchasing'
-import { csrfPost, csrfPut, fetchAsJson } from '../utils'
+import { csrfPatch, csrfPost, csrfPut, fetchAsJson } from '../utils'
 
 const ROOT = '/purchasing/'
 
@@ -20,7 +21,7 @@ async function putJson<T>(url: string, data: object): Promise<T> {
 const getRequisitions = (signal?: AbortSignal) => listResource<PurchaseRequisition>('requisitions', signal)
 const getPurchaseOrders = (signal?: AbortSignal) => listResource<PurchaseOrder>('orders', signal)
 const getSupplierInvoices = (signal?: AbortSignal) => listResource<SupplierInvoice>('invoices', signal)
-const getExpenseCategories = (signal?: AbortSignal) => listResource<ExpenseCategory>('expense-categories', signal)
+const getExpenseCategories = (signal?: AbortSignal, search?: string) => fetchAsJson<Array<ExpenseCategory>>(`${ROOT}expense-categories/${catalogSearchQuery(search)}`, signal)
 const getBusinessExpenses = (signal?: AbortSignal) => listResource<BusinessExpense>('expenses', signal)
 const getPurchasingSummary = (signal?: AbortSignal) => fetchAsJson<PurchasingSummary>(`${ROOT}summary/`, signal)
 
@@ -37,6 +38,12 @@ const confirmSupplierInvoice = (pk: number) => postJson<SupplierInvoice>(`${ROOT
 const correctSupplierInvoice = (pk: number, data: object) => postJson(`${ROOT}invoices/${pk}/correct/`, data)
 const createSupplierPayment = (data: object) => postJson(`${ROOT}payments/`, data)
 const createExpenseCategory = (data: object) => postJson<ExpenseCategory>(`${ROOT}expense-categories/`, data)
+// Only what should read differently is sent, the way every catalog correction
+// does: the server carries the rest of the record over.
+const updateExpenseCategory = async (pk: number, changes: Partial<ExpenseCategory>) => {
+  const response = await csrfPatch(`${ROOT}expense-categories/${pk}/`, changes)
+  return response.json() as Promise<ExpenseCategory>
+}
 const createBusinessExpense = (data: object) => postJson<BusinessExpense>(`${ROOT}expenses/`, data)
 const confirmBusinessExpense = (pk: number) => postJson<BusinessExpense>(`${ROOT}expenses/${pk}/confirm/`, {})
 
@@ -59,5 +66,6 @@ export {
   getSupplierInvoices,
   matchPurchaseReceipt,
   replaceSupplierInvoiceDraft,
-  reviewRequisition
+  reviewRequisition,
+  updateExpenseCategory
 }

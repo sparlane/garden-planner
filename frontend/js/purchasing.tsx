@@ -21,14 +21,16 @@ import {
   getSupplierInvoices,
   matchPurchaseReceipt,
   replaceSupplierInvoiceDraft,
-  reviewRequisition
+  reviewRequisition,
+  updateExpenseCategory
 } from './api/purchasing'
 import { getInventoryItems, getStockReceipts } from './api/inventory'
 import { getSuppliers } from './api/supplies'
-import { activeChoices } from './catalog'
-import { queryKeys } from './query'
+import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { queryKeys, searchedKey } from './query'
+import { CatalogRecordLabel } from './types/catalog'
 import { InventoryItem, PurchaseTaxTreatment, StockReceipt, StockReceiptLine } from './types/inventory'
-import { PurchaseOrder, PurchaseOrderLine, SupplierInvoice } from './types/purchasing'
+import { ExpenseCategory, PurchaseOrder, PurchaseOrderLine, SupplierInvoice } from './types/purchasing'
 import { Workspace } from './types/workspace'
 import { errorsByField, formatMoney, sumMoney } from './utils'
 
@@ -426,13 +428,11 @@ function Invoices({
                         onChange={(event) => updateLine(line.key, { expenseCategory: event.target.value ? Number(event.target.value) : '' })}
                       >
                         <option value="">Category…</option>
-                        {categories
-                          .filter((entry) => entry.active)
-                          .map((entry) => (
-                            <option key={entry.pk} value={entry.pk}>
-                              {entry.name}
-                            </option>
-                          ))}
+                        {activeChoices(categories, line.expenseCategory === '' ? null : line.expenseCategory).map((entry) => (
+                          <option key={entry.pk} value={entry.pk}>
+                            {entry.name}
+                          </option>
+                        ))}
                       </Form.Select>
                     )}
                   </td>
@@ -881,6 +881,147 @@ function Orders({
   )
 }
 
+interface ExpenseCategoriesProps {
+  //: The whole collection, which is what a merge may be onto and what the
+  //: `Merged into` note reads a name out of. Both have to reach records the
+  //: search is deliberately hiding.
+  categories: Array<ExpenseCategory>
+  //: Told which category a newly added one is, so the expense form below can
+  //: open on it: somebody adds a category because they are about to file
+  //: something under it.
+  onCreated: (pk: number) => void
+  onSaved: () => Promise<unknown>
+}
+
+// An expense category is a catalog record like a supplier is, so the whole
+// correction vocabulary applies: it is retired rather than deleted, because
+// every confirmed expense already filed under it has to keep reading the same,
+// and a duplicate is merged into the record it duplicates, which is what puts
+// a split expense history back together.
+function ExpenseCategories({ categories, onCreated, onSaved }: ExpenseCategoriesProps) {
+  const [search, setSearch] = React.useState('')
+  const [name, setName] = React.useState('')
+  const [showRetired, setShowRetired] = React.useState(false)
+  const [merging, setMerging] = React.useState<CatalogRecordLabel | null>(null)
+  const [failure, setFailure] = React.useState<string | null>(null)
+  const { data: found = [] } = useQuery({
+    queryKey: searchedKey(queryKeys.purchasing.categories, search),
+    queryFn: ({ signal }) => getExpenseCategories(signal, search)
+  })
+
+  // A name already taken is refused by naming the category holding it, and
+  // retirement is refused while the catalog rule says so, so a failure names a
+  // field and belongs on this card rather than only in the global alert.
+  async function save(write: () => Promise<unknown>) {
+    setFailure(null)
+    try {
+      await write()
+      await onSaved()
+    } catch (error) {
+      const fields = errorsByField(error)
+      setFailure(fields.name ?? fields.active ?? fields.form ?? 'The change could not be saved.')
+    }
+  }
+
+  const visible = found.filter((entry) => entry.active || showRetired)
+  return (
+    <Card body className="mb-3">
+      <div className="d-flex justify-content-between align-items-start">
+        <h2 className="h5">Expense categories</h2>
+        <div className="d-flex align-items-center gap-3">
+          <CatalogSearch id="expense-category-search" onSearch={setSearch} label="Search categories" />
+          <Form.Check type="switch" id="show-retired-categories" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+        </div>
+      </div>
+      {failure && (
+        <Alert variant="danger" onClose={() => setFailure(null)} dismissible>
+          {failure}
+        </Alert>
+      )}
+      {merging && (
+        <MergeDialog
+          collection="/purchasing/expense-categories/"
+          source={merging}
+          choices={activeChoices(categories)
+            .filter((entry) => entry.pk !== merging.pk)
+            .map((entry) => ({ pk: entry.pk, label: entry.name }))}
+          onMerged={() => {
+            setMerging(null)
+            void onSaved()
+          }}
+          onCancel={() => setMerging(null)}
+        />
+      )}
+      <Table size="sm">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Notes</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((entry) => (
+            <tr key={entry.pk} className={retiredRowClass(entry.active)}>
+              <td>
+                <Form.Control
+                  aria-label={`Name of ${entry.name}`}
+                  defaultValue={entry.name}
+                  onBlur={(event) => {
+                    const next = event.target.value.trim()
+                    if (next && next !== entry.name) void save(() => updateExpenseCategory(entry.pk, { name: next }))
+                  }}
+                />
+                <RetiredBadge active={entry.active} />
+                <MergedIntoNote into={categories.find((row) => row.pk === entry.merged_into)?.name ?? null} />
+              </td>
+              <td>
+                <Form.Control
+                  aria-label={`Notes for ${entry.name}`}
+                  defaultValue={entry.notes}
+                  onBlur={(event) => {
+                    if (event.target.value !== entry.notes) void save(() => updateExpenseCategory(entry.pk, { notes: event.target.value }))
+                  }}
+                />
+              </td>
+              <td className="text-nowrap">
+                {entry.merged_into === null && (
+                  <>
+                    <Button size="sm" variant="outline-secondary" onClick={() => setMerging({ pk: entry.pk, label: entry.name })}>
+                      Merge
+                    </Button>{' '}
+                  </>
+                )}
+                <RetireButton active={entry.active} onChange={(active) => void save(() => updateExpenseCategory(entry.pk, { active }))} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      <Row className="g-2">
+        <Col>
+          <Form.Control aria-label="New expense category" value={name} placeholder="New category" onChange={(event) => setName(event.target.value)} />
+          <DuplicateWarning collection="/purchasing/expense-categories/" name={name} />
+        </Col>
+        <Col xs="auto">
+          <Button
+            disabled={!name}
+            onClick={() =>
+              void save(async () => {
+                const created = await createExpenseCategory({ name, active: true, notes: '' })
+                onCreated(created.pk)
+                setName('')
+              })
+            }
+          >
+            Add
+          </Button>
+        </Col>
+      </Row>
+    </Card>
+  )
+}
+
 // GST-inclusive is how a receipt is usually written, GST-exclusive how a
 // supplier invoice usually is, so the form takes whichever pair of figures the
 // document actually shows and derives the third. The arithmetic runs through
@@ -898,7 +1039,6 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
   const queryClient = useQueryClient()
   const { data: categories = [] } = useQuery({ queryKey: queryKeys.purchasing.categories, queryFn: ({ signal }) => getExpenseCategories(signal) })
   const { data: expenses = [] } = useQuery({ queryKey: queryKeys.purchasing.expenses, queryFn: ({ signal }) => getBusinessExpenses(signal) })
-  const [categoryName, setCategoryName] = React.useState('')
   const [category, setCategory] = React.useState<number | ''>('')
   const [supplier, setSupplier] = React.useState<number | ''>('')
   const [payee, setPayee] = React.useState('')
@@ -914,14 +1054,6 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
   const [allocationType, setAllocationType] = React.useState('')
   const [allocationReference, setAllocationReference] = React.useState('')
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })
-  const addCategory = useMutation({
-    mutationFn: () => createExpenseCategory({ name: categoryName, active: true, notes: '' }),
-    onSuccess: async (created) => {
-      setCategory(created.pk)
-      setCategoryName('')
-      await refresh()
-    }
-  })
   const { subtotal, taxTotal, total, reconciles } = expenseAmounts(amountBasis, amount, tax)
   const claimedPercentage = claimInputTax ? claimablePercentage : '0'
   // Only a partial claim has to be explained, and the server draws that line at
@@ -980,28 +1112,19 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
     (apportioned && !apportionmentBasis.trim())
   return (
     <>
+      <ExpenseCategories categories={categories} onCreated={setCategory} onSaved={refresh} />
       <Card body className="mb-3">
-        <h2 className="h5">Expense categories</h2>
-        <div className="d-flex gap-2">
-          <Form.Control value={categoryName} placeholder="New category" onChange={(event) => setCategoryName(event.target.value)} />
-          <Button disabled={!categoryName} onClick={() => addCategory.mutate()}>
-            Add
-          </Button>
-        </div>
-        <hr />
         <h2 className="h5">Record business expense</h2>
         <Row className="g-2">
           <Col md={2}>
             <Form.Label htmlFor="expense-category">Category</Form.Label>
             <Form.Select id="expense-category" value={category} isInvalid={'category' in fieldErrors} onChange={(event) => setCategory(Number(event.target.value))}>
               <option value="">Category…</option>
-              {categories
-                .filter((entry) => entry.active)
-                .map((entry) => (
-                  <option key={entry.pk} value={entry.pk}>
-                    {entry.name}
-                  </option>
-                ))}
+              {activeChoices(categories).map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.name}
+                </option>
+              ))}
             </Form.Select>
             {fieldError('category')}
           </Col>
@@ -1160,7 +1283,7 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
         <Button className="mt-2" disabled={incomplete || create.isPending} onClick={() => create.mutate()}>
           Record and confirm expense
         </Button>
-        <ErrorMessage error={create.error || addCategory.error} />
+        <ErrorMessage error={create.error} />
       </Card>
       <Table striped>
         <thead>
