@@ -1,4 +1,4 @@
-"""Media still owned by an unused pot fill, separate from container cost."""
+"""Media held by a pot fill or taken by its plants, separate from pot cost."""
 
 from decimal import Decimal
 from fractions import Fraction
@@ -48,27 +48,51 @@ def pot_fill_contents(fill):
 
 
 def pot_fill_cost_breakdown(fill):
-    """Report held, discarded and recovered media without inventing plant costs.
+    """Report departed, held, discarded and recovered media at fill level.
 
     Unknown acquisition costs remain unknown. The media ledger and these
     residuals are the source of the report; the pot's acquisition cost never
     changes when it is filled or cleaned.
     """
     media = pot_fill_contents(fill)
+    departures = [row for row in numbered_fill_shares(fill) if row['departed_at'] is not None]
+    unknown_allocation = any(row['share'] is None for row in departures)
+    fraction = sum((row['share'] for row in departures if row['share'] is not None), Fraction(0))
     unknown = any(row['unit_cost'] is None for row in media)
     applied = sum((row['base_quantity'] * (row['unit_cost'] or 0) for row in media), Decimal('0'))
+    departed = quantize_cost(applied * fraction.numerator / fraction.denominator)
     residuals = {'waste': Decimal('0'), 'reclaimed': Decimal('0')}
     for residual in fill.residuals.filter(kind='media'):
         unknown = unknown or residual.unit_cost is None
         residuals[residual.disposition] += residual.base_quantity * (residual.unit_cost or 0)
     amounts = {
         'applied_cost': applied,
-        'held_cost': applied - sum(residuals.values()),
+        'departed_cost': departed,
+        'held_cost': applied - departed - sum(residuals.values()),
         'production_loss': residuals['waste'],
         'recovered_cost': residuals['reclaimed'],
     }
     return {
         'fill': fill.pk, 'container_count': fill.container_count,
         'currency_code': fill.workspace.currency_code, 'unknown_cost': unknown,
-        **{key: None if unknown else quantize_cost(value) for key, value in amounts.items()},
+        'unknown_allocation': unknown_allocation,
+        **{key: None if unknown or (unknown_allocation and key in ('departed_cost', 'held_cost'))
+           else quantize_cost(value) for key, value in amounts.items()},
     }
+
+
+def pot_fill_media_departures(fill):
+    """Return exact quantities per departed placement and posted media lot.
+
+    Fractions preserve thirds without rounding away media. A legacy departure
+    without a frozen denominator remains explicitly unallocated. Active plants
+    claim nothing yet, and this report does not create crop cost layers.
+    """
+    media = pot_fill_contents(fill)
+    return [
+        {**departure, 'lot': row['lot'], 'base_unit': row['base_unit'],
+         'base_quantity': None if departure['share'] is None else Fraction(row['base_quantity']) * departure['share'],
+         'unit_cost': row['unit_cost']}
+        for departure in numbered_fill_shares(fill) if departure['departed_at'] is not None
+        for row in media
+    ]
