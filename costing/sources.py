@@ -23,7 +23,7 @@ from sales.models import SalesOrderAllocation, FulfillmentRider
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
-from inventory.ledger import distribute_exactly, quantize_money
+from inventory.ledger import QUANTITY_QUANTUM, distribute_exactly, quantize_money
 from inventory.models import InventoryItem
 from plantings.germination import ungerminated_by_cell
 from plantings.models import (
@@ -568,6 +568,49 @@ def application_sources(batch, generation_ids, cell_weights):
     return sources
 
 
+def pot_media_sources(batch):
+    """Value numbered-fill departures against all frozen participants, once.
+
+    Split each line before selecting a batch or its departed plants. This
+    reserves the same rounding remainder for the same participant even when
+    plants leave separately or belong to different crops. Historical fills
+    without an explicit denominator acquire no inferred costs.
+    """
+    fill_ids = SpecificPlantLocation.objects.filter(
+        specific_plant__batch=batch, ended__isnull=False,
+        container_fill__tray__isnull=True,
+        container_fill__inventory_unit__isnull=False,
+        container_fill__plant_share_count__isnull=False,
+    ).values_list('container_fill_id', flat=True)
+    lines = _posted_lines().filter(targets__container_fill_id__in=fill_ids).select_related(
+        'lot__item', 'consumption_movement',
+    ).prefetch_related('targets__container_fill__plant_locations__specific_plant').order_by('pk')
+    sources = []
+    for line in lines:
+        fill = line.targets.all()[0].container_fill
+        participants = sorted(fill.plant_locations.all(), key=lambda row: row.pk)
+        if len(participants) != fill.plant_share_count:
+            # Incomplete history cannot allocate the missing participants' mix.
+            continue
+        weights = [Decimal('1')] * fill.plant_share_count
+        quantities = distribute_exactly(line.applied_base_quantity, weights, QUANTITY_QUANTUM)
+        unit_cost = line.lot.base_unit_cost
+        amount = None if unit_cost is None else quantize_money(line.applied_base_quantity * unit_cost)
+        amounts = distribute_exactly(amount, weights)
+        for placement, quantity, cost in zip(participants, quantities, amounts):
+            if placement.ended is None or placement.specific_plant.batch_id != batch.pk:
+                continue
+            sources.append(SourceInput(
+                source_type=SourceType.APPLICATION_LINE,
+                source=line, movement=line.consumption_movement,
+                base_quantity=quantity, base_unit=line.base_unit,
+                unit_cost=unit_cost, currency_code=line.lot.currency_code,
+                shares=tuple(plant_shares([placement.specific_plant_id])),
+                exact_amount=cost,
+            ))
+    return sources
+
+
 # --------------------------------------------------------------------------
 # Discarded remainders
 # --------------------------------------------------------------------------
@@ -702,6 +745,7 @@ def batch_sources(batch):
     sources = seed_sources(batch)
     sources += garden_purchase_sources(batch)
     sources += application_sources(batch, generation_ids, cell_weights)
+    sources += pot_media_sources(batch)
     sources += residual_sources(batch, generation_ids)
     sources += container_sources(batch)
     observed = plants_by_cell(batch)
