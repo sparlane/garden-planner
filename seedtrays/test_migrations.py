@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
+from django.utils import timezone
 
 from applications.models import InputApplicationTarget
 from inventory.models import InventoryItem
@@ -19,6 +20,7 @@ from plantings.models import SeedTrayPlanting
 from tests.factories import (
     make_inventory_item,
     make_location,
+    make_numbered_container,
     make_stock_lot,
     make_seed_tray,
     make_seed_tray_cell,
@@ -234,8 +236,32 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
         )
         with self.assertRaisesMessage(RuntimeError, 'while non-tray fills exist'):
             self._migrate([('seedtrays', '0008_generation_inventory_unit')])
+
+        # The refusal leaves the database in the state 0009 built, so only the
+        # columns of that state can be read back: the model class describes a
+        # later schema than the one under test.
+        self.assertEqual(
+            SeedTrayGeneration.objects.filter(pk=fill.pk)
+            .values_list('stock_lot_id', 'container_count').first(),
+            (lot.pk, 50),
+        )
+        self.assertEqual(
+            SeedTrayGeneration.objects.filter(pk=tray_fill.pk)
+            .values_list('inventory_unit_id', flat=True).first(),
+            tray_fill.inventory_unit_id,
+        )
+
+    def test_share_basis_migration_refuses_to_discard_frozen_shares(self):
+        """Rollback stops before dropping denominators no later state can rebuild."""
+        unit = make_numbered_container()
+        fill = SeedTrayGeneration.objects.create(
+            workspace=unit.workspace, inventory_unit=unit,
+            code='POT-SHARES', sequence=1, opened_at=timezone.now(),
+        )
+        SeedTrayGeneration.objects.filter(pk=fill.pk).update(plant_share_count=3)
+
+        with self.assertRaisesMessage(RuntimeError, 'while frozen plant shares exist'):
+            self._migrate([('seedtrays', '0010_replace_tray_models')])
+
         fill.refresh_from_db()
-        self.assertEqual(fill.stock_lot, lot)
-        self.assertEqual(fill.container_count, 50)
-        self.assertEqual(SeedTrayGeneration.objects.get(pk=tray_fill.pk).inventory_unit_id,
-                         tray_fill.inventory_unit_id)
+        self.assertEqual(fill.plant_share_count, 3)

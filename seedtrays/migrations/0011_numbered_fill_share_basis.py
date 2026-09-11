@@ -4,6 +4,15 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def refuse_frozen_share_rollback(apps, schema_editor):
+    """A share basis was fixed by departures that cannot be replayed."""
+    fills = apps.get_model('seedtrays', 'SeedTrayGeneration')
+    if fills.objects.using(schema_editor.connection.alias).filter(
+        plant_share_count__isnull=False,
+    ).exists():
+        raise RuntimeError('Cannot reverse the pot share basis while frozen plant shares exist.')
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -40,4 +49,7 @@ class Migration(migrations.Migration):
                 name="pot_fill_positive_share_count",
             ),
         ),
+        # First on reversal, before the frozen denominators are dropped. The
+        # guard in 0009 comes too late: this migration is unapplied ahead of it.
+        migrations.RunPython(migrations.RunPython.noop, refuse_frozen_share_rollback),
     ]
