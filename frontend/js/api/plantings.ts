@@ -1,3 +1,4 @@
+import { catalogSearchQuery } from './catalog'
 import { fetchAsJson, csrfPatch, csrfPost } from '../utils'
 import {
   BatchAction,
@@ -54,6 +55,7 @@ import {
   CohortObservation,
   CohortPage,
   PlantCohort,
+  GrowthCatalogKind,
   GrowthCatalogValue,
   NurseryPlanDemand,
   NurseryPlanVariance,
@@ -288,18 +290,23 @@ function postBulkPlantOperation(data: BulkPlantOperationRequest): Promise<BulkPl
   return csrfPost('/plantings/bulk-operations/', data).then((response) => response.json() as Promise<BulkPlantOperation>)
 }
 
-function getGrowthStages(signal?: AbortSignal): Promise<Array<GrowthCatalogValue>> {
-  return fetchAsJson<Array<GrowthCatalogValue>>('/plantings/growth-stages/', signal)
+function getGrowthStages(signal?: AbortSignal, search?: string): Promise<Array<GrowthCatalogValue>> {
+  return fetchAsJson<Array<GrowthCatalogValue>>(`/plantings/growth-stages/${catalogSearchQuery(search)}`, signal)
 }
 
-function getPlantGrades(signal?: AbortSignal): Promise<Array<GrowthCatalogValue>> {
-  return fetchAsJson<Array<GrowthCatalogValue>>('/plantings/plant-grades/', signal)
+function getPlantGrades(signal?: AbortSignal, search?: string): Promise<Array<GrowthCatalogValue>> {
+  return fetchAsJson<Array<GrowthCatalogValue>>(`/plantings/plant-grades/${catalogSearchQuery(search)}`, signal)
 }
 
-function saveGrowthCatalog(kind: 'growth-stages' | 'plant-grades', value: Partial<GrowthCatalogValue> & { name: string; code?: string }): Promise<GrowthCatalogValue> {
-  const path = `/plantings/${kind}/${value.pk === undefined ? '' : `${value.pk}/`}`
-  const request = value.pk === undefined ? csrfPost(path, value) : csrfPatch(path, value)
-  return request.then((response) => response.json() as Promise<GrowthCatalogValue>)
+function addGrowthCatalogValue(kind: GrowthCatalogKind, value: { code: string; name: string; display_order?: number }): Promise<GrowthCatalogValue> {
+  return csrfPost(`/plantings/${kind}/`, value).then((response) => response.json() as Promise<GrowthCatalogValue>)
+}
+
+// Only what should read differently is sent. A stable code is not among the
+// things that can, so a screen posting the whole record back would be offering
+// the server a code to refuse on every unrelated edit.
+function updateGrowthCatalogValue(kind: GrowthCatalogKind, pk: number, changes: Partial<GrowthCatalogValue>): Promise<GrowthCatalogValue> {
+  return csrfPatch(`/plantings/${kind}/${pk}/`, changes).then((response) => response.json() as Promise<GrowthCatalogValue>)
 }
 
 function getPlanningAssumptions(signal?: AbortSignal): Promise<Array<NurseryPlanningAssumption>> {
@@ -493,9 +500,10 @@ export {
   postBulkPlantOutcome,
   previewBulkPlantOperation,
   postBulkPlantOperation,
+  addGrowthCatalogValue,
   getGrowthStages,
   getPlantGrades,
-  saveGrowthCatalog,
+  updateGrowthCatalogValue,
   getPlanningAssumptions,
   addPlanningAssumption,
   getAssumptionVariance,
