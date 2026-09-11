@@ -5,39 +5,36 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
+from common.coded import CodedSettingModel
 from workspaces.models import WorkspaceOwnedModel
 
 
-class HealthObservationType(WorkspaceOwnedModel):
-    """A configurable kind of evidence an operator may observe."""
+class HealthObservationType(CodedSettingModel, WorkspaceOwnedModel):
+    """A configurable kind of evidence an operator may observe.
 
-    code = models.CharField(max_length=64)
-    name = models.CharField(max_length=128)
-    display_order = models.IntegerField(default=0)
-    active = models.BooleanField(default=True)
+    Nothing catalog-shaped hangs off one, so retiring it waits for nothing:
+    the observations naming it are the history retirement exists to leave
+    readable.
+    """
 
-    class Meta:
-        ordering = ['display_order', 'name', 'pk']
+    class Meta(CodedSettingModel.Meta):
         constraints = [models.UniqueConstraint(
             fields=['workspace', 'code'], name='health_type_workspace_code_unique',
         )]
 
-    def __str__(self):
-        return self.name
 
-    def clean(self):
-        super().clean()
-        self.code = self.code.strip().lower()
-        if not self.code:
-            raise ValidationError({'code': 'A stable code is required.'})
+class HealthDiagnosis(CodedSettingModel, WorkspaceOwnedModel):
+    """A configurable pest, disease, damage, or vigor diagnosis.
 
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-
-class HealthDiagnosis(WorkspaceOwnedModel):
-    """A configurable pest, disease, damage, or vigor diagnosis."""
+    The category files a diagnosis the way a plant files a variety, and it is
+    the one thing on this catalog that is not a record: nobody can retire
+    ``Pest``, so it is a grouping field rather than a retirement parent. What
+    follows from it is the same either way. Two diagnoses are interchangeable
+    only inside one category, so merging a pest into a disease is refused as a
+    reclassification, and the duplicate warning looks for a resembling name
+    only among the diagnoses filed under the same category -- anywhere else it
+    would offer a merge that is then refused.
+    """
 
     class Category(models.TextChoices):
         """Stable diagnosis groupings used by reports and filters."""
@@ -48,30 +45,25 @@ class HealthDiagnosis(WorkspaceOwnedModel):
         VIGOR = 'vigor', 'Vigor or stress'
         OTHER = 'other', 'Other'
 
-    code = models.CharField(max_length=64)
-    name = models.CharField(max_length=128)
     category = models.CharField(max_length=16, choices=Category.choices)
-    display_order = models.IntegerField(default=0)
-    active = models.BooleanField(default=True)
 
-    class Meta:
+    grouping_fields = ('category',)
+
+    class Meta(CodedSettingModel.Meta):
         ordering = ['category', 'display_order', 'name', 'pk']
         constraints = [models.UniqueConstraint(
             fields=['workspace', 'code'], name='health_diagnosis_workspace_code_unique',
         )]
 
-    def __str__(self):
-        return self.name
+    def search_names(self):
+        """Return the names this diagnosis is found by.
 
-    def clean(self):
-        super().clean()
-        self.code = self.code.strip().lower()
-        if not self.code:
-            raise ValidationError({'code': 'A stable code is required.'})
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
+        Its own, its code, and the category it is filed under, which is the
+        one name above it in this catalog -- somebody cleaning up the pests
+        starts by asking for the pests.
+        """
+        yield from super().search_names()
+        yield self.get_category_display()
 
 
 class HealthObservation(WorkspaceOwnedModel):

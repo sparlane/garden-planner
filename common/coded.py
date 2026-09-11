@@ -1,13 +1,14 @@
 """A usage setting: the catalog record something else names by code.
 
-A growth stage or a plant grade is a catalog record like a crop or a supplier
-is, and it is wrong in the same three ways -- it stopped being used, it got
-typed twice, or somebody is about to type it twice again -- so it takes the
-same corrections, from ``common.catalog``. What it carries that a crop does
-not is a stable code. The name is what an operator reads on a form; the code
-is the handle everything else holds the record by, which is why
-``plantings.signals`` finds the stages it seeds by code and re-finds them
-every time a workspace is saved.
+A growth stage, a plant grade, a health evidence type or a health diagnosis is
+a catalog record like a crop or a supplier is, and it is wrong in the same
+three ways -- it stopped being used, it got typed twice, or somebody is about
+to type it twice again -- so it takes the same corrections, from
+``common.catalog``. What it carries that a crop does not is a stable code. The
+name is what an operator reads on a form; the code is the handle everything
+else holds the record by, which is why ``plantings.signals`` and
+``health.signals`` find the settings they seed by code and re-find them every
+time a workspace is saved.
 
 That is the whole of what this module adds, and the one rule that follows from
 it: a code is written once and never again. A crop typed twice is one record
@@ -95,13 +96,16 @@ class StableCodeSerializerMixin:  # pylint: disable=too-few-public-methods
     """
 
     def validate(self, attrs):
-        """Reject a payload that would re-cut this setting's stable code."""
-        attrs = super().validate(attrs)
-        if self.instance is None or 'code' not in attrs:
-            return attrs
-        if normalize_code(attrs['code']) != self.instance.code:
-            raise RestValidationError({'code': [
-                'A stable code cannot be changed. Add the setting under the '
-                'code you want and merge this one into it.',
-            ]})
-        return attrs
+        """Reject a payload that would re-cut this setting's stable code.
+
+        Asked before the rest of the record is, because this refusal names the
+        correction that is owed, and a payload re-cutting a code is never
+        going to be saved whatever else it says.
+        """
+        if self.instance is not None and 'code' in attrs:
+            if normalize_code(attrs['code']) != self.instance.code:
+                raise RestValidationError({'code': [
+                    'A stable code cannot be changed. Add the setting under '
+                    'the code you want and merge this one into it.',
+                ]})
+        return super().validate(attrs)

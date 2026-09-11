@@ -9,9 +9,12 @@ survivor, and retires the duplicate pointing at where it went.
 A merge moves references; it never changes what one of them means. That is the
 whole rule, and everything refused below follows from it:
 
-* Two records are interchangeable only while they hang off the same parents, so
-  a merge cannot reclassify a variety into another plant. Reparenting is an
-  edit somebody makes deliberately, and the catalog screen already does it.
+* Two records are interchangeable only while they are filed in the same place,
+  so a merge cannot reclassify a variety into another plant, or a pest into a
+  disease. Refiling is an edit somebody makes deliberately, and the catalog
+  screen already does it. What a record is filed under is not always another
+  record -- a diagnosis has a category and nothing to retire -- which is why
+  ``grouping_fields`` is read here beside ``retirement_parents``.
 * Nothing may be lost on the way. If moving a reference would collide with one
   the survivor already has, the merge is refused and names the pair, because
   the only alternative would be to drop one of them.
@@ -72,20 +75,48 @@ def merge_errors(source, target):
         errors.append(f'Merge into {target.merged_into} instead.')
     if not target.active:
         errors.append(f'Restore {target} first.')
-    errors += _reparenting_errors(source, target)
+    errors += _refiling_errors(source, target)
     errors += _collision_errors(source, target)
     errors += source.merge_extra_errors(target)
     return errors
 
 
-def _reparenting_errors(source, target):
-    """Refuse a merge that would refile everything under another parent."""
+def _refiling_errors(source, target):
+    """Refuse a merge that would refile everything somewhere else.
+
+    A record is filed two ways, and neither may move here. Most of what a
+    catalog record hangs off is another record, which is what
+    ``retirement_parents`` names; some of it is a plain value with no record
+    behind it, which is what ``grouping_fields`` names. A diagnosis is filed
+    under a category that nobody can retire, and merging a pest into a disease
+    would still be saying every observation of it had always meant something
+    else. Refiling is an edit somebody makes deliberately, so both are refused
+    by naming that edit.
+    """
     errors = []
     for name in source.retirement_parents:
         if getattr(source, f'{name}_id') == getattr(target, f'{name}_id'):
             continue
         errors.append(f'Move {source} under {getattr(target, name)} first.')
+    for name in source.grouping_fields:
+        if getattr(source, name) == getattr(target, name):
+            continue
+        label = source._meta.get_field(name).verbose_name  # pylint: disable=protected-access
+        errors.append(
+            f'Change the {label} of {source} to {_grouping_label(target, name)} first.'
+        )
     return errors
+
+
+def _grouping_label(record, name):
+    """Return a grouping value as an operator reads it rather than as stored.
+
+    A choice field is stored as the handle a report groups by and shown as the
+    words on the form, and a refusal naming the first would be telling somebody
+    to change a field to a value their screen never offers.
+    """
+    display = getattr(record, f'get_{name}_display', None)
+    return display() if display is not None else getattr(record, name)
 
 
 def merge_preview(source, target):

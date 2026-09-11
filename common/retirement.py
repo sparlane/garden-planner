@@ -58,6 +58,16 @@ class RetirableModel(models.Model):
     #: active while one of them is retired.
     retirement_parents = ()
 
+    #: Names of the plain fields that file this record the way a parent does
+    #: without being a record of their own: a health diagnosis is a pest or a
+    #: disease, and neither of those is something anybody can retire. Nothing
+    #: here is checked when a record is retired or restored, because a value
+    #: cannot be. They are named beside the parents because the two questions
+    #: that ask what makes two records interchangeable read both -- merging
+    #: refuses to refile a record, and the duplicate warning looks only where
+    #: a merge would then be allowed.
+    grouping_fields = ()
+
     #: ``(related accessor, plural noun)`` pairs for the catalog records that
     #: hang off this one. Retiring is refused while any of them is active.
     retirement_dependants = ()

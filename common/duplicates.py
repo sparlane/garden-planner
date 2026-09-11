@@ -12,11 +12,13 @@ answer is what the catalog already holds, and what to do about it stays with
 the operator.
 
 The rule is the merge rule, read from the same place. Two records are
-interchangeable only while they hang off the same parents, which is what
+interchangeable only while they are filed in the same place, which is what
 ``merge_errors`` refuses a cross-parent merge on, so the candidates are drawn
-from under the parents the new record would have and ``retirement_parents``
-names them here as it does there. A warning therefore never points at a record
-the merge rule would then reject as a reclassification.
+from where the new record would be filed and ``retirement_parents`` and
+``grouping_fields`` name that here as they do there -- the parents it hangs off
+and, for a record filed under a plain value with no record behind it, that
+value. A warning therefore never points at a record the merge rule would then
+reject as a reclassification.
 
 A superseded record is still worth warning about, and is the case this earns
 its keep on: somebody who merged ``Tomatoe`` away last season and is typing it
@@ -183,11 +185,14 @@ def key_duplicate_candidates(records, reason):
 
 
 def duplicate_scope(model, params):
-    """Return the parents a duplicate has to share, read from the request.
+    """Return where a duplicate has to be filed too, read from the request.
 
-    Required rather than optional: without them the answer would name records
+    Required rather than optional: without it the answer would name records
     from another crop entirely, and the merge the warning is trying to save
     would be refused as a reclassification.
+
+    A parent arrives as the record it is, and a grouping value as the value it
+    is, which is the whole of the difference between the two halves.
     """
     scope = {}
     for name in model.retirement_parents:
@@ -195,6 +200,11 @@ def duplicate_scope(model, params):
         if value is None:
             raise RestValidationError({name: [f'Name the {name} to check against.']})
         scope[f'{name}_id'] = value
+    for name in model.grouping_fields:
+        value = params.get(name)
+        if not value:
+            raise RestValidationError({name: [f'Name the {name} to check against.']})
+        scope[name] = value
     return scope
 
 

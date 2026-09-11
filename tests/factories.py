@@ -11,7 +11,11 @@ from django.utils import timezone
 
 from health.services import preview_observation, record_observation
 from health.operations import quarantine_observation
-from health.models import HealthObservation, HealthObservationType
+from health.models import (
+    HealthDiagnosis,
+    HealthObservation,
+    HealthObservationType,
+)
 from garden.models import (
     GardenArea,
     GardenBed,
@@ -46,6 +50,7 @@ from plantings.models import (
     SpecificPlantLocation,
 )
 from plants.models import Plant, PlantFamily, PlantVariety
+from purchasing.models import ExpenseCategory
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import (
     SeedTray,
@@ -471,6 +476,36 @@ def make_plant_grade(**overrides):
     values.setdefault('workspace', get_current_workspace())
     values.setdefault('code', values['name'].replace(' ', '-').lower())
     return PlantGrade.objects.create(**values)
+
+
+def make_expense_category(**overrides):
+    """Create one workspace expense category."""
+    values = {'name': _next_name('Expense')}
+    values.update(overrides)
+    values.setdefault('workspace', get_current_workspace())
+    return ExpenseCategory.objects.create(**values)
+
+
+def make_health_observation_type(**overrides):
+    """Create one workspace health observation type with a unique code."""
+    values = {'name': _next_name('Evidence'), 'display_order': 0}
+    values.update(overrides)
+    values.setdefault('workspace', get_current_workspace())
+    values.setdefault('code', values['name'].replace(' ', '-').lower())
+    return HealthObservationType.objects.create(**values)
+
+
+def make_health_diagnosis(**overrides):
+    """Create one workspace health diagnosis with a unique code."""
+    values = {
+        'name': _next_name('Diagnosis'),
+        'category': HealthDiagnosis.Category.PEST,
+        'display_order': 0,
+    }
+    values.update(overrides)
+    values.setdefault('workspace', get_current_workspace())
+    values.setdefault('code', values['name'].replace(' ', '-').lower())
+    return HealthDiagnosis.objects.create(**values)
 
 
 def make_planning_assumption(**overrides):

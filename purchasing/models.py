@@ -15,6 +15,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
+from common.merging import MergeableModel
 from inventory.models import (
     MONEY_DECIMAL_PLACES,
     MONEY_MAX_DIGITS,
@@ -382,11 +383,25 @@ class ReceiptMatch(AppendOnlyModel):
             raise ValidationError(errors)
 
 
-class ExpenseCategory(WorkspaceOwnedModel, ValidatedModel):
-    """A reusable non-stock business-expense classification."""
+class ExpenseCategory(MergeableModel, WorkspaceOwnedModel, ValidatedModel):
+    """A reusable non-stock business-expense classification.
+
+    A catalog record like a supplier is, and wrong in the same three ways: it
+    stopped being used, it got typed twice, or somebody is about to type it
+    twice again. So it is retired rather than deleted, and a duplicate is
+    merged into the record it duplicates, which moves the invoice lines and
+    the expenses recorded against it and leaves both of them saying what they
+    always said.
+
+    Nothing files it beyond the workspace, so any two categories are
+    interchangeable and every other one is a merge candidate. Its name is
+    unique in the workspace, which the warning is read against rather than
+    instead of: a resemblance is worth saying out loud, while a name already
+    taken is exactly the record somebody was looking for and is refused by
+    naming it.
+    """
 
     name = models.CharField(max_length=128)
-    active = models.BooleanField(default=True)
     notes = models.TextField(blank=True, default='')
 
     class Meta:
@@ -394,6 +409,10 @@ class ExpenseCategory(WorkspaceOwnedModel, ValidatedModel):
         constraints = [models.UniqueConstraint(
             fields=['workspace', 'name'], name='purchasing_expense_category_unique',
         )]
+
+    def search_names(self):
+        """Return the names this category is found by, which is only its own."""
+        yield self.name
 
     def __str__(self):
         return self.name
