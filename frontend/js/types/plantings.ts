@@ -603,12 +603,18 @@ interface PlantAllocationOrder {
   status: 'pending' | 'reserved'
 }
 
+// Which of the two coded nursery settings a control is maintaining. Both are
+// the same shape and share one server contract, so the screens that correct
+// them take the collection rather than being written out twice.
+type GrowthCatalogKind = 'growth-stages' | 'plant-grades'
+
 interface GrowthCatalogValue {
   pk: number
   code: string
   name: string
   display_order: number
   active: boolean
+  merged_into: number | null
   target_days?: number | null
 }
 
@@ -1361,6 +1367,7 @@ export {
   BulkPlantOperationRequest,
   BulkPlantPreview,
   BulkPlantOperation,
+  GrowthCatalogKind,
   GrowthCatalogValue,
   NurseryGrowth,
   NurseryObservation,

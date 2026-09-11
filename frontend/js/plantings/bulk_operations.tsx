@@ -6,6 +6,7 @@ import { getGardenSquares } from '../api/garden'
 import { getInventoryItems, getSerializedUnits } from '../api/inventory'
 import { getGrowthStages, getNurseryRegisterSelection, getPlantGrades, postBulkPlantOperation, previewBulkPlantOperation } from '../api/plantings'
 import { getSeedTrayCells, getSeedTrays } from '../api/seedtrays'
+import { activeChoices } from '../catalog'
 import { queryKeys } from '../query'
 import { Location } from '../types/locations'
 import { BulkPlantAction, BulkPlantAtomicity, BulkPlantOperationRequest, BulkPlantPreview, NurseryRegisterFilters } from '../types/plantings'
@@ -70,8 +71,8 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
     queryFn: ({ signal }) => getSeedTrayCells(tray as number, signal),
     enabled: destinationType === 'seed_tray_cell' && tray !== ''
   })
-  const stagesQuery = useQuery({ queryKey: ['growth-stages'], queryFn: ({ signal }) => getGrowthStages(signal) })
-  const gradesQuery = useQuery({ queryKey: ['plant-grades'], queryFn: ({ signal }) => getPlantGrades(signal) })
+  const stagesQuery = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.stages, queryFn: ({ signal }) => getGrowthStages(signal) })
+  const gradesQuery = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.grades, queryFn: ({ signal }) => getPlantGrades(signal) })
   const containersQuery = useQuery({
     queryKey: ['inventory', 'pot-containers'],
     queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container', active: true }, signal)
@@ -339,13 +340,11 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                 }}
               >
                 <option value="">Select stage</option>
-                {(stagesQuery.data ?? [])
-                  .filter((entry) => entry.active)
-                  .map((entry) => (
-                    <option key={entry.pk} value={entry.pk}>
-                      {entry.name}
-                    </option>
-                  ))}
+                {activeChoices(stagesQuery.data ?? []).map((entry) => (
+                  <option key={entry.pk} value={entry.pk}>
+                    {entry.name}
+                  </option>
+                ))}
               </Form.Select>
             </Col>
           </Row>
@@ -362,13 +361,11 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                 }}
               >
                 <option value="">Select grade</option>
-                {(gradesQuery.data ?? [])
-                  .filter((entry) => entry.active)
-                  .map((entry) => (
-                    <option key={entry.pk} value={entry.pk}>
-                      {entry.name}
-                    </option>
-                  ))}
+                {activeChoices(gradesQuery.data ?? []).map((entry) => (
+                  <option key={entry.pk} value={entry.pk}>
+                    {entry.name}
+                  </option>
+                ))}
               </Form.Select>
             </Col>
           </Row>

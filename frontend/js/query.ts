@@ -184,6 +184,15 @@ const queryKeys = {
     cohorts: (filters: CohortFilters) => ['plantings', 'cohorts', filters] as const,
     cohort: (cohortPk: number) => ['plantings', 'cohorts', 'detail', cohortPk] as const,
     cohortAvailability: (filters: CohortFilters) => ['plantings', 'cohorts', 'availability', filters] as const,
+    // The two coded nursery settings. Each is read twice: unsearched for the
+    // pickers on the register, the cohort screen and the bulk operations, and
+    // again under a search key for the setup screen's own rows. Correcting one
+    // invalidates `all` above rather than these, because a merge moves the
+    // observations naming it and every nursery screen shows a stage name.
+    growthCatalogs: {
+      stages: ['plantings', 'growth-catalogs', 'stages'] as const,
+      grades: ['plantings', 'growth-catalogs', 'grades'] as const
+    },
     planningAssumptions: ['plantings', 'planningAssumptions'] as const,
     assumptionVariance: ['plantings', 'planningAssumptions', 'variance'] as const,
     assumptionRevisionDraft: (assumptionPk: number) => ['plantings', 'planningAssumptions', assumptionPk, 'revision-draft'] as const,

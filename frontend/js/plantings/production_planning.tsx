@@ -91,7 +91,7 @@ function AssumptionForm({ varieties }: { varieties: Array<PlantVariety> }) {
 
 function StageAssumptionForm({ assumption }: { assumption: NurseryPlanningAssumption }) {
   const cache = useQueryClient()
-  const stages = useQuery({ queryKey: ['growth-stages'], queryFn: ({ signal }) => getGrowthStages(signal) })
+  const stages = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.stages, queryFn: ({ signal }) => getGrowthStages(signal) })
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
   const [stage, setStage] = React.useState('')
   const [leadDays, setLeadDays] = React.useState('7')
@@ -126,7 +126,7 @@ function StageAssumptionForm({ assumption }: { assumption: NurseryPlanningAssump
           <Form.Label>Add stage</Form.Label>
           <Form.Select required value={stage} onChange={(event) => setStage(event.target.value)}>
             <option value="">Choose…</option>
-            {(stages.data ?? [])
+            {activeChoices(stages.data ?? [])
               .filter((value) => !used.has(value.pk))
               .map((value) => (
                 <option key={value.pk} value={value.pk}>

@@ -158,8 +158,8 @@ function CohortRegisterView() {
     page,
     page_size: 50
   }
-  const { data: stages = [] } = useQuery({ queryKey: ['growth-stages'], queryFn: ({ signal }) => getGrowthStages(signal) })
-  const { data: grades = [] } = useQuery({ queryKey: ['plant-grades'], queryFn: ({ signal }) => getPlantGrades(signal) })
+  const { data: stages = [] } = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.stages, queryFn: ({ signal }) => getGrowthStages(signal) })
+  const { data: grades = [] } = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.grades, queryFn: ({ signal }) => getPlantGrades(signal) })
   const { data: containers = [] } = useQuery({
     queryKey: ['inventory', 'pot-containers'],
     queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container' }, signal)
