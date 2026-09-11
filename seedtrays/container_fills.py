@@ -139,10 +139,10 @@ def clean_empty_fill(workspace, user, fill, *, reason, occurred_at=None):
 
 @transaction.atomic
 def clean_pot_fill(workspace, user, fill, request):
-    """Clean unused pots, accounting explicitly for every applied lot of media.
+    """Clean empty pots, disposing only of media not taken by departed plants.
 
-    Plants and their media departures need the later placement workflow. This
-    clean can resolve filled buffers that have not yet served plants. No pot
+    Numbered fills whose complete participation has departed retain that media
+    in their departure reports rather than reclaiming it a second time. No pot
     stock movement is posted: closing the fill releases its existing claim.
     """
     if not request.reason or not request.reason.strip():
@@ -153,11 +153,12 @@ def clean_pot_fill(workspace, user, fill, request):
     _require_cleanable_pot(fill)
     occurred_at = request.occurred_at or timezone.now()
     contents = pot_fill_contents(fill)
-    if request.digest is not None and request.digest != contents_digest({'plants': [], 'seeds': [], 'media': contents}):
+    remaining = [] if fill.plant_share_count else contents
+    if request.digest is not None and request.digest != contents_digest({'plants': [], 'seeds': [], 'media': remaining}):
         raise ValidationError({'digest': 'The fill changed after this clean was prepared. Review it again.'})
     if occurred_at < fill.opened_at or any(occurred_at < row['latest_application'] for row in contents) or fill.plant_locations.filter(ended__gt=occurred_at).exists():
         raise ValidationError({'occurred_at': 'The clean cannot precede opening, media application or a plant departure.'})
-    totals = {row['lot'].pk: row['base_quantity'] for row in contents}
+    totals = {row['lot'].pk: row['base_quantity'] for row in remaining}
     match_residual_quantities(totals, request.media, 'lot_id', 'media', ('waste', 'reclaimed'))
     lots = lock_lots(workspace, totals)
     for row in request.media:
@@ -193,7 +194,14 @@ def _require_cleanable_pot(fill):
             raise ValidationError({'fill': 'Move the plants before cleaning this fill.'})
         if unit.application_targets.exclude(line__application__status=InputApplication.Status.REVERSED).exists():
             raise ValidationError({'fill': 'Resolve the container input applications before cleaning this fill.'})
-        if pot_fill_contents(fill) and unit.standing_plants.filter(
+        history = unit.standing_plants.filter(
             Q(ended__isnull=True) | Q(ended__gte=fill.opened_at),
-        ).exists():
+        )
+        participants = fill.plant_locations.all()
+        if participants.filter(ended__isnull=True).exists():
+            raise ValidationError({'fill': 'Move the plants before cleaning this fill.'})
+        if fill.plant_share_count and participants.count() != fill.plant_share_count:
+            raise ValidationError({'fill': 'The recorded participants do not match the frozen media shares.'})
+        unknown_history = history.exclude(container_fill=fill).exists() or (participants.exists() and not fill.plant_share_count)
+        if pot_fill_contents(fill) and unknown_history:
             raise ValidationError({'fill': 'This container has plant history requiring fill departure accounting.'})

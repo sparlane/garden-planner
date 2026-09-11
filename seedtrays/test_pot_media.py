@@ -234,7 +234,7 @@ class PotMediaTests(PotMediaMixin, CountedStockTestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             InputApplicationTarget.objects.filter(pk=target.pk).update(inventory_unit_id=self.number(self.pots, 1)[0].pk)
 
-    def test_clean_refuses_media_that_has_served_a_plant(self):
+    def test_clean_refuses_reclaiming_media_taken_by_a_plant(self):
         """A departed plant's share cannot be misclassified as discarded media."""
         unit = individualize_lot_units(self.workspace, None, IndividualizationRequest(self.pots, self.store, 1))[0]
         fill = open_numbered_fill(self.workspace, None, unit)
@@ -242,8 +242,24 @@ class PotMediaTests(PotMediaMixin, CountedStockTestCase):
         placement = make_specific_plant_location(location_type='container_unit', container_unit=unit, seed_tray_cell=None)
         placement.ended = timezone.now()
         placement.save()
-        with self.assertRaisesMessage(ValidationError, 'departure accounting'):
+        with self.assertRaisesMessage(ValidationError, 'nothing left over'):
             self.clean(fill)
+        self.assertFalse(fill.residuals.exists())
+        clean_empty_fill(self.workspace, None, fill, reason='Wash the vacated pot.')
+        self.assertEqual(pot_fill_cost_breakdown(fill)['departed_cost'], 100)
+        self.assertEqual(pot_fill_cost_breakdown(fill)['production_loss'], 0)
+        self.assertEqual(physical_balance(self.media, self.store), 150)
+        self.assertEqual(open_numbered_fill(self.workspace, None, unit).sequence, 2)
+
+
+class PotMediaDepartureTests(PotMediaMixin, CountedStockTestCase):
+    """Departed media stays with the original plants through cleaning and reuse."""
+
+    def setUp(self):
+        super().setUp()
+        self.setup_media()
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
 
     def shared_numbered_fill(self):
         """Put three plants in a pot containing fifty litres of known-cost mix."""
@@ -287,6 +303,56 @@ class PotMediaTests(PotMediaMixin, CountedStockTestCase):
         self.assertEqual(report['applied_cost'], 100)
         self.assertIsNone(report['held_cost'])
         self.assertIsNone(report['departed_cost'])
+
+    def test_clean_after_all_thirds_depart_preserves_allocation(self):
+        """Cleaning and refilling do not reclaim or reassign the old plants' mix."""
+        fill, placements = self.shared_numbered_fill()
+        digest = contents_digest({'plants': [], 'seeds': [], 'media': pot_fill_contents(fill)})
+        for placement in placements:
+            placement.ended = timezone.now()
+            placement.save()
+        before = pot_fill_media_departures(fill)
+        with self.assertRaisesMessage(ValidationError, 'changed'):
+            self.clean(fill, media=(), digest=digest)
+        with self.assertRaisesMessage(ValidationError, 'cannot precede'):
+            self.clean(fill, media=(), occurred_at=placements[0].ended)
+        self.clean(fill, media=())
+        new_fill = open_numbered_fill(self.workspace, None, fill.inventory_unit)
+        post_application(self.draft(new_fill), None)
+        self.assertEqual(pot_fill_media_departures(fill), before)
+        self.assertFalse(fill.residuals.exists())
+        report = pot_fill_cost_breakdown(fill)
+        self.assertEqual(report['held_cost'], 0)
+        self.assertEqual(report['departed_cost'], 100)
+        self.assertEqual(report['recovered_cost'], 0)
+
+    def test_clean_requires_every_participant_to_depart(self):
+        """A fixed share basis does not make a still-occupied pot cleanable."""
+        fill, placements = self.shared_numbered_fill()
+        placements[0].ended = timezone.now()
+        placements[0].save()
+        with self.assertRaisesMessage(ValidationError, 'Move the plants'):
+            self.clean(fill, media=())
+        self.assertFalse(fill.residuals.exists())
+
+    def test_clean_refuses_legacy_departures_without_frozen_shares(self):
+        """Old unallocated media must not be turned into a recovery or a loss."""
+        fill, placements = self.shared_numbered_fill()
+        type(placements[0]).objects.filter(container_fill=fill).update(ended=timezone.now())
+        with self.assertRaisesMessage(ValidationError, 'departure accounting'):
+            self.clean(fill)
+        self.assertFalse(fill.residuals.exists())
+
+    def test_clean_refuses_incomplete_frozen_participation(self):
+        """An inconsistent denominator cannot silently release unclaimed media."""
+        fill, placements = self.shared_numbered_fill()
+        for placement in placements:
+            placement.ended = timezone.now()
+            placement.save()
+        type(fill).objects.filter(pk=fill.pk).update(plant_share_count=4)
+        with self.assertRaisesMessage(ValidationError, 'do not match'):
+            self.clean(fill, media=())
+        self.assertFalse(fill.residuals.exists())
 
     def test_unpriced_departures_keep_exact_quantities_and_unknown_cost(self):
         """An unknown price does not obscure the known physical media share."""
