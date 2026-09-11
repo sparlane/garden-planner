@@ -4,6 +4,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
+from fractions import Fraction
 from threading import Barrier
 
 from django.core.exceptions import ValidationError
@@ -28,7 +29,7 @@ from workspaces.models import Workspace, get_current_workspace
 
 from .container_fills import clean_empty_fill, clean_pot_fill, open_counted_fill, open_numbered_fill
 from .generations import CloseRequest, MediaDisposition, contents_digest
-from .pot_media import pot_fill_contents, pot_fill_cost_breakdown
+from .pot_media import pot_fill_contents, pot_fill_cost_breakdown, pot_fill_media_departures
 
 
 class PotMediaMixin:
@@ -243,6 +244,63 @@ class PotMediaTests(PotMediaMixin, CountedStockTestCase):
         placement.save()
         with self.assertRaisesMessage(ValidationError, 'departure accounting'):
             self.clean(fill)
+
+    def shared_numbered_fill(self):
+        """Put three plants in a pot containing fifty litres of known-cost mix."""
+        unit = self.number(self.pots, 1)[0]
+        fill = open_numbered_fill(self.workspace, None, unit)
+        post_application(self.draft(fill), None)
+        placements = [make_specific_plant_location(
+            location_type='container_unit', container_unit=unit, seed_tray_cell=None,
+        ) for _ in range(3)]
+        return fill, placements
+
+    def test_departures_take_exact_thirds_and_held_cost_reconciles(self):
+        """Sequential departures never give the last plant its siblings' media."""
+        fill, placements = self.shared_numbered_fill()
+        self.assertEqual(pot_fill_media_departures(fill), [])
+        self.assertEqual(pot_fill_cost_breakdown(fill)['held_cost'], 100)
+        for count, placement in enumerate(placements, start=1):
+            placement.ended = timezone.now()
+            placement.save()
+            rows = pot_fill_media_departures(fill)
+            self.assertEqual(len(rows), count)
+            self.assertEqual({row['plant'] for row in rows}, {p.specific_plant_id for p in placements[:count]})
+            self.assertTrue(all(row['base_quantity'] == Fraction(50, 3) for row in rows))
+            self.assertTrue(all(row['lot'] == self.media and row['unit_cost'] == 2 for row in rows))
+            report = pot_fill_cost_breakdown(fill)
+            self.assertFalse(report['unknown_allocation'])
+            self.assertEqual(report['departed_cost'] + report['held_cost'], report['applied_cost'])
+        self.assertEqual(report['departed_cost'], 100)
+        self.assertEqual(report['held_cost'], 0)
+        self.assertEqual(sum(row['base_quantity'] for row in rows), 50)
+        self.assertEqual(physical_balance(self.media, self.store), 150)
+
+    def test_legacy_departure_reports_unknown_allocation(self):
+        """Missing historical shares cannot turn used media into held stock."""
+        fill, placements = self.shared_numbered_fill()
+        type(placements[0]).objects.filter(pk=placements[0].pk).update(ended=timezone.now())
+        self.assertIsNone(pot_fill_media_departures(fill)[0]['base_quantity'])
+        report = pot_fill_cost_breakdown(fill)
+        self.assertTrue(report['unknown_allocation'])
+        self.assertFalse(report['unknown_cost'])
+        self.assertEqual(report['applied_cost'], 100)
+        self.assertIsNone(report['held_cost'])
+        self.assertIsNone(report['departed_cost'])
+
+    def test_unpriced_departures_keep_exact_quantities_and_unknown_cost(self):
+        """An unknown price does not obscure the known physical media share."""
+        fill, placements = self.shared_numbered_fill()
+        type(self.media).objects.filter(pk=self.media.pk).update(base_unit_cost=None)
+        placements[0].ended = timezone.now()
+        placements[0].save()
+        row = pot_fill_media_departures(fill)[0]
+        self.assertEqual(row['base_quantity'], Fraction(50, 3))
+        self.assertIsNone(row['unit_cost'])
+        report = pot_fill_cost_breakdown(fill)
+        self.assertTrue(report['unknown_cost'])
+        self.assertIsNone(report['departed_cost'])
+        self.assertIsNone(report['held_cost'])
 
     def test_rest_resolves_fill_identity_and_scopes_it_to_workspace(self):
         """The application API round-trips a fill target without a fake unit or crop."""
