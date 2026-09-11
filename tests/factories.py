@@ -36,6 +36,7 @@ from plantings.models import (
     HarvestPlant,
     NurseryPlanningAssumption,
     NurseryPlanningStageAssumption,
+    PlantGrade,
     PlantLifecycleEvent,
     ProductionBatch,
     ProductionBatchTransition,
@@ -461,6 +462,15 @@ def make_growth_stage(**overrides):
     values.setdefault('workspace', get_current_workspace())
     values.setdefault('code', values['name'].replace(' ', '-').lower())
     return GrowthStage.objects.create(**values)
+
+
+def make_plant_grade(**overrides):
+    """Create one workspace plant grade with a unique stable code."""
+    values = {'name': _next_name('Grade'), 'display_order': 0}
+    values.update(overrides)
+    values.setdefault('workspace', get_current_workspace())
+    values.setdefault('code', values['name'].replace(' ', '-').lower())
+    return PlantGrade.objects.create(**values)
 
 
 def make_planning_assumption(**overrides):

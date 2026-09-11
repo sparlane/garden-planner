@@ -11,6 +11,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
 from django.utils import timezone
 
+from common.coded import CodedSettingModel
 from inventory.models import (
     MONEY_DECIMAL_PLACES,
     MONEY_MAX_DIGITS,
@@ -852,36 +853,24 @@ class SpecificPlant(WorkspaceOwnedModel):
         return f'Plant from {origin} germinated {self.germinated}'
 
 
-class GrowthStage(WorkspaceOwnedModel):
-    """One workspace-configurable operational nursery stage."""
+class GrowthStage(CodedSettingModel, WorkspaceOwnedModel):
+    """One workspace-configurable operational nursery stage.
 
-    code = models.CharField(max_length=64)
-    name = models.CharField(max_length=128)
-    display_order = models.IntegerField(default=0)
-    active = models.BooleanField(default=True)
+    Nothing catalog-shaped hangs off a stage, so retiring one waits for
+    nothing: the plants, plans, rules and observations that name it are the
+    history and the configuration written against it, and leaving those
+    readable is what retirement is for.
+    """
+
     target_days = models.PositiveIntegerField(null=True, blank=True)
 
-    class Meta:
-        ordering = ['display_order', 'name', 'pk']
+    class Meta(CodedSettingModel.Meta):
         constraints = [
             models.UniqueConstraint(
                 fields=['workspace', 'code'],
                 name='growth_stage_workspace_code_unique',
             ),
         ]
-
-    def __str__(self):
-        return self.name
-
-    def clean(self):
-        super().clean()
-        self.code = self.code.strip().lower()
-        if not self.code:
-            raise ValidationError({'code': 'A stable code is required.'})
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
 
 
 class NurseryPlanningAssumption(WorkspaceOwnedModel):
@@ -1284,35 +1273,19 @@ class NurseryPlanIssue(models.Model):
         ordering = ['kind', 'pk']
 
 
-class PlantGrade(WorkspaceOwnedModel):
-    """One workspace-configurable commercial plant grade."""
+class PlantGrade(CodedSettingModel, WorkspaceOwnedModel):
+    """One workspace-configurable commercial plant grade.
 
-    code = models.CharField(max_length=64)
-    name = models.CharField(max_length=128)
-    display_order = models.IntegerField(default=0)
-    active = models.BooleanField(default=True)
+    Retiring one waits for nothing, for the reason ``GrowthStage`` gives.
+    """
 
-    class Meta:
-        ordering = ['display_order', 'name', 'pk']
+    class Meta(CodedSettingModel.Meta):
         constraints = [
             models.UniqueConstraint(
                 fields=['workspace', 'code'],
                 name='plant_grade_workspace_code_unique',
             ),
         ]
-
-    def __str__(self):
-        return self.name
-
-    def clean(self):
-        super().clean()
-        self.code = self.code.strip().lower()
-        if not self.code:
-            raise ValidationError({'code': 'A stable code is required.'})
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
 
 
 class PlantCohort(WorkspaceOwnedModel):
