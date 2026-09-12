@@ -1,15 +1,18 @@
 import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Badge, Button, Card, Col, Form, Nav, Row, Table } from 'react-bootstrap'
+import { Alert, Badge, Button, Card, Col, Form, Nav, Row, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
 
 import { acknowledgeWorkTask, actOnWorkTask, addWorkRule, addWorkTask, getWorkAssignees, getWorkRules, getWorkTasks, updateWorkRule } from './api/work'
-import { queryKeys } from './query'
+import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, mergeChoices, retiredRowClass } from './catalog'
+import { queryKeys, searchedKey } from './query'
+import { CatalogRecordLabel } from './types/catalog'
 import { WorkFilters, WorkRule, WorkTask, WorkView } from './types/work'
-import { formatDateTime, localDatetimeInputValue, parseLocalDatetimeInput } from './utils'
+import { errorsByField, formatDateTime, localDatetimeInputValue, parseLocalDatetimeInput } from './utils'
 
 const TASK_TYPES = [
   ['germination_check', 'Germination check'],
+  ['germination_assessment', 'Germination assessment'],
   ['watering', 'Watering'],
   ['feeding', 'Feeding'],
   ['thinning', 'Thinning'],
@@ -24,7 +27,25 @@ const TASK_TYPES = [
   ['health_inspection', 'Health inspection'],
   ['treatment_follow_up', 'Treatment follow-up'],
   ['reservation_review', 'Reservation review'],
+  ['assumption_review', 'Planning assumption review'],
   ['custom', 'Custom']
+]
+
+// What a rule counts from. Everything but the calendar counts from a fact the
+// workspace already records, which is why those rules arrive seeded rather than
+// being typed here; all of them are shown, because a rule that counts from the
+// wrong fact is corrected by saying so.
+const TRIGGERS = [
+  ['sowing_germination', 'Expected sowing germination'],
+  ['sowing_germination_end', 'End of sowing germination window'],
+  ['plan_milestone', 'Approved plan milestone'],
+  ['stage_age', 'Current stage target age'],
+  ['expected_ready', 'Recorded expected-ready date'],
+  ['sowing_maturity', 'Expected sowing maturity'],
+  ['calendar', 'Recurring calendar work'],
+  ['health_follow_up', 'Health follow-up due'],
+  ['reservation_expiry', 'Sales reservation expiry'],
+  ['assumption_variance', 'Diverged planning assumption']
 ]
 
 const VIEWS: Array<[WorkView, string]> = [
@@ -228,22 +249,80 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
   )
 }
 
-function RuleEditor({ rules }: { rules: Array<WorkRule> }) {
+interface Merging {
+  source: CatalogRecordLabel
+  choices: Array<CatalogRecordLabel>
+}
+
+const RULES_COLLECTION = '/work/rules/'
+
+// A rule added here watches the calendar, because every other trigger counts
+// from a fact the workspace already records and arrives seeded. It is still
+// shown and still editable on the row: what a rule counts from is half of what
+// files it, so a merge refuses to change it and this is where that edit is
+// made.
+const NEW_RULE_TRIGGER = 'calendar'
+
+function nameOf(rules: Array<WorkRule>, pk: number | null): string | null {
+  if (pk == null) return null
+  return rules.find((rule) => rule.pk === pk)?.name ?? null
+}
+
+// A merge is onto another rule making the same kind of work from the same
+// anchor, because the server refuses anything else as a reclassification and a
+// picker offering one would make that refusal the operator's problem rather
+// than the screen's.
+function ruleMergeChoices(rules: Array<WorkRule>, source: WorkRule): Array<CatalogRecordLabel> {
+  return mergeChoices(
+    rules.filter((rule) => rule.task_type === source.task_type && rule.trigger === source.trigger),
+    source
+  )
+}
+
+function RuleEditor() {
   const cache = useQueryClient()
+  const [code, setCode] = React.useState('')
   const [name, setName] = React.useState('')
   const [taskType, setTaskType] = React.useState('watering')
   const [frequency, setFrequency] = React.useState<'daily' | 'weekly'>('daily')
-  const mutation = useMutation({
-    mutationFn: ({ pk, values }: { pk?: number; values: object }) => (pk ? updateWorkRule(pk, values) : addWorkRule(values)),
-    onSuccess: () => cache.invalidateQueries({ queryKey: queryKeys.work.rules })
-  })
-  const add = () =>
-    mutation.mutate({
-      values: {
-        code: `care-${Date.now()}`,
+  const [search, setSearch] = React.useState('')
+  const [showRetired, setShowRetired] = React.useState(false)
+  const [merging, setMerging] = React.useState<Merging | null>(null)
+  const [failure, setFailure] = React.useState<string | null>(null)
+  // The whole collection is what a merge may be onto and what the `Merged into`
+  // note reads a name out of, both of which have to reach rules the search is
+  // deliberately hiding; the rows read the searched list.
+  const { data: rules = [] } = useQuery({ queryKey: queryKeys.work.rules, queryFn: ({ signal }) => getWorkRules(signal) })
+  const { data: found = [] } = useQuery({ queryKey: searchedKey(queryKeys.work.rules, search), queryFn: ({ signal }) => getWorkRules(signal, search) })
+  // Retiring a rule changes what the queue projects and merging one moves the
+  // tasks already acknowledged under it, so what has moved on is the whole of
+  // the work screen rather than this list.
+  const refresh = () => cache.invalidateQueries({ queryKey: queryKeys.work.all })
+
+  // Retirement is refused while a catalog rule stands in the way, a stable code
+  // is refused outright, and so is a recurrence a trigger cannot carry, so a
+  // failure names a field and belongs on the screen.
+  async function save(write: () => Promise<unknown>) {
+    setFailure(null)
+    try {
+      await write()
+      await refresh()
+    } catch (error) {
+      const fields = errorsByField(error)
+      setFailure(
+        fields.active ?? fields.code ?? fields.name ?? fields.task_type ?? fields.trigger ?? fields.frequency ?? fields.weekdays ?? fields.form ?? 'The change could not be saved.'
+      )
+    }
+  }
+
+  const create = useMutation({
+    mutationFn: () =>
+      addWorkRule({
+        code,
         name,
         task_type: taskType,
-        trigger: 'calendar',
+        trigger: NEW_RULE_TRIGGER,
+        display_order: rules.length,
         frequency,
         interval: 1,
         weekdays: frequency === 'weekly' ? [0] : [],
@@ -251,31 +330,120 @@ function RuleEditor({ rules }: { rules: Array<WorkRule> }) {
         due_start_offset_days: 0,
         due_end_offset_days: 0,
         local_due_time: '09:00'
-      }
-    })
+      })
+  })
+  const edit = useMutation({ mutationFn: ({ pk, changes }: { pk: number; changes: Partial<WorkRule> }) => updateWorkRule(pk, changes) })
+  const visible = found.filter((rule) => rule.active || showRetired)
+
   return (
     <Card className="mt-4">
-      <Card.Header>Automation rules</Card.Header>
+      <Card.Header className="d-flex justify-content-between align-items-center gap-3">
+        <span>Automation rules</span>
+        <div className="d-flex align-items-center gap-3">
+          <CatalogSearch id="work-rule-search" onSearch={setSearch} label="Search care rules" />
+          <Form.Check type="switch" id="show-retired-rules" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
+        </div>
+      </Card.Header>
       <Card.Body>
+        {failure && (
+          <Alert variant="danger" onClose={() => setFailure(null)} dismissible>
+            {failure}
+          </Alert>
+        )}
+        {merging && (
+          <MergeDialog
+            collection={RULES_COLLECTION}
+            source={merging.source}
+            choices={merging.choices}
+            onMerged={() => {
+              setMerging(null)
+              void refresh()
+            }}
+            onCancel={() => setMerging(null)}
+          />
+        )}
         <Table size="sm">
           <thead>
             <tr>
               <th>Rule</th>
+              <th>Work</th>
               <th>Trigger</th>
               <th>Recurrence</th>
+              <th>Code</th>
               <th />
             </tr>
           </thead>
           <tbody>
-            {rules.map((rule) => (
-              <tr key={rule.pk}>
-                <td>{rule.name}</td>
-                <td>{rule.trigger.replaceAll('_', ' ')}</td>
-                <td>{rule.frequency || 'From source date'}</td>
+            {visible.map((rule) => (
+              <tr key={rule.pk} className={retiredRowClass(rule.active)}>
                 <td>
-                  <Button size="sm" variant="outline-secondary" onClick={() => mutation.mutate({ pk: rule.pk, values: { active: !rule.active } })}>
-                    {rule.active ? 'Disable' : 'Enable'}
-                  </Button>
+                  <Form.Control
+                    aria-label={`Name of ${rule.code}`}
+                    defaultValue={rule.name}
+                    onBlur={(event) => {
+                      const next = event.target.value.trim()
+                      if (next && next !== rule.name) void save(() => edit.mutateAsync({ pk: rule.pk, changes: { name: next } }))
+                    }}
+                  />
+                  <RetiredBadge active={rule.active} />
+                  <MergedIntoNote into={nameOf(rules, rule.merged_into)} />
+                </td>
+                {/* The kind of work and the anchor file a rule the way a
+                    category files a diagnosis, so both stay editable: a rule
+                    making the wrong kind of work is refiled, which is the
+                    deliberate edit a merge refuses to make on its own. */}
+                <td>
+                  <Form.Select
+                    aria-label={`Work made by ${rule.name}`}
+                    value={rule.task_type}
+                    onChange={(event) => {
+                      const next = event.target.value
+                      if (next !== rule.task_type) void save(() => edit.mutateAsync({ pk: rule.pk, changes: { task_type: next } }))
+                    }}
+                  >
+                    {TASK_TYPES.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </td>
+                <td>
+                  <Form.Select
+                    aria-label={`Trigger of ${rule.name}`}
+                    value={rule.trigger}
+                    onChange={(event) => {
+                      const next = event.target.value
+                      if (next !== rule.trigger) void save(() => edit.mutateAsync({ pk: rule.pk, changes: { trigger: next } }))
+                    }}
+                  >
+                    {TRIGGERS.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </td>
+                <td className="text-nowrap">{rule.frequency || 'From source date'}</td>
+                {/* The code is what the seeded defaults and every acknowledged
+                    task hold this rule by, so it is shown and never offered for
+                    editing: a wrong one is merged away instead. */}
+                <td>
+                  <code>{rule.code}</code>
+                </td>
+                <td className="text-nowrap">
+                  {rule.merged_into === null && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        onClick={() => setMerging({ source: { pk: rule.pk, label: rule.name }, choices: ruleMergeChoices(rules, rule) })}
+                      >
+                        Merge
+                      </Button>{' '}
+                    </>
+                  )}
+                  <RetireButton active={rule.active} saving={edit.isPending} onChange={(active) => void save(() => edit.mutateAsync({ pk: rule.pk, changes: { active } }))} />
                 </td>
               </tr>
             ))}
@@ -283,10 +451,16 @@ function RuleEditor({ rules }: { rules: Array<WorkRule> }) {
         </Table>
         <Row className="g-2">
           <Col>
-            <Form.Control placeholder="New care rule" value={name} onChange={(event) => setName(event.target.value)} />
+            <Form.Control aria-label="New care rule code" placeholder="stable_code" value={code} onChange={(event) => setCode(event.target.value)} />
           </Col>
           <Col>
-            <Form.Select value={taskType} onChange={(event) => setTaskType(event.target.value)}>
+            <Form.Control aria-label="New care rule name" placeholder="New care rule" value={name} onChange={(event) => setName(event.target.value)} />
+            {/* Checked among the rules making the same kind of work from the
+                same anchor, because that is where a merge would be allowed. */}
+            <DuplicateWarning collection={RULES_COLLECTION} name={name} scope={{ task_type: taskType, trigger: NEW_RULE_TRIGGER }} />
+          </Col>
+          <Col>
+            <Form.Select aria-label="New care rule work" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
               {TASK_TYPES.map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
@@ -295,13 +469,22 @@ function RuleEditor({ rules }: { rules: Array<WorkRule> }) {
             </Form.Select>
           </Col>
           <Col>
-            <Form.Select value={frequency} onChange={(event) => setFrequency(event.target.value as 'daily' | 'weekly')}>
+            <Form.Select aria-label="New care rule recurrence" value={frequency} onChange={(event) => setFrequency(event.target.value as 'daily' | 'weekly')}>
               <option value="daily">Daily</option>
               <option value="weekly">Weekly on Monday</option>
             </Form.Select>
           </Col>
           <Col xs="auto">
-            <Button disabled={!name} onClick={add}>
+            <Button
+              disabled={!code || !name || create.isPending}
+              onClick={() =>
+                void save(async () => {
+                  await create.mutateAsync()
+                  setCode('')
+                  setName('')
+                })
+              }
+            >
               Add rule
             </Button>
           </Col>
@@ -327,7 +510,6 @@ function WorkQueueView() {
     location: location ? Number(location) : undefined
   }
   const tasks = useQuery({ queryKey: queryKeys.work.tasks(filters), queryFn: ({ signal }) => getWorkTasks(filters, signal) })
-  const rules = useQuery({ queryKey: queryKeys.work.rules, queryFn: ({ signal }) => getWorkRules(signal) })
   const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal) })
   return (
     <main className="container-fluid py-3">
@@ -373,7 +555,7 @@ function WorkQueueView() {
         </Col>
       </Row>
       <TaskTable tasks={tasks.data ?? []} />
-      <RuleEditor rules={rules.data ?? []} />
+      <RuleEditor />
     </main>
   )
 }

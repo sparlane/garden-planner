@@ -37,8 +37,11 @@ from tests.factories import (
 )
 from workspaces.models import get_current_workspace
 
-from .models import WorkTaskRule, WorkTaskType
-from .projections import next_recurrence, projected_tasks
+from common.merging import merge_records
+
+from .models import WorkTask, WorkTaskRule, WorkTaskType
+from .projections import next_recurrence, projected_tasks, rule_key
+from .services import acknowledge_projection
 
 
 class WorkProjectionTests(TestCase):
@@ -435,3 +438,79 @@ class AssumptionReviewProjectionTests(TestCase):
         )
 
         self.assertEqual(self._reviews(), [])
+
+
+class MergedRuleProjectionTests(TestCase):
+    """Cleaning up a duplicate rule does not undo the work already done.
+
+    An acknowledged task keeps the key it was taken up under, which names the
+    rule that projected it. A merge moves the task onto the survivor and leaves
+    that key where it is, so the survivor has to answer for the keys of every
+    duplicate it absorbed -- otherwise the occurrence somebody dealt with last
+    week is projected again the moment the catalog is tidied.
+    """
+
+    def setUp(self):
+        self.workspace = get_current_workspace()
+        self.workspace.mode = self.workspace.Mode.NURSERY
+        self.workspace.timezone = 'Pacific/Auckland'
+        self.workspace.save()
+        self.user = get_user_model().objects.create_user(username='rule-merger')
+        WorkTaskRule.objects.filter(workspace=self.workspace).delete()
+        variety = make_plant_variety(
+            workspace=self.workspace, germination_days_min=3, germination_days_max=5,
+        )
+        seeds = make_seeds(workspace=self.workspace, plant_variety=variety)
+        packet = make_seed_packet(workspace=self.workspace, seeds=seeds)
+        batch = make_production_batch(workspace=self.workspace, variety=variety)
+        SeedTrayPlanting.objects.create(
+            workspace=self.workspace, batch=batch, seeds_used=packet,
+            quantity=10, planted=datetime(2026, 8, 1, tzinfo=datetime_timezone.utc),
+        )
+        self.survivor = self._rule('germination-check', 'Germination checks')
+        self.duplicate = self._rule('germination-checks', 'Germination check')
+
+    def _rule(self, code, name):
+        """Create one rule watching the same fact as the other."""
+        return WorkTaskRule.objects.create(
+            workspace=self.workspace, code=code, name=name,
+            task_type=WorkTaskType.GERMINATION,
+            trigger=WorkTaskRule.Trigger.GERMINATION,
+        )
+
+    def _projection(self, rule):
+        """Return the one occurrence this rule is projecting."""
+        tasks = [task for task in projected_tasks(self.workspace) if task.rule.pk == rule.pk]
+        self.assertEqual(len(tasks), 1)
+        return tasks[0]
+
+    def test_work_acknowledged_under_a_duplicate_stays_dealt_with(self):
+        """The survivor answers for the key the duplicate projected it under."""
+        occurrence = self._projection(self.duplicate).occurrence
+        acknowledge_projection(
+            self.workspace, self.user, rule_key(self.duplicate.pk, occurrence),
+        )
+
+        merge_records(self.duplicate, self.survivor)
+
+        keys = [task.key for task in projected_tasks(self.workspace)]
+        self.assertNotIn(rule_key(self.survivor.pk, occurrence), keys)
+
+    def test_the_acknowledged_task_moves_onto_the_survivor(self):
+        """It is the survivor's history now, keeping the key it was taken up under."""
+        key = rule_key(self.duplicate.pk, self._projection(self.duplicate).occurrence)
+        task = acknowledge_projection(self.workspace, self.user, key)
+
+        merge_records(self.duplicate, self.survivor)
+
+        task.refresh_from_db()
+        self.assertEqual(task.rule_id, self.survivor.pk)
+        self.assertEqual(task.key, key)
+
+    def test_an_occurrence_nobody_took_up_is_still_projected(self):
+        """Only what was acknowledged is suppressed, and only that."""
+        merge_records(self.duplicate, self.survivor)
+
+        keys = [task.key for task in projected_tasks(self.workspace)]
+        self.assertEqual(len(WorkTask.objects.filter(workspace=self.workspace)), 0)
+        self.assertEqual(len(keys), 1)

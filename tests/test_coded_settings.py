@@ -16,6 +16,11 @@ files a variety, without being a record anybody can retire, so the rules that
 ask what makes two records interchangeable read it where they read a parent: a
 cross-category merge is refused as a reclassification, and the duplicate
 warning is asked within one category or not at all.
+
+A care rule is the same record with two of those groups rather than one: the
+kind of work it makes and the fact it counts from are together what every task
+under it was projected as, so both are read where a diagnosis reads its
+category.
 """
 
 # Test names state their behavior; repeating it in method docstrings adds noise.
@@ -34,12 +39,15 @@ from tests.factories import (
     make_nursery_workspace,
     make_plant_grade,
     make_specific_plant,
+    make_work_rule,
 )
+from work.models import WorkTaskRule, WorkTaskType
 
 STAGES = '/plantings/growth-stages/'
 GRADES = '/plantings/plant-grades/'
 TYPES = '/health/observation-types/'
 DIAGNOSES = '/health/diagnoses/'
+RULES = '/work/rules/'
 
 
 class CodedSettingTestCase(RESTContractTestCase):
@@ -442,3 +450,194 @@ class DiagnosisSearchTests(GroupedSettingTestCase):
 
         self.assertIn(self.unknown_pest.name, found)
         self.assertNotIn(self.unknown_disease.name, found)
+
+
+class CareRuleTestCase(RESTContractTestCase):
+    """The care rules a workspace runs by, which are coded settings too."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = make_nursery_workspace()
+        self.checks = WorkTaskRule.objects.get(
+            workspace=self.workspace, code='germination-check',
+        )
+
+    def watering_rule(self, **overrides):
+        """Create one calendar watering rule, which is what somebody types."""
+        return make_work_rule(workspace=self.workspace, **overrides)
+
+
+class CareRuleCorrectionTests(CareRuleTestCase):
+    """A rule is held by its code the way every other usage setting is."""
+
+    def test_a_stable_code_cannot_be_rewritten(self):
+        """The seeded defaults are re-found by code every time a workspace saves."""
+        response = self.client.patch(
+            f'{RULES}{self.checks.pk}/', {'code': 'germination-checks'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('merge', response.data['code'][0].lower())
+        self.checks.refresh_from_db()
+        self.assertEqual(self.checks.code, 'germination-check')
+
+    def test_a_name_typed_wrong_is_corrected_in_place(self):
+        response = self.client.patch(
+            f'{RULES}{self.checks.pk}/', {'name': 'Germination checks'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.checks.refresh_from_db()
+        self.assertEqual(self.checks.name, 'Germination checks')
+
+    def test_a_code_already_taken_names_the_rule_holding_it(self):
+        """It is exactly the rule being looked for, not a resemblance."""
+        response = self.client.post(RULES, {
+            'code': 'Germination-Check', 'name': 'Germination checks',
+            'task_type': WorkTaskType.WATERING,
+            'trigger': WorkTaskRule.Trigger.CALENDAR,
+            'frequency': WorkTaskRule.Frequency.DAILY,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn(str(self.checks), response.data['code'][0])
+        self.assertIn('Merge into it', response.data['code'][0])
+
+    def test_what_a_rule_projects_stays_editable(self):
+        """Refiling one is the deliberate edit a merge refuses to make."""
+        response = self.client.patch(
+            f'{RULES}{self.checks.pk}/',
+            {'task_type': WorkTaskType.HEALTH_INSPECTION}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.checks.refresh_from_db()
+        self.assertEqual(self.checks.task_type, WorkTaskType.HEALTH_INSPECTION)
+
+
+class CareRuleRetirementTests(CareRuleTestCase):
+    """Retiring is what disabling a rule always did, said in the shared words."""
+
+    def test_a_retired_rule_stops_projecting_work(self):
+        response = self.client.patch(
+            f'{RULES}{self.checks.pk}/', {'active': False}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.checks.refresh_from_db()
+        self.assertFalse(self.checks.active)
+
+    def test_the_collection_still_names_a_retired_rule(self):
+        """It is what the tasks acknowledged under it point at."""
+        self.client.patch(f'{RULES}{self.checks.pk}/', {'active': False}, format='json')
+
+        self.assertIn(self.checks.name, self.listed_names(RULES))
+        self.assertNotIn(self.checks.name, self.listed_names(RULES, active='true'))
+
+    def test_a_retired_rule_restores(self):
+        self.client.patch(f'{RULES}{self.checks.pk}/', {'active': False}, format='json')
+
+        response = self.client.patch(
+            f'{RULES}{self.checks.pk}/', {'active': True}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn(self.checks.name, self.listed_names(RULES, active='true'))
+
+    def test_a_rule_is_never_deleted(self):
+        response = self.client.delete(f'{RULES}{self.checks.pk}/')
+
+        self.assertEqual(response.status_code, 405)
+
+
+class CareRuleMergeTests(CareRuleTestCase):
+    """Two rules are interchangeable only while they project the same work."""
+
+    def setUp(self):
+        super().setUp()
+        self.watering = self.watering_rule(code='watering', name='Watering')
+        self.duplicate = self.watering_rule(code='watering-again', name='Waterings')
+
+    def test_a_merge_retires_the_duplicate_pointing_at_where_it_went(self):
+        response = self.client.post(
+            f'{RULES}{self.duplicate.pk}/merge/', {'into': self.watering.pk},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.duplicate.refresh_from_db()
+        self.assertFalse(self.duplicate.active)
+        self.assertEqual(self.duplicate.merged_into_id, self.watering.pk)
+
+    def test_a_merge_into_another_kind_of_work_is_refused(self):
+        """Every task under it was acknowledged as the work the rule makes."""
+        feeding = self.watering_rule(
+            code='feeding', name='Feeding', task_type=WorkTaskType.FEEDING,
+        )
+
+        response = self.client.get(
+            f'{RULES}{self.duplicate.pk}/merge/', {'into': feeding.pk},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['blockers'])
+
+    def test_a_merge_across_the_anchor_it_counts_from_is_refused(self):
+        response = self.client.get(
+            f'{RULES}{self.duplicate.pk}/merge/', {'into': self.checks.pk},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data['blockers'])
+
+
+class CareRuleDuplicateWarningTests(CareRuleTestCase):
+    """The merge question, asked while the second rule is still half typed."""
+
+    def setUp(self):
+        super().setUp()
+        self.watering = self.watering_rule(code='watering', name='Watering')
+
+    def test_a_resembling_name_making_the_same_work_is_reported(self):
+        response = self.client.get(f'{RULES}duplicates/', {
+            'name': 'Waterings', 'task_type': WorkTaskType.WATERING,
+            'trigger': WorkTaskRule.Trigger.CALENDAR,
+        })
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn(
+            str(self.watering),
+            [entry['label'] for entry in response.data['candidates']],
+        )
+
+    def test_a_resembling_name_making_other_work_is_not(self):
+        """Naming it would offer a merge that is then refused."""
+        response = self.client.get(f'{RULES}duplicates/', {
+            'name': 'Waterings', 'task_type': WorkTaskType.FEEDING,
+            'trigger': WorkTaskRule.Trigger.CALENDAR,
+        })
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['candidates'], [])
+
+    def test_both_halves_of_what_files_a_rule_have_to_be_named(self):
+        response = self.client.get(f'{RULES}duplicates/', {'name': 'Waterings'})
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('task_type', response.data)
+
+
+class CareRuleSearchTests(CareRuleTestCase):
+    """A rule is found by what an operator was shown, either half of it."""
+
+    def test_a_rule_is_found_by_the_start_of_its_name(self):
+        self.assertIn(self.checks.name, self.listed_names(RULES, search='germ'))
+
+    def test_a_rule_is_found_by_its_code(self):
+        """Somebody who met it in a seeded default met the code, not the name."""
+        rule = self.watering_rule(code='bench-water', name='Propagation round')
+
+        self.assertIn(rule.name, self.listed_names(RULES, search='bench'))
+
+    def test_a_search_that_matches_nothing_narrows_to_nothing(self):
+        self.assertEqual(self.listed_names(RULES, search='hydroponics'), [])

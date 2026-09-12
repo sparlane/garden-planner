@@ -50,9 +50,11 @@ interface WorkRule {
   pk: number
   code: string
   name: string
+  display_order: number
   task_type: string
   trigger: string
   active: boolean
+  merged_into: number | null
   priority: number
   due_start_offset_days: number
   due_end_offset_days: number

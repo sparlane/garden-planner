@@ -61,6 +61,7 @@ from seedtrays.models import (
     SeedTrayModel,
 )
 from supplies.models import Supplier
+from work.models import WorkTaskRule, WorkTaskType
 from workspaces.models import Workspace, get_current_workspace
 
 
@@ -504,6 +505,21 @@ def make_plant_grade(**overrides):
     values.setdefault('workspace', get_current_workspace())
     values.setdefault('code', values['name'].replace(' ', '-').lower())
     return PlantGrade.objects.create(**values)
+
+
+def make_work_rule(**overrides):
+    """Create one workspace care rule with a unique stable code."""
+    values = {
+        'name': _next_name('Rule'),
+        'task_type': WorkTaskType.WATERING,
+        'trigger': WorkTaskRule.Trigger.CALENDAR,
+        'frequency': WorkTaskRule.Frequency.DAILY,
+        'display_order': 0,
+    }
+    values.update(overrides)
+    values.setdefault('workspace', get_current_workspace())
+    values.setdefault('code', values['name'].replace(' ', '-').lower())
+    return WorkTaskRule.objects.create(**values)
 
 
 def make_expense_category(**overrides):

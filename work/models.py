@@ -14,6 +14,7 @@ from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
 
+from common.coded import CodedSettingModel
 from workspaces.models import WorkspaceOwnedModel
 
 
@@ -40,8 +41,26 @@ class WorkTaskType(models.TextChoices):
     CUSTOM = 'custom', 'Custom'
 
 
-class WorkTaskRule(WorkspaceOwnedModel):
-    """Configuration that projects source facts into actionable work."""
+class WorkTaskRule(CodedSettingModel, WorkspaceOwnedModel):
+    """Configuration that projects source facts into actionable work.
+
+    A care rule is a usage setting like a growth stage, and it is held the same
+    way: ``work.signals`` re-finds the defaults it seeds by code every time a
+    workspace is saved, and an acknowledged task carries the rule's pk inside
+    the key it was taken up under. So the code is written once, and a rule
+    typed twice is merged into the one that was right rather than re-cut.
+
+    What files a rule is not a record either. The kind of work it makes and the
+    date it counts from are what every task under it was projected as, so
+    ``grouping_fields`` names them and a merge across either is refused as the
+    reclassification it would be -- changing what a rule projects is an edit
+    somebody makes deliberately, and the setup screen makes it.
+
+    Nothing catalog-shaped hangs off a rule, so retiring one waits for nothing:
+    the tasks naming it are the history retirement exists to leave readable.
+    Retiring is what disabling a rule always did -- ``projections`` reads only
+    the active ones -- said in the vocabulary the rest of the catalogs use.
+    """
 
     class Trigger(models.TextChoices):
         """Available authoritative scheduling anchors."""
@@ -64,11 +83,8 @@ class WorkTaskRule(WorkspaceOwnedModel):
         DAILY = 'daily', 'Daily'
         WEEKLY = 'weekly', 'Weekly'
 
-    code = models.CharField(max_length=64)
-    name = models.CharField(max_length=160)
     task_type = models.CharField(max_length=32, choices=WorkTaskType.choices)
     trigger = models.CharField(max_length=32, choices=Trigger.choices)
-    active = models.BooleanField(default=True)
     priority = models.PositiveSmallIntegerField(default=20)
     due_start_offset_days = models.IntegerField(default=0)
     due_end_offset_days = models.IntegerField(default=0)
@@ -104,8 +120,13 @@ class WorkTaskRule(WorkspaceOwnedModel):
     created = models.DateTimeField(auto_now_add=True)
     updated = models.DateTimeField(auto_now=True)
 
-    class Meta:
-        ordering = ['name', 'pk']
+    #: What a rule is filed by, neither half of which is a record anybody can
+    #: retire. Two rules are interchangeable only while they make the same kind
+    #: of work from the same anchor, which is what a merge refuses to move and
+    #: what the duplicate warning looks within.
+    grouping_fields = ('task_type', 'trigger')
+
+    class Meta(CodedSettingModel.Meta):
         constraints = [
             models.UniqueConstraint(
                 fields=['workspace', 'code'], name='work_rule_workspace_code_unique',
@@ -115,9 +136,6 @@ class WorkTaskRule(WorkspaceOwnedModel):
                 name='work_rule_due_offsets_ordered',
             ),
         ]
-
-    def __str__(self):
-        return self.name
 
     @staticmethod
     def _month_day(value):
@@ -133,9 +151,6 @@ class WorkTaskRule(WorkspaceOwnedModel):
         """Validate recurrence, season syntax, and workspace-scoped filters."""
         super().clean()
         errors = {}
-        self.code = self.code.strip().lower()
-        if not self.code:
-            errors['code'] = 'A stable rule code is required.'
         if self.due_end_offset_days < self.due_start_offset_days:
             errors['due_end_offset_days'] = 'The due window cannot end before it starts.'
         if bool(self.season_start) != bool(self.season_end):
@@ -156,10 +171,6 @@ class WorkTaskRule(WorkspaceOwnedModel):
                 errors[field] = f'The {field} belongs to another workspace.'
         if errors:
             raise ValidationError(errors)
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
 
 
 class WorkTask(WorkspaceOwnedModel):
