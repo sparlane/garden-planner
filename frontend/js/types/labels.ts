@@ -42,6 +42,24 @@ interface LabelIdentityPage {
   target_types: Array<LabelTargetTypeCount>
 }
 
+// The millimetres a template is cut to. Label stock is rarely symmetrical, so
+// the four figures that place the first label are separate measurements rather
+// than one inset: `margin_mm` is the unprintable edge down each side and
+// `margin_top_mm` the bar above the first row, while `gap_mm` parts the columns
+// and `row_gap_mm` the rows. LC24 runs its labels to both paper edges with
+// 4.5mm above the first row and no gaps at all. A symmetrical sheet states
+// `margin_mm` and `gap_mm` alone, and the other two follow them.
+interface LabelDimensions {
+  label_width_mm: number
+  label_height_mm: number
+  page_width_mm?: number
+  page_height_mm?: number
+  margin_mm?: number
+  margin_top_mm?: number
+  gap_mm?: number
+  row_gap_mm?: number
+}
+
 interface LabelTemplate {
   pk: number
   name: string
@@ -49,7 +67,7 @@ interface LabelTemplate {
   payload_mode: LabelPayloadMode
   layout: LabelLayout
   fields: Array<string>
-  dimensions: Record<string, number>
+  dimensions: LabelDimensions
   built_in: boolean
   active: boolean
 }
@@ -81,6 +99,7 @@ interface LabelResolution {
 }
 
 export {
+  LabelDimensions,
   LabelFormat,
   LabelIdentity,
   LabelIdentityPage,
