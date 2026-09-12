@@ -20,6 +20,18 @@ function activeChoices<Record extends CatalogRecord>(records: Array<Record>, kee
   return records.filter((record) => record.active || (keep != null && record.pk === keep))
 }
 
+// A duplicate may only be merged onto a record it is interchangeable with,
+// which is one still in use and not itself. Narrow further before calling it
+// wherever something else files the record -- a variety's crop, a diagnosis's
+// category -- because the server refuses a merge across those as a
+// reclassification, and a picker offering one makes that refusal the
+// operator's problem rather than the screen's.
+function mergeChoices<Record extends CatalogRecord & { name: string }>(records: Array<Record>, source: Record): Array<CatalogRecordLabel> {
+  return activeChoices(records)
+    .filter((record) => record.pk !== source.pk)
+    .map((record) => ({ pk: record.pk, label: record.name }))
+}
+
 function RetiredBadge({ active }: { active: boolean }) {
   if (active) return null
   return (
@@ -580,6 +592,7 @@ export {
   RetiredBadge,
   activeChoices,
   changedValues,
+  mergeChoices,
   referenceFigureClass,
   retiredRowClass
 }

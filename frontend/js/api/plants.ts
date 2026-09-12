@@ -6,6 +6,14 @@ function getPlantFamilies(signal?: AbortSignal, search?: string): Promise<Array<
   return fetchAsJson<Array<PlantFamily>>(`/plants/family/${catalogSearchQuery(search)}`, signal)
 }
 
+// One record, for the page that is about that record. A detail route asks for
+// the record it is showing rather than picking it out of a collection, because
+// varieties are paginated and the one being looked at need not be on the page
+// the collection would send.
+function getPlantFamily(pk: number, signal?: AbortSignal): Promise<PlantFamily> {
+  return fetchAsJson<PlantFamily>(`/plants/family/${pk}/`, signal)
+}
+
 function addPlantFamily(data: PlantFamilyCreate) {
   return csrfPost('/plants/family/', data)
 }
@@ -19,6 +27,18 @@ function getPlantVarieties(signal?: AbortSignal, search?: string): Promise<Array
   return fetchAsJson<Array<PlantVariety>>(`/plants/variety/${catalogSearchQuery(search)}`, signal)
 }
 
+// One crop's varieties. Families and crops are short enough to be sent whole
+// and filed in the browser; varieties are the level that is not, so a crop's
+// own page asks the collection for them rather than filtering a page of the
+// catalog that may not hold them.
+function getCropVarieties(plant: number, signal?: AbortSignal): Promise<Array<PlantVariety>> {
+  return fetchAsJson<Array<PlantVariety>>(`/plants/variety/?plant=${plant}`, signal)
+}
+
+function getPlantVariety(pk: number, signal?: AbortSignal): Promise<PlantVariety> {
+  return fetchAsJson<PlantVariety>(`/plants/variety/${pk}/`, signal)
+}
+
 function addPlantVariety(data: PlantVarietyCreate) {
   return csrfPost('/plants/variety/', data)
 }
@@ -30,6 +50,10 @@ async function updatePlantVariety(pk: number, data: Partial<PlantVarietyCreate>)
 
 function getPlants(signal?: AbortSignal, search?: string): Promise<Array<Plant>> {
   return fetchAsJson<Array<Plant>>(`/plants/plant/${catalogSearchQuery(search)}`, signal)
+}
+
+function getPlant(pk: number, signal?: AbortSignal): Promise<Plant> {
+  return fetchAsJson<Plant>(`/plants/plant/${pk}/`, signal)
 }
 
 function addPlant(data: PlantCreate) {
@@ -66,8 +90,12 @@ async function importReferenceSet(document: ReferenceSet): Promise<InstalledCata
 }
 
 export {
+  getCropVarieties,
+  getPlant,
   getPlantFamilies,
+  getPlantFamily,
   getPlantVarieties,
+  getPlantVariety,
   getPlants,
   addPlantFamily,
   addPlantVariety,

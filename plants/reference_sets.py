@@ -41,6 +41,7 @@ from rest_framework import serializers
 
 from common.reference import EMPTY, SOURCE_MAX_LENGTH, install_record
 
+from .metadata import INHERITED_FIELDS
 from .models import Plant, PlantFamily, PlantVariety
 
 #: What a set may say about a family. A family carries no planning figures of
@@ -48,18 +49,11 @@ from .models import Plant, PlantFamily, PlantVariety
 FAMILY_FIELDS = ('notes',)
 
 #: What a set may say about a crop: the figures a seed catalogue prints, and
-#: the prose beside them.
-CROP_FIELDS = (
-    'notes',
-    'spacing',
-    'inter_row_spacing',
-    'plants_per_square_foot',
-    'germination_days_min',
-    'germination_days_max',
-    'maturity_days_min',
-    'maturity_days_max',
-    'maturity_basis',
-)
+#: the prose beside them. The figures are read from ``plants.metadata`` rather
+#: than listed again, because they are the same list seen from the other side:
+#: what a document may carry about a crop is exactly what a variety of it may
+#: override.
+CROP_FIELDS = ('notes', *INHERITED_FIELDS)
 
 #: The same fields on a variety, because a variety may override any of them.
 #: What it does not say it reads through to its crop, which is what

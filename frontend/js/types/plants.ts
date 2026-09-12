@@ -50,13 +50,35 @@ interface PlantCreate extends PlantingDetails {
   active?: boolean
 }
 
+// What a variety is planned by, figure by figure, and whose figure it is. A
+// blank on the variety is not a missing figure: the server reads it through to
+// the crop everywhere a sowing or maturity date is worked out, so the catalog
+// answers the same way. `inherited` is the half a screen cannot work out for
+// itself — a blank and an override that happens to equal the crop's figure
+// look identical until the crop is corrected.
+interface EffectiveFigure<Value> {
+  value: Value
+  inherited: boolean
+}
+
+interface VarietyEffective {
+  spacing: EffectiveFigure<number | null>
+  inter_row_spacing: EffectiveFigure<number | null>
+  plants_per_square_foot: EffectiveFigure<number | null>
+  germination_days_min: EffectiveFigure<number | null>
+  germination_days_max: EffectiveFigure<number | null>
+  maturity_days_min: EffectiveFigure<number | null>
+  maturity_days_max: EffectiveFigure<number | null>
+  maturity_basis: EffectiveFigure<MaturityBasis>
+}
+
 interface PlantVariety extends PlantingDetails, ReferencedRecord {
   pk: number
   plant: number
   name: string
   notes: string | null
   maturity_basis: MaturityBasis | null
-  effective_maturity_basis: MaturityBasis
+  effective: VarietyEffective
   active: boolean
   merged_into: number | null
 }
@@ -107,6 +129,7 @@ interface ReferenceSet {
 }
 
 export {
+  EffectiveFigure,
   MaturityBasis,
   PlantFamily,
   Plant,
@@ -116,6 +139,7 @@ export {
   PlantCreate,
   PlantVarietyCreate,
   ReferencedRecord,
+  VarietyEffective,
   InstalledCatalog,
   ReferenceSet,
   ReferenceFamilyEntry,
