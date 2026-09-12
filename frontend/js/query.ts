@@ -83,6 +83,7 @@ const queryKeys = {
   },
   containerFills: {
     all: ['container-fills'] as const,
+    detail: (pk: number) => ['container-fills', 'detail', pk] as const,
     list: (target: object, page: number) => ['container-fills', 'list', target, page] as const,
     contents: (pk: number) => ['container-fills', 'contents', pk] as const
   },

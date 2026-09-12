@@ -3,15 +3,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { Link } from 'react-router'
 
-import { getPotFillContents, getPotFills, openPotFill, PotFillTarget } from '../api/container_fills'
+import { getPotFill, getPotFillContents, getPotFills, openPotFill, PotFillTarget } from '../api/container_fills'
 import { getInventoryBalances } from '../api/inventory'
 import { InputApplicationForm } from '../applications/application_form'
 import { queryKeys } from '../query'
 import { InventoryItem } from '../types/inventory'
 import { errorsByField, formatMoney, formatQuantity } from '../utils'
+import { PotFillClean } from './pot_fill_clean'
 
 function FillContents({ pk }: { pk: number }) {
   const [posted, setPosted] = React.useState<number>()
+  const history = useQuery({ queryKey: queryKeys.containerFills.detail(pk), queryFn: ({ signal }) => getPotFill(pk, signal) })
   const { data, isPending, isError } = useQuery({
     queryKey: queryKeys.containerFills.contents(pk),
     queryFn: ({ signal }) => getPotFillContents(pk, signal)
@@ -78,6 +80,28 @@ function FillContents({ pk }: { pk: number }) {
           ))}
         </tbody>
       </Table>
+      <PotFillClean key={`${data.status}:${data.digest}:${data.plants.join(',')}`} pk={pk} contents={data} />
+      <h3 className="h6 mt-3">Clean and correction history</h3>
+      {history.isPending && <p>Loading history…</p>}
+      {history.isError && <Alert variant="danger">Could not load clean history.</Alert>}
+      {history.data && (
+        <>
+          {history.data.events
+            .filter((event) => event.event_type === 'closed' || event.event_type === 'reopened')
+            .map((event) => (
+              <p key={event.pk}>
+                #{event.pk} · {new Date(event.occurred_at).toLocaleString()} · {event.event_type === 'closed' ? 'Cleaned' : 'Clean corrected'} — {event.reason}
+              </p>
+            ))}
+          {history.data.residuals.map((residual) => (
+            <p key={residual.pk}>
+              Lot #{residual.lot} · {residual.base_quantity} {residual.base_unit} · {residual.disposition} — {residual.reason}
+              {residual.correction_event !== null && ` (reversed by correction #${residual.correction_event})`}
+            </p>
+          ))}
+          {history.data.events.every((event) => event.event_type !== 'closed' && event.event_type !== 'reopened') && <p>No cleans recorded.</p>}
+        </>
+      )}
     </div>
   )
 }
