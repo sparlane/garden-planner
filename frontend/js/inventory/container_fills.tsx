@@ -5,11 +5,13 @@ import { Link } from 'react-router'
 
 import { getPotFillContents, getPotFills, openPotFill, PotFillTarget } from '../api/container_fills'
 import { getInventoryBalances } from '../api/inventory'
+import { InputApplicationForm } from '../applications/application_form'
 import { queryKeys } from '../query'
 import { InventoryItem } from '../types/inventory'
 import { errorsByField, formatMoney, formatQuantity } from '../utils'
 
 function FillContents({ pk }: { pk: number }) {
+  const [posted, setPosted] = React.useState<number>()
   const { data, isPending, isError } = useQuery({
     queryKey: queryKeys.containerFills.contents(pk),
     queryFn: ({ signal }) => getPotFillContents(pk, signal)
@@ -26,6 +28,15 @@ function FillContents({ pk }: { pk: number }) {
   ]
   return (
     <div className="mt-3">
+      {data.status === 'open' && (
+        <InputApplicationForm
+          title="Add growing media to this fill"
+          onPosted={(application) => setPosted(application.pk)}
+          targets={[{ key: `container_fill:${pk}`, target_type: 'container_fill', pk, label: `Fill #${pk} (all pots)` }]}
+          defaultTargetKeys={[`container_fill:${pk}`]}
+        />
+      )}
+      {posted !== undefined && <Alert variant="success">Media application #{posted} posted.</Alert>}
       <h3 className="h6">Current contents</h3>
       <p>{data.plants.length} plants in this fill.</p>
       {data.plants.map((plant) => (
