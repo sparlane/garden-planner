@@ -3,9 +3,12 @@
 
 from decimal import Decimal
 
+from django.db import transaction
 from django.utils import timezone
 
 from applications.services import LineRequest, TargetRequest, post_application
+from plantings.lifecycle import OutcomeRequest, record_lifecycle_event
+from plantings.movement import move_specific_plant
 from sales.test_counted_lines import CountedStockTestCase
 from seedtrays.container_fills import clean_empty_fill, open_numbered_fill
 from seedtrays.test_pot_media import PotMediaMixin
@@ -109,3 +112,61 @@ class PotMediaCostTests(PotMediaMixin, CountedStockTestCase):
         source = sources[0]
         self.assertEqual(source.source.pk, self.application.lines.get().pk)
         self.assertEqual(source.amount, Decimal('33.3334'))
+
+    def test_departure_automatically_posts_after_commit(self):
+        """The ordinary interval end posts costs only once its facts commit."""
+        placement = self.placements[0]
+        batch = placement.specific_plant.batch
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            self.leave(placement)
+            self.assertEqual(effective_allocations(batch), [])
+        self.assertEqual(len(callbacks), 1)
+        layer, = effective_allocations(batch)
+        self.assertEqual(layer.amount, Decimal('33.3334'))
+        self.assertEqual(layer.run.trigger, 'fill_departure')
+        self.assertIsNone(layer.run.created_by)
+        self.assertEqual(effective_allocations(self.placements[1].specific_plant.batch), [])
+        callbacks[0]()
+        self.assertEqual([row.pk for row in effective_allocations(batch)], [layer.pk])
+        with self.captureOnCommitCallbacks(execute=True) as repeated:
+            placement.notes = 'Departure checked.'
+            placement.save(update_fields=['notes'])
+        self.assertEqual(repeated, [])
+
+    def test_rolled_back_departure_never_posts_costs(self):
+        """An outer move failure discards both the departure and its callback."""
+        placement = self.placements[0]
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            with self.assertRaisesMessage(ValueError, 'Cancel move'):
+                with transaction.atomic():
+                    self.leave(placement)
+                    raise ValueError('Cancel move')
+        self.assertEqual(callbacks, [])
+        placement.refresh_from_db()
+        self.fill.refresh_from_db()
+        self.assertIsNone(placement.ended)
+        self.assertIsNone(self.fill.plant_share_count)
+        self.assertEqual(effective_allocations(placement.specific_plant.batch), [])
+
+    def test_move_posts_source_fill_media(self):
+        """Moving to another pot charges the fill left behind automatically."""
+        placement = self.placements[0]
+        destination = self.number(self.pots, 1)[0]
+        with self.captureOnCommitCallbacks(execute=True):
+            move_specific_plant(placement.specific_plant, {
+                'location_type': 'container_unit', 'container_unit': destination,
+            }, self.user)
+        layer, = effective_allocations(placement.specific_plant.batch)
+        self.assertEqual(layer.application_line_id, self.application.lines.get().pk)
+        self.assertEqual(layer.amount, Decimal('33.3334'))
+
+    def test_final_outcome_posts_departure_media(self):
+        """A failed plant also consumed its fixed share of the pot's mix."""
+        placement = self.placements[0]
+        with self.captureOnCommitCallbacks(execute=True):
+            record_lifecycle_event(
+                placement.specific_plant, self.user,
+                OutcomeRequest('failed', reason='Did not survive.'),
+            )
+        layer, = effective_allocations(placement.specific_plant.batch)
+        self.assertEqual(layer.amount, Decimal('33.3334'))

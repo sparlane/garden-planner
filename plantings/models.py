@@ -1906,6 +1906,7 @@ class SpecificPlantLocation(models.Model):
                 raise ValidationError({'ended': 'A recorded fill departure cannot be changed.'})
             if original.ended is None and self.ended is not None and (update_fields is None or 'ended' in update_fields):
                 self._freeze_fill_shares()
+                self._schedule_fill_costs()
         elif self.container_fill_id:
             raise ValidationError({'container_fill': 'Move the plant to join a fill; historical placements are not backfilled.'})
         elif original.container_unit_id != self.container_unit_id and self.container_unit_id:
@@ -1914,6 +1915,19 @@ class SpecificPlantLocation(models.Model):
                 inventory_unit_id=self.container_unit_id, status=SeedTrayGeneration.Status.OPEN,
             ).exists():
                 raise ValidationError({'container_unit': 'Move the plant to join the pot\'s fill.'})
+
+    def _schedule_fill_costs(self):
+        """Reallocate after releasing the departure's plant and container locks.
+
+        Reallocation locks every plant in the batch. Doing that while holding
+        this pot could deadlock against a sibling waiting to leave it. The
+        callback belongs to the outer transaction, so rolled-back moves never
+        allocate media and completed outcomes are visible to costing.
+        """
+        from costing.services import reallocate_fill_departure  # pylint: disable=import-outside-toplevel,cyclic-import
+
+        placement_id = self.pk
+        transaction.on_commit(lambda: reallocate_fill_departure(placement_id))
 
     def _freeze_fill_shares(self):
         """Fix the denominator once, while arrivals and other exits wait on the pot.
