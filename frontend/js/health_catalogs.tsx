@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { addHealthCatalogValue, getHealthDiagnoses, getHealthObservationTypes, updateHealthCatalogValue } from './api/health'
-import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
+import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, mergeChoices, retiredRowClass } from './catalog'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
 import { HealthCatalogKind, HealthCatalogValue, HealthDiagnosisCategory } from './types/health'
@@ -43,15 +43,17 @@ function nameOf(values: Array<HealthCatalogValue>, pk: number | null): string | 
   return values.find((value) => value.pk === pk)?.name ?? null
 }
 
-// A setting can only be merged onto one it is interchangeable with. For
-// evidence types that is every other one still in use; for a diagnosis it is
-// every other one still in use under the same category, because the server
-// refuses a cross-category merge as a reclassification and a picker offering
-// one would make that refusal the operator's problem rather than the screen's.
-function mergeChoices(values: Array<HealthCatalogValue>, source: HealthCatalogValue): Array<CatalogRecordLabel> {
-  return activeChoices(values)
-    .filter((value) => value.pk !== source.pk && value.category === source.category)
-    .map((value) => ({ pk: value.pk, label: value.name }))
+// For an evidence type a merge is onto every other one still in use; for a
+// diagnosis it is onto every other one still in use under the same category,
+// because the server refuses a cross-category merge as a reclassification and
+// a picker offering one would make that refusal the operator's problem rather
+// than the screen's. An evidence type carries no category, so the one filter
+// says both.
+function catalogMergeChoices(values: Array<HealthCatalogValue>, source: HealthCatalogValue): Array<CatalogRecordLabel> {
+  return mergeChoices(
+    values.filter((value) => value.category === source.category),
+    source
+  )
 }
 
 interface CatalogProps {
@@ -159,7 +161,7 @@ function Catalog({ kind, values, found, showRetired, onMerge, onSaved, onFailure
                       <Button
                         size="sm"
                         variant="outline-secondary"
-                        onClick={() => onMerge({ collection, source: { pk: value.pk, label: value.name }, choices: mergeChoices(values, value) })}
+                        onClick={() => onMerge({ collection, source: { pk: value.pk, label: value.name }, choices: catalogMergeChoices(values, value) })}
                       >
                         Merge
                       </Button>{' '}

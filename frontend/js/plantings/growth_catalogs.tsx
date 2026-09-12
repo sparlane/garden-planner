@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { addGrowthCatalogValue, getGrowthStages, getPlantGrades, updateGrowthCatalogValue } from '../api/plantings'
-import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from '../catalog'
+import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, mergeChoices, retiredRowClass } from '../catalog'
 import { queryKeys, searchedKey } from '../query'
 import { CatalogRecordLabel } from '../types/catalog'
 import { GrowthCatalogKind, GrowthCatalogValue } from '../types/plantings'
@@ -28,16 +28,6 @@ interface Merging {
 function nameOf(values: Array<GrowthCatalogValue>, pk: number | null): string | null {
   if (pk == null) return null
   return values.find((value) => value.pk === pk)?.name ?? null
-}
-
-// A setting can only be merged onto one it is interchangeable with, which for a
-// flat catalog is every other one still in use. The retired ones are left out
-// because merging into a retired record is refused, and the record being merged
-// away is not a choice for itself.
-function mergeChoices(values: Array<GrowthCatalogValue>, source: GrowthCatalogValue): Array<CatalogRecordLabel> {
-  return activeChoices(values)
-    .filter((value) => value.pk !== source.pk)
-    .map((value) => ({ pk: value.pk, label: value.name }))
 }
 
 interface CatalogProps {

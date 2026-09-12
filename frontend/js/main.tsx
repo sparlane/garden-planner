@@ -8,6 +8,7 @@ import { HashRouter, Navigate, Route, Routes, useParams } from 'react-router'
 
 import { GPTopBar } from './menu.js'
 import { PlantsView } from './plants.js'
+import { CropDetailView, PlantFamilyDetailView, PlantVarietyDetailView } from './plants/detail.js'
 import { SeedStockTable, SeedSuppliersTable, SeedTable } from './seeds.js'
 import { GardenSquarePlantingTable, SeedTrayPlantingTable } from './planting.js'
 import { GardenDisplay } from './garden.js'
@@ -52,6 +53,22 @@ function NumberedUnitDetailsRoute() {
   }
 
   return <NumberedUnitDetails key={unitPk} unitPk={unitPk} />
+}
+
+// The crop catalog's three detail routes. Each reads the record by its own id
+// rather than picking it out of a collection, so a variety is reachable by URL
+// however long the catalog has grown -- which is the point of having the route
+// at all.
+function CatalogRecordRoute({ param, missing, children }: { param: string; missing: string; children: (pk: number) => React.ReactElement }) {
+  const params = useParams()
+  const value = params[param]
+  const pk = Number(value)
+
+  if (!value || !Number.isInteger(pk) || pk <= 0) {
+    return <div>{missing}</div>
+  }
+
+  return children(pk)
 }
 
 function SeedTrayDetailsRoute() {
@@ -131,6 +148,30 @@ function FrontEndPage() {
         <Route path="/setup" element={<GardenSetup workspace={workspace} />} />
         <Route path="/setup/:areaId" element={<GardenSetup workspace={workspace} />} />
         <Route path="/plants" element={<PlantsView />} />
+        <Route
+          path="/plants/family/:familyId"
+          element={
+            <CatalogRecordRoute param="familyId" missing="Family not found.">
+              {(pk) => <PlantFamilyDetailView key={pk} familyPk={pk} />}
+            </CatalogRecordRoute>
+          }
+        />
+        <Route
+          path="/plants/plant/:plantId"
+          element={
+            <CatalogRecordRoute param="plantId" missing="Crop not found.">
+              {(pk) => <CropDetailView key={pk} plantPk={pk} />}
+            </CatalogRecordRoute>
+          }
+        />
+        <Route
+          path="/plants/variety/:varietyId"
+          element={
+            <CatalogRecordRoute param="varietyId" missing="Variety not found.">
+              {(pk) => <PlantVarietyDetailView key={pk} varietyPk={pk} />}
+            </CatalogRecordRoute>
+          }
+        />
         <Route path="/seeds/suppliers" element={<SeedSuppliersTable />} />
         <Route path="/seeds" element={<SeedTable />} />
         <Route path="/seeds/stock" element={<SeedStockTable workspace={workspace} />} />

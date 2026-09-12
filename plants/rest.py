@@ -6,10 +6,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from common.catalog import CatalogViewSetMixin
+from common.rest_query import parse_integer
 from common.retirement import RetirementSerializerMixin
 from workspaces.current import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
+from .metadata import variety_inheritance
 from .models import PlantFamily, Plant, PlantVariety
 from .reference_sets import ReferenceSetSerializer, export_reference_set, install_reference_set
 from .starters import ensure_starter_crops
@@ -78,18 +80,30 @@ class PlantVarietySerializer(
     """
     Serializer for Plant Variety
     """
+
+    effective = serializers.SerializerMethodField()
+
     class Meta:
         model = PlantVariety
         fields = [
             'pk', 'plant', 'name', 'notes', 'spacing', 'inter_row_spacing',
             'plants_per_square_foot', 'germination_days_min',
             'germination_days_max', 'maturity_days_min', 'maturity_days_max',
-            'maturity_basis', 'effective_maturity_basis', 'active',
+            'maturity_basis', 'effective', 'active',
             'merged_into', 'reference_source', 'reference_fields',
         ]
-        read_only_fields = ['effective_maturity_basis']
 
     workspace_field_lookups = {'plant': 'workspace'}
+
+    def get_effective(self, instance):
+        """Report what each cultivation figure is, and whose figure it is.
+
+        The written fields above are what this variety says; this is what it
+        is planned by, which is not the same answer whenever one of them is
+        blank. Both are sent because a screen correcting the record has to
+        offer the override while saying what leaving it blank would mean.
+        """
+        return variety_inheritance(instance)
 
 
 class PlantFamilyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors
@@ -120,10 +134,27 @@ class PlantVarietyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, vie
     """
     ViewSet of Plant Varieties
     """
-    queryset = PlantVariety.objects.order_by('pk')
+    #: Every row reports the figures it is planned by, and a variety that
+    #: overrides nothing is planned by its crop's, so the crop is loaded with
+    #: the page rather than once per row of it.
+    queryset = PlantVariety.objects.select_related('plant').order_by('pk')
     serializer_class = PlantVarietySerializer
 
     search_related = ('plant__family',)
+
+    def get_queryset(self):
+        """Narrow the collection to one crop's varieties when asked to.
+
+        Families and crops are short enough to be sent whole and filed in the
+        browser, and varieties are the one level of the catalog that is not:
+        a screen showing a crop cannot find its own varieties in a page of a
+        catalog that may not contain them.
+        """
+        queryset = super().get_queryset()
+        plant = parse_integer(self.request.query_params.get('plant'), 'plant')
+        if plant is None:
+            return queryset
+        return queryset.filter(plant_id=plant)
 
 
 def installed_response(request, installed):

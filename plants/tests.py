@@ -87,7 +87,7 @@ class PlantRESTContractTests(RESTContractTestCase):
             },
         )
         self.assertIsNone(variety['maturity_basis'])
-        self.assertEqual(variety['effective_maturity_basis'], 'transplanting')
+        self.assertEqual(variety['effective']['maturity_basis'], {'value': 'transplanting', 'inherited': True})
 
     def test_resources_can_be_edited_and_reassigned(self):
         """Catalog corrections may update details and hierarchy relationships."""
@@ -145,7 +145,7 @@ class PlantRESTContractTests(RESTContractTestCase):
         self.assertEqual(plant_response.data['maturity_basis'], 'transplanting')
         self.assertEqual(variety_response.status_code, 200, variety_response.data)
         self.assertEqual(variety_response.data['plant'], second_plant['pk'])
-        self.assertEqual(variety_response.data['effective_maturity_basis'], 'seed')
+        self.assertEqual(variety_response.data['effective']['maturity_basis'], {'value': 'seed', 'inherited': False})
 
     def test_variety_maturity_basis_can_return_to_inherited_default(self):
         """A null override follows later changes to the parent plant default."""
@@ -179,4 +179,4 @@ class PlantRESTContractTests(RESTContractTestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertIsNone(response.data['maturity_basis'])
-        self.assertEqual(response.data['effective_maturity_basis'], 'transplanting')
+        self.assertEqual(response.data['effective']['maturity_basis'], {'value': 'transplanting', 'inherited': True})

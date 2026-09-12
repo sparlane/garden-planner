@@ -7,6 +7,8 @@ from common.merging import MergeableModel
 from common.reference import ReferencedModel
 from workspaces.models import WorkspaceOwnedModel
 
+from .metadata import variety_metadata_value
+
 
 class MaturityBasis(models.TextChoices):
     """The cultivation event from which maturity days are counted."""
@@ -105,8 +107,13 @@ class PlantVariety(ReferencedModel, MergeableModel, WorkspaceOwnedModel):
 
     @property
     def effective_maturity_basis(self):
-        """Return this variety's override or its plant's default."""
-        return self.maturity_basis or self.plant.maturity_basis
+        """Return this variety's override or its plant's default.
+
+        Read through ``plants.metadata`` like every other inherited figure, so
+        that what a maturity date is counted from cannot be resolved one way
+        here and another way where the date is worked out.
+        """
+        return variety_metadata_value(self, 'maturity_basis')
 
     def search_names(self):
         """Return the names this variety is found by.

@@ -4,6 +4,7 @@ import 'bootstrap/dist/css/bootstrap.css'
 import React from 'react'
 import { Alert, Button, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router'
 
 import {
   addPlant,
@@ -29,9 +30,20 @@ import {
   RetireButton,
   RetiredBadge,
   activeChoices,
+  mergeChoices,
   referenceFigureClass,
   retiredRowClass
 } from './catalog'
+import {
+  BASIS_LABELS,
+  CULTIVATION_FIGURES,
+  CultivationFigure,
+  CultivationFormState,
+  EffectiveFigureCell,
+  cultivationPayload,
+  cultivationState,
+  figureText
+} from './plants/cultivation'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
 import { InstalledCatalog, MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from './types/plants'
@@ -65,21 +77,6 @@ function nameOf(records: Array<{ pk: number; name: string }>, pk: number | null)
   return records.find((record) => record.pk === pk)?.name ?? null
 }
 
-// A duplicate can only be merged onto a record it is interchangeable with, so
-// each caller passes the records still in use beside it — under the same parent,
-// where it has one. The server refuses the rest, but a picker that offers them
-// makes the refusal the operator's problem rather than the screen's.
-function mergeChoices<Record extends { pk: number; name: string; active: boolean }>(records: Array<Record>, source: Record): Array<CatalogRecordLabel> {
-  return activeChoices(records)
-    .filter((record) => record.pk !== source.pk)
-    .map((record) => ({ pk: record.pk, label: record.name }))
-}
-
-const BASIS_LABELS: Record<MaturityBasis, string> = {
-  seed: 'From seed',
-  transplanting: 'From transplanting'
-}
-
 function errorsByField(error: unknown): FieldErrors {
   const body = error instanceof ApiError ? error.body : null
   if (!body || typeof body !== 'object') return { form: 'The changes could not be saved.' }
@@ -88,25 +85,6 @@ function errorsByField(error: unknown): FieldErrors {
     errors[field] = Array.isArray(detail) ? String(detail[0]) : String(detail)
   }
   return errors
-}
-
-function optionalNumber(value: string): number | null {
-  return value === '' ? null : Number(value)
-}
-
-function inputNumber(value: number | null | undefined): string {
-  return value === null || value === undefined ? '' : String(value)
-}
-
-function displayNumber(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : String(value)
-}
-
-function displayRange(minimum: number | null | undefined, maximum: number | null | undefined): string {
-  if (minimum == null && maximum == null) return '—'
-  if (minimum == null) return `Up to ${maximum}`
-  if (maximum == null) return `${minimum}+`
-  return `${minimum}–${maximum}`
 }
 
 interface SaveActionsProps {
@@ -212,79 +190,25 @@ function FamilyEditor({ family, onSave, onDone }: FamilyEditorProps) {
   )
 }
 
-interface CultivationFormState {
-  name: string
-  spacing: string
-  interRowSpacing: string
-  plantsPerSquareFoot: string
-  germinationMin: string
-  germinationMax: string
-  maturityMin: string
-  maturityMax: string
-  notes: string
-}
-
-function cultivationState(value?: Plant | PlantVariety): CultivationFormState {
-  return {
-    name: value?.name ?? '',
-    spacing: inputNumber(value?.spacing),
-    interRowSpacing: inputNumber(value?.inter_row_spacing),
-    plantsPerSquareFoot: inputNumber(value?.plants_per_square_foot),
-    germinationMin: inputNumber(value?.germination_days_min),
-    germinationMax: inputNumber(value?.germination_days_max),
-    maturityMin: inputNumber(value?.maturity_days_min),
-    maturityMax: inputNumber(value?.maturity_days_max),
-    notes: value?.notes ?? ''
-  }
-}
-
-function cultivationPayload(form: CultivationFormState) {
-  return {
-    name: form.name,
-    spacing: optionalNumber(form.spacing),
-    inter_row_spacing: optionalNumber(form.interRowSpacing),
-    plants_per_square_foot: optionalNumber(form.plantsPerSquareFoot),
-    germination_days_min: optionalNumber(form.germinationMin),
-    germination_days_max: optionalNumber(form.germinationMax),
-    maturity_days_min: optionalNumber(form.maturityMin),
-    maturity_days_max: optionalNumber(form.maturityMax),
-    notes: form.notes
-  }
-}
-
-interface NumberCellProps {
+interface FigureCellProps {
+  figure: CultivationFigure
   formId: string
-  field: string
   errors: FieldErrors
-  value: string
-  onChange: (value: string) => void
+  form: CultivationFormState
+  onChange: (field: string, value: string) => void
 }
 
-function NumberCell(props: NumberCellProps) {
-  return (
-    <td>
-      <EditorInput {...props} type="number" />
-    </td>
-  )
-}
-
-interface RangeCellProps {
-  formId: string
-  minimumField: string
-  maximumField: string
-  errors: FieldErrors
-  minimum: string
-  maximum: string
-  onMinimum: (value: string) => void
-  onMaximum: (value: string) => void
-}
-
-function RangeCell({ formId, minimumField, maximumField, errors, minimum, maximum, onMinimum, onMaximum }: RangeCellProps) {
+// One figure in the column its heading names, however many boxes it takes.
+// Both the cell and the heading are drawn from `CULTIVATION_FIGURES`, so a
+// column cannot stop matching what it is labelled.
+function FigureCell({ figure, formId, errors, form, onChange }: FigureCellProps) {
+  const fields = figure.maximumField ? [figure.field, figure.maximumField] : [figure.field]
   return (
     <td>
       <div className="d-flex gap-1">
-        <EditorInput formId={formId} field={minimumField} errors={errors} value={minimum} onChange={onMinimum} type="number" />
-        <EditorInput formId={formId} field={maximumField} errors={errors} value={maximum} onChange={onMaximum} type="number" />
+        {fields.map((field) => (
+          <EditorInput key={field} formId={formId} field={field} errors={errors} value={form[field]} onChange={(value) => onChange(field, value)} type="number" />
+        ))}
       </div>
     </td>
   )
@@ -305,7 +229,7 @@ function PlantEditor({ plant, families, initialFamily, onSave, onDone }: PlantEd
   const [form, setForm] = React.useState(() => cultivationState(plant))
   const [saving, setSaving] = React.useState(false)
   const [errors, setErrors] = React.useState<FieldErrors>({})
-  const update = (field: keyof CultivationFormState, value: string) => setForm((current) => ({ ...current, [field]: value }))
+  const update = (field: string, value: string) => setForm((current) => ({ ...current, [field]: value }))
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -339,29 +263,9 @@ function PlantEditor({ plant, families, initialFamily, onSave, onDone }: PlantEd
         <DuplicateWarning collection={COLLECTIONS.plant} name={form.name} scope={{ family: Number(family) }} exclude={plant?.pk} />
       </td>
       <td></td>
-      <NumberCell formId={formId} field="spacing" errors={errors} value={form.spacing} onChange={(value) => update('spacing', value)} />
-      <NumberCell formId={formId} field="inter_row_spacing" errors={errors} value={form.interRowSpacing} onChange={(value) => update('interRowSpacing', value)} />
-      <NumberCell formId={formId} field="plants_per_square_foot" errors={errors} value={form.plantsPerSquareFoot} onChange={(value) => update('plantsPerSquareFoot', value)} />
-      <RangeCell
-        formId={formId}
-        minimumField="germination_days_min"
-        maximumField="germination_days_max"
-        errors={errors}
-        minimum={form.germinationMin}
-        maximum={form.germinationMax}
-        onMinimum={(value) => update('germinationMin', value)}
-        onMaximum={(value) => update('germinationMax', value)}
-      />
-      <RangeCell
-        formId={formId}
-        minimumField="maturity_days_min"
-        maximumField="maturity_days_max"
-        errors={errors}
-        minimum={form.maturityMin}
-        maximum={form.maturityMax}
-        onMinimum={(value) => update('maturityMin', value)}
-        onMaximum={(value) => update('maturityMax', value)}
-      />
+      {CULTIVATION_FIGURES.map((figure) => (
+        <FigureCell key={figure.field} figure={figure} formId={formId} errors={errors} form={form} onChange={update} />
+      ))}
       <td>
         <Form.Select size="sm" form={formId} value={basis} isInvalid={'maturity_basis' in errors} onChange={(event) => setBasis(event.target.value as MaturityBasis)}>
           <option value="seed">From seed</option>
@@ -395,7 +299,7 @@ function VarietyEditor({ variety, plants, families, initialPlant, onSave, onDone
   const [form, setForm] = React.useState(() => cultivationState(variety))
   const [saving, setSaving] = React.useState(false)
   const [errors, setErrors] = React.useState<FieldErrors>({})
-  const update = (field: keyof CultivationFormState, value: string) => setForm((current) => ({ ...current, [field]: value }))
+  const update = (field: string, value: string) => setForm((current) => ({ ...current, [field]: value }))
   const selectedPlant = plants.find((value) => value.pk === Number(plant))
   const familyName = families.find((value) => value.pk === selectedPlant?.family)?.name ?? '—'
 
@@ -431,29 +335,9 @@ function VarietyEditor({ variety, plants, families, initialPlant, onSave, onDone
         <EditorInput formId={formId} field="name" errors={errors} value={form.name} onChange={(value) => update('name', value)} required />
         <DuplicateWarning collection={COLLECTIONS.variety} name={form.name} scope={{ plant: Number(plant) }} exclude={variety?.pk} />
       </td>
-      <NumberCell formId={formId} field="spacing" errors={errors} value={form.spacing} onChange={(value) => update('spacing', value)} />
-      <NumberCell formId={formId} field="inter_row_spacing" errors={errors} value={form.interRowSpacing} onChange={(value) => update('interRowSpacing', value)} />
-      <NumberCell formId={formId} field="plants_per_square_foot" errors={errors} value={form.plantsPerSquareFoot} onChange={(value) => update('plantsPerSquareFoot', value)} />
-      <RangeCell
-        formId={formId}
-        minimumField="germination_days_min"
-        maximumField="germination_days_max"
-        errors={errors}
-        minimum={form.germinationMin}
-        maximum={form.germinationMax}
-        onMinimum={(value) => update('germinationMin', value)}
-        onMaximum={(value) => update('germinationMax', value)}
-      />
-      <RangeCell
-        formId={formId}
-        minimumField="maturity_days_min"
-        maximumField="maturity_days_max"
-        errors={errors}
-        minimum={form.maturityMin}
-        maximum={form.maturityMax}
-        onMinimum={(value) => update('maturityMin', value)}
-        onMaximum={(value) => update('maturityMax', value)}
-      />
+      {CULTIVATION_FIGURES.map((figure) => (
+        <FigureCell key={figure.field} figure={figure} formId={formId} errors={errors} form={form} onChange={update} />
+      ))}
       <td>
         <Form.Select size="sm" form={formId} value={basis} isInvalid={'maturity_basis' in errors} onChange={(event) => setBasis(event.target.value as MaturityBasis | '')}>
           <option value="">Inherit ({selectedPlant ? BASIS_LABELS[selectedPlant.maturity_basis] : 'plant default'})</option>
@@ -538,7 +422,7 @@ function PlantsView() {
       rows.push(
         <tr key={`family-${family.pk}`} className={retiredRowClass(family.active)}>
           <td>
-            {family.name}
+            <Link to={`/plants/family/${family.pk}`}>{family.name}</Link>
             <RetiredBadge active={family.active} />
             <ReferenceBadge record={family} />
             <MergedIntoNote into={nameOf(families, family.merged_into)} />
@@ -592,17 +476,17 @@ function PlantsView() {
           <tr key={`plant-${plant.pk}`} className={retiredRowClass(plant.active)}>
             <td>{family.name}</td>
             <td>
-              {plant.name}
+              <Link to={`/plants/plant/${plant.pk}`}>{plant.name}</Link>
               <RetiredBadge active={plant.active} />
               <ReferenceBadge record={plant} />
               <MergedIntoNote into={nameOf(plants, plant.merged_into)} />
             </td>
             <td></td>
-            <td className={referenceFigureClass(plant, 'spacing')}>{displayNumber(plant.spacing)}</td>
-            <td className={referenceFigureClass(plant, 'inter_row_spacing')}>{displayNumber(plant.inter_row_spacing)}</td>
-            <td className={referenceFigureClass(plant, 'plants_per_square_foot')}>{displayNumber(plant.plants_per_square_foot)}</td>
-            <td className={referenceFigureClass(plant, 'germination_days_min')}>{displayRange(plant.germination_days_min, plant.germination_days_max)}</td>
-            <td className={referenceFigureClass(plant, 'maturity_days_min')}>{displayRange(plant.maturity_days_min, plant.maturity_days_max)}</td>
+            {CULTIVATION_FIGURES.map((figure) => (
+              <td key={figure.field} className={referenceFigureClass(plant, figure.field)}>
+                {figureText(plant, figure)}
+              </td>
+            ))}
             <td className={referenceFigureClass(plant, 'maturity_basis')}>{BASIS_LABELS[plant.maturity_basis]}</td>
             <td>{plant.notes || '—'}</td>
             <td>
@@ -663,17 +547,17 @@ function PlantsView() {
               <td>{family.name}</td>
               <td>{plant.name}</td>
               <td>
-                {variety.name}
+                <Link to={`/plants/variety/${variety.pk}`}>{variety.name}</Link>
                 <RetiredBadge active={variety.active} />
                 <ReferenceBadge record={variety} />
                 <MergedIntoNote into={nameOf(varieties, variety.merged_into)} />
               </td>
-              <td>{displayNumber(variety.spacing)}</td>
-              <td>{displayNumber(variety.inter_row_spacing)}</td>
-              <td>{displayNumber(variety.plants_per_square_foot)}</td>
-              <td className={referenceFigureClass(variety, 'germination_days_min')}>{displayRange(variety.germination_days_min, variety.germination_days_max)}</td>
-              <td className={referenceFigureClass(variety, 'maturity_days_min')}>{displayRange(variety.maturity_days_min, variety.maturity_days_max)}</td>
-              <td>{variety.maturity_basis ? BASIS_LABELS[variety.maturity_basis] : `Inherit (${BASIS_LABELS[variety.effective_maturity_basis]})`}</td>
+              {CULTIVATION_FIGURES.map((figure) => (
+                <td key={figure.field} className={referenceFigureClass(variety, figure.field)}>
+                  <EffectiveFigureCell variety={variety} figure={figure} crop={plant.name} />
+                </td>
+              ))}
+              <td>{variety.maturity_basis ? BASIS_LABELS[variety.maturity_basis] : `Inherit (${BASIS_LABELS[variety.effective.maturity_basis.value]})`}</td>
               <td>{variety.notes || '—'}</td>
               <td>
                 <Button size="sm" variant="outline-secondary" onClick={() => setEditor({ kind: 'variety', pk: variety.pk })}>
@@ -714,7 +598,8 @@ function PlantsView() {
         <div>
           <h2 className="mb-1">Plants</h2>
           <div className="text-muted">
-            Variety values override plant defaults when provided. Figures shown in grey came with the set a record was installed from rather than from your garden.
+            Variety values override plant defaults when provided. A variety figure in brackets is its plant&apos;s, which the variety leaves blank and is planned by. Figures shown
+            in grey came with the set a record was installed from rather than from your garden.
           </div>
         </div>
         <div className="d-flex align-items-center gap-3">
@@ -759,11 +644,9 @@ function PlantsView() {
             <th>Family</th>
             <th>Plant</th>
             <th>Variety</th>
-            <th>Spacing (mm)</th>
-            <th>Row spacing (mm)</th>
-            <th>Per sq ft</th>
-            <th>Germination (days)</th>
-            <th>Maturity (days)</th>
+            {CULTIVATION_FIGURES.map((figure) => (
+              <th key={figure.field}>{figure.label}</th>
+            ))}
             <th>Maturity counted</th>
             <th>Notes</th>
             <th>Actions</th>

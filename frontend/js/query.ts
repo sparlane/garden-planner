@@ -120,7 +120,17 @@ const queryKeys = {
     all: ['plants'] as const,
     families: ['plants', 'families'] as const,
     plants: ['plants', 'plants'] as const,
-    varieties: ['plants', 'varieties'] as const
+    varieties: ['plants', 'varieties'] as const,
+    // One record, for the page that is about that record. It is a key of its
+    // own rather than a read of the collection above, because varieties are
+    // paginated: the record a detail route is showing need not be on the page
+    // the collection last cached. `cropVarieties` is the same reasoning from
+    // the other end — a crop's own varieties, which it cannot file out of a
+    // page of the catalog that may not hold them.
+    family: (pk: number) => ['plants', 'families', 'detail', pk] as const,
+    plant: (pk: number) => ['plants', 'plants', 'detail', pk] as const,
+    variety: (pk: number) => ['plants', 'varieties', 'detail', pk] as const,
+    cropVarieties: (plant: number) => ['plants', 'varieties', 'of-crop', plant] as const
   },
   suppliers: {
     all: ['suppliers'] as const
