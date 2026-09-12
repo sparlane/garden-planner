@@ -62,7 +62,7 @@ def pot_fill_cost_breakdown(fill):
     applied = sum((row['base_quantity'] * (row['unit_cost'] or 0) for row in media), Decimal('0'))
     departed = quantize_cost(applied * fraction.numerator / fraction.denominator)
     residuals = {'waste': Decimal('0'), 'reclaimed': Decimal('0')}
-    for residual in fill.residuals.filter(kind='media'):
+    for residual in fill.residuals.filter(kind='media', pot_correction__isnull=True):
         unknown = unknown or residual.unit_cost is None
         residuals[residual.disposition] += residual.base_quantity * (residual.unit_cost or 0)
     amounts = {

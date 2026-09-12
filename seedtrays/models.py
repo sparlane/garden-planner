@@ -489,6 +489,36 @@ class SeedTrayGenerationEvent(models.Model):
         raise ValidationError('Generation events cannot be deleted.')
 
 
+class PotFillResidualCorrection(models.Model):
+    """Append a mistaken pot disposition's correction without rewriting it."""
+
+    residual = models.OneToOneField(
+        'SeedTrayGenerationResidual', on_delete=models.PROTECT,
+        related_name='pot_correction',
+    )
+    event = models.ForeignKey(
+        SeedTrayGenerationEvent, on_delete=models.PROTECT,
+        related_name='pot_residual_corrections',
+    )
+
+    def clean(self):
+        super().clean()
+        if self.residual_id and self.event_id:
+            if self.event.generation_id != self.residual.generation_id or self.event.generation.tray_id:
+                raise ValidationError('The correction must belong to the same pot fill.')
+            if self.event.event_type != SeedTrayGenerationEvent.EventType.REOPENED:
+                raise ValidationError('The correction must record a reopening.')
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Pot residual corrections are immutable.')
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Pot residual corrections cannot be deleted.')
+
+
 class SeedTrayGenerationResidual(models.Model):
     """One disposition an operator recorded while cleaning a generation.
 
