@@ -6,7 +6,7 @@ import { addInputApplication, deleteInputApplication, postInputApplication, prev
 import { getInventoryBalances, getInventoryItems } from '../api/inventory'
 import { queryKeys } from '../query'
 import { formatMeasure, formatQuantity, localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
-import { ApplicationPreview, ApplicationTargetType, InputApplication } from '../types/applications'
+import { ApplicationLineInput, ApplicationPreview, ApplicationTargetType, InputApplication } from '../types/applications'
 import { invalidateApplications } from './application_list'
 
 interface ApplicationTargetOption {
@@ -42,7 +42,7 @@ function targetKey(option: ApplicationTargetOption) {
 function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, title = 'Apply an input', onPosted }: InputApplicationFormProps) {
   const queryClient = useQueryClient()
   const [item, setItem] = React.useState<number | ''>('')
-  const [lot, setLot] = React.useState<number | ''>('')
+  const [stock, setStock] = React.useState('')
   const [quantity, setQuantity] = React.useState('')
   const [waste, setWaste] = React.useState('')
   const [wasteReason, setWasteReason] = React.useState('')
@@ -65,14 +65,18 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
   })
 
   const targetsSeedTray = tray !== undefined || targets.some((target) => target.target_type === 'seed_tray_cell')
+  const targetsPotFill = targets.some((target) => target.target_type === 'container_fill')
   // Seed stock is consumed by a sowing, not by an input application. A tray's
   // cells additionally receive only media and treatments; containers, labels,
   // packaging, and unrelated physical stock have their own workflows.
   const applicableItems = items.filter(
-    (entry) => entry.category !== 'seed' && (!targetsSeedTray || entry.category === 'growing_media' || entry.category === 'fertilizer_treatment')
+    (entry) =>
+      entry.category !== 'seed' &&
+      (!targetsPotFill || entry.category === 'growing_media') &&
+      (!targetsSeedTray || entry.category === 'growing_media' || entry.category === 'fertilizer_treatment')
   )
   const chosenItem = applicableItems.find((entry) => entry.pk === item)
-  const chosenBalance = balances.find((entry) => entry.lot === lot)
+  const chosenBalance = balances.find((entry) => `${entry.lot}:${entry.location}` === stock)
   const previewLine = preview?.lines[0]
   const overrideRequired = previewLine?.override_required ?? false
   const selectable = targets.filter((option) => !option.blocked)
@@ -87,13 +91,14 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
     setPreview(undefined)
   }
 
-  function linePayload() {
+  function linePayload(): ApplicationLineInput {
     return {
       item: Number(item),
-      lot: Number(lot),
+      lot: chosenBalance!.lot,
+      ...(targetsPotFill ? { usage_basis: 'manual' as const } : {}),
       applied_quantity: quantity,
       unit_code: chosenItem?.base_unit ?? null,
-      fill_factor: fillFactor === '' ? null : fillFactor,
+      fill_factor: targetsPotFill || fillFactor === '' ? null : fillFactor,
       waste_quantity: waste === '' ? '0' : waste,
       waste_reason: wasteReason,
       override_reason: overrideReason,
@@ -163,7 +168,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
     setError(undefined)
   }
 
-  const readyToCheck = item !== '' && lot !== '' && quantity.trim() !== '' && (tray !== undefined || selected.length > 0)
+  const readyToCheck = item !== '' && chosenBalance !== undefined && quantity.trim() !== '' && (tray !== undefined || selected.length > 0)
   const readyToPost = preview !== undefined && !checkMutation.isPending && (!overrideRequired || overrideReason.trim() !== '')
 
   return (
@@ -178,7 +183,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
                 value={item}
                 onChange={(event) => {
                   setItem(event.target.value === '' ? '' : Number(event.target.value))
-                  setLot('')
+                  setStock('')
                   discardPreview()
                 }}
               >
@@ -193,18 +198,18 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
           </Col>
           <Col md={4}>
             <Form.Group className="mb-3" controlId="application-lot">
-              <Form.Label>Lot</Form.Label>
+              <Form.Label>Lot and location</Form.Label>
               <Form.Select
-                value={lot}
+                value={stock}
                 disabled={item === ''}
                 onChange={(event) => {
-                  setLot(event.target.value === '' ? '' : Number(event.target.value))
+                  setStock(event.target.value)
                   discardPreview()
                 }}
               >
-                <option value="">Select a lot</option>
+                <option value="">Select stock</option>
                 {balances.map((entry) => (
-                  <option key={`${entry.lot}-${entry.location}`} value={entry.lot}>
+                  <option key={`${entry.lot}-${entry.location}`} value={`${entry.lot}:${entry.location}`}>
                     {entry.lot_identifier} · {entry.location_name} · {formatMeasure(entry.available_quantity, entry.base_unit)}
                   </option>
                 ))}
@@ -254,7 +259,10 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
         <Row className="g-2">
           <Col md={3}>
             <Form.Group className="mb-3" controlId="application-quantity">
-              <Form.Label>Confirmed quantity{chosenItem ? ` (${chosenItem.base_unit})` : ''}</Form.Label>
+              <Form.Label>
+                {targetsPotFill ? 'Quantity applied to the whole fill' : 'Confirmed quantity'}
+                {chosenItem ? ` (${chosenItem.base_unit})` : ''}
+              </Form.Label>
               <Form.Control
                 value={quantity}
                 inputMode="decimal"
@@ -266,21 +274,23 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
               />
             </Form.Group>
           </Col>
-          <Col md={3}>
-            <Form.Group className="mb-3" controlId="application-fill-factor">
-              <Form.Label>Fill factor</Form.Label>
-              <Form.Control
-                value={fillFactor}
-                inputMode="decimal"
-                placeholder="1.0"
-                onChange={(event) => {
-                  setFillFactor(event.target.value)
-                  discardPreview()
-                }}
-              />
-              <Form.Text className="text-muted">How full each cell was packed.</Form.Text>
-            </Form.Group>
-          </Col>
+          {!targetsPotFill && (
+            <Col md={3}>
+              <Form.Group className="mb-3" controlId="application-fill-factor">
+                <Form.Label>Fill factor</Form.Label>
+                <Form.Control
+                  value={fillFactor}
+                  inputMode="decimal"
+                  placeholder="1.0"
+                  onChange={(event) => {
+                    setFillFactor(event.target.value)
+                    discardPreview()
+                  }}
+                />
+                <Form.Text className="text-muted">How full each cell was packed.</Form.Text>
+              </Form.Group>
+            </Col>
+          )}
           <Col md={3}>
             <Form.Group className="mb-3" controlId="application-waste">
               <Form.Label>Waste</Form.Label>
@@ -307,8 +317,8 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
           <Alert variant={previewLine.short ? 'danger' : 'info'}>
             <div>{previewLine.formula}</div>
             <div className="small">
-              Calculated {formatMeasure(previewLine.calculated_base_quantity ?? '0', previewLine.base_unit)} · applying{' '}
-              {formatMeasure(previewLine.applied_base_quantity, previewLine.base_unit)}
+              {previewLine.calculated_base_quantity === null ? 'Manual quantity' : `Calculated ${formatMeasure(previewLine.calculated_base_quantity, previewLine.base_unit)}`} ·
+              applying {formatMeasure(previewLine.applied_base_quantity, previewLine.base_unit)}
             </div>
             <div className="small">
               Lot holds {formatQuantity(previewLine.available_base_quantity)} and would hold {formatQuantity(previewLine.available_after_base_quantity)} {previewLine.base_unit}

@@ -21,6 +21,7 @@ export interface PotFillPage {
 }
 
 export interface PotFillContents {
+  status: 'open' | 'closed'
   plants: number[]
   media: Array<{ lot: number; base_quantity: string; base_unit: string }>
   costs: {

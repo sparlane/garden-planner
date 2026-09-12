@@ -14,7 +14,11 @@ const STATUS_VARIANTS: Record<string, string> = {
 }
 
 function invalidateApplications(queryClient: ReturnType<typeof useQueryClient>) {
-  return Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.applications.all }), queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all })])
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.applications.all }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.containerFills.all })
+  ])
 }
 
 function ReverseApplicationButton({ application }: { application: InputApplication }) {
