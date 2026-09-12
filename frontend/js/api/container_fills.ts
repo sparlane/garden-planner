@@ -1,4 +1,5 @@
 import { csrfPost, fetchAsJson } from '../utils'
+import { CleanMediaDisposition, SeedTrayGenerationEvent } from '../types/seedtrays'
 
 export type PotFillTarget = { inventory_unit: number } | { stock_lot: number; source_location: number }
 
@@ -11,6 +12,8 @@ export interface PotFill {
   closed_at: string | null
   close_reason: string
   notes: string
+  events: SeedTrayGenerationEvent[]
+  residuals: Array<{ pk: number; lot: number; base_quantity: string; base_unit: string; disposition: string; reason: string; correction_event: number | null }>
 }
 
 export interface PotFillPage {
@@ -21,6 +24,7 @@ export interface PotFillPage {
 }
 
 export interface PotFillContents {
+  digest: string
   status: 'open' | 'closed'
   plants: number[]
   media: Array<{ lot: number; base_quantity: string; base_unit: string }>
@@ -35,6 +39,18 @@ export interface PotFillContents {
     recovered_cost: string | null
     rounding_difference: string | null
   }
+}
+
+export function getPotFill(pk: number, signal?: AbortSignal): Promise<PotFill> {
+  return fetchAsJson<PotFill>(`/seedtrays/container-fills/${pk}/`, signal)
+}
+
+export function cleanPotFill(pk: number, data: { reason: string; digest: string; media: CleanMediaDisposition[] }): Promise<PotFill> {
+  return csrfPost(`/seedtrays/container-fills/${pk}/clean/`, data).then((response) => response.json() as Promise<PotFill>)
+}
+
+export function reopenPotFill(pk: number, reason: string): Promise<PotFill> {
+  return csrfPost(`/seedtrays/container-fills/${pk}/reopen/`, { reason }).then((response) => response.json() as Promise<PotFill>)
 }
 
 export function getPotFills(target: PotFillTarget, page: number, signal?: AbortSignal): Promise<PotFillPage> {
