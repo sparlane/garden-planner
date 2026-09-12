@@ -40,12 +40,15 @@ function NumberedUnitDetails({ unitPk }: NumberedUnitDetailsProps) {
     queryFn: ({ signal }) => getSerializedUnit(unitPk, signal)
   })
   // The code lives with the label identity rather than on the unit, so that a
-  // replaced code changes in one place. Only this container's row is used.
-  const { data: identities = [] } = useQuery({
-    queryKey: queryKeys.labels.identities('inventoryunit'),
-    queryFn: ({ signal }) => getLabelIdentities('inventoryunit', signal)
+  // replaced code changes in one place. Ask for this container's row alone:
+  // the printable list is paged, so scanning a fetched list for it would find
+  // nothing once a workspace has numbered more pots than fit on a page.
+  const identityQuery = { targetType: 'inventoryunit', objectId: unitPk }
+  const { data: identities } = useQuery({
+    queryKey: queryKeys.labels.identities(identityQuery),
+    queryFn: ({ signal }) => getLabelIdentities(identityQuery, signal)
   })
-  const identity = identities.find((row) => row.object_id === unitPk)
+  const identity = identities?.results[0]
 
   if (isPending) {
     return <main className="container-fluid mt-3">Loading container…</main>

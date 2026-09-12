@@ -58,6 +58,11 @@ function PrintArea({ job }: { job: LabelPrintJob }) {
   )
 }
 
+// `LabelIdentityPagination.page_size` on the server. The screen asks for the
+// server's default rather than naming a size of its own, so this is the one
+// place the two have to agree.
+const PAGE_SIZE = 100
+
 function LabelsView() {
   const [selected, setSelected] = React.useState<Array<number>>([])
   const [templatePk, setTemplatePk] = React.useState<number | ''>('')
@@ -67,9 +72,11 @@ function LabelsView() {
   const [labelWidth, setLabelWidth] = React.useState('50')
   const [labelHeight, setLabelHeight] = React.useState('30')
   const [targetType, setTargetType] = React.useState('')
+  const [page, setPage] = React.useState(1)
+  const identityQuery = { targetType: targetType || undefined, page }
   const identities = useQuery({
-    queryKey: queryKeys.labels.identities(targetType || undefined),
-    queryFn: ({ signal }) => getLabelIdentities(targetType || undefined, signal)
+    queryKey: queryKeys.labels.identities(identityQuery),
+    queryFn: ({ signal }) => getLabelIdentities(identityQuery, signal)
   })
   const templates = useQuery({ queryKey: queryKeys.labels.templates, queryFn: ({ signal }) => getLabelTemplates(signal) })
   const selectedTemplate = templates.data?.find((entry) => entry.pk === templatePk)
@@ -105,16 +112,27 @@ function LabelsView() {
     if (templatePk === '' && templates.data?.length) setTemplatePk(templates.data[0].pk)
   }, [templatePk, templates.data])
 
+  React.useEffect(() => setPage(1), [targetType])
+
   React.useEffect(() => {
     if (selectedTemplate?.format === 'code128') setPayloadMode('code')
     else if (selectedTemplate) setPayloadMode(selectedTemplate.payload_mode)
     setPreview(undefined)
   }, [selectedTemplate])
 
-  // Changing the filter starts a fresh query, so there is a moment with no
-  // rows in hand. Counting hidden selections against that would announce that
-  // every chosen label had just gone out of view.
-  const rows = identities.data ?? []
+  // A selection is a set of identities rather than a set of rows, so it
+  // outlives both the filter and the page it was made on — printing a sheet of
+  // pots and the plants going into them is one job. Changing either starts a
+  // fresh query, so there is a moment with no rows in hand; counting hidden
+  // selections against that would announce that every chosen label had just
+  // gone out of view.
+  const rows = identities.data?.results ?? []
+  const total = identities.data?.count ?? 0
+  const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  // The per-type counts describe the workspace, not the filter or the page, so
+  // their sum is what "everything" means however the list is currently narrowed.
+  const typeCounts = new Map((identities.data?.target_types ?? []).map((entry) => [entry.target_type, entry.count]))
+  const labelled = [...typeCounts.values()].reduce((running, entry) => running + entry, 0)
   const hiddenSelections = identities.isPending ? 0 : selected.filter((entry) => !rows.some((identity) => identity.identity === entry)).length
 
   function toggle(identity: number) {
@@ -177,10 +195,10 @@ function LabelsView() {
           <Col md={4}>
             <Form.Label htmlFor="label-target-type">Show</Form.Label>
             <Form.Select id="label-target-type" value={targetType} onChange={(event) => setTargetType(event.target.value)}>
-              <option value="">Everything with a label</option>
+              <option value="">Everything with a label ({labelled})</option>
               {LABEL_TARGET_TYPES.map(([value, label]) => (
                 <option value={value} key={value}>
-                  {label}
+                  {label} ({typeCounts.get(value) ?? 0})
                 </option>
               ))}
             </Form.Select>
@@ -215,12 +233,26 @@ function LabelsView() {
             )}
           </tbody>
         </Table>
-        {hiddenSelections > 0 && (
-          <p className="text-muted small">
-            {hiddenSelections} selected label{hiddenSelections === 1 ? '' : 's'} {hiddenSelections === 1 ? 'is' : 'are'} outside this filter and will still print. Clear the filter
-            to see {hiddenSelections === 1 ? 'it' : 'them'}.
-          </p>
-        )}
+        <div className="d-flex align-items-center flex-wrap gap-2 mb-2">
+          {lastPage > 1 && (
+            <>
+              <Button size="sm" variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                Previous
+              </Button>
+              <span className="text-muted small">
+                {total} label{total === 1 ? '' : 's'} · page {page} of {lastPage}
+              </span>
+              <Button size="sm" variant="outline-secondary" disabled={page >= lastPage} onClick={() => setPage(page + 1)}>
+                Next
+              </Button>
+            </>
+          )}
+          {hiddenSelections > 0 && (
+            <span className="text-muted small">
+              {hiddenSelections} selected label{hiddenSelections === 1 ? '' : 's'} {hiddenSelections === 1 ? 'is' : 'are'} not shown here and will still print.
+            </span>
+          )}
+        </div>
         <div className="d-flex gap-2 mb-3">
           <Button variant="outline-primary" disabled={!templatePk || selected.length === 0 || previewMutation.isPending} onClick={() => previewMutation.mutate()}>
             Preview
