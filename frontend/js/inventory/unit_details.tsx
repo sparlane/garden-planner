@@ -6,8 +6,9 @@ import { Link } from 'react-router'
 import { getSerializedUnit } from '../api/inventory'
 import { getLabelIdentities } from '../api/labels'
 import { queryKeys } from '../query'
-import { SerializedPhysicalState } from '../types/inventory'
-import { formatMoney } from '../utils'
+import { InventoryItem, SerializedPhysicalState } from '../types/inventory'
+import { PotFillPanel } from './container_fills'
+import { fetchAsJson, formatMoney } from '../utils'
 
 const STATE_LABELS: Record<SerializedPhysicalState, string> = {
   available: 'On hand',
@@ -38,6 +39,11 @@ function NumberedUnitDetails({ unitPk }: NumberedUnitDetailsProps) {
   const { data: unit, isPending } = useQuery({
     queryKey: queryKeys.inventory.serializedUnit(unitPk),
     queryFn: ({ signal }) => getSerializedUnit(unitPk, signal)
+  })
+  const item = useQuery({
+    queryKey: ['inventory', 'item', unit?.item],
+    queryFn: ({ signal }) => fetchAsJson<InventoryItem>(`/inventory/items/${unit?.item}/`, signal),
+    enabled: Boolean(unit)
   })
   // The code lives with the label identity rather than on the unit, so that a
   // replaced code changes in one place. Ask for this container's row alone:
@@ -122,6 +128,7 @@ function NumberedUnitDetails({ unitPk }: NumberedUnitDetailsProps) {
           </Card>
         </Col>
       </Row>
+      {item.data?.category === 'pot_container' && <PotFillPanel key={unitPk} target={{ inventory_unit: unitPk }} canOpen={unit.active && unit.physical_state === 'available'} />}
     </main>
   )
 }

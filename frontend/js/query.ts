@@ -81,6 +81,11 @@ const queryKeys = {
     list: (status: string) => ['locations', 'list', status] as const,
     occupancy: (pk: number) => ['locations', 'occupancy', pk] as const
   },
+  containerFills: {
+    all: ['container-fills'] as const,
+    list: (target: object, page: number) => ['container-fills', 'list', target, page] as const,
+    contents: (pk: number) => ['container-fills', 'contents', pk] as const
+  },
   inventory: {
     all: ['inventory'] as const,
     units: ['inventory', 'units'] as const,

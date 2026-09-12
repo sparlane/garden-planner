@@ -178,7 +178,7 @@ function unwrapPaginatedResponse<T>(data: T | PaginatedResponse<T>): T {
   return data as T
 }
 
-async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Promise<T> {
+async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal, preservePagination = false): Promise<T> {
   const method = 'GET'
   const response = await fetchResponse(method, url, {
     method: 'GET',
@@ -211,7 +211,8 @@ async function fetchAsJson<T = unknown>(url: string, signal?: AbortSignal): Prom
   }
 
   try {
-    return unwrapPaginatedResponse(JSON.parse(body) as T | PaginatedResponse<T>)
+    const data = JSON.parse(body) as T | PaginatedResponse<T>
+    return preservePagination ? (data as T) : unwrapPaginatedResponse(data)
   } catch (error) {
     raiseApiError(
       new ApiError(`${method} ${url} returned malformed JSON (${responseStatus(response)}): ${errorMessage(error)}`, {

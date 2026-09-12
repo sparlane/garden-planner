@@ -11,6 +11,7 @@ import {
   setInventoryItemActive,
   setItemUnitConversionActive
 } from './api/inventory'
+import { CountedPotFills } from './inventory/container_fills'
 import { NumberedUnitsPanel } from './inventory/individualization'
 import { queryKeys } from './query'
 import {
@@ -522,6 +523,7 @@ function InventoryCatalog() {
         </Card.Body>
       </Card>
       {selectedItem && <ConversionPanel item={selectedItem} />}
+      {selectedItem?.category === 'pot_container' && selectedItem.tracking_mode !== 'serialized' && <CountedPotFills key={selectedItem.pk} item={selectedItem} />}
       {selectedItem?.tracking_mode === 'mixed' && <NumberedUnitsPanel item={selectedItem} />}
     </main>
   )
