@@ -1,12 +1,11 @@
 """Merging a duplicate catalog record into the one it duplicates."""
 
 from datetime import date
-from decimal import Decimal
 
-from purchasing.services import confirm_invoice, create_invoice
 from supplies.defaults import ensure_default_supplier
 from tests.api import RESTContractTestCase
 from tests.factories import (
+    make_confirmed_invoice,
     make_plant,
     make_plant_family,
     make_plant_variety,
@@ -233,24 +232,9 @@ class SupplierMergeTests(RESTContractTestCase):
 
     def make_invoice(self, supplier, reference):
         """Confirm one payable against a supplier, snapshotting its identity."""
-        invoice = create_invoice(
-            self.workspace,
-            self.user,
-            {
-                'supplier': supplier,
-                'external_reference': reference,
-                'invoice_date': date(2026, 8, 1),
-                'currency_code': 'NZD',
-            },
-            [{
-                'description': 'Seed order',
-                'subtotal_ex_tax': Decimal('10'),
-                'tax_rate': Decimal('15'),
-                'tax_total': Decimal('1.5'),
-                'total_incl_tax': Decimal('11.5'),
-            }],
+        return make_confirmed_invoice(
+            self.workspace, self.user, supplier, external_reference=reference,
         )
-        return confirm_invoice(invoice, self.user)
 
     def merge(self, source, into):
         """Ask for one supplier to be merged into another."""
