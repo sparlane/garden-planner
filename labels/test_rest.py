@@ -163,6 +163,19 @@ class LabelPrintJobTests(TestCase):
         reprint = self.client.post('/labels/print-jobs/preview/', self.request(), content_type='application/json')
         self.assertTrue(reprint.data['items'][0]['is_reprint'])
 
+    def test_the_print_history_is_paged_and_the_template_list_is_not(self):
+        """History grows without limit; a picker must still offer every template."""
+        self.client.post('/labels/print-jobs/', self.request(), content_type='application/json')
+        jobs = self.client.get('/labels/print-jobs/')
+        self.assertEqual(jobs.status_code, 200)
+        self.assertEqual(set(jobs.data), {'count', 'next', 'previous', 'results'})
+        self.assertEqual(jobs.data['count'], 1)
+
+        templates = self.client.get('/labels/templates/')
+        self.assertEqual(templates.status_code, 200)
+        self.assertIsInstance(templates.data, list)
+        self.assertGreaterEqual(len(templates.data), 3)
+
     def test_code128_rejects_a_url_payload(self):
         """Linear labels remain compact enough for practical scanners."""
         template = LabelTemplate.objects.get(

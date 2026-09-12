@@ -366,6 +366,11 @@ class LabelTemplateViewSet(
 
     queryset = LabelTemplate.objects.all()
     serializer_class = LabelTemplateSerializer
+    #: A template picker needs every template or it offers the wrong one. Said
+    #: explicitly rather than left to the absence of a default, because the
+    #: project's default *is* to paginate, and a screen reading page one of its
+    #: own templates would silently drop the rest.
+    pagination_class = None
 
     def perform_destroy(self, instance):
         if instance.built_in:
@@ -523,8 +528,18 @@ class LabelPrintJobViewSet(
     queryset = LabelPrintJob.objects.prefetch_related('items')
 
     def list(self, request, *args, **kwargs):  # pylint: disable=unused-argument
-        jobs = self.get_queryset()[:100]
-        return Response([{'pk': job.pk, 'created': job.created, 'printed_at': job.printed_at, 'items': job.items.count()} for job in jobs])
+        """Page the print history rather than showing its most recent hundred.
+
+        Print jobs are immutable and accumulate for the life of the workspace,
+        so the fixed slice this replaces quietly put everything before it out of
+        reach. The rows are ordered newest first by the model, so the first page
+        still answers "what did we just print".
+        """
+        page = self.paginator.paginate_queryset(self.get_queryset(), request, view=self)
+        return self.paginator.get_paginated_response([
+            {'pk': job.pk, 'created': job.created, 'printed_at': job.printed_at, 'items': job.items.count()}
+            for job in page
+        ])
 
     def retrieve(self, request, *args, **kwargs):  # pylint: disable=unused-argument
         job = self.get_object()
