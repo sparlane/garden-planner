@@ -51,6 +51,7 @@ from plantings.models import (
 )
 from plants.models import Plant, PlantFamily, PlantVariety
 from purchasing.models import ExpenseCategory
+from purchasing.services import confirm_invoice, create_invoice
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import (
     SeedTray,
@@ -122,6 +123,33 @@ def make_supplier(**overrides):
     }
     values.update(overrides)
     return Supplier.objects.create(**values)
+
+
+def make_confirmed_invoice(workspace, user, supplier, **overrides):
+    """Confirm one payable against a supplier, snapshotting its identity.
+
+    A confirmed invoice is what a catalog correction has to leave alone, so
+    both the merge tests and the supplier editing tests need one.
+    """
+    values = {
+        'external_reference': _next_name('SUP'),
+        'invoice_date': date(2026, 8, 1),
+        'currency_code': 'NZD',
+    }
+    values.update(overrides)
+    invoice = create_invoice(
+        workspace,
+        user,
+        {'supplier': supplier, **values},
+        [{
+            'description': 'Seed order',
+            'subtotal_ex_tax': Decimal('10'),
+            'tax_rate': Decimal('15'),
+            'tax_total': Decimal('1.5'),
+            'total_incl_tax': Decimal('11.5'),
+        }],
+    )
+    return confirm_invoice(invoice, user)
 
 
 def make_plant_family(**overrides):

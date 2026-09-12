@@ -44,112 +44,170 @@ import { ReceiptSettlement } from './inventory/settlement'
 import { queryKeys, searchedKey } from './query'
 import { ApiError, errorsByField, formatQuantity } from './utils'
 
-interface NewSeedSupplierRowProps {
-  done: () => void
-  createSupplier: (data: SupplierCreate) => Promise<void>
-}
-
-interface NewSeedSupplierRowState {
+interface SupplierFormState {
   name: string
+  website: string
   address: string
-  gstStatus: 'registered' | 'unregistered' | 'unknown'
+  gstStatus: Supplier['gst_status']
   gstNumber: string
-  website?: string
-  notes?: string
+  notes: string
 }
 
-class NewSeedSupplierRow extends React.Component<NewSeedSupplierRowProps, NewSeedSupplierRowState> {
-  constructor(props: NewSeedSupplierRowProps) {
-    super(props)
+function supplierFormState(supplier?: Supplier): SupplierFormState {
+  return {
+    name: supplier?.name ?? '',
+    website: supplier?.website ?? '',
+    address: supplier?.address ?? '',
+    gstStatus: supplier?.gst_status ?? 'unknown',
+    gstNumber: supplier?.gst_number ?? '',
+    notes: supplier?.notes ?? ''
+  }
+}
 
-    this.state = {
-      name: '',
-      address: '',
-      gstStatus: 'unknown',
-      gstNumber: '',
-      website: undefined,
-      notes: undefined
+// A supplier's tax identity is one fact rather than two fields: the server
+// refuses a GST number on a supplier that is not registered, so a status sent
+// on its own would be judged against the number the record still holds and
+// rejected. The two travel together, and a supplier that has stopped being
+// registered stops carrying one.
+function supplierPayload(form: SupplierFormState): SupplierCreate {
+  return {
+    name: form.name,
+    website: form.website,
+    address: form.address,
+    gst_status: form.gstStatus,
+    gst_number: form.gstStatus === 'registered' ? form.gstNumber : '',
+    notes: form.notes
+  }
+}
+
+interface SupplierEditorRowProps {
+  //: The supplier being corrected, or nothing at all when one is being added.
+  supplier?: Supplier
+  onSave: (data: SupplierCreate) => Promise<unknown>
+  onDone: () => void
+}
+
+// One editor for adding a supplier and for correcting one, because they write
+// the same fields and a screen carrying two of them would end up offering to
+// record something it would not let anybody fix.
+//
+// Nothing here is frozen by what has been posted, which is what separates a
+// supplier from a seed catalog entry: a receipt and an invoice snapshot the
+// name, address and GST identity they were issued against, so correcting the
+// catalog record leaves every document written on it saying exactly what it
+// said. A supplier that registers for GST midway through a season is the
+// ordinary case rather than the awkward one.
+function SupplierEditorRow({ supplier, onSave, onDone }: SupplierEditorRowProps) {
+  const [form, setForm] = React.useState(() => supplierFormState(supplier))
+  const [saving, setSaving] = React.useState(false)
+  const [errors, setErrors] = React.useState<Record<string, string>>({})
+
+  function update<Field extends keyof SupplierFormState>(field: Field, value: SupplierFormState[Field]) {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  async function save() {
+    setSaving(true)
+    setErrors({})
+    try {
+      await onSave(supplierPayload(form))
+      onDone()
+    } catch (error) {
+      setErrors(errorsByField(error))
+    } finally {
+      setSaving(false)
     }
-
-    this.updateName = this.updateName.bind(this)
-    this.updateWebsite = this.updateWebsite.bind(this)
-    this.updateNotes = this.updateNotes.bind(this)
-
-    this.add = this.add.bind(this)
   }
 
-  updateName(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    this.setState({ name: value })
-  }
-
-  updateWebsite(event: React.ChangeEvent<HTMLInputElement>) {
-    const { value } = event.target
-
-    this.setState({ website: value })
-  }
-
-  updateNotes(event: React.ChangeEvent<HTMLTextAreaElement>) {
-    const { value } = event.target
-
-    this.setState({ notes: value })
-  }
-
-  async add() {
-    const data: SupplierCreate = {
-      name: this.state.name,
-      address: this.state.address,
-      gst_status: this.state.gstStatus,
-      gst_number: this.state.gstStatus === 'registered' ? this.state.gstNumber : '',
-      notes: this.state.notes
-    }
-    if (this.state.website && this.state.website !== '') {
-      data.website = this.state.website
-    }
-    await this.props.createSupplier(data)
-    this.props.done()
-  }
-
-  render() {
-    return (
-      <tr>
-        <td>
-          <input type="text" onChange={this.updateName} />
-          <DuplicateWarning collection="/supplies/supplier/" name={this.state.name} />
-        </td>
-        <td>
-          <input type="text" onChange={this.updateWebsite} />
-        </td>
-        <td>
-          <textarea placeholder="Address" onChange={(event) => this.setState({ address: event.target.value })} />
-          <select value={this.state.gstStatus} onChange={(event) => this.setState({ gstStatus: event.target.value as NewSeedSupplierRowState['gstStatus'] })}>
-            <option value="unknown">GST status unknown</option>
-            <option value="registered">GST registered</option>
-            <option value="unregistered">Not GST registered</option>
-          </select>
-          {this.state.gstStatus === 'registered' && <input type="text" placeholder="GST number" onChange={(event) => this.setState({ gstNumber: event.target.value })} />}
-        </td>
-        <td>
-          <textarea onChange={this.updateNotes} />
-        </td>
-        <td>
-          <Button onClick={this.add}>Add</Button>
-          <Button onClick={this.props.done}>Cancel</Button>
-        </td>
-      </tr>
-    )
-  }
+  return (
+    <tr>
+      <td>
+        <Form.Control size="sm" aria-label="Supplier name" value={form.name} isInvalid={'name' in errors} onChange={(event) => update('name', event.target.value)} />
+        <Form.Control.Feedback type="invalid">{errors.name}</Form.Control.Feedback>
+        {/* A warning and never a refusal: two suppliers really can trade under
+            one name. The record being corrected is not a duplicate of itself. */}
+        <DuplicateWarning collection="/supplies/supplier/" name={form.name} exclude={supplier?.pk} />
+      </td>
+      <td>
+        <Form.Control size="sm" aria-label="Supplier website" value={form.website} isInvalid={'website' in errors} onChange={(event) => update('website', event.target.value)} />
+        <Form.Control.Feedback type="invalid">{errors.website}</Form.Control.Feedback>
+      </td>
+      <td>
+        <Form.Control
+          size="sm"
+          as="textarea"
+          rows={2}
+          placeholder="Address"
+          aria-label="Supplier address"
+          value={form.address}
+          isInvalid={'address' in errors}
+          onChange={(event) => update('address', event.target.value)}
+        />
+        <Form.Control.Feedback type="invalid">{errors.address}</Form.Control.Feedback>
+        <Form.Select
+          size="sm"
+          className="mt-1"
+          aria-label="GST status"
+          value={form.gstStatus}
+          onChange={(event) => update('gstStatus', event.target.value as SupplierFormState['gstStatus'])}
+        >
+          <option value="unknown">GST status unknown</option>
+          <option value="registered">GST registered</option>
+          <option value="unregistered">Not GST registered</option>
+        </Form.Select>
+        {form.gstStatus === 'registered' && (
+          <>
+            <Form.Control
+              size="sm"
+              className="mt-1"
+              placeholder="GST number"
+              aria-label="GST number"
+              value={form.gstNumber}
+              isInvalid={'gst_number' in errors}
+              onChange={(event) => update('gstNumber', event.target.value)}
+            />
+            <Form.Control.Feedback type="invalid">{errors.gst_number}</Form.Control.Feedback>
+          </>
+        )}
+      </td>
+      <td>
+        <Form.Control
+          size="sm"
+          as="textarea"
+          rows={2}
+          aria-label="Supplier notes"
+          value={form.notes}
+          isInvalid={'notes' in errors}
+          onChange={(event) => update('notes', event.target.value)}
+        />
+        <Form.Control.Feedback type="invalid">{errors.notes}</Form.Control.Feedback>
+      </td>
+      <td className="text-nowrap">
+        <Button size="sm" disabled={saving || form.name.trim() === ''} onClick={() => void save()}>
+          {saving ? 'Saving…' : 'Save'}
+        </Button>{' '}
+        <Button size="sm" variant="secondary" disabled={saving} onClick={onDone}>
+          Cancel
+        </Button>
+        {(errors.form || errors.non_field_errors || errors.detail) && (
+          <Alert variant="danger" className="mt-2 mb-0 p-1">
+            {errors.form || errors.non_field_errors || errors.detail}
+          </Alert>
+        )}
+      </td>
+    </tr>
+  )
 }
 
 interface SeedSupplierRowProps {
   supplier: Supplier
   mergedInto: string | null
+  onEdit: () => void
   onRetire: (active: boolean) => void
   onMerge: () => void
 }
 
-function SeedSupplierRow({ supplier, mergedInto, onRetire, onMerge }: SeedSupplierRowProps) {
+function SeedSupplierRow({ supplier, mergedInto, onEdit, onRetire, onMerge }: SeedSupplierRowProps) {
   return (
     <tr className={retiredRowClass(supplier.active)}>
       <td>
@@ -162,15 +220,20 @@ function SeedSupplierRow({ supplier, mergedInto, onRetire, onMerge }: SeedSuppli
         <RetiredBadge active={supplier.active} />
         <MergedIntoNote into={mergedInto} />
       </td>
-      <td>
-        <a href={supplier.website}>{supplier.website}</a>
-      </td>
+      <td>{supplier.website ? <a href={supplier.website}>{supplier.website}</a> : '—'}</td>
       <td>
         <div>{supplier.address || '—'}</div>
         <div>{supplier.gst_status === 'registered' ? `GST ${supplier.gst_number}` : supplier.gst_status}</div>
       </td>
       <td>{supplier.notes}</td>
-      <td>
+      <td className="text-nowrap">
+        {/* Every supplier is correctable, the stand-in for an unnamed Basic
+            Garden purchase included: it may not be merged away or retired
+            because something still has to land on it, but a garden that calls
+            it `Gifts and swaps` is naming what it actually holds. */}
+        <Button size="sm" variant="outline-secondary" onClick={onEdit}>
+          Edit
+        </Button>{' '}
         {!supplier.is_system_default && supplier.merged_into === null && (
           <>
             <Button size="sm" variant="outline-secondary" onClick={onMerge}>
@@ -190,6 +253,7 @@ function SeedSuppliersTable() {
   const [showRetired, setShowRetired] = React.useState(false)
   const [retireError, setRetireError] = React.useState<string | null>(null)
   const [merging, setMerging] = React.useState<Supplier | null>(null)
+  const [editing, setEditing] = React.useState<number | null>(null)
   const [search, setSearch] = React.useState('')
   // The whole list, which is what a merge may be onto and what names the
   // record a duplicate handed off to — both reach past whatever is being
@@ -202,9 +266,17 @@ function SeedSuppliersTable() {
     queryKey: searchedKey(queryKeys.suppliers.all, search),
     queryFn: ({ signal }) => getSuppliers(signal, search)
   })
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all })
+  // A correction can rename a supplier, and a name is what a merge preview and
+  // a duplicate warning quote back, so the catalog answers go with the list.
+  async function invalidate() {
+    await Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.suppliers.all }), queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all })])
+  }
   const supplierMutation = useMutation({
     mutationFn: addSupplier,
+    onSuccess: invalidate
+  })
+  const editMutation = useMutation({
+    mutationFn: ({ pk, data }: { pk: number; data: SupplierCreate }) => updateSupplier(pk, data),
     onSuccess: invalidate
   })
   const retireMutation = useMutation({
@@ -227,14 +299,19 @@ function SeedSuppliersTable() {
 
   const rows = []
   if (showSupplierAdd) {
-    rows.push(<NewSeedSupplierRow key="new" createSupplier={createSupplier} done={() => setShowSupplierAdd(false)} />)
+    rows.push(<SupplierEditorRow key="new" onSave={createSupplier} onDone={() => setShowSupplierAdd(false)} />)
   }
   for (const supplier of found.filter((candidate) => candidate.active || showRetired)) {
+    if (supplier.pk === editing) {
+      rows.push(<SupplierEditorRow key={supplier.pk} supplier={supplier} onSave={(data) => editMutation.mutateAsync({ pk: supplier.pk, data })} onDone={() => setEditing(null)} />)
+      continue
+    }
     rows.push(
       <SeedSupplierRow
         key={supplier.pk}
         supplier={supplier}
         mergedInto={suppliers.find((candidate) => candidate.pk === supplier.merged_into)?.name ?? null}
+        onEdit={() => setEditing(supplier.pk)}
         onRetire={(active) => retire(supplier.pk, active)}
         onMerge={() => setMerging(supplier)}
       />
