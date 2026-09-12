@@ -39,6 +39,7 @@ from plantings.models import (
 from plantings.sowing import current_sowing_consumption
 from seedtrays.generations import cell_shares
 from seedtrays.models import SeedTrayGenerationResidual
+from seedtrays.pot_shares import counted_parts
 
 from .allocation import (
     area_plant_shares,
@@ -568,14 +569,6 @@ def application_sources(batch, generation_ids, cell_weights):
     return sources
 
 
-def _counted_parts(total, count, participants, quantum):
-    """Reserve rounding across all pots without constructing unplanted identities."""
-    if total is None:
-        return [None] * participants
-    whole, remainder = divmod(int(total / quantum), count)
-    return [(whole + (index < remainder)) * quantum for index in range(participants)]
-
-
 def pot_media_sources(batch):
     """Value pot-fill departures against the original sharing basis, once.
 
@@ -603,8 +596,8 @@ def pot_media_sources(batch):
         unit_cost = line.lot.base_unit_cost
         amount = None if unit_cost is None else quantize_money(line.applied_base_quantity * unit_cost)
         if fill.stock_lot_id:
-            quantities = _counted_parts(line.applied_base_quantity, fill.container_count, len(participants), QUANTITY_QUANTUM)
-            amounts = _counted_parts(amount, fill.container_count, len(participants), MONEY_QUANTUM)
+            quantities = counted_parts(line.applied_base_quantity, fill.container_count, len(participants), QUANTITY_QUANTUM)
+            amounts = counted_parts(amount, fill.container_count, len(participants), MONEY_QUANTUM)
         else:
             weights = [Decimal('1')] * fill.plant_share_count
             quantities = distribute_exactly(line.applied_base_quantity, weights, QUANTITY_QUANTUM)
