@@ -42,10 +42,10 @@ function NumberedUnitDetails({ unitPk }: NumberedUnitDetailsProps) {
   // The code lives with the label identity rather than on the unit, so that a
   // replaced code changes in one place. Only this container's row is used.
   const { data: identities = [] } = useQuery({
-    queryKey: ['labels', 'identities', 'inventoryunit'],
-    queryFn: ({ signal }) => getLabelIdentities(signal)
+    queryKey: queryKeys.labels.identities('inventoryunit'),
+    queryFn: ({ signal }) => getLabelIdentities('inventoryunit', signal)
   })
-  const identity = identities.find((row) => row.target_type === 'inventoryunit' && row.object_id === unitPk)
+  const identity = identities.find((row) => row.object_id === unitPk)
 
   if (isPending) {
     return <main className="container-fluid mt-3">Loading container…</main>

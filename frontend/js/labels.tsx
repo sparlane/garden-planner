@@ -9,6 +9,7 @@ import { createLabelPrintJob, createLabelTemplate, getLabelIdentities, getLabelT
 import { getLocations } from './api/locations'
 import { queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
+import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
 import { BulkOperationPanel } from './plantings/bulk_operations'
 import { HealthScopeType } from './types/health'
 import { allocateOrderLine, getFulfillments, getSalesOrders, postFulfillment, postReturn, previewAllocation } from './api/sales'
@@ -65,8 +66,12 @@ function LabelsView() {
   const [templateName, setTemplateName] = React.useState('')
   const [labelWidth, setLabelWidth] = React.useState('50')
   const [labelHeight, setLabelHeight] = React.useState('30')
-  const identities = useQuery({ queryKey: ['labels', 'identities'], queryFn: ({ signal }) => getLabelIdentities(signal) })
-  const templates = useQuery({ queryKey: ['labels', 'templates'], queryFn: ({ signal }) => getLabelTemplates(signal) })
+  const [targetType, setTargetType] = React.useState('')
+  const identities = useQuery({
+    queryKey: queryKeys.labels.identities(targetType || undefined),
+    queryFn: ({ signal }) => getLabelIdentities(targetType || undefined, signal)
+  })
+  const templates = useQuery({ queryKey: queryKeys.labels.templates, queryFn: ({ signal }) => getLabelTemplates(signal) })
   const selectedTemplate = templates.data?.find((entry) => entry.pk === templatePk)
   const previewMutation = useMutation({ mutationFn: () => previewLabels(templatePk as number, selected, payloadMode), onSuccess: setPreview })
   const printMutation = useMutation({
@@ -105,6 +110,12 @@ function LabelsView() {
     else if (selectedTemplate) setPayloadMode(selectedTemplate.payload_mode)
     setPreview(undefined)
   }, [selectedTemplate])
+
+  // Changing the filter starts a fresh query, so there is a moment with no
+  // rows in hand. Counting hidden selections against that would announce that
+  // every chosen label had just gone out of view.
+  const rows = identities.data ?? []
+  const hiddenSelections = identities.isPending ? 0 : selected.filter((entry) => !rows.some((identity) => identity.identity === entry)).length
 
   function toggle(identity: number) {
     setSelected(selected.includes(identity) ? selected.filter((entry) => entry !== identity) : [...selected, identity])
@@ -162,6 +173,19 @@ function LabelsView() {
             </Col>
           </Row>
         </Card>
+        <Row className="g-2 mb-2 align-items-end">
+          <Col md={4}>
+            <Form.Label htmlFor="label-target-type">Show</Form.Label>
+            <Form.Select id="label-target-type" value={targetType} onChange={(event) => setTargetType(event.target.value)}>
+              <option value="">Everything with a label</option>
+              {LABEL_TARGET_TYPES.map(([value, label]) => (
+                <option value={value} key={value}>
+                  {label}
+                </option>
+              ))}
+            </Form.Select>
+          </Col>
+        </Row>
         <Table responsive hover size="sm">
           <thead>
             <tr>
@@ -172,18 +196,31 @@ function LabelsView() {
             </tr>
           </thead>
           <tbody>
-            {(identities.data ?? []).map((identity) => (
+            {rows.map((identity) => (
               <tr key={identity.identity}>
                 <td>
                   <Form.Check aria-label={`Select ${identity.display}`} checked={selected.includes(identity.identity)} onChange={() => toggle(identity.identity)} />
                 </td>
-                <td>{identity.target_type}</td>
+                <td>{labelTargetLabel(identity.target_type)}</td>
                 <td>{identity.display}</td>
                 <td className="font-monospace">{identity.code}</td>
               </tr>
             ))}
+            {!identities.isPending && rows.length === 0 && (
+              <tr>
+                <td colSpan={4} className="text-muted">
+                  {targetType ? 'Nothing of this kind has a label yet.' : 'Nothing in this workspace has a label yet.'}
+                </td>
+              </tr>
+            )}
           </tbody>
         </Table>
+        {hiddenSelections > 0 && (
+          <p className="text-muted small">
+            {hiddenSelections} selected label{hiddenSelections === 1 ? '' : 's'} {hiddenSelections === 1 ? 'is' : 'are'} outside this filter and will still print. Clear the filter
+            to see {hiddenSelections === 1 ? 'it' : 'them'}.
+          </p>
+        )}
         <div className="d-flex gap-2 mb-3">
           <Button variant="outline-primary" disabled={!templatePk || selected.length === 0 || previewMutation.isPending} onClick={() => previewMutation.mutate()}>
             Preview

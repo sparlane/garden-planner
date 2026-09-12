@@ -1,8 +1,13 @@
 import { csrfPost, fetchAsJson } from '../utils'
 import { LabelIdentity, LabelPayloadMode, LabelPrintJob, LabelResolution, LabelTemplate } from '../types/labels'
 
-function getLabelIdentities(signal?: AbortSignal): Promise<Array<LabelIdentity>> {
-  return fetchAsJson<Array<LabelIdentity>>('/labels/identities/', signal)
+// Narrowing is the server's, because it answers on the content type behind
+// the generic target rather than on anything the row carries. Fetching the lot
+// and filtering here would also mean paging through every plant, tray and
+// location in the workspace to find the containers numbered this morning.
+function getLabelIdentities(targetType?: string, signal?: AbortSignal): Promise<Array<LabelIdentity>> {
+  const query = targetType ? `?target_type=${encodeURIComponent(targetType)}` : ''
+  return fetchAsJson<Array<LabelIdentity>>(`/labels/identities/${query}`, signal)
 }
 
 function getLabelTemplates(signal?: AbortSignal): Promise<Array<LabelTemplate>> {

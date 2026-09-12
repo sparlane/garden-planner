@@ -41,7 +41,7 @@ const queryKeys = {
   },
   labels: {
     all: ['labels'] as const,
-    identities: ['labels', 'identities'] as const,
+    identities: (targetType?: string) => ['labels', 'identities', targetType ?? 'all'] as const,
     templates: ['labels', 'templates'] as const
   },
   workspace: {

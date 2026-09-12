@@ -6,12 +6,15 @@ from uuid import uuid4
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from tests.factories import make_garden_area, make_specific_plant
+from tests.factories import make_garden_area, make_inventory_item, make_location, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace, get_current_workspace
 
 from health.models import HealthObservation, HealthObservationType
 from health.operations import quarantine_observation
 from health.services import preview_observation, record_observation
+from inventory.ledger import IndividualizationRequest, individualize_lot_units
+from inventory.models import InventoryItem
+from inventory.units import UnitCode
 from plantings.lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
 from sales.commerce import post_fulfillment
 from sales.models import SalesOrderLine
@@ -173,3 +176,50 @@ class LabelPrintJobTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn('payload_mode', response.data)
+
+
+class LabelIdentityFilterTests(TestCase):
+    """The printable list narrows to one kind of record on the server."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user('identities', password='secret')
+        self.client.force_login(self.user)
+        self.workspace = get_current_workspace()
+        self.plant = make_specific_plant()
+        item = make_inventory_item(
+            category=InventoryItem.Category.POT_CONTAINER,
+            base_unit=UnitCode.EACH,
+            tracking_mode=InventoryItem.TrackingMode.MIXED,
+        )
+        self.location = make_location(workspace=self.workspace)
+        lot = make_stock_lot(item=item, quantity=Decimal('20'), location=self.location)
+        self.units = individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.location, count=3, reason='Specimen pots'),
+        )
+
+    def identities(self, **params):
+        """List printable identities through the public endpoint."""
+        response = self.client.get('/labels/identities/', params)
+        self.assertEqual(response.status_code, 200)
+        return response.data
+
+    def test_numbering_a_pot_makes_it_printable_alongside_other_records(self):
+        """An unfiltered list is the mixture the filter exists to narrow."""
+        rows = self.identities()
+        types = {row['target_type'] for row in rows}
+        self.assertIn('inventoryunit', types)
+        self.assertIn('specificplant', types)
+
+    def test_the_numbered_container_filter_returns_only_the_numbered_pots(self):
+        """A grower printing the morning's pot labels sees nothing else."""
+        rows = self.identities(target_type='inventoryunit')
+        self.assertEqual({row['target_type'] for row in rows}, {'inventoryunit'})
+        self.assertEqual(
+            {row['object_id'] for row in rows},
+            {unit.pk for unit in self.units},
+        )
+
+    def test_an_unknown_target_type_narrows_to_nothing_rather_than_everything(self):
+        """A filter the server does not recognize must not print the workspace."""
+        self.assertEqual(self.identities(target_type='nosuchmodel'), [])
