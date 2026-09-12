@@ -296,16 +296,19 @@ def promised_bulk(lot, location):
 def filled_bulk(lot, location):
     """Count anonymous pots held by open fills at their original location.
 
-    These containers remain physical stock. Until fill departures and moves
-    can carry their history, ordinary stock actions may draw only empty pots.
+    These containers remain physical stock. Each counted departure leaves one
+    empty pot available again, while the original count stays the media basis.
     Read under the lot lock when making a new claim on the pool.
     """
     if lot.item.category != InventoryItem.Category.POT_CONTAINER:
         return 0
-    return SeedTrayGeneration.objects.filter(
+    fills = SeedTrayGeneration.objects.filter(
         stock_lot=lot, source_location=location,
         status=SeedTrayGeneration.Status.OPEN,
-    ).aggregate(total=Sum('container_count'))['total'] or 0
+    )
+    original = fills.aggregate(total=Sum('container_count'))['total'] or 0
+    departed = SpecificPlantLocation.objects.filter(container_fill__in=fills, ended__isnull=False).count()
+    return original - departed
 
 
 def unit_has_open_pot_fill(unit):

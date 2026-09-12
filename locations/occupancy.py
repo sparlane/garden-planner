@@ -116,6 +116,10 @@ def _container_occupancy(plants, cohorts):
     legacy_plants = 0
     for target in [*plants, *cohorts]:
         growth = current_growth(target)
+        if growth['container_fill'] is not None:
+            containers += 1
+            area += growth['container_footprint_m2'] or Decimal('0')
+            continue
         observation = growth['container_observation']
         if observation is None:
             if hasattr(target, 'germinated'):

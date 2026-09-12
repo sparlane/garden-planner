@@ -2,6 +2,7 @@
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 
 from .models import NurseryObservation, NurseryObservationTarget, PlantCohort, SpecificPlant
 
@@ -127,8 +128,8 @@ def current_growth(target):
     current['container_fill'] = None
     placement = None
     if isinstance(target, SpecificPlant):
-        placement = target.locations.filter(container_unit__isnull=False).select_related(
-            'container_unit__item', 'container_fill',
+        placement = target.locations.filter(Q(container_unit__isnull=False) | Q(container_fill__isnull=False)).select_related(
+            'container_unit__item', 'container_fill__stock_lot__item',
         ).order_by('-started', '-pk').first()
     for row in rows:
         for field in OBSERVED_FIELDS:
@@ -151,7 +152,7 @@ def current_growth(target):
         if all(current[field] is not None for field in OBSERVED_FIELDS):
             break
     if placement and placement.ended is None:
-        item = placement.container_unit.item
+        item = placement.container_unit.item if placement.container_unit_id else placement.container_fill.stock_lot.item
         current.update({
             'container_item': item, 'container_count': 1,
             'container_name': item.name, 'container_size_label': item.container_size_label,

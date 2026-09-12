@@ -11,8 +11,9 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from inventory.models import InventoryUnit
-from locations.occupancy import check_capacity, plant_contribution
+from inventory.models import InventoryUnit, StockLot
+from seedtrays.models import SeedTrayGeneration
+from locations.occupancy import Occupancy, check_capacity, plant_contribution
 
 from .lifecycle import record_transplant_event
 from .models import SpecificPlant, SpecificPlantLocation
@@ -26,6 +27,23 @@ def _model_errors(error):
 
 
 FIELD_MISSING = object()
+
+
+def lock_placement_containers(placements=(), destinations=()):
+    """Take every source and destination pot lock before any move changes a fill."""
+    unit_ids = {row.container_unit_id for row in placements if row.container_unit_id}
+    fill_ids = {row.container_fill_id for row in placements if row.container_fill_id}
+    for data in destinations:
+        if data.get('container_unit'):
+            unit_ids.add(data['container_unit'].pk)
+        if data.get('container_fill'):
+            fill_ids.add(data['container_fill'].pk)
+    fills = list(SeedTrayGeneration.objects.filter(pk__in=fill_ids))
+    unit_ids.update(fill.inventory_unit_id for fill in fills if fill.inventory_unit_id)
+    lot_ids = {fill.stock_lot_id for fill in fills if fill.stock_lot_id}
+    list(StockLot.objects.select_for_update().filter(pk__in=lot_ids).order_by('pk'))
+    list(InventoryUnit.objects.select_for_update(of=('self',)).filter(pk__in=unit_ids).order_by('pk'))
+    list(SeedTrayGeneration.objects.select_for_update().filter(pk__in=fill_ids).order_by('pk'))
 
 
 def places_from(data):
@@ -143,7 +161,7 @@ def is_active_location_integrity_error(exc):
     return names_constraint or names_sqlite_column
 
 
-def _check_destination_capacity(destination, override_reason, plant):
+def _check_destination_capacity(destination, override_reason, plant, fill=None):
     """Refuse a bench that is full, or that cannot measure a single plant.
 
     Locks the destination and every capacitated ancestor before counting, so
@@ -152,7 +170,10 @@ def _check_destination_capacity(destination, override_reason, plant):
     if not destination.active:
         raise ValidationError({'location': 'The location is inactive.'})
     try:
-        check_capacity(destination, plant_contribution(plant), override_reason)
+        contribution = plant_contribution(plant)
+        if fill is not None and fill.stock_lot_id:
+            contribution = Occupancy(plants=1, containers=1, area=fill.stock_lot.item.container_footprint_m2 or 0)
+        check_capacity(destination, contribution, override_reason)
     except DjangoValidationError as exc:
         raise ValidationError(
             {'location': _model_errors(exc).get('destination', exc.messages)},
@@ -180,7 +201,7 @@ def move_specific_plant(plant, move_data, user=None):
         )
         if destination is not None:
             _check_destination_capacity(
-                destination, move_payload.get('override_reason', ''), plant,
+                destination, move_payload.get('override_reason', ''), plant, move_payload.get('container_fill'),
             )
         if planted_out:
             try:
@@ -189,13 +210,9 @@ def move_specific_plant(plant, move_data, user=None):
                 raise ValidationError(_model_errors(exc)) from exc
         active_location = get_single_active_location_for_update(plant)
 
-        # A move may leave one fill and join another. Acquire both unit locks
-        # in order before either fill, so opposite-direction moves cannot
-        # each hold their source pot while waiting for their destination.
-        unit_ids = {unit.pk for unit in [move_payload.get('container_unit')] if unit is not None}
-        if active_location and active_location.container_unit_id:
-            unit_ids.add(active_location.container_unit_id)
-        list(InventoryUnit.objects.select_for_update(of=('self',)).filter(pk__in=unit_ids).order_by('pk'))
+        # Lock both sources and destinations: lots, units, then fills. Opposite
+        # moves cannot each hold their source while waiting for a destination.
+        lock_placement_containers([active_location] if active_location else [], [move_payload])
 
         if active_location:
             if started < active_location.started:
