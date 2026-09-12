@@ -32,6 +32,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 
 from applications.models import FACTOR_DECIMAL_PLACES
 from inventory.ledger import quantize_money, quantize_quantity
@@ -361,7 +362,7 @@ def schedule_fill_departure(placement):
 
 
 def reallocate_fill_departure(placement_id):
-    """Bring a committed numbered-fill departure into its crop's cost ledger.
+    """Bring a committed pot-fill departure into its crop's cost ledger.
 
     Read persisted facts rather than a caller's potentially stale plant or
     fill. Legacy departures with no fixed shares have no new cost to post.
@@ -371,8 +372,7 @@ def reallocate_fill_departure(placement_id):
     placement = SpecificPlantLocation.objects.select_related('specific_plant__batch').filter(
         pk=placement_id, ended__isnull=False,
         container_fill__tray__isnull=True,
-        container_fill__plant_share_count__isnull=False,
-    ).first()
+    ).filter(Q(container_fill__plant_share_count__isnull=False) | Q(container_fill__stock_lot__isnull=False)).first()
     run = None
     if placement is not None and placement.specific_plant.batch_id is not None:
         run = reallocate_batch(

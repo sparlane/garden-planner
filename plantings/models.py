@@ -19,6 +19,7 @@ from inventory.models import (
     QUANTITY_DECIMAL_PLACES,
     QUANTITY_MAX_DIGITS,
     StockMovement,
+    StockLot,
     InventoryItem,
     InventoryUnit,
 )
@@ -1800,7 +1801,9 @@ class SpecificPlantLocation(models.Model):
     would let the two disagree the moment a tray is moved. `container_unit`
     works the same way for a numbered pot, which carries its own location.
     `location` is for a plant standing somewhere in its own right, such as a
-    potted plant on a bench in an anonymous container.
+    potted plant on a bench in an anonymous container. When that pot belongs
+    to a counted fill, `container_fill` retains its cycle and `location` must
+    match the fill's fixed location; no individual pot identity is invented.
 
     Several plants may share one place. The only uniqueness here is one active
     location per plant, so three bulbs in one numbered pot are three rows
@@ -1840,7 +1843,7 @@ class SpecificPlantLocation(models.Model):
     container_fill = models.ForeignKey(
         SeedTrayGeneration, on_delete=models.PROTECT, null=True, blank=True,
         related_name='plant_locations',
-        help_text='The numbered pot fill captured when this placement began.',
+        help_text='The pot fill captured when this placement began.',
     )
     started = models.DateTimeField(default=timezone.now)
     ended = models.DateTimeField(null=True, blank=True)
@@ -1888,7 +1891,10 @@ class SpecificPlantLocation(models.Model):
     def _validate_container_fill(self):
         """Keep the historical fill tied to the pot and plant that used it."""
         fill = self.container_fill
-        if self.location_type != self.CONTAINER_UNIT or fill.tray_id or fill.inventory_unit_id != self.container_unit_id:
+        if fill.stock_lot_id:
+            if self.location_type != self.LOCATION or self.location_id != fill.source_location_id or self.container_unit_id:
+                raise ValidationError({'container_fill': 'Counted pots must stand at their fill location without a numbered identity.'})
+        elif self.location_type != self.CONTAINER_UNIT or fill.tray_id or fill.inventory_unit_id != self.container_unit_id:
             raise ValidationError({'container_fill': 'The fill must belong to this numbered pot.'})
         if self.specific_plant_id and fill.workspace_id != self.specific_plant.workspace_id:
             raise ValidationError({'container_fill': 'The fill belongs to a different workspace.'})
@@ -1899,7 +1905,7 @@ class SpecificPlantLocation(models.Model):
         """Do not let an interval edit change which cultivation cycle a plant used."""
         original = type(self).objects.select_for_update().get(pk=self.pk)
         if original.container_fill_id:
-            fields = ('specific_plant_id', 'location_type', 'container_unit_id', 'container_fill_id', 'started')
+            fields = ('specific_plant_id', 'location_type', 'location_id', 'container_unit_id', 'container_fill_id', 'started')
             if any(getattr(original, field) != getattr(self, field) for field in fields):
                 raise ValidationError({'container_fill': 'Move the plant to change its fill; recorded fill placements are immutable.'})
             if original.ended is not None and original.ended != self.ended:
@@ -1935,6 +1941,12 @@ class SpecificPlantLocation(models.Model):
         plant may already hold those locks while waiting for this same pot.
         Earlier departures without a basis remain legacy history.
         """
+        if self.container_fill.stock_lot_id:
+            # Counted pots have one plant each and use the original pot count,
+            # including unplanted pots, rather than the number of participants.
+            StockLot.objects.select_for_update().get(pk=self.container_fill.stock_lot_id)
+            SeedTrayGeneration.objects.select_for_update().get(pk=self.container_fill_id)
+            return
         InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
         fill = SeedTrayGeneration.objects.select_for_update().get(pk=self.container_fill_id)
         participants = fill.plant_locations.all()
@@ -1948,7 +1960,7 @@ class SpecificPlantLocation(models.Model):
 
     @transaction.atomic
     def save(self, *args, **kwargs):
-        """Capture the open fill under the same unit lock as opening and cleaning.
+        """Capture a fill under the same stock locks as opening and cleaning.
 
         Legacy placements keep their recorded identity. A newly placed plant
         either joins the pot's current fill or occupies an unfilled pot; it
@@ -1972,16 +1984,36 @@ class SpecificPlantLocation(models.Model):
             ).exists():
                 raise ValidationError({'started': 'Placement cannot precede the pot\'s previous clean.'})
             self.container_fill = fill
+        elif self._state.adding and self.container_fill_id:
+            self._join_counted_fill()
         elif not self._state.adding:
             self._preserve_fill_history(kwargs.get('update_fields'))
         if self.container_fill_id:
             self.clean()
         super().save(*args, **kwargs)
 
+    def _join_counted_fill(self):
+        """Claim one unused anonymous pot while cleaning and other arrivals wait."""
+        SpecificPlant.objects.select_for_update().get(pk=self.specific_plant_id)
+        fill = self.container_fill
+        if not fill.stock_lot_id:
+            raise ValidationError({'container_fill': 'Choose a counted pot fill.'})
+        StockLot.objects.select_for_update().get(pk=fill.stock_lot_id)
+        fill = SeedTrayGeneration.objects.select_for_update().get(pk=fill.pk)
+        self.container_fill = fill
+        if fill.status != SeedTrayGeneration.Status.OPEN or fill.review_state != SeedTrayGeneration.ReviewState.NONE:
+            raise ValidationError({'container_fill': 'Choose an open, reviewed pot fill.'})
+        if self.ended is not None:
+            raise ValidationError({'ended': 'Join an open fill before recording the departure.'})
+        if fill.plant_locations.filter(specific_plant_id=self.specific_plant_id).exists():
+            raise ValidationError({'container_fill': 'This plant has already used this fill. Choose a new fill.'})
+        if fill.plant_locations.count() >= fill.container_count:
+            raise ValidationError({'container_fill': 'Every pot in this fill has already been assigned.'})
+
     class Meta:
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(container_fill__isnull=True) | models.Q(location_type='container_unit', container_unit__isnull=False),
+                condition=(models.Q(container_fill__isnull=True) | models.Q(location_type='container_unit', container_unit__isnull=False) | models.Q(location_type='location', location__isnull=False, container_unit__isnull=True)),
                 name='plant_location_fill_needs_pot',
             ),
             models.UniqueConstraint(

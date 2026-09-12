@@ -9,20 +9,27 @@ from inventory.ledger import quantize_quantity
 from .generation_costs import quantize_cost
 
 
-def numbered_fill_shares(fill):
+def pot_fill_shares(fill):
     """Return exact fixed shares, distinguishing held plants from departures.
 
-    A missing denominator means participation is still open or the fill has
-    legacy departures. It must not be inferred from the remaining plants.
+    Counted pots always use the original pot count, including unplanted pots.
+    A missing numbered denominator means participation is still open or the
+    fill has legacy departures; never infer it from the remaining plants.
     This reports allocation bases only; it does not post plant cost layers.
     """
-    fill.refresh_from_db(fields=['plant_share_count'])
-    share = Fraction(1, fill.plant_share_count) if fill.plant_share_count else None
+    fill.refresh_from_db(fields=['plant_share_count', 'container_count', 'stock_lot'])
+    count = fill.container_count if fill.stock_lot_id else fill.plant_share_count
+    share = Fraction(1, count) if count else None
     return [
         {'placement': placement.pk, 'plant': placement.specific_plant_id,
          'share': share, 'departed_at': placement.ended}
         for placement in fill.plant_locations.order_by('pk')
     ]
+
+
+def numbered_fill_shares(fill):
+    """Retain the original numbered-fill report entry point for existing callers."""
+    return pot_fill_shares(fill)
 
 
 def pot_fill_contents(fill):
@@ -55,7 +62,7 @@ def pot_fill_cost_breakdown(fill):
     changes when it is filled or cleaned.
     """
     media = pot_fill_contents(fill)
-    departures = [row for row in numbered_fill_shares(fill) if row['departed_at'] is not None]
+    departures = [row for row in pot_fill_shares(fill) if row['departed_at'] is not None]
     unknown_allocation = any(row['share'] is None for row in departures)
     fraction = sum((row['share'] for row in departures if row['share'] is not None), Fraction(0))
     unknown = any(row['unit_cost'] is None for row in media)
@@ -93,6 +100,6 @@ def pot_fill_media_departures(fill):
         {**departure, 'lot': row['lot'], 'base_unit': row['base_unit'],
          'base_quantity': None if departure['share'] is None else Fraction(row['base_quantity']) * departure['share'],
          'unit_cost': row['unit_cost']}
-        for departure in numbered_fill_shares(fill) if departure['departed_at'] is not None
+        for departure in pot_fill_shares(fill) if departure['departed_at'] is not None
         for row in media
     ]

@@ -42,6 +42,8 @@ def validate_pot_media(application, *, lock=False):
             raise ValidationError({'container_fill': 'Review this fill before applying media.'})
         if application.applied_at < fill.opened_at:
             raise ValidationError({'applied_at': 'Media application cannot precede the fill opening.'})
+        if fill.stock_lot_id and fill.plant_locations.exists():
+            raise ValidationError({'container_fill': 'This fill has served plants and needs departure accounting.'})
         if fill.inventory_unit_id and fill.inventory_unit.standing_plants.filter(
             Q(ended__isnull=True) | Q(ended__gte=fill.opened_at),
         ).exists():

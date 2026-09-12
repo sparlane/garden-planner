@@ -189,6 +189,8 @@ def _require_cleanable_pot(fill):
         raise ValidationError({'fill': 'Review this fill before cleaning it.'})
     if fill.application_targets.exists() or fill.residuals.filter(pot_correction__isnull=True).exists() or fill.sowings.exists():
         raise ValidationError({'fill': 'This fill has recorded contents requiring a different clean workflow.'})
+    if fill.stock_lot_id and fill.plant_locations.exists():
+        raise ValidationError({'fill': 'Cleaning a used counted fill needs a remaining-pot media disposition workflow.'})
     if fill.inventory_unit_id:
         unit = fill.inventory_unit
         if unit_is_in_use(unit):

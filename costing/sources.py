@@ -17,13 +17,13 @@ whose cost is None all the way through, and an unvalued batch stays unvalued.
 from decimal import Decimal
 from typing import NamedTuple
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 
 from sales.models import SalesOrderAllocation, FulfillmentRider
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
-from inventory.ledger import QUANTITY_QUANTUM, distribute_exactly, quantize_money
+from inventory.ledger import MONEY_QUANTUM, QUANTITY_QUANTUM, distribute_exactly, quantize_money
 from inventory.models import InventoryItem
 from plantings.germination import ungerminated_by_cell
 from plantings.models import (
@@ -568,8 +568,16 @@ def application_sources(batch, generation_ids, cell_weights):
     return sources
 
 
+def _counted_parts(total, count, participants, quantum):
+    """Reserve rounding across all pots without constructing unplanted identities."""
+    if total is None:
+        return [None] * participants
+    whole, remainder = divmod(int(total / quantum), count)
+    return [(whole + (index < remainder)) * quantum for index in range(participants)]
+
+
 def pot_media_sources(batch):
-    """Value numbered-fill departures against all frozen participants, once.
+    """Value pot-fill departures against the original sharing basis, once.
 
     Split each line before selecting a batch or its departed plants. This
     reserves the same rounding remainder for the same participant even when
@@ -579,9 +587,7 @@ def pot_media_sources(batch):
     fill_ids = SpecificPlantLocation.objects.filter(
         specific_plant__batch=batch, ended__isnull=False,
         container_fill__tray__isnull=True,
-        container_fill__inventory_unit__isnull=False,
-        container_fill__plant_share_count__isnull=False,
-    ).values_list('container_fill_id', flat=True)
+    ).filter(Q(container_fill__plant_share_count__isnull=False) | Q(container_fill__stock_lot__isnull=False)).values_list('container_fill_id', flat=True)
     lines = _posted_lines().filter(targets__container_fill_id__in=fill_ids).select_related(
         'lot__item', 'consumption_movement',
     ).prefetch_related('targets__container_fill__plant_locations__specific_plant').order_by('pk')
@@ -589,14 +595,20 @@ def pot_media_sources(batch):
     for line in lines:
         fill = line.targets.all()[0].container_fill
         participants = sorted(fill.plant_locations.all(), key=lambda row: row.pk)
-        if len(participants) != fill.plant_share_count:
+        if fill.stock_lot_id and len(participants) > fill.container_count:
+            continue
+        if not fill.stock_lot_id and len(participants) != fill.plant_share_count:
             # Incomplete history cannot allocate the missing participants' mix.
             continue
-        weights = [Decimal('1')] * fill.plant_share_count
-        quantities = distribute_exactly(line.applied_base_quantity, weights, QUANTITY_QUANTUM)
         unit_cost = line.lot.base_unit_cost
         amount = None if unit_cost is None else quantize_money(line.applied_base_quantity * unit_cost)
-        amounts = distribute_exactly(amount, weights)
+        if fill.stock_lot_id:
+            quantities = _counted_parts(line.applied_base_quantity, fill.container_count, len(participants), QUANTITY_QUANTUM)
+            amounts = _counted_parts(amount, fill.container_count, len(participants), MONEY_QUANTUM)
+        else:
+            weights = [Decimal('1')] * fill.plant_share_count
+            quantities = distribute_exactly(line.applied_base_quantity, weights, QUANTITY_QUANTUM)
+            amounts = distribute_exactly(amount, weights)
         for placement, quantity, cost in zip(participants, quantities, amounts):
             if placement.ended is None or placement.specific_plant.batch_id != batch.pk:
                 continue

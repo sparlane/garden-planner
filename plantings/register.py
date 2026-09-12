@@ -196,6 +196,7 @@ def _container_fact(item_field, observation_field, output_field):
     """Prefer the occupied pot and retire observations predating its departure."""
     return Case(
         When(current_container_unit__isnull=False, then=_current_location(f'container_unit__item{item_field}')),
+        When(current_counted_lot__isnull=False, then=_current_location(f'container_fill__stock_lot__item{item_field}')),
         When(container_observed_at__lt=F('last_pot_departure'), then=Value(None)),
         default=_current_observation(observation_field, output_field, 'container_item'),
         output_field=output_field,
@@ -243,7 +244,8 @@ def register_projection(workspace):
             ),
         ),
         last_pot_departure=Subquery(
-            SpecificPlantLocation.objects.filter(specific_plant=OuterRef('pk'), container_unit__isnull=False)
+            SpecificPlantLocation.objects.filter(specific_plant=OuterRef('pk'))
+            .filter(Q(container_unit__isnull=False) | Q(container_fill__isnull=False))
             .order_by('-started', '-pk').values('ended')[:1],
         ),
         container_observed_at=_current_observation('occurred_at', DateTimeField(), 'container_item'),
@@ -275,6 +277,7 @@ def register_projection(workspace):
         current_garden_square=_current_location('garden_square'),
         current_garden_square_label=_current_location('garden_square__name'),
         current_container_unit=_current_location('container_unit'),
+        current_counted_lot=_current_location('container_fill__stock_lot'),
         current_container_unit_label=_current_location('container_unit__asset_code'),
         located_since=_current_location('started'),
         cost=_plant_cost(),
@@ -299,6 +302,7 @@ def register_projection(workspace):
         current_container_size=_container_fact('__container_size_label', 'container_size_label', TextField()),
         current_container_count=Case(
             When(current_container_unit__isnull=False, then=Value(1)),
+            When(current_counted_lot__isnull=False, then=Value(1)),
             When(container_observed_at__lt=F('last_pot_departure'), then=Value(None)),
             default=_current_observation('container_count', IntegerField(), 'container_item'),
             output_field=IntegerField(),
