@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query'
 
 import { CatalogScope } from './types/catalog'
+import { LabelIdentityQuery } from './types/labels'
 import { CohortFilters, NurseryRegisterFilters } from './types/plantings'
 import { WorkFilters } from './types/work'
 
@@ -41,7 +42,7 @@ const queryKeys = {
   },
   labels: {
     all: ['labels'] as const,
-    identities: (targetType?: string) => ['labels', 'identities', targetType ?? 'all'] as const,
+    identities: (query: LabelIdentityQuery) => ['labels', 'identities', query] as const,
     templates: ['labels', 'templates'] as const
   },
   workspace: {

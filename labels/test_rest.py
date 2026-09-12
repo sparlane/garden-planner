@@ -198,11 +198,19 @@ class LabelIdentityFilterTests(TestCase):
             IndividualizationRequest(lot=lot, location=self.location, count=3, reason='Specimen pots'),
         )
 
-    def identities(self, **params):
-        """List printable identities through the public endpoint."""
+    def page(self, **params):
+        """Read one page of printable identities through the public endpoint."""
         response = self.client.get('/labels/identities/', params)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            set(response.data),
+            {'count', 'next', 'previous', 'results', 'target_types'},
+        )
         return response.data
+
+    def identities(self, **params):
+        """Return one page's rows, for the assertions that only read them."""
+        return self.page(**params)['results']
 
     def test_numbering_a_pot_makes_it_printable_alongside_other_records(self):
         """An unfiltered list is the mixture the filter exists to narrow."""
@@ -223,3 +231,53 @@ class LabelIdentityFilterTests(TestCase):
     def test_an_unknown_target_type_narrows_to_nothing_rather_than_everything(self):
         """A filter the server does not recognize must not print the workspace."""
         self.assertEqual(self.identities(target_type='nosuchmodel'), [])
+
+    def test_the_object_id_filter_answers_for_one_container_alone(self):
+        """A container's own screen asks for its row instead of scanning a page."""
+        wanted = self.units[1]
+        rows = self.identities(target_type='inventoryunit', object_id=wanted.pk)
+        self.assertEqual([row['object_id'] for row in rows], [wanted.pk])
+
+    def test_a_non_numeric_object_id_narrows_to_nothing(self):
+        """A malformed lookup must not fall back to listing the workspace."""
+        self.assertEqual(self.identities(object_id='not-a-number'), [])
+
+    def test_the_type_counts_describe_the_workspace_rather_than_the_filter(self):
+        """The picker is built from them, so narrowing must not shrink them."""
+        unfiltered = self.page()['target_types']
+        filtered = self.page(target_type='inventoryunit')['target_types']
+        self.assertEqual(unfiltered, filtered)
+        counts = {row['target_type']: row['count'] for row in unfiltered}
+        self.assertEqual(counts['inventoryunit'], len(self.units))
+        self.assertEqual(sum(counts.values()), self.page()['count'])
+
+    def test_paging_reaches_every_container_without_repeating_one(self):
+        """More pots than fit on a page stay printable, each exactly once."""
+        lot = make_stock_lot(
+            item=self.units[0].item, quantity=Decimal('200'), location=self.location,
+        )
+        individualize_lot_units(
+            self.workspace, self.user,
+            IndividualizationRequest(lot=lot, location=self.location, count=120, reason='Filling line'),
+        )
+        first = self.page(target_type='inventoryunit')
+        self.assertEqual(first['count'], 123)
+        self.assertEqual(len(first['results']), 100)
+        self.assertIsNotNone(first['next'])
+
+        second = self.page(target_type='inventoryunit', page=2)
+        self.assertEqual(len(second['results']), 23)
+        self.assertIsNone(second['next'])
+        seen = [row['object_id'] for row in first['results'] + second['results']]
+        self.assertEqual(len(set(seen)), 123)
+
+    def test_a_voided_code_leaves_its_record_off_the_printable_list(self):
+        """A short page and an overstated count would both be lies about it."""
+        identity = ensure_identity(self.units[0])
+        void_code(
+            identity.codes.get(status=LabelCode.Status.ACTIVE),
+            self.user, 'Label destroyed in the wash.',
+        )
+        page = self.page(target_type='inventoryunit')
+        self.assertEqual(page['count'], len(page['results']))
+        self.assertNotIn(self.units[0].pk, {row['object_id'] for row in page['results']})

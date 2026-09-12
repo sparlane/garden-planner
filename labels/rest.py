@@ -8,6 +8,7 @@ from django.utils import timezone
 from rest_framework import mixins, routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -67,7 +68,33 @@ def _key(identity):
 
 
 def _active_code(identity):
-    return identity.codes.filter(status=LabelCode.Status.ACTIVE).first()
+    """Return the one code currently printable for this identity, if any.
+
+    Read from the codes already in hand rather than asking the database for a
+    filtered subset, which would discard a prefetch and put the listing back to
+    one query per row. A retired code keeps its row, so an identity holds its
+    whole issuing history and at most one active member of it.
+    """
+    for code in identity.codes.all():
+        if code.status == LabelCode.Status.ACTIVE:
+            return code
+    return None
+
+
+def _target_type_counts(queryset):
+    """Count printable identities per kind of record, in picker order.
+
+    Counted with `distinct`, because the printable filter joins the code table:
+    one active code per identity is a database constraint rather than something
+    a count should rely on staying true.
+    """
+    rows = queryset.values('target_content_type__model').annotate(
+        count=models.Count('pk', distinct=True),
+    ).order_by('target_content_type__model')
+    return [
+        {'target_type': row['target_content_type__model'], 'count': row['count']}
+        for row in rows
+    ]
 
 
 def _target_values(identity, code=None):
@@ -347,22 +374,72 @@ class LabelTemplateViewSet(
         instance.save(update_fields=['active', 'updated'])
 
 
+class LabelIdentityPagination(PageNumberPagination):
+    """Page printable identities and say what kinds the workspace holds.
+
+    `target_types` counts the whole workspace rather than the page or the
+    current filter, because it is what a type picker is built from: a screen
+    offering "Numbered container (412)" while reading page three of the plants
+    is describing the workspace, not what is in front of it. The extra key is
+    also what keeps the envelope intact on its way through the browser's
+    `unwrapPaginatedResponse`, which hands a bare four-key page straight to the
+    caller as a list and would silently lose every page but the first.
+    """
+
+    page_size = 100
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+    def __init__(self):
+        super().__init__()
+        self.target_types = []
+
+    def get_paginated_response(self, data):
+        response = super().get_paginated_response(data)
+        response.data['target_types'] = self.target_types
+        return response
+
+
 class LabelIdentityViewSet(CurrentWorkspaceViewSetMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
     """List printable identities without exposing generic target internals."""
 
     queryset = LabelIdentity.objects.select_related('target_content_type').prefetch_related('codes')
+    pagination_class = LabelIdentityPagination
 
-    def list(self, request, *args, **kwargs):  # pylint: disable=unused-argument
-        queryset = self.get_queryset().filter(active=True)
+    def get_queryset(self):
+        """Narrow to what can actually be printed, before anything is counted.
+
+        An identity whose code has been voided has nothing to put on a label,
+        so dropping those row by row after the page was sliced would give short
+        pages and a count that promised more than the list could show.
+        """
+        return super().get_queryset().filter(active=True, codes__status=LabelCode.Status.ACTIVE)
+
+    def _narrow(self, queryset, request):
+        """Apply the filters, refusing nothing and inventing nothing.
+
+        An unrecognized target type or a non-numeric object id narrows to
+        nothing rather than being ignored: a filter the server cannot honor
+        must not answer with the whole workspace.
+        """
         target_type = request.query_params.get('target_type')
         if target_type:
             queryset = queryset.filter(target_content_type__model=target_type)
-        rows = []
-        for identity in queryset:
-            code = _active_code(identity)
-            if code:
-                rows.append(_target_values(identity, code))
-        return Response(rows)
+        object_id = request.query_params.get('object_id')
+        if object_id:
+            if not object_id.isdigit():
+                return queryset.none()
+            queryset = queryset.filter(target_object_id=int(object_id))
+        return queryset
+
+    def list(self, request, *args, **kwargs):  # pylint: disable=unused-argument
+        printable = self.get_queryset()
+        paginator = self.paginator
+        paginator.target_types = _target_type_counts(printable)
+        page = paginator.paginate_queryset(self._narrow(printable, request), request, view=self)
+        return paginator.get_paginated_response(
+            [_target_values(identity, _active_code(identity)) for identity in page],
+        )
 
 
 class PrintTargetSerializer(serializers.Serializer):  # pylint: disable=abstract-method
