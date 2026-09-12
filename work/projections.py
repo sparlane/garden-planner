@@ -53,11 +53,23 @@ class TargetLink:
     url: str = ''
 
 
+def rule_key(rule_pk, occurrence):
+    """Return the key one occurrence of one rule is acknowledged under.
+
+    Which rule projected the work is half of what identifies an occurrence: two
+    rules watching the same sowing project their own task each, and acknowledging
+    one leaves the other due.
+    """
+    return f'rule:{rule_pk}:{occurrence}'
+
+
 @dataclass(frozen=True)
 class ProjectedTask:
     """A generated task that has not yet been acknowledged."""
 
-    key: str
+    #: What the rule is projecting work about -- the sowing, the batch, the day
+    #: -- which is the half of the key that survives a merge.
+    occurrence: str
     rule: WorkTaskRule
     task_type: str
     title: str
@@ -67,6 +79,11 @@ class ProjectedTask:
     assignee: object
     targets: tuple[TargetLink, ...]
     source_snapshot: dict
+
+    @property
+    def key(self):
+        """Return the identity this occurrence is acknowledged under."""
+        return rule_key(self.rule.pk, self.occurrence)
 
     @property
     def origin(self):
@@ -130,12 +147,12 @@ def _allows(rule, variety=None, stage=None, location=None):
     ))
 
 
-def _source_task(rule, key, title, start_day, end_day, targets, snapshot):
+def _source_task(rule, occurrence, title, start_day, end_day, targets, snapshot):
     due_start, due_end = _window(rule, start_day, end_day)
     if not _in_season(rule, due_end.astimezone(ZoneInfo(rule.workspace.timezone)).date()):
         return None
     return ProjectedTask(
-        key=f'rule:{rule.pk}:{key}', rule=rule, task_type=rule.task_type,
+        occurrence=occurrence, rule=rule, task_type=rule.task_type,
         title=title, priority=rule.priority, due_start=due_start, due_end=due_end,
         assignee=rule.default_assignee, targets=tuple(targets), source_snapshot=snapshot,
     )
@@ -758,13 +775,42 @@ def projected_tasks(workspace, today=None):
             tasks.extend(_calendar_tasks(rule, today))
         else:
             tasks.extend(PROJECTORS[rule.trigger](rule))
-    acknowledged = set(WorkTask.objects.filter(
-        workspace=workspace, key__in=[task.key for task in tasks],
-    ).values_list('key', flat=True))
+    acknowledged = _acknowledged_occurrences(workspace, tasks)
     return sorted(
         (task for task in tasks if task.key not in acknowledged),
         key=lambda task: (task.due_end, -task.priority, task.key),
     )
+
+
+def _acknowledged_occurrences(workspace, tasks):
+    """Return the projected keys of the occurrences already taken up.
+
+    An acknowledged task keeps the key it was taken up under, because that is
+    what it was: a snapshot of one occurrence of the rule that projected it.
+    Merging a duplicate rule moves its tasks onto the survivor and leaves those
+    keys naming the rule they were projected from, so a survivor answers for
+    the keys of every duplicate it absorbed as well as its own. Without that,
+    cleaning up a duplicate would put work somebody had already dealt with back
+    in the queue the same afternoon.
+
+    One hop is the whole trail: a merge moves ``merged_into`` along with every
+    other reference, so a duplicate merged away earlier points at the survivor
+    rather than at the record it first went to.
+    """
+    absorbed = {}
+    merged = WorkTaskRule.objects.filter(
+        workspace=workspace, merged_into__isnull=False,
+    ).values_list('pk', 'merged_into_id')
+    for duplicate, survivor in merged:
+        absorbed.setdefault(survivor, []).append(duplicate)
+    taken_up = {}
+    for task in tasks:
+        for rule_pk in (task.rule.pk, *absorbed.get(task.rule.pk, ())):
+            taken_up[rule_key(rule_pk, task.occurrence)] = task.key
+    stored = WorkTask.objects.filter(
+        workspace=workspace, key__in=list(taken_up),
+    ).values_list('key', flat=True)
+    return {taken_up[key] for key in stored}
 
 
 def target_identity(target):

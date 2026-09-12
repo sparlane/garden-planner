@@ -13,9 +13,11 @@ from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from common.catalog import CatalogViewSetMixin
 from health.availability import target_alert_count
 from workspaces.models import Workspace
 from workspaces.scoping import (
+    CodedSettingSerializer,
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
     RequireWorkspaceModeMixin,
@@ -30,11 +32,12 @@ def _errors(error):
     return error.message_dict if hasattr(error, 'message_dict') else error.messages
 
 
-class WorkRuleSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class WorkRuleSerializer(CurrentWorkspaceSerializerMixin, CodedSettingSerializer):
     class Meta:
         model = WorkTaskRule
         fields = [
-            'pk', 'code', 'name', 'task_type', 'trigger', 'active', 'priority',
+            'pk', 'code', 'name', 'display_order', 'task_type', 'trigger',
+            'active', 'merged_into', 'priority',
             'due_start_offset_days', 'due_end_offset_days', 'local_due_time',
             'frequency', 'interval', 'weekdays', 'season_start', 'season_end',
             'variety', 'stage', 'location', 'default_assignee', 'notes',
@@ -199,9 +202,13 @@ class OperationalWorkMixin(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMix
     required_workspace_modes = (Workspace.Mode.GARDEN, Workspace.Mode.NURSERY)
 
 
-class WorkRuleViewSet(OperationalWorkMixin, viewsets.ModelViewSet):
+class WorkRuleViewSet(CatalogViewSetMixin, OperationalWorkMixin, viewsets.ModelViewSet):
     queryset = WorkTaskRule.objects.select_related('variety', 'stage', 'location', 'default_assignee')
     serializer_class = WorkRuleSerializer
+    # A rule is retired rather than deleted, for the reason every other catalog
+    # is: the tasks acknowledged under it name it, and they are the history
+    # retirement exists to leave readable.
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def perform_create(self, serializer):
         serializer.save(workspace=self.get_current_workspace(), created_by=self.request.user)

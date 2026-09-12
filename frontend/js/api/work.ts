@@ -1,3 +1,4 @@
+import { catalogSearchQuery } from './catalog'
 import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
 import { WorkAssignee, WorkFilters, WorkRule, WorkTask } from '../types/work'
 
@@ -11,8 +12,8 @@ function getWorkTasks(filters: WorkFilters, signal?: AbortSignal): Promise<Array
   return fetchAsJson<Array<WorkTask>>(`/work/tasks/?${query.toString()}`, signal)
 }
 
-function getWorkRules(signal?: AbortSignal): Promise<Array<WorkRule>> {
-  return fetchAsJson<Array<WorkRule>>('/work/rules/', signal)
+function getWorkRules(signal?: AbortSignal, search?: string): Promise<Array<WorkRule>> {
+  return fetchAsJson<Array<WorkRule>>(`/work/rules/${catalogSearchQuery(search)}`, signal)
 }
 
 function getWorkAssignees(signal?: AbortSignal): Promise<Array<WorkAssignee>> {
@@ -35,6 +36,9 @@ function addWorkRule(data: object): Promise<WorkRule> {
   return csrfPost('/work/rules/', data).then((response) => response.json() as Promise<WorkRule>)
 }
 
+// Only what should read differently is sent. A stable code is not among the
+// things that can, so a screen posting the whole rule back would be offering
+// the server a code to refuse on every unrelated edit.
 function updateWorkRule(pk: number, data: object): Promise<WorkRule> {
   return csrfPatch(`/work/rules/${pk}/`, data).then((response) => response.json() as Promise<WorkRule>)
 }
