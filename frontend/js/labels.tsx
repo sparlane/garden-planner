@@ -10,6 +10,7 @@ import { getLocations } from './api/locations'
 import { queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
 import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
+import { sheetLayout } from './labels/sheet'
 import { BulkOperationPanel } from './plantings/bulk_operations'
 import { HealthScopeType } from './types/health'
 import { allocateOrderLine, getFulfillments, getSalesOrders, postFulfillment, postReturn, previewAllocation } from './api/sales'
@@ -25,36 +26,54 @@ function PrintArea({ job }: { job: LabelPrintJob }) {
   const dimensions = job.template.dimensions
   const width = `${dimensions.label_width_mm}mm`
   const height = `${dimensions.label_height_mm}mm`
-  const columns = job.template.layout === 'sheet' ? `repeat(auto-fill, ${width})` : width
+  const sheet = sheetLayout(job.template)
   return (
-    <div className="label-print-area label-sheet" style={{ gridTemplateColumns: columns, ['--label-gap' as string]: `${dimensions.gap_mm ?? 0}mm` }}>
-      {job.items.map((item) => (
-        <article className="physical-label" key={`${item.identity}:${item.position}`} style={{ width, height }}>
-          <Barcode format={job.template.format} payload={item.payload} />
-          <div className="label-values">
-            {job.template.fields.map((field) => {
-              const value = item.target[field]
-              if (value === undefined || value === null || value === '') return null
-              return (
-                <div key={field}>
-                  {field === 'display' ? (
-                    <strong>{String(value)}</strong>
-                  ) : field === 'code' ? (
-                    <>
-                      <div>code:</div>
-                      <div className="label-code">{String(value)}</div>
-                    </>
-                  ) : (
-                    `${field.replaceAll('_', ' ')}: ${String(value)}`
-                  )}
-                </div>
-              )
-            })}
-            {item.is_reprint && <small>Reprint</small>}
-          </div>
-        </article>
-      ))}
-    </div>
+    <>
+      {/* The page box has to come from the template, not from the print
+          dialog: a sheet is cut to the paper it is cut to, and the browser's
+          own margins would move every label off its gum. The bars go on the
+          `@page` margin rather than as padding inside the grid, so the second
+          sheet gets them too — padding would only indent the first. The column
+          count is fixed for the same reason: a page narrowed by a printer
+          setting must overflow visibly rather than quietly print one column
+          fewer, every label of it on the wrong gum. */}
+      <style>{`@page { size: ${sheet.pageWidthMm}mm ${sheet.pageHeightMm}mm; margin: ${sheet.marginTopMm}mm ${sheet.marginSideMm}mm; }`}</style>
+      <div
+        className="label-print-area label-sheet"
+        style={{
+          gridTemplateColumns: `repeat(${sheet.columns}, ${width})`,
+          columnGap: `${sheet.columnGapMm}mm`,
+          rowGap: `${sheet.rowGapMm}mm`
+        }}
+      >
+        {job.items.map((item) => (
+          <article className="physical-label" key={`${item.identity}:${item.position}`} style={{ width, height }}>
+            <Barcode format={job.template.format} payload={item.payload} />
+            <div className="label-values">
+              {job.template.fields.map((field) => {
+                const value = item.target[field]
+                if (value === undefined || value === null || value === '') return null
+                return (
+                  <div key={field}>
+                    {field === 'display' ? (
+                      <strong>{String(value)}</strong>
+                    ) : field === 'code' ? (
+                      <>
+                        <div>code:</div>
+                        <div className="label-code">{String(value)}</div>
+                      </>
+                    ) : (
+                      `${field.replaceAll('_', ' ')}: ${String(value)}`
+                    )}
+                  </div>
+                )
+              })}
+              {item.is_reprint && <small>Reprint</small>}
+            </div>
+          </article>
+        ))}
+      </div>
+    </>
   )
 }
 

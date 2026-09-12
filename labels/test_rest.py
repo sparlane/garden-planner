@@ -176,6 +176,62 @@ class LabelPrintJobTests(TestCase):
         self.assertIsInstance(templates.data, list)
         self.assertGreaterEqual(len(templates.data), 3)
 
+    def sheet(self, **dimensions):
+        """Post one sheet template, returning the response for inspection."""
+        values = {
+            'label_width_mm': 70, 'label_height_mm': 36,
+            'page_width_mm': 210, 'page_height_mm': 297,
+            'margin_mm': 0, 'margin_top_mm': 4.5, 'gap_mm': 0, 'row_gap_mm': 0,
+        }
+        values.update(dimensions)
+        return self.client.post(
+            '/labels/templates/',
+            {
+                'name': f'Sheet {uuid4().hex[:8]}', 'format': 'qr', 'payload_mode': 'url',
+                'layout': 'sheet', 'fields': ['display', 'code'], 'dimensions': values,
+            },
+            content_type='application/json',
+        )
+
+    def test_a_sheet_template_keeps_its_asymmetric_bars_and_gaps(self):
+        """LC24 runs to both paper edges and leaves a bar only at the top."""
+        response = self.sheet()
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['dimensions']['margin_mm'], 0)
+        self.assertEqual(response.data['dimensions']['margin_top_mm'], 4.5)
+        self.assertEqual(response.data['dimensions']['row_gap_mm'], 0)
+
+    def test_a_sheet_needs_the_page_it_is_cut_from(self):
+        """Without a page there is nothing to place the first label against."""
+        response = self.sheet(page_width_mm=0, page_height_mm=0)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('dimensions', response.data)
+
+    def test_a_label_wider_than_its_page_is_refused_rather_than_printed(self):
+        """A row too wide prints short and every label lands on the wrong gum."""
+        response = self.sheet(label_width_mm=120, margin_mm=50)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('dimensions', response.data)
+
+    def test_a_label_taller_than_its_bars_allow_is_refused(self):
+        """The same failure read down the page instead of across it."""
+        response = self.sheet(label_height_mm=290, margin_top_mm=20)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('dimensions', response.data)
+
+    def test_a_roll_template_states_the_label_and_no_page(self):
+        """A roll has no sheet to be placed on, so it is not asked for one."""
+        response = self.client.post(
+            '/labels/templates/',
+            {
+                'name': f'Roll {uuid4().hex[:8]}', 'format': 'code128', 'payload_mode': 'code',
+                'layout': 'roll', 'fields': ['display', 'code'],
+                'dimensions': {'label_width_mm': 50, 'label_height_mm': 30},
+            },
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 201)
+
     def test_code128_rejects_a_url_payload(self):
         """Linear labels remain compact enough for practical scanners."""
         template = LabelTemplate.objects.get(

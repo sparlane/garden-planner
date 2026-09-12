@@ -1,7 +1,8 @@
+/* The gaps come from the template through inline `columnGap`/`rowGap`: a
+   sheet parts its columns and butts its rows together as often as not. */
 .label-sheet {
   display: grid;
   align-content: start;
-  gap: var(--label-gap, 2mm);
 }
 
 .physical-label {
@@ -53,9 +54,14 @@
     visibility: visible;
   }
 
+  /* Pinned to the page origin so the hidden application chrome above it does
+     not push the first row down, but deliberately not to the bottom: an
+     element given a page's height cannot grow past it, and a run longer than
+     one sheet would be clipped rather than continued. The page's own margin
+     box supplies the sheet's bars. */
   .label-print-area {
     position: absolute;
-    inset: 0;
+    inset: 0 0 auto 0;
     margin: 0;
   }
 

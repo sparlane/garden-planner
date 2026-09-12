@@ -40,13 +40,23 @@ LABEL_FIELDS = {
     'code',
     'print_date',
 }
+#: Label stock is rarely symmetrical, so the four figures that place the first
+#: label are separate measurements rather than one inset. `margin_mm` is the
+#: unprintable edge down each side and `margin_top_mm` the bar across the top;
+#: `gap_mm` is the space between columns and `row_gap_mm` between rows, which
+#: sheets commonly set to nothing while still parting their columns. LC24 runs
+#: its labels to both paper edges with 4.5mm above the first row and no gaps at
+#: all. A sheet that is symmetrical states `margin_mm` and `gap_mm` alone, and
+#: the other two follow them.
 DIMENSION_FIELDS = {
     'label_width_mm',
     'label_height_mm',
     'page_width_mm',
     'page_height_mm',
     'margin_mm',
+    'margin_top_mm',
     'gap_mm',
+    'row_gap_mm',
 }
 TARGET_ROUTES = {
     ('plantings', 'specificplant'): '/plantings/plants/{pk}',
@@ -351,11 +361,42 @@ class LabelTemplateSerializer(serializers.ModelSerializer):
         payload_mode = attrs.get('payload_mode', getattr(self.instance, 'payload_mode', None))
         if format_name == LabelTemplate.Format.CODE128 and payload_mode != LabelTemplate.PayloadMode.CODE:
             raise serializers.ValidationError({'payload_mode': 'Code 128 labels always contain the bare code.'})
+        if attrs.get('layout', getattr(self.instance, 'layout', None)) == LabelTemplate.Layout.SHEET:
+            self._validate_sheet_fits(attrs)
         if self.instance and self.instance.built_in:
             editable = set(attrs) - {'active'}
             if editable:
                 raise serializers.ValidationError('Clone a built-in template before changing it.')
         return attrs
+
+    def _validate_sheet_fits(self, attrs):
+        """Refuse a sheet whose first label already runs off the page.
+
+        Caught here rather than left to the printer, because the failure is
+        silent: a row too wide for the paper simply prints fewer labels across
+        than the sheet has, and every one of them lands on the wrong gum.
+        """
+        if 'dimensions' not in attrs:
+            # Nothing about the geometry is changing, so there is nothing here
+            # to check: retiring a template must not re-litigate its measurements.
+            return
+        dimensions = attrs['dimensions']
+        page_width = dimensions.get('page_width_mm')
+        page_height = dimensions.get('page_height_mm')
+        if not page_width or not page_height:
+            raise serializers.ValidationError({
+                'dimensions': 'A sheet needs page_width_mm and page_height_mm.',
+            })
+        margin = dimensions.get('margin_mm', 0)
+        margin_top = dimensions.get('margin_top_mm', margin)
+        if dimensions['label_width_mm'] + 2 * margin > page_width:
+            raise serializers.ValidationError({
+                'dimensions': 'One label and its side margins are wider than the page.',
+            })
+        if dimensions['label_height_mm'] + 2 * margin_top > page_height:
+            raise serializers.ValidationError({
+                'dimensions': 'One label and its top and bottom bars are taller than the page.',
+            })
 
 
 class LabelTemplateViewSet(
