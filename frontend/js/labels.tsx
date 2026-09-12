@@ -5,12 +5,13 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { Link, useParams } from 'react-router'
 
-import { createLabelPrintJob, createLabelTemplate, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel } from './api/labels'
+import { createLabelPrintJob, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel } from './api/labels'
 import { getLocations } from './api/locations'
 import { queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
 import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
 import { sheetLayout } from './labels/sheet'
+import { TemplateForm } from './labels/template_form'
 import { BulkOperationPanel } from './plantings/bulk_operations'
 import { HealthScopeType } from './types/health'
 import { allocateOrderLine, getFulfillments, getSalesOrders, postFulfillment, postReturn, previewAllocation } from './api/sales'
@@ -87,9 +88,6 @@ function LabelsView() {
   const [templatePk, setTemplatePk] = React.useState<number | ''>('')
   const [payloadMode, setPayloadMode] = React.useState<'code' | 'url'>('url')
   const [preview, setPreview] = React.useState<LabelPrintJob>()
-  const [templateName, setTemplateName] = React.useState('')
-  const [labelWidth, setLabelWidth] = React.useState('50')
-  const [labelHeight, setLabelHeight] = React.useState('30')
   const [targetType, setTargetType] = React.useState('')
   const [page, setPage] = React.useState(1)
   const identityQuery = { targetType: targetType || undefined, page }
@@ -110,23 +108,6 @@ function LabelsView() {
       }
     }
   })
-  const templateMutation = useMutation({
-    mutationFn: () =>
-      createLabelTemplate({
-        name: templateName,
-        format: 'qr',
-        payload_mode: 'url',
-        layout: 'roll',
-        fields: ['display', 'variety', 'batch', 'sowing_date', 'expected_ready', 'code', 'print_date'],
-        dimensions: { label_width_mm: Number(labelWidth), label_height_mm: Number(labelHeight) }
-      }),
-    onSuccess: async (created) => {
-      setTemplatePk(created.pk)
-      setTemplateName('')
-      await templates.refetch()
-    }
-  })
-
   React.useEffect(() => {
     if (templatePk === '' && templates.data?.length) setTemplatePk(templates.data[0].pk)
   }, [templatePk, templates.data])
@@ -185,31 +166,12 @@ function LabelsView() {
             </Form.Select>
           </Col>
         </Row>
-        <Card body className="mb-3">
-          <Card.Title>Save a custom roll template</Card.Title>
-          <Row className="g-2 align-items-end">
-            <Col md={5}>
-              <Form.Label>Name</Form.Label>
-              <Form.Control value={templateName} onChange={(event) => setTemplateName(event.target.value)} />
-            </Col>
-            <Col md={2}>
-              <Form.Label>Width (mm)</Form.Label>
-              <Form.Control type="number" min="1" step="0.1" value={labelWidth} onChange={(event) => setLabelWidth(event.target.value)} />
-            </Col>
-            <Col md={2}>
-              <Form.Label>Height (mm)</Form.Label>
-              <Form.Control type="number" min="1" step="0.1" value={labelHeight} onChange={(event) => setLabelHeight(event.target.value)} />
-            </Col>
-            <Col md={3}>
-              <Button
-                disabled={!templateName.trim() || Number(labelWidth) <= 0 || Number(labelHeight) <= 0 || templateMutation.isPending}
-                onClick={() => templateMutation.mutate()}
-              >
-                Save template
-              </Button>
-            </Col>
-          </Row>
-        </Card>
+        <TemplateForm
+          onCreated={async (created) => {
+            setTemplatePk(created.pk)
+            await templates.refetch()
+          }}
+        />
         <Row className="g-2 mb-2 align-items-end">
           <Col md={4}>
             <Form.Label htmlFor="label-target-type">Show</Form.Label>
