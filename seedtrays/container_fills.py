@@ -17,6 +17,7 @@ from inventory.ledger import (
     lock_lots,
     lock_units,
     quantize_quantity,
+    reverse_tray_generation_movements,
     unit_is_in_use,
     unit_physical_state,
     unpromised_bulk,
@@ -26,7 +27,7 @@ from locations.models import Location
 from sales.models import SalesOrderAllocation
 
 from .generations import CloseRequest, contents_digest, match_residual_quantities, write_residual
-from .models import SeedTrayGeneration, SeedTrayGenerationEvent
+from .models import PotFillResidualCorrection, SeedTrayGeneration, SeedTrayGenerationEvent
 from .pot_media import pot_fill_contents
 
 
@@ -186,7 +187,7 @@ def _require_cleanable_pot(fill):
         raise ValidationError({'fill': 'This fill is already closed.'})
     if fill.review_state != SeedTrayGeneration.ReviewState.NONE:
         raise ValidationError({'fill': 'Review this fill before cleaning it.'})
-    if fill.application_targets.exists() or fill.residuals.exists() or fill.sowings.exists():
+    if fill.application_targets.exists() or fill.residuals.filter(pot_correction__isnull=True).exists() or fill.sowings.exists():
         raise ValidationError({'fill': 'This fill has recorded contents requiring a different clean workflow.'})
     if fill.inventory_unit_id:
         unit = fill.inventory_unit
@@ -205,3 +206,59 @@ def _require_cleanable_pot(fill):
         unknown_history = history.exclude(container_fill=fill).exists() or (participants.exists() and not fill.plant_share_count)
         if pot_fill_contents(fill) and unknown_history:
             raise ValidationError({'fill': 'This container has plant history requiring fill departure accounting.'})
+
+
+def _require_reclaimable_containers(fill):
+    """A correction must claim the pots again before it can restore their media."""
+    if fill.stock_lot_id:
+        _require_item(fill.stock_lot.item)
+        _require_location(fill.workspace, fill.source_location)
+        if not balance_is_known(fill.stock_lot) or unpromised_bulk(fill.stock_lot, fill.source_location) < fill.container_count:
+            raise ValidationError({'fill': 'There are not enough empty, unpromised pots to restore this fill.'})
+        return
+    unit = fill.inventory_unit
+    _require_item(unit.item)
+    _require_location(fill.workspace, unit.current_location)
+    if not unit.active or unit_physical_state(unit) != 'available' or unit_is_in_use(unit):
+        raise ValidationError({'fill': 'The container is not empty and available to restore this fill.'})
+    if unit.container_fills.filter(sequence__gt=fill.sequence).exists():
+        raise ValidationError({'fill': 'The container has been filled again; its earlier fill cannot be restored.'})
+    if unit.standing_plants.filter(started__gte=fill.closed_at).exclude(container_fill=fill).exists():
+        raise ValidationError({'fill': 'The container has held plants since this clean; its earlier fill cannot be restored.'})
+    if SalesOrderAllocation.objects.filter(inventory_unit=unit, status=SalesOrderAllocation.Status.RESERVED).exists():
+        raise ValidationError({'fill': 'The container is reserved for an order.'})
+
+
+@transaction.atomic
+def reopen_pot_fill(workspace, user, fill, reason):
+    """Correct a clean atomically, retaining its dispositions and departure shares.
+
+    Reclaim the container stock first, then reverse only uncorrected media
+    recoveries under media lot locks. Correction rows also retire waste, which
+    has no stock movement to reverse. A later clean writes new residuals.
+    """
+    if not reason or not reason.strip():
+        raise ValidationError({'reason': 'A reason is required.'})
+    fill = lock_pot_fills(workspace, [fill.pk])[0]
+    if fill.status != SeedTrayGeneration.Status.CLOSED:
+        raise ValidationError({'fill': 'Only a closed pot fill can be reopened.'})
+    if fill.review_state != SeedTrayGeneration.ReviewState.NONE:
+        raise ValidationError({'fill': 'Review this fill before reopening it.'})
+    _require_reclaimable_containers(fill)
+    residuals = list(fill.residuals.filter(pot_correction__isnull=True).select_related('movement'))
+    lock_lots(workspace, [row.lot_id for row in residuals])
+    reverse_tray_generation_movements(workspace, [row.movement for row in residuals if row.movement_id], user, reason.strip())
+    occurred_at = timezone.now()
+    event = SeedTrayGenerationEvent.objects.create(
+        generation=fill, event_type=SeedTrayGenerationEvent.EventType.REOPENED,
+        occurred_at=occurred_at, reason=reason.strip(),
+        created_by=user if user is not None and user.is_authenticated else None,
+    )
+    for residual in residuals:
+        PotFillResidualCorrection.objects.create(residual=residual, event=event)
+    SeedTrayGeneration.objects.filter(pk=fill.pk).update(
+        status=SeedTrayGeneration.Status.OPEN, closed_at=None,
+        close_reason='', closed_by=None, updated=occurred_at,
+    )
+    fill.refresh_from_db()
+    return fill

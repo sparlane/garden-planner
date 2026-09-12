@@ -27,7 +27,7 @@ from tests.factories import (
 )
 from workspaces.models import Workspace, get_current_workspace
 
-from .container_fills import clean_empty_fill, clean_pot_fill, open_counted_fill, open_numbered_fill
+from .container_fills import clean_empty_fill, clean_pot_fill, open_counted_fill, open_numbered_fill, reopen_pot_fill
 from .generations import CloseRequest, MediaDisposition, contents_digest
 from .pot_media import pot_fill_contents, pot_fill_cost_breakdown, pot_fill_media_departures
 
@@ -431,3 +431,33 @@ class PotMediaConcurrencyTests(PotMediaMixin, ReservationConcurrencyTestCase):
             lambda: reverse_application(application, None, 'Correction'),
         )
         self.assertEqual(physical_balance(self.media, self.store), 200)
+
+    def test_reopen_and_numbering_cannot_claim_the_same_pots(self):
+        """Restoring a fill and numbering its released stock share the lot lock."""
+        clean_empty_fill(self.workspace, None, self.fill, reason='Clean')
+        self.race(
+            lambda: reopen_pot_fill(self.workspace, None, self.fill, 'Correction'),
+            lambda: individualize_lot_units(self.workspace, None, IndividualizationRequest(self.pots, self.store, 100)),
+        )
+
+    def test_two_corrections_reverse_reclaimed_media_only_once(self):
+        """Duplicate corrections cannot append a second stock reversal."""
+        post_application(self.draft(), None)
+        self.clean(media=(MediaDisposition(self.media.pk, '50', 'reclaimed', 'Reusable mix.', self.store),))
+
+        def correction():
+            return reopen_pot_fill(self.workspace, None, self.fill, 'Correction')
+
+        self.race(correction, correction)
+        self.assertEqual(physical_balance(self.media, self.store), 150)
+        self.assertEqual(self.fill.events.filter(event_type='reopened').count(), 1)
+
+    def test_reopen_and_refill_cannot_claim_the_same_numbered_pot(self):
+        """The unit lock serializes a correction against its next fill."""
+        unit = individualize_lot_units(self.workspace, None, IndividualizationRequest(self.pots, self.store, 1))[0]
+        fill = open_numbered_fill(self.workspace, None, unit)
+        clean_empty_fill(self.workspace, None, fill, reason='Clean')
+        self.race(
+            lambda: reopen_pot_fill(self.workspace, None, fill, 'Correction'),
+            lambda: open_numbered_fill(self.workspace, None, unit),
+        )
