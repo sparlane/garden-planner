@@ -74,8 +74,7 @@ class CountedFillPlacementTests(PotMediaMixin, CountedStockTestCase):
         self.number(self.pots, 50)
         with self.assertRaises(ValidationError):
             self.join()
-        with self.assertRaises(ValidationError):
-            clean_empty_fill(self.workspace, self.user, self.fill, reason='Clean')
+        clean_empty_fill(self.workspace, self.user, self.fill, reason='Clean the fully departed fill')
 
     def test_partial_run_keeps_media_on_unused_pots(self):
         """Unplanted pots do not make the first departure absorb their mix."""
@@ -255,6 +254,18 @@ class CountedFillConcurrencyTests(PotMediaMixin, ReservationConcurrencyTestCase)
         results = self.race(
             lambda: clean_empty_fill(self.workspace, None, self.fill, reason='Clean'),
             lambda: plant_counted_fill(self.workspace, None, self.fill, [plant.pk]),
+        )
+        self.assertEqual(results, ['done', 'rejected'])
+
+    def test_used_clean_and_next_arrival_cannot_both_succeed(self):
+        """Cleaning remaining pots cannot race past a later counted arrival."""
+        first, second = make_specific_plant(), make_specific_plant()
+        row, = plant_counted_fill(self.workspace, None, self.fill, [first.pk])
+        row.ended = timezone.now()
+        row.save(update_fields=['ended'])
+        results = self.race(
+            lambda: clean_empty_fill(self.workspace, None, self.fill, reason='Clean unused pots'),
+            lambda: plant_counted_fill(self.workspace, None, self.fill, [second.pk]),
         )
         self.assertEqual(results, ['done', 'rejected'])
 

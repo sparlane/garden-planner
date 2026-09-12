@@ -28,7 +28,7 @@ from sales.models import SalesOrderAllocation
 
 from .generations import CloseRequest, contents_digest, match_residual_quantities, write_residual
 from .models import PotFillResidualCorrection, SeedTrayGeneration, SeedTrayGenerationEvent
-from .pot_media import pot_fill_contents
+from .pot_media import pot_fill_contents, pot_fill_remaining_media
 
 
 def _require_location(workspace, location):
@@ -143,8 +143,9 @@ def clean_pot_fill(workspace, user, fill, request):
     """Clean empty pots, disposing only of media not taken by departed plants.
 
     Numbered fills whose complete participation has departed retain that media
-    in their departure reports rather than reclaiming it a second time. No pot
-    stock movement is posted: closing the fill releases its existing claim.
+    in their departure reports. Counted fills dispose of the rounded remainder
+    in their unplanted pots. No pot stock movement is posted: closing releases
+    only the claim left after the plants' departures.
     """
     if not request.reason or not request.reason.strip():
         raise ValidationError({'reason': 'A reason is required.'})
@@ -154,7 +155,7 @@ def clean_pot_fill(workspace, user, fill, request):
     _require_cleanable_pot(fill)
     occurred_at = request.occurred_at or timezone.now()
     contents = pot_fill_contents(fill)
-    remaining = [] if fill.plant_share_count else contents
+    remaining = pot_fill_remaining_media(fill)
     if request.digest is not None and request.digest != contents_digest({'plants': [], 'seeds': [], 'media': remaining}):
         raise ValidationError({'digest': 'The fill changed after this clean was prepared. Review it again.'})
     if occurred_at < fill.opened_at or any(occurred_at < row['latest_application'] for row in contents) or fill.plant_locations.filter(ended__gt=occurred_at).exists():
@@ -189,8 +190,11 @@ def _require_cleanable_pot(fill):
         raise ValidationError({'fill': 'Review this fill before cleaning it.'})
     if fill.application_targets.exists() or fill.residuals.filter(pot_correction__isnull=True).exists() or fill.sowings.exists():
         raise ValidationError({'fill': 'This fill has recorded contents requiring a different clean workflow.'})
-    if fill.stock_lot_id and fill.plant_locations.exists():
-        raise ValidationError({'fill': 'Cleaning a used counted fill needs a remaining-pot media disposition workflow.'})
+    if fill.stock_lot_id:
+        if fill.plant_locations.filter(ended__isnull=True).exists():
+            raise ValidationError({'fill': 'Move the plants before cleaning this fill.'})
+        if fill.plant_locations.count() > fill.container_count:
+            raise ValidationError({'fill': 'The recorded participants exceed the original pot count.'})
     if fill.inventory_unit_id:
         unit = fill.inventory_unit
         if unit_is_in_use(unit):
@@ -215,7 +219,8 @@ def _require_reclaimable_containers(fill):
     if fill.stock_lot_id:
         _require_item(fill.stock_lot.item)
         _require_location(fill.workspace, fill.source_location)
-        if not balance_is_known(fill.stock_lot) or unpromised_bulk(fill.stock_lot, fill.source_location) < fill.container_count:
+        remaining = fill.container_count - fill.plant_locations.filter(ended__isnull=False).count()
+        if remaining < 0 or not balance_is_known(fill.stock_lot) or unpromised_bulk(fill.stock_lot, fill.source_location) < remaining:
             raise ValidationError({'fill': 'There are not enough empty, unpromised pots to restore this fill.'})
         return
     unit = fill.inventory_unit
