@@ -113,6 +113,7 @@ class CostAllocationRun(WorkspaceOwnedModel):
         GENERATION_CLOSED = 'generation_closed', 'Tray generation cleaned'
         OUTPUT_FINALIZED = 'output_finalized', 'Batch output finalized'
         CONTAINER_SOLD = 'container_sold', 'Container sold with its plants'
+        FILL_DEPARTURE = 'fill_departure', 'Plant left its container fill'
         MANUAL_RECALCULATE = 'manual_recalculate', 'Recalculated by an operator'
 
     batch = models.ForeignKey(

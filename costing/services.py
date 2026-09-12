@@ -37,7 +37,7 @@ from applications.models import FACTOR_DECIMAL_PLACES
 from inventory.ledger import quantize_money, quantize_quantity
 from plantings.batches import lock_batch_with_plants
 from plantings.lifecycle import LifecycleState, lifecycle_summaries
-from plantings.models import ProductionBatch, SpecificPlant
+from plantings.models import ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .allocation import combine, loss_shares, value_shares
 from .models import CostAllocation, CostAllocationRun
@@ -351,6 +351,25 @@ def reallocate_batch(batch, user, trigger, reason=''):
     for spec in post:
         _write_layer(run, spec)
     return run
+
+
+def reallocate_fill_departure(placement_id):
+    """Bring a committed numbered-fill departure into its crop's cost ledger.
+
+    Read persisted facts rather than a caller's potentially stale plant or
+    fill. Legacy departures with no fixed shares have no new cost to post.
+    Manual batch recalculation remains the recovery path if this callback fails.
+    """
+    placement = SpecificPlantLocation.objects.select_related('specific_plant__batch').filter(
+        pk=placement_id, ended__isnull=False,
+        container_fill__tray__isnull=True,
+        container_fill__plant_share_count__isnull=False,
+    ).first()
+    if placement is None or placement.specific_plant.batch_id is None:
+        return None
+    return reallocate_batch(
+        placement.specific_plant.batch, None, CostAllocationRun.Trigger.FILL_DEPARTURE,
+    )
 
 
 def reallocate_batches(batches, user, trigger, reason=''):
