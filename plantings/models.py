@@ -1924,10 +1924,9 @@ class SpecificPlantLocation(models.Model):
         callback belongs to the outer transaction, so rolled-back moves never
         allocate media and completed outcomes are visible to costing.
         """
-        from costing.services import reallocate_fill_departure  # pylint: disable=import-outside-toplevel,cyclic-import
+        from costing.services import schedule_fill_departure  # pylint: disable=import-outside-toplevel,cyclic-import
 
-        placement_id = self.pk
-        transaction.on_commit(lambda: reallocate_fill_departure(placement_id))
+        schedule_fill_departure(self)
 
     def _freeze_fill_shares(self):
         """Fix the denominator once, while arrivals and other exits wait on the pot.

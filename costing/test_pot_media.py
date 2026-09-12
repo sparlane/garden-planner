@@ -2,7 +2,11 @@
 # pylint: disable=duplicate-code
 
 from decimal import Decimal
+from io import StringIO
+from unittest.mock import patch
 
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -14,7 +18,8 @@ from seedtrays.container_fills import clean_empty_fill, open_numbered_fill
 from seedtrays.test_pot_media import PotMediaMixin
 from tests.factories import make_specific_plant_location
 
-from .services import effective_allocations, reallocate_batch
+from .models import FillDepartureRecalculation
+from .services import effective_allocations, reallocate_batch, reallocate_fill_departure
 from .sources import pot_media_sources
 
 
@@ -120,7 +125,9 @@ class PotMediaCostTests(PotMediaMixin, CountedStockTestCase):
         with self.captureOnCommitCallbacks(execute=True) as callbacks:
             self.leave(placement)
             self.assertEqual(effective_allocations(batch), [])
+            self.assertTrue(FillDepartureRecalculation.objects.filter(placement=placement).exists())
         self.assertEqual(len(callbacks), 1)
+        self.assertFalse(FillDepartureRecalculation.objects.exists())
         layer, = effective_allocations(batch)
         self.assertEqual(layer.amount, Decimal('33.3334'))
         self.assertEqual(layer.run.trigger, 'fill_departure')
@@ -146,6 +153,7 @@ class PotMediaCostTests(PotMediaMixin, CountedStockTestCase):
         self.fill.refresh_from_db()
         self.assertIsNone(placement.ended)
         self.assertIsNone(self.fill.plant_share_count)
+        self.assertFalse(FillDepartureRecalculation.objects.exists())
         self.assertEqual(effective_allocations(placement.specific_plant.batch), [])
 
     def test_move_posts_source_fill_media(self):
@@ -170,3 +178,61 @@ class PotMediaCostTests(PotMediaMixin, CountedStockTestCase):
             )
         layer, = effective_allocations(placement.specific_plant.batch)
         self.assertEqual(layer.amount, Decimal('33.3334'))
+
+    def test_failed_callback_is_durable_and_command_recovers_it(self):
+        """A cost failure does not turn a committed departure into a failed move."""
+        placement = self.placements[0]
+        with patch('costing.services.reallocate_batch', side_effect=RuntimeError('Costing unavailable')):
+            with self.assertLogs('django.test', level='ERROR'):
+                with self.captureOnCommitCallbacks(execute=True):
+                    self.leave(placement)
+        placement.refresh_from_db()
+        self.assertIsNotNone(placement.ended)
+        self.assertTrue(FillDepartureRecalculation.objects.filter(placement=placement).exists())
+        self.assertEqual(effective_allocations(placement.specific_plant.batch), [])
+        output = StringIO()
+        call_command('retry_fill_departure_costs', stdout=output)
+        self.assertIn('Processed 1', output.getvalue())
+        self.assertFalse(FillDepartureRecalculation.objects.exists())
+        layer, = effective_allocations(placement.specific_plant.batch)
+        self.assertEqual(layer.amount, Decimal('33.3334'))
+        call_command('retry_fill_departure_costs', stdout=StringIO())
+        self.assertEqual([row.pk for row in effective_allocations(layer.batch)], [layer.pk])
+
+    def test_retry_recovers_costs_already_posted_before_interruption(self):
+        """A crash between posting layers and clearing work cannot double cost."""
+        placement = self.placements[0]
+        self.leave(placement)
+        layer, = self.layers(placement)
+        self.assertTrue(FillDepartureRecalculation.objects.exists())
+        self.assertIsNone(reallocate_fill_departure(placement.pk))
+        self.assertFalse(FillDepartureRecalculation.objects.exists())
+        self.assertEqual([row.pk for row in effective_allocations(layer.batch)], [layer.pk])
+
+    def test_retry_failure_keeps_request_and_processes_other_departures(self):
+        """One failing crop does not prevent another pending crop recovering."""
+        first, second = self.placements[:2]
+        self.leave(first)
+        self.leave(second)
+
+        def retry(placement_id):
+            if placement_id == first.pk:
+                raise RuntimeError('Still unavailable')
+            return reallocate_fill_departure(placement_id)
+
+        with patch('costing.management.commands.retry_fill_departure_costs.reallocate_fill_departure', side_effect=retry):
+            with self.assertRaisesMessage(CommandError, '1 fill departures remain pending'):
+                call_command('retry_fill_departure_costs', stdout=StringIO(), stderr=StringIO())
+        self.assertEqual(list(FillDepartureRecalculation.objects.values_list('placement_id', flat=True)), [first.pk])
+        self.assertEqual(len(effective_allocations(second.specific_plant.batch)), 1)
+
+    def test_retry_limit_and_workspace_filter(self):
+        """Maintenance can restrict work and refuses an invalid batch size."""
+        for placement in self.placements:
+            self.leave(placement)
+        with self.assertRaisesMessage(CommandError, '--limit must be positive'):
+            call_command('retry_fill_departure_costs', limit=0)
+        call_command('retry_fill_departure_costs', workspace=-1, stdout=StringIO())
+        self.assertEqual(FillDepartureRecalculation.objects.count(), 3)
+        call_command('retry_fill_departure_costs', workspace=self.workspace.pk, limit=1, stdout=StringIO())
+        self.assertEqual(FillDepartureRecalculation.objects.count(), 2)

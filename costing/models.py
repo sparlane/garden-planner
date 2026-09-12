@@ -92,6 +92,16 @@ TARGET_FIELDS = tuple(dict.fromkeys(TARGET_COLUMNS.values()))
 POOL_TARGET_TYPES = ('batch_pool', 'production_loss', 'unattributed')
 
 
+class FillDepartureRecalculation(models.Model):
+    """Durable work recorded with a departure and removed after costing succeeds."""
+
+    placement = models.OneToOneField(
+        'plantings.SpecificPlantLocation', on_delete=models.PROTECT,
+        primary_key=True, related_name='pending_cost_recalculation',
+    )
+    requested_at = models.DateTimeField(auto_now_add=True)
+
+
 class CostAllocationRun(WorkspaceOwnedModel):
     """One recalculation of one batch's allocations.
 

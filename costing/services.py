@@ -40,7 +40,7 @@ from plantings.lifecycle import LifecycleState, lifecycle_summaries
 from plantings.models import ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .allocation import combine, loss_shares, value_shares
-from .models import CostAllocation, CostAllocationRun
+from .models import CostAllocation, CostAllocationRun, FillDepartureRecalculation
 from .sources import batch_sources, sold_cohort_quantities
 
 
@@ -353,23 +353,33 @@ def reallocate_batch(batch, user, trigger, reason=''):
     return run
 
 
+def schedule_fill_departure(placement):
+    """Persist retry work in the departure transaction before trying it at commit."""
+    FillDepartureRecalculation.objects.get_or_create(placement=placement)
+    placement_id = placement.pk
+    transaction.on_commit(lambda: reallocate_fill_departure(placement_id), robust=True)
+
+
 def reallocate_fill_departure(placement_id):
     """Bring a committed numbered-fill departure into its crop's cost ledger.
 
     Read persisted facts rather than a caller's potentially stale plant or
     fill. Legacy departures with no fixed shares have no new cost to post.
-    Manual batch recalculation remains the recovery path if this callback fails.
+    A failure leaves the durable request for retry_fill_departure_costs. A crash
+    after costing but before clearing the request is safe: costing is idempotent.
     """
     placement = SpecificPlantLocation.objects.select_related('specific_plant__batch').filter(
         pk=placement_id, ended__isnull=False,
         container_fill__tray__isnull=True,
         container_fill__plant_share_count__isnull=False,
     ).first()
-    if placement is None or placement.specific_plant.batch_id is None:
-        return None
-    return reallocate_batch(
-        placement.specific_plant.batch, None, CostAllocationRun.Trigger.FILL_DEPARTURE,
-    )
+    run = None
+    if placement is not None and placement.specific_plant.batch_id is not None:
+        run = reallocate_batch(
+            placement.specific_plant.batch, None, CostAllocationRun.Trigger.FILL_DEPARTURE,
+        )
+    FillDepartureRecalculation.objects.filter(placement_id=placement_id).delete()
+    return run
 
 
 def reallocate_batches(batches, user, trigger, reason=''):
