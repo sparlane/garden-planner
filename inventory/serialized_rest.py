@@ -8,6 +8,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from common.rest_query import parse_boolean, parse_integer
@@ -184,6 +185,18 @@ class UnitReconciliationActionSerializer(
     workspace_field_lookups = {'destination': 'workspace'}
 
 
+class SerializedUnitPagination(PageNumberPagination):
+    """Let a caller ask for a whole bench rather than walking it a page at a time.
+
+    A run of numbered pots is worked on as one bench, and a screen that asked
+    for pots 81 to 600 and silently got the first hundred would fill the wrong
+    pots. The default page stays as it is for every caller that does not ask.
+    """
+
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 class InventoryUnitViewSet(
     CurrentWorkspaceViewSetMixin,
     viewsets.ReadOnlyModelViewSet,
@@ -196,6 +209,7 @@ class InventoryUnitViewSet(
         'current_location',
     ).prefetch_related('movements')
     serializer_class = InventoryUnitSerializer
+    pagination_class = SerializedUnitPagination
 
     def get_queryset(self):
         """Apply identity, location, state, and cultivation filters."""
@@ -215,8 +229,30 @@ class InventoryUnitViewSet(
         asset_code = self.request.query_params.get('asset_code', '').strip()
         if asset_code:
             queryset = queryset.filter(asset_code__icontains=asset_code)
+        queryset = self._filter_numbers(queryset)
         queryset = self._filter_state(queryset)
         return self._filter_in_use(queryset)
+
+    def _filter_numbers(self, queryset):
+        """Select a run of units by the numbers written on them.
+
+        A unit's number is its identity here: it is issued once, never reused,
+        and unique across the whole nursery, so a range needs no second key to
+        say which pots it means. Ordering follows the numbers whenever one of
+        the bounds is given, because a range asked for by number and answered
+        in asset-code order would page through an arbitrary slice of itself.
+        """
+        first = parse_integer(self.request.query_params.get('number_from'), 'number_from')
+        last = parse_integer(self.request.query_params.get('number_to'), 'number_to')
+        if first is None and last is None:
+            return queryset
+        if first is not None and last is not None and last < first:
+            raise ValidationError({'number_to': 'The last number cannot precede the first.'})
+        if first is not None:
+            queryset = queryset.filter(pk__gte=first)
+        if last is not None:
+            queryset = queryset.filter(pk__lte=last)
+        return queryset.order_by('pk')
 
     def _filter_state(self, queryset):
         """Filter by the movement-derived state when requested."""

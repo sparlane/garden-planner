@@ -361,6 +361,80 @@ class AssetCodeLookupTests(SerializedInventoryTestCase):
         self.assertEqual(self.lookup('ASSET-NOT-A-CODE'), [])
 
 
+class NumberRangeLookupTests(SerializedInventoryTestCase):
+    """A run of units is selected by the numbers they were issued.
+
+    A unit's number is its identity: issued once, never reused, and unique
+    across the nursery, so a bench filled or worked on in one go is named as
+    the range it occupies rather than code by code.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.post_receipt(quantity='5', cost='50.0000')
+        self.units = list(InventoryUnit.objects.order_by('pk'))
+
+    def lookup(self, **query):
+        """Return the numbers the collection answers with, in its own order."""
+        response = self.client.get('/inventory/serialized-units/', query)
+        self.assertEqual(response.status_code, 200, response.data)
+        return [row['pk'] for row in response.data['results']]
+
+    def test_a_range_answers_in_number_order_with_both_ends_inside_it(self):
+        """The bench asked for is the bench answered, ends included."""
+        wanted = [unit.pk for unit in self.units[1:4]]
+
+        self.assertEqual(
+            self.lookup(number_from=wanted[0], number_to=wanted[-1]),
+            wanted,
+        )
+
+    def test_one_bound_runs_to_the_end_of_the_numbers(self):
+        """Half a range is still a range; the other end is simply open."""
+        self.assertEqual(
+            self.lookup(number_from=self.units[3].pk),
+            [unit.pk for unit in self.units[3:]],
+        )
+        self.assertEqual(
+            self.lookup(number_to=self.units[1].pk),
+            [unit.pk for unit in self.units[:2]],
+        )
+
+    def test_a_range_combines_with_the_filters_beside_it(self):
+        """A number range narrows a selection rather than replacing it."""
+        other = InventoryItem.objects.create(
+            workspace=self.workspace,
+            name='Other tray',
+            category=InventoryItem.Category.TRAY,
+            base_unit=UnitCode.EACH,
+            tracking_mode=InventoryItem.TrackingMode.SERIALIZED,
+        )
+
+        self.assertEqual(
+            self.lookup(number_from=self.units[0].pk, item=other.pk),
+            [],
+        )
+
+    def test_a_backwards_or_unreadable_range_is_refused(self):
+        """Silently answering with nothing would look like an empty bench."""
+        for query in (
+            {'number_from': self.units[3].pk, 'number_to': self.units[1].pk},
+            {'number_from': 'eighty-one'},
+        ):
+            with self.subTest(query=query):
+                response = self.client.get('/inventory/serialized-units/', query)
+                self.assertEqual(response.status_code, 400, response.data)
+
+    def test_a_caller_can_ask_for_a_whole_bench_or_walk_it_in_pages(self):
+        """A screen that got a silent first page would work on the wrong pots."""
+        response = self.client.get('/inventory/serialized-units/', {'page_size': 2})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(len(response.data['results']), 2)
+        self.assertIsNotNone(response.data['next'])
+
+        self.assertEqual(len(self.lookup(page_size=500)), 5)
+
+
 class OpeningReconciliationTests(SerializedInventoryTestCase):
     """A migrated unit leaves its unknown location only by being audited."""
 
