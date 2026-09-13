@@ -66,6 +66,14 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
 
   const targetsSeedTray = tray !== undefined || targets.some((target) => target.target_type === 'seed_tray_cell')
   const targetsPotFill = targets.some((target) => target.target_type === 'container_fill')
+  const chosenTargets = selected.map((key) => targets.find((option) => option.key === key)).filter((option) => option !== undefined)
+  // A pot fill owns its media history and its cost, so a line names exactly
+  // one fill and records the whole quantity that went into it: there is no
+  // allocation basis for a line spread over several, and the server refuses
+  // one. A bench filled from the same barrow is therefore one document with a
+  // line per pot, which is also what makes it readable afterwards — each pot
+  // can say how much mix it holds without dividing anything back out.
+  const fillPerLine = chosenTargets.length > 0 && chosenTargets.every((option) => option.target_type === 'container_fill')
   // Seed stock is consumed by a sowing, not by an input application. A tray's
   // cells additionally receive only media and treatments; containers, labels,
   // packaging, and unrelated physical stock have their own workflows.
@@ -77,8 +85,15 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
   )
   const chosenItem = applicableItems.find((entry) => entry.pk === item)
   const chosenBalance = balances.find((entry) => `${entry.lot}:${entry.location}` === stock)
-  const previewLine = preview?.lines[0]
-  const overrideRequired = previewLine?.override_required ?? false
+  const previewLines = preview?.lines ?? []
+  const previewLine = previewLines[0]
+  // Every line draws on the same lot, and the server subtracts them in order,
+  // so what the lot is left with is the last line's figure rather than the
+  // first's. A document that showed the first would tell an operator filling
+  // forty pots that the lot had barely been touched.
+  const finalLine = previewLines[previewLines.length - 1]
+  const overrideRequired = previewLines.some((line) => line.override_required)
+  const short = previewLines.some((line) => line.short)
   const selectable = targets.filter((option) => !option.blocked)
   const blocked = targets.filter((option) => option.blocked)
 
@@ -91,7 +106,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
     setPreview(undefined)
   }
 
-  function linePayload(): ApplicationLineInput {
+  function linePayload(keys: Array<string>, wasted: string): ApplicationLineInput {
     return {
       item: Number(item),
       lot: chosenBalance!.lot,
@@ -99,17 +114,26 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
       applied_quantity: quantity,
       unit_code: chosenItem?.base_unit ?? null,
       fill_factor: targetsPotFill || fillFactor === '' ? null : fillFactor,
-      waste_quantity: waste === '' ? '0' : waste,
+      waste_quantity: wasted === '' ? '0' : wasted,
       waste_reason: wasteReason,
       override_reason: overrideReason,
       targets: tray
         ? []
-        : selected.map((key) => {
+        : keys.map((key) => {
             const option = targets.find((entry) => entry.key === key)
             return { target_type: option!.target_type, target: option!.pk }
           }),
       tray: tray ?? null
     }
+  }
+
+  // The mix left in the barrow is one amount for the whole job, not one per
+  // pot, so it stays on a single line rather than being counted once for every
+  // pot on the bench. It never entered a pot either way — waste is stock
+  // discarded, and a fill's contents only ever count what was applied to it.
+  function linePayloads(): Array<ApplicationLineInput> {
+    if (!fillPerLine) return [linePayload(selected, waste)]
+    return selected.map((key, index) => linePayload([key], index === 0 ? waste : '0'))
   }
 
   const checkMutation = useMutation({
@@ -122,7 +146,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
         applied_at: applied.toISOString(),
         source_location: chosenBalance!.location,
         batch,
-        lines: [linePayload()]
+        lines: linePayloads()
       }
       const saved = draft ? await updateInputApplication(draft.pk, payload) : await addInputApplication(payload)
       return { saved, state: await previewInputApplication(saved.pk) }
@@ -260,7 +284,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
           <Col md={3}>
             <Form.Group className="mb-3" controlId="application-quantity">
               <Form.Label>
-                {targetsPotFill ? 'Quantity applied to the whole fill' : 'Confirmed quantity'}
+                {targetsPotFill ? `Quantity applied to ${fillPerLine && selected.length > 1 ? 'each fill' : 'the whole fill'}` : 'Confirmed quantity'}
                 {chosenItem ? ` (${chosenItem.base_unit})` : ''}
               </Form.Label>
               <Form.Control
@@ -293,7 +317,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
           )}
           <Col md={3}>
             <Form.Group className="mb-3" controlId="application-waste">
-              <Form.Label>Waste</Form.Label>
+              <Form.Label>Waste{fillPerLine && selected.length > 1 ? ' (for the whole bench)' : ''}</Form.Label>
               <Form.Control
                 value={waste}
                 inputMode="decimal"
@@ -313,17 +337,18 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
           </Col>
         </Row>
 
-        {previewLine && (
-          <Alert variant={previewLine.short ? 'danger' : 'info'}>
+        {previewLine && finalLine && (
+          <Alert variant={short ? 'danger' : 'info'}>
             <div>{previewLine.formula}</div>
             <div className="small">
               {previewLine.calculated_base_quantity === null ? 'Manual quantity' : `Calculated ${formatMeasure(previewLine.calculated_base_quantity, previewLine.base_unit)}`} ·
               applying {formatMeasure(previewLine.applied_base_quantity, previewLine.base_unit)}
+              {previewLines.length > 1 ? ` to each of ${previewLines.length} fills` : ''}
             </div>
             <div className="small">
-              Lot holds {formatQuantity(previewLine.available_base_quantity)} and would hold {formatQuantity(previewLine.available_after_base_quantity)} {previewLine.base_unit}
+              Lot holds {formatQuantity(previewLine.available_base_quantity)} and would hold {formatQuantity(finalLine.available_after_base_quantity)} {previewLine.base_unit}
             </div>
-            {previewLine.short && <div className="fw-bold">This lot does not hold enough.</div>}
+            {short && <div className="fw-bold">This lot does not hold enough.</div>}
           </Alert>
         )}
 

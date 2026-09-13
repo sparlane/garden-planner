@@ -297,10 +297,11 @@ function NumberedPotFills({ item }: NumberedPotFillsProps) {
             <Alert className="mt-2" variant="success">
               Opened {opened.length} fill{opened.length === 1 ? '' : 's'} on {numberList(opened.map((entry) => entry.inventory_unit ?? 0))}.
             </Alert>
-            {/* The mix that went into the bench is one document over all of it,
-                because that is how it was mixed and how it was used: the server
-                divides the quantity and its cost across the fills named here,
-                so each pot still carries its own share of what it cost. */}
+            {/* One document over the whole bench, because that is how the mix
+                was made up and used, but a line per pot inside it: a fill owns
+                its own media history and its own cost, so the quantity is what
+                went into one pot rather than something to divide back out
+                later. The form asks for it per pot for the same reason. */}
             <InputApplicationForm
               title="Record the growing media these pots were filled with"
               targets={opened.map((entry) => ({ key: `container_fill:${entry.pk}`, target_type: 'container_fill' as const, pk: entry.pk, label: `Pot #${entry.inventory_unit}` }))}

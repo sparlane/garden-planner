@@ -368,6 +368,55 @@ class PotMediaDepartureTests(PotMediaMixin, CountedStockTestCase):
         self.assertIsNone(report['departed_cost'])
         self.assertIsNone(report['held_cost'])
 
+    def test_rest_records_a_bench_as_one_line_for_each_pot(self):
+        """One barrow of mix over a bench is one document, a line per pot.
+
+        A line names one whole fill, which is what lets a pot say how much mix
+        it holds without dividing anything back out of a shared line, so the
+        bench posts as many lines as it has pots. The document still draws on
+        one lot, and the preview has to subtract the lines in order or a screen
+        filling a bench would be told the lot was barely touched.
+        """
+        fills = [open_numbered_fill(self.workspace, self.user, unit) for unit in self.number(self.pots, 3)]
+
+        def line(fill, waste):
+            """One pot's share of the job, with the barrow's leftover on the first."""
+            return {'item': self.media_item.pk, 'lot': self.media.pk, 'applied_quantity': '1.5',
+                    'unit_code': 'l', 'usage_basis': 'manual', 'waste_quantity': waste,
+                    'waste_reason': 'Left in the barrow.' if waste != '0' else '',
+                    'targets': [{'target_type': 'container_fill', 'target': fill.pk}]}
+
+        response = self.client.post('/applications/input-applications/', {
+            'applied_at': timezone.now().isoformat(), 'source_location': self.store.pk,
+            'lines': [line(fill, '2' if index == 0 else '0') for index, fill in enumerate(fills)],
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        draft = response.data['pk']
+        preview = self.client.get(f'/applications/input-applications/{draft}/preview/')
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual([row['available_after_base_quantity'] for row in preview.data['lines']],
+                         ['196.500000000', '195.000000000', '193.500000000'])
+        self.assertFalse(any(row['short'] for row in preview.data['lines']))
+        posted = self.client.post(f'/applications/input-applications/{draft}/post/', {
+            'revision': preview.data['revision'], 'availability_digest': preview.data['availability_digest'],
+        }, format='json')
+        self.assertEqual(posted.status_code, 200, posted.data)
+        self.assertEqual(physical_balance(self.media, self.store), Decimal('193.5'))
+        for fill in fills:
+            self.assertEqual(pot_fill_contents(fill)[0]['base_quantity'], Decimal('1.5'))
+
+    def test_rest_refuses_one_line_spread_over_a_whole_bench(self):
+        """Which is the shape a screen filling a bench reaches for first."""
+        fills = [open_numbered_fill(self.workspace, self.user, unit) for unit in self.number(self.pots, 2)]
+        response = self.client.post('/applications/input-applications/', {
+            'applied_at': timezone.now().isoformat(), 'source_location': self.store.pk,
+            'lines': [{'item': self.media_item.pk, 'lot': self.media.pk, 'applied_quantity': '3',
+                       'unit_code': 'l', 'usage_basis': 'manual',
+                       'targets': [{'target_type': 'container_fill', 'target': fill.pk} for fill in fills]}],
+        }, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(any(pot_fill_contents(fill) for fill in fills))
+
     def test_rest_resolves_fill_identity_and_scopes_it_to_workspace(self):
         """The application API round-trips a fill target without a fake unit or crop."""
         payload = {
