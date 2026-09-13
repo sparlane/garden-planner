@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { getGardenSquares } from '../api/garden'
-import { getInventoryItems, getSerializedUnits } from '../api/inventory'
+import { getInventoryItems } from '../api/inventory'
 import { getGrowthStages, getNurseryRegisterSelection, getPlantGrades, postBulkPlantOperation, previewBulkPlantOperation } from '../api/plantings'
 import { getSeedTrayCells, getSeedTrays } from '../api/seedtrays'
 import { activeChoices } from '../catalog'
@@ -13,6 +13,7 @@ import { BulkPlantAction, BulkPlantAtomicity, BulkPlantOperationRequest, BulkPla
 import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
 import { STATE_LABELS } from './lifecycle'
 import { PLACEMENT_LABELS } from './placements'
+import { potOptionLabel, useNumberedPotDestinations } from './pot_destinations'
 import { EMPTY_SELECTION, RegisterSelection } from './register_list'
 
 const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
@@ -31,9 +32,8 @@ const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
 ]
 
 // The places a plant can be put. A numbered pot is reached through the item it
-// came from, the way a cell is reached through its tray: the pots of one
-// catalog item are what an operator is choosing between, and listing every
-// numbered container in the nursery at once would not be.
+// came from, the way a cell is reached through its tray, which is what
+// `pot_destinations.ts` holds the two lists for.
 type DestinationType = 'location' | 'garden_square' | 'seed_tray_cell' | 'container_unit'
 
 interface BulkOperationPanelProps {
@@ -74,21 +74,13 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   const stagesQuery = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.stages, queryFn: ({ signal }) => getGrowthStages(signal) })
   const gradesQuery = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.grades, queryFn: ({ signal }) => getPlantGrades(signal) })
   const containersQuery = useQuery({
-    queryKey: ['inventory', 'pot-containers'],
+    queryKey: queryKeys.inventory.items('', 'pot_container', '', 'active'),
     queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container', active: true }, signal)
   })
-  // Only pots still on hand can be stood in. A sold or wasted one keeps its
-  // identity forever, so filtering on `active` alone would offer containers
-  // that have left the nursery.
-  const containerUnitsQuery = useQuery({
-    queryKey: queryKeys.inventory.serializedUnits(containerItem, 'available'),
-    queryFn: ({ signal }) => getSerializedUnits({ item: containerItem as number, active: true, physical_state: 'available' }, signal),
-    enabled: destinationType === 'container_unit' && containerItem !== ''
-  })
-  // A pot has to be numbered before a plant can be recorded as standing in it,
-  // which is what mixed tracking means; the rest of the pot catalog is bought
-  // and consumed by the boxful.
-  const numberableContainers = (containersQuery.data ?? []).filter((entry) => entry.tracking_mode === 'mixed')
+  // Which pots can be stood in is the same question here as on a tray page, so
+  // both ask `useNumberedPotDestinations`. The repot picker above wants the
+  // whole active pot catalog, and shares the cache entry the hook reads.
+  const { potItems, pots } = useNumberedPotDestinations({ choosing: destinationType === 'container_unit', item: containerItem })
 
   function invalidateReview() {
     setPreview(undefined)
@@ -266,7 +258,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                   }}
                 >
                   <option value="">Select container item</option>
-                  {numberableContainers.map((entry) => (
+                  {potItems.map((entry) => (
                     <option key={entry.pk} value={entry.pk}>
                       {entry.name}
                     </option>
@@ -303,11 +295,9 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                     </option>
                   ))}
                 {destinationType === 'container_unit' &&
-                  (containerUnitsQuery.data ?? []).map((entry) => (
+                  pots.map((entry) => (
                     <option key={entry.pk} value={entry.pk}>
-                      {entry.asset_code}
-                      {entry.current_location_full_name ? ` — ${entry.current_location_full_name}` : ''}
-                      {entry.in_use ? ' (already holding a plant)' : ''}
+                      {potOptionLabel(entry)}
                     </option>
                   ))}
               </Form.Select>

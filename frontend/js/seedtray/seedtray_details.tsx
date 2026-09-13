@@ -39,11 +39,14 @@ import {
   reverseSpecificPlantEvent
 } from '../api/plantings'
 import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog } from '../plantings/lifecycle'
+import { PLACEMENT_LABELS, placementLabel } from '../plantings/placements'
+import { potOptionLabel, useNumberedPotDestinations } from '../plantings/pot_destinations'
 import { GerminationSummary } from '../plantings/germination'
 import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
 import { CohortLossCause } from '../types/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
 import { GardenSquare } from '../types/garden'
+import { InventoryItem, SerializedInventoryUnit } from '../types/inventory'
 import { getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
 import { queryClient, queryKeys } from '../query'
@@ -71,7 +74,26 @@ type SeedTrayMove = {
   seedTrayCellPk?: number
 }
 
-type MoveForm = BaseMoveForm & (GardenSquareMove | SeedTrayMove)
+// A pot is chosen through the item it came from, the way a cell is chosen
+// through its tray, so the item is part of the form rather than state beside it.
+type ContainerUnitMove = {
+  locationType: 'container_unit'
+  potItemPk?: number
+  containerUnitPk?: number
+}
+
+type MoveForm = BaseMoveForm & (GardenSquareMove | SeedTrayMove | ContainerUnitMove)
+
+// The one field that says where the plant is going, whichever kind of place the
+// form is naming. Save is refused until it is answered and the payload is built
+// from the same answer, so a fifth kind of place cannot reach one and not the
+// other.
+function moveDestinationPk(form: MoveForm): number | undefined {
+  if (form.locationType === 'garden_square') return form.gardenSquarePk
+  if (form.locationType === 'seed_tray_cell') return form.seedTrayCellPk
+  return form.containerUnitPk
+}
+
 type InventoryAction = 'transfer' | 'loss' | 'retire' | 'return' | 'reconcile-opening'
 
 type CellPlantingEntry = { cellPlantingPk: number; quantity: number; plantingPk: number }
@@ -392,13 +414,31 @@ type MovePlantFormProps = {
   allSeedTrays: SeedTray[] | undefined
   moveCells: SeedTrayCell[] | undefined
   moveCellsLoading: boolean | undefined
+  potItems: Array<InventoryItem>
+  pots: Array<SerializedInventoryUnit>
+  potsLoading: boolean
   onChange: (form: MoveForm) => void
   onChangeTray: (value: string) => void
+  onChangePotItem: (value: string) => void
   onSave: () => void
   onCancel: () => void
 }
 
-const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allSeedTrays, moveCells, moveCellsLoading, onChange, onChangeTray, onSave, onCancel }) => (
+const MovePlantForm: React.FC<MovePlantFormProps> = ({
+  form,
+  gardenSquares,
+  allSeedTrays,
+  moveCells,
+  moveCellsLoading,
+  potItems,
+  pots,
+  potsLoading,
+  onChange,
+  onChangeTray,
+  onChangePotItem,
+  onSave,
+  onCancel
+}) => (
   <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 480 }}>
     <h5>Move Plant #{form.plantPk}</h5>
     {form.currentLocationPk && <p style={{ fontSize: '0.9em', color: '#666' }}>This will end the current location on the selected date.</p>}
@@ -409,30 +449,19 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
           value={form.locationType}
           onChange={(e) => {
             const locationType = e.target.value as MoveForm['locationType']
+            const base = { plantPk: form.plantPk, currentLocationPk: form.currentLocationPk, date: form.date, notes: form.notes }
             if (locationType === 'garden_square') {
-              onChange({
-                plantPk: form.plantPk,
-                currentLocationPk: form.currentLocationPk,
-                date: form.date,
-                notes: form.notes,
-                locationType: 'garden_square',
-                gardenSquarePk: undefined
-              })
+              onChange({ ...base, locationType, gardenSquarePk: undefined })
+            } else if (locationType === 'seed_tray_cell') {
+              onChange({ ...base, locationType, moveSeedTrayPk: undefined, seedTrayCellPk: undefined })
             } else {
-              onChange({
-                plantPk: form.plantPk,
-                currentLocationPk: form.currentLocationPk,
-                date: form.date,
-                notes: form.notes,
-                locationType: 'seed_tray_cell',
-                moveSeedTrayPk: undefined,
-                seedTrayCellPk: undefined
-              })
+              onChange({ ...base, locationType, potItemPk: undefined, containerUnitPk: undefined })
             }
           }}
         >
-          <option value="garden_square">Garden Square</option>
-          <option value="seed_tray_cell">Seed Tray Cell</option>
+          <option value="garden_square">{PLACEMENT_LABELS.garden_square}</option>
+          <option value="seed_tray_cell">{PLACEMENT_LABELS.seed_tray_cell}</option>
+          <option value="container_unit">{PLACEMENT_LABELS.container_unit}</option>
         </select>
       </label>
     </div>
@@ -487,6 +516,48 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
         )}
       </>
     )}
+    {form.locationType === 'container_unit' && (
+      <>
+        <div style={{ marginTop: 8 }}>
+          <label>
+            Container item:{' '}
+            <select value={form.potItemPk ?? ''} onChange={(e) => onChangePotItem(e.target.value)}>
+              <option value="">— select item —</option>
+              {potItems.map((item) => (
+                <option key={item.pk} value={item.pk}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {potItems.length === 0 && (
+            <p style={{ fontSize: '0.9em', color: '#666', marginBottom: 0 }}>
+              No pot item is numbered individually yet. A plant stands in a pot by the code printed on it, so number some pots on the inventory item first.
+            </p>
+          )}
+        </div>
+        {form.potItemPk && (
+          <div style={{ marginTop: 8 }}>
+            <label>
+              Pot:{' '}
+              {potsLoading ? (
+                <span>Loading…</span>
+              ) : (
+                <select value={form.containerUnitPk ?? ''} onChange={(e) => onChange({ ...form, containerUnitPk: Number(e.target.value) })}>
+                  <option value="">— select pot —</option>
+                  {pots.map((pot) => (
+                    <option key={pot.pk} value={pot.pk}>
+                      {potOptionLabel(pot)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
+            {!potsLoading && pots.length === 0 && <p style={{ fontSize: '0.9em', color: '#666', marginBottom: 0 }}>No pots of this item are numbered and on hand.</p>}
+          </div>
+        )}
+      </>
+    )}
     <div style={{ marginTop: 8 }}>
       <label>
         Date: <input type="datetime-local" value={form.date} onChange={(e) => onChange({ ...form, date: e.target.value })} />
@@ -498,7 +569,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({ form, gardenSquares, allS
       </label>
     </div>
     <div style={{ marginTop: 8 }}>
-      <Button variant="primary" onClick={onSave} disabled={!form.date || (form.locationType === 'garden_square' ? !form.gardenSquarePk : !form.seedTrayCellPk)}>
+      <Button variant="primary" onClick={onSave} disabled={!form.date || !moveDestinationPk(form)}>
         Save
       </Button>{' '}
       <Button variant="secondary" onClick={onCancel}>
@@ -669,6 +740,10 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     enabled: Boolean(activeGeneration)
   })
   const moveTrayPk = moveForm?.locationType === 'seed_tray_cell' ? moveForm.moveSeedTrayPk : undefined
+  const { potItems, pots, potsLoading } = useNumberedPotDestinations({
+    choosing: moveForm?.locationType === 'container_unit',
+    item: (moveForm?.locationType === 'container_unit' ? moveForm.potItemPk : undefined) ?? ''
+  })
   const moveCellsQuery = useQuery({
     queryKey: queryKeys.seedTrays.cells(moveTrayPk ?? 0),
     queryFn: ({ signal }) => getSeedTrayCells(moveTrayPk as number, signal),
@@ -702,11 +777,15 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   })
   const moveMutation = useMutation({
     mutationFn: ({ plantPk, move }: { plantPk: number; move: SpecificPlantMove }) => moveSpecificPlant(plantPk, move),
+    // Standing a plant in a numbered pot is what puts that pot in use, so the
+    // pot lists are revalidated too: the next plant off this tray would
+    // otherwise be offered the pot as though it were still empty.
     onSuccess: () =>
       Promise.all([
         cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
         cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
         cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
+        cache.invalidateQueries({ queryKey: queryKeys.inventory.all }),
         cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
       ])
   })
@@ -862,6 +941,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         location_type: moveForm.locationType,
         seed_tray_cell: moveForm.locationType === 'seed_tray_cell' ? moveForm.seedTrayCellPk : undefined,
         garden_square: moveForm.locationType === 'garden_square' ? moveForm.gardenSquarePk : undefined,
+        container_unit: moveForm.locationType === 'container_unit' ? moveForm.containerUnitPk : undefined,
         started: parsedMoveDate.toISOString(),
         notes: moveForm.notes || undefined
       }
@@ -908,13 +988,30 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     })
   }
 
+  function handleMovePotItemChange(rawValue: string) {
+    setMoveForm((currentForm) => {
+      if (!currentForm || currentForm.locationType !== 'container_unit') return currentForm
+      return {
+        ...currentForm,
+        potItemPk: rawValue ? Number(rawValue) : undefined,
+        containerUnitPk: undefined
+      }
+    })
+  }
+
   function locationLabel(location: SpecificPlantLocation): string {
     if (location.location_type === 'seed_tray_cell') {
       const cell = allCells.find((candidate) => candidate.pk === location.seed_tray_cell)
       return cell ? `Cell (${cell.x_position},${cell.y_position})` : `Cell #${location.seed_tray_cell}`
     }
-    const square = gardenSquares.find((candidate) => candidate.pk === location.garden_square)
-    return square ? square.name : `Square #${location.garden_square}`
+    if (location.location_type === 'garden_square') {
+      const square = gardenSquares.find((candidate) => candidate.pk === location.garden_square)
+      return square ? square.name : `Square #${location.garden_square}`
+    }
+    // A pot or a bench is not drawn on this page, so there is no row here to
+    // name it from. `placementLabel` names a pot by the code printed on it,
+    // which is how it is found in the nursery.
+    return placementLabel(location)
   }
 
   async function handleFillTray() {
@@ -1316,8 +1413,12 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           allSeedTrays={seedTrays}
           moveCells={moveCellsQuery.data}
           moveCellsLoading={moveCellsQuery.isPending}
+          potItems={potItems}
+          pots={pots}
+          potsLoading={potsLoading}
           onChange={setMoveForm}
           onChangeTray={handleMoveTrayChange}
+          onChangePotItem={handleMovePotItemChange}
           onSave={handleRecordMove}
           onCancel={() => setMoveForm(undefined)}
         />
