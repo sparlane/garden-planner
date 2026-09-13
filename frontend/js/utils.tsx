@@ -346,20 +346,34 @@ function sumMoney(values: Array<string | null | undefined>): string {
   return `${negative ? '-' : ''}${digits.slice(0, -4)}.${digits.slice(-4)}`
 }
 
-// DRF reports a rejected write as {field: [message]}. Forms want one message
-// per field, so this flattens it and drops anything that is not shaped that
-// way — a network failure has already been published to the global alert.
-function errorsByField(error: unknown): Record<string, string> {
+// DRF reports a rejected write as {field: [message]}, and a write over many
+// records answers with one message per record under the field that named them.
+// This keeps them all, dropping anything not shaped that way — a network
+// failure has already been published to the global alert.
+function messagesByField(error: unknown): Record<string, Array<string>> {
   if (!(error instanceof ApiError) || typeof error.body !== 'object' || error.body === null) {
     return {}
   }
 
-  const fields: Record<string, string> = {}
+  const fields: Record<string, Array<string>> = {}
   for (const [field, messages] of Object.entries(error.body as Record<string, unknown>)) {
-    if (Array.isArray(messages) && messages.length > 0) {
-      fields[field] = String(messages[0])
+    if (Array.isArray(messages)) {
+      fields[field] = messages.map(String)
     } else if (typeof messages === 'string') {
-      fields[field] = messages
+      fields[field] = [messages]
+    }
+  }
+  return fields
+}
+
+// One message per field, which is what a form with a control per field can
+// show. A rejection that named forty pots has more to say than this: see
+// `messagesByField`.
+function errorsByField(error: unknown): Record<string, string> {
+  const fields: Record<string, string> = {}
+  for (const [field, messages] of Object.entries(messagesByField(error))) {
+    if (messages.length > 0) {
+      fields[field] = messages[0]
     }
   }
   return fields
@@ -368,6 +382,7 @@ function errorsByField(error: unknown): Record<string, string> {
 export {
   ApiError,
   errorsByField,
+  messagesByField,
   csrfDelete,
   csrfPost,
   csrfPostForm,

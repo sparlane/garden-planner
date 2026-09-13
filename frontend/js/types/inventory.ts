@@ -107,6 +107,14 @@ interface SerializedUnitFilters {
   in_use?: boolean
   physical_state?: SerializedPhysicalState
   asset_code?: string
+  // A unit's number is its `pk`: issued once, never reused, and unique across
+  // the nursery, so a run of pots is named by the numbers written on them.
+  number_from?: number
+  number_to?: number
+  // Only raise this to take a whole bench in one answer. The server caps it,
+  // and a page that silently held the first hundred of a wider range would be
+  // an arbitrary slice of the pots the operator meant.
+  page_size?: number
 }
 
 interface ItemUnitConversion {

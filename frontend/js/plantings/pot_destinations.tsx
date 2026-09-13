@@ -57,19 +57,20 @@ function useNumberedPotDestinations({ choosing, item }: NumberedPotQuery): Numbe
   }
 }
 
-// What a pot is called while it is being chosen: the code printed on it and the
-// unit it is, then where it is standing, then whether something is already
-// growing in it. The printed code comes first because that is what the operator
-// is holding, and the unit id follows it because that is the pot's name
-// everywhere below the label — its own inventory page, its movement history,
-// the URL of both — so a chosen pot can be carried between this screen and
-// those without reading the code back off the container. A pot in use is still
-// offered — several plants legitimately share one, the way a multigerm cell
-// holds several seedlings — so the option says so rather than disappearing from
-// the list.
+// What a pot is called while it is being chosen: its number, then the code
+// printed on it, then where it is standing, then whether something is already
+// growing in it. The number comes first because it is what an operator reads
+// off a bench and types into a range, and it is the pot's own identity — issued
+// once, never reused, unique across the nursery — rather than a second name for
+// it. It is also the pot's name everywhere below the label — its own inventory
+// page, its movement history, the URL of both — so a pot chosen here can be
+// carried to those without reading the code back off the container. A pot in
+// use is still offered — several plants legitimately share one, the way a
+// multigerm cell holds several seedlings — so the option says so rather than
+// disappearing from the list.
 function potOptionLabel(pot: SerializedInventoryUnit): string {
   const standing = pot.current_location_full_name ? ` — ${pot.current_location_full_name}` : ''
-  return `${pot.asset_code} (unit #${pot.pk})${standing}${pot.in_use ? ' (already holding a plant)' : ''}`
+  return `#${pot.pk} ${pot.asset_code}${standing}${pot.in_use ? ' (already holding a plant)' : ''}`
 }
 
 // What a typed or scanned code turned out to be: the pot, when it is one that
@@ -95,6 +96,11 @@ interface PotLookup {
 // described by its cell.
 async function findPotByCode(value: string, potItems: Array<InventoryItem>): Promise<PotLookup> {
   const typed = value.trim()
+  // Digits are the pot's number rather than part of a code. Nothing else it
+  // answers to can be read that way — both a label code and an asset code carry
+  // their prefix — and the asset-code filter matches on a fragment, so `81`
+  // left to the code path would quietly find every pot with 81 in its hex.
+  if (/^#?\d+$/.test(typed)) return standablePot(await findPotByNumber(Number(typed.replace('#', ''))), potItems)
   const resolution = await resolveLabel(typed)
   let unit: SerializedInventoryUnit | undefined
   if (resolution.status === 'unknown') {
@@ -114,11 +120,28 @@ async function findPotByCode(value: string, potItems: Array<InventoryItem>): Pro
   } else {
     unit = await getSerializedUnit(resolution.target.object_id)
   }
+  return standablePot(unit, potItems)
+}
+
+// The number is a whole answer on its own: it names one unit in the nursery,
+// so there is no fragment to disambiguate and nothing to guess at. The range
+// filter is what asks, rather than the unit's own route, because a number
+// nobody has issued has to come back as an empty answer to report rather than
+// as a failed request.
+async function findPotByNumber(number: number): Promise<SerializedInventoryUnit | undefined> {
+  const [found] = await getSerializedUnits({ number_from: number, number_to: number })
+  return found
+}
+
+// The checks every way of naming a pot shares: that it is a pot at all, and
+// that it is still in the nursery.
+function standablePot(unit: SerializedInventoryUnit | undefined, potItems: Array<InventoryItem>): PotLookup {
+  if (!unit) return { message: 'No pot carries that number.' }
   if (!potItems.some((item) => item.pk === unit.item)) {
-    return { message: `${unit.item_name} ${unit.asset_code} is not a pot a plant can stand in.` }
+    return { message: `${unit.item_name} #${unit.pk} is not a pot a plant can stand in.` }
   }
   if (!unit.active || unit.physical_state !== 'available') {
-    return { message: `${unit.asset_code} is not on hand.` }
+    return { message: `#${unit.pk} ${unit.asset_code} is not on hand.` }
   }
   return { pot: unit, message: `Selected ${potOptionLabel(unit)}.` }
 }
@@ -150,9 +173,9 @@ function PotCodeField({ potItems, onFound }: PotCodeFieldProps) {
         if (typed) lookup.mutate(typed)
       }}
     >
-      <Form.Label htmlFor="pot-code">Pot code</Form.Label>
+      <Form.Label htmlFor="pot-code">Pot number or code</Form.Label>
       <div className="d-flex gap-2">
-        <Form.Control id="pot-code" value={value} placeholder="Scan or type a code" onChange={(event) => setValue(event.target.value)} />
+        <Form.Control id="pot-code" value={value} placeholder="Scan a code, or type a number" onChange={(event) => setValue(event.target.value)} />
         <Button type="submit" variant="outline-secondary" disabled={lookup.isPending || value.trim() === ''}>
           {lookup.isPending ? 'Finding…' : 'Find'}
         </Button>

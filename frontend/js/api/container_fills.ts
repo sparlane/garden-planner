@@ -68,6 +68,14 @@ export function openPotFill(data: PotFillTarget & { container_count: number; not
   return csrfPost('/seedtrays/container-fills/', data).then((response) => response.json() as Promise<PotFill>)
 }
 
+// A bench of numbered pots, filled as one claim. Every pot gets its own fill —
+// a numbered pot owns its media history and its cost — but one refusal refuses
+// the request, so the answer is either every fill or a list of the pots in the
+// way, never a half-filled bench nobody can see the edge of.
+export function openNumberedPotFills(data: { inventory_units: number[]; notes: string }): Promise<PotFill[]> {
+  return csrfPost('/seedtrays/container-fills/open-numbered/', data).then((response) => response.json() as Promise<PotFill[]>)
+}
+
 export function getPotFillContents(pk: number, signal?: AbortSignal): Promise<PotFillContents> {
   return fetchAsJson<PotFillContents>(`/seedtrays/container-fills/${pk}/contents/`, signal)
 }

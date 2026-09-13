@@ -84,6 +84,9 @@ function getSerializedUnits(filters: SerializedUnitFilters = {}, signal?: AbortS
   if (filters.in_use !== undefined) params.set('in_use', String(filters.in_use))
   if (filters.physical_state) params.set('physical_state', filters.physical_state)
   if (filters.asset_code) params.set('asset_code', filters.asset_code)
+  if (filters.number_from !== undefined) params.set('number_from', String(filters.number_from))
+  if (filters.number_to !== undefined) params.set('number_to', String(filters.number_to))
+  if (filters.page_size !== undefined) params.set('page_size', String(filters.page_size))
   const query = params.size ? `?${params.toString()}` : ''
   return fetchAsJson<Array<SerializedInventoryUnit>>(`${SERIALIZED_UNITS_URL}${query}`, signal)
 }

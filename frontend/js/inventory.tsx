@@ -12,6 +12,7 @@ import {
   setItemUnitConversionActive
 } from './api/inventory'
 import { CountedPotFills } from './inventory/container_fills'
+import { NumberedPotFills } from './inventory/numbered_fills'
 import { NumberedUnitsPanel } from './inventory/individualization'
 import { queryKeys } from './query'
 import {
@@ -525,6 +526,7 @@ function InventoryCatalog() {
       {selectedItem && <ConversionPanel item={selectedItem} />}
       {selectedItem?.category === 'pot_container' && selectedItem.tracking_mode !== 'serialized' && <CountedPotFills key={selectedItem.pk} item={selectedItem} />}
       {selectedItem?.tracking_mode === 'mixed' && <NumberedUnitsPanel item={selectedItem} />}
+      {selectedItem?.category === 'pot_container' && selectedItem.tracking_mode === 'mixed' && <NumberedPotFills key={selectedItem.pk} item={selectedItem} />}
     </main>
   )
 }
