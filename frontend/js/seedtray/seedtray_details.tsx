@@ -197,7 +197,10 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
         return (
           <div key={plant.pk} style={{ marginTop: 4, fontSize: '0.8em', borderTop: '1px solid #eee', paddingTop: 2 }}>
             <div>
-              <a href={`/plantings/plants/${plant.pk}`}>Plant #{plant.pk}</a>
+              {/* A plain hash anchor, not a <Link>: this screen also mounts on its own Django
+                  page, which has no router around it. Both templates set <base href="/">, so
+                  "#/..." lands on the single-page app either way. */}
+              <a href={`#/plantings/plants/${plant.pk}`}>Plant #{plant.pk}</a>
               {loc && <span style={{ color: '#555' }}> — {locationLabel(loc)}</span>}
             </div>
             <div style={{ marginTop: 2 }}>
@@ -258,7 +261,7 @@ const PlantLifecycleRow: React.FC<PlantLifecycleRowProps> = ({ plant, locationLa
     <>
       <tr>
         <td>
-          <a href={`/plantings/plants/${plant.pk}`}>#{plant.pk}</a>
+          <a href={`#/plantings/plants/${plant.pk}`}>#{plant.pk}</a>
         </td>
         <td>
           <PlantLifecycleBadge plant={plant} />
