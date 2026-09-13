@@ -157,6 +157,7 @@ class RegisterContractTests(RegisterTestCase):
             'batch_code',
             'container',
             'container_count',
+            'container_fill',
             'container_name',
             'container_size',
             'container_unit',

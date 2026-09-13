@@ -36,7 +36,10 @@ function LocationHistory({ locations }: { locations: Array<SpecificPlantLocation
       <tbody>
         {locations.map((location) => (
           <tr key={location.pk}>
-            <td>{placementLabel(location)}</td>
+            <td>
+              {placementLabel(location)}
+              {location.container_fill != null && <div className="small">Fill #{location.container_fill}</div>}
+            </td>
             <td>{formatDateTime(location.started)}</td>
             <td>{location.ended === undefined || location.ended === null ? <span className="text-success">Still there</span> : formatDateTime(location.ended)}</td>
           </tr>
@@ -156,6 +159,12 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
                       ? 'Not recorded'
                       : `${plant.growth.container_name} ${plant.growth.container_size ?? ''} × ${plant.growth.container_count}`}
                   </dd>
+                  {plant.growth.container_fill != null && (
+                    <>
+                      <dt className="col-sm-5">Container fill</dt>
+                      <dd className="col-sm-7">Fill #{plant.growth.container_fill}</dd>
+                    </>
+                  )}
                   <dt className="col-sm-5">Expected ready</dt>
                   <dd className="col-sm-7">{plant.growth.expected_ready === null ? 'Not recorded' : formatDate(plant.growth.expected_ready)}</dd>
                   <dt className="col-sm-5">Measurements</dt>

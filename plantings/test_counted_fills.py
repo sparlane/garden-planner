@@ -32,6 +32,7 @@ from .growth import current_growth
 from .models import SpecificPlantLocation
 from .movement import move_specific_plant
 from .register import RegisterFilters, register_projection, register_queryset
+from .register_rest import NurseryRegisterSerializer
 
 
 class CountedFillPlacementTests(PotMediaMixin, CountedStockTestCase):
@@ -142,7 +143,11 @@ class CountedFillPlacementTests(PotMediaMixin, CountedStockTestCase):
         unit = self.number(self.pots, 1)[0]
         numbered = open_numbered_fill(self.workspace, self.user, unit)
         source = move_specific_plant(plant, {'location_type': 'container_unit', 'container_unit': unit})
+        row = register_projection(self.workspace).get(pk=plant.pk)
+        self.assertEqual(NurseryRegisterSerializer(row, context={'workspace': self.workspace}).data['container_fill'], numbered.pk)
         counted, = self.join([plant])
+        row = register_projection(self.workspace).get(pk=plant.pk)
+        self.assertEqual(NurseryRegisterSerializer(row, context={'workspace': self.workspace}).data['container_fill'], self.fill.pk)
         source.refresh_from_db()
         self.assertEqual(source.container_fill, numbered)
         self.assertEqual(source.ended, counted.started)
@@ -150,6 +155,8 @@ class CountedFillPlacementTests(PotMediaMixin, CountedStockTestCase):
         moved = move_specific_plant(plant, {'location_type': 'container_unit', 'container_unit': other_unit})
         counted.refresh_from_db()
         self.assertEqual(counted.ended, moved.started)
+        row = register_projection(self.workspace).get(pk=plant.pk)
+        self.assertIsNone(NurseryRegisterSerializer(row, context={'workspace': self.workspace}).data['container_fill'])
 
     def test_media_changes_and_clean_cannot_rewrite_served_counted_fills(self):
         """A stale media draft or reversal cannot alter a participant's basis."""
@@ -179,6 +186,12 @@ class CountedFillPlacementTests(PotMediaMixin, CountedStockTestCase):
         self.assertEqual(row.current_container_count, 1)
         self.assertEqual(row.standing_at, self.store.pk)
         self.assertEqual(register_queryset(self.workspace, RegisterFilters(container=item.pk)).count(), 2)
+        self.assertEqual(NurseryRegisterSerializer(row, context={'workspace': self.workspace}).data['container_fill'], self.fill.pk)
+        self.leave(rows[0])
+        departed = register_projection(self.workspace).get(pk=rows[0].specific_plant_id)
+        self.assertIsNone(NurseryRegisterSerializer(departed, context={'workspace': self.workspace}).data['container_fill'])
+        rows[0].refresh_from_db()
+        self.assertEqual(rows[0].container_fill_id, self.fill.pk)
 
     def test_empty_foreign_and_backdated_requests_are_refused(self):
         """The service validates the entire selection and the fill's chronology."""
