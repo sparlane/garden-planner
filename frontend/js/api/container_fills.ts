@@ -5,6 +5,8 @@ export type PotFillTarget = { inventory_unit: number } | { stock_lot: number; so
 
 export interface PotFill {
   pk: number
+  stock_lot: number | null
+  inventory_unit: number | null
   code: string
   container_count: number
   status: 'open' | 'closed'
@@ -14,6 +16,10 @@ export interface PotFill {
   notes: string
   events: SeedTrayGenerationEvent[]
   residuals: Array<{ pk: number; lot: number; base_quantity: string; base_unit: string; disposition: string; reason: string; correction_event: number | null }>
+}
+
+export function plantPotFill(pk: number, data: { plants: number[]; override_reason: string }): Promise<Response> {
+  return csrfPost(`/seedtrays/container-fills/${pk}/plant/`, data)
 }
 
 export interface PotFillPage {

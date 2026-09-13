@@ -10,6 +10,7 @@ import { queryKeys } from '../query'
 import { InventoryItem } from '../types/inventory'
 import { errorsByField, formatMoney, formatQuantity } from '../utils'
 import { PotFillClean } from './pot_fill_clean'
+import { PotFillPlant } from './pot_fill_plant'
 
 function FillContents({ pk }: { pk: number }) {
   const [posted, setPosted] = React.useState<number>()
@@ -39,6 +40,7 @@ function FillContents({ pk }: { pk: number }) {
         />
       )}
       {posted !== undefined && <Alert variant="success">Media application #{posted} posted.</Alert>}
+      {data.status === 'open' && history.data?.stock_lot != null && <PotFillPlant pk={pk} currentPlants={data.plants} />}
       <h3 className="h6">Current contents</h3>
       <p>{data.plants.length} plants in this fill.</p>
       {data.plants.map((plant) => (
