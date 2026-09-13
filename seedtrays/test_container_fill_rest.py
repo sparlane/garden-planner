@@ -4,7 +4,7 @@
 from rest_framework.test import APIClient
 
 from applications.services import post_application
-from inventory.ledger import physical_balance
+from inventory.ledger import IndividualizationRequest, individualize_lot_units, physical_balance
 from sales.test_counted_lines import CountedStockTestCase
 from tests.factories import make_inventory_item, make_location, make_seed_tray_generation, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace
@@ -49,6 +49,50 @@ class ContainerFillRESTTests(PotMediaMixin, CountedStockTestCase):
         self.assertEqual(counted.data['created_by'], self.user.pk)
         self.assertEqual(physical_balance(self.pots, self.store), 100)
         self.assertEqual(self.pots.serialized_units.count(), 1)
+
+    def test_a_bench_of_numbered_pots_opens_in_one_request(self):
+        """Filling forty pots is one job, so it is one claim and one answer."""
+        units = self.number(self.pots, 3)
+        response = self.client.post(f'{self.base}open-numbered/', {
+            'inventory_units': [unit.pk for unit in units], 'notes': 'Bench by the door.',
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual([row['inventory_unit'] for row in response.data], [unit.pk for unit in units])
+        self.assertEqual({row['container_count'] for row in response.data}, {1})
+        self.assertEqual({row['created_by'] for row in response.data}, {self.user.pk})
+        self.assertEqual(len({row['opened_at'] for row in response.data}), 1)
+        self.assertEqual(physical_balance(self.pots, self.store), 100)
+
+    def test_a_bench_refuses_whole_and_names_the_pots_in_the_way(self):
+        """The operator gets the list to fix, not the first pot that failed."""
+        units = self.number(self.pots, 3)
+        payload = {'inventory_units': [unit.pk for unit in units]}
+        self.assertEqual(self.client.post(f'{self.base}open-numbered/', payload, format='json').status_code, 201)
+        response = self.client.post(f'{self.base}open-numbered/', payload, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [str(message) for message in response.data['inventory_units']],
+            [f'Pot #{unit.pk}: Clean the current fill before filling this container again.' for unit in units],
+        )
+        self.assertEqual(SeedTrayGeneration.objects.filter(inventory_unit__in=units).count(), 3)
+
+    def test_a_bench_selection_names_each_pot_once_and_stays_in_this_nursery(self):
+        """A range typed by hand is exactly where a stray number comes from."""
+        unit = self.number(self.pots, 1)[0]
+        other = Workspace.objects.create(name='Other')
+        location = make_location(workspace=other)
+        item = make_inventory_item(workspace=other, category='pot_container', tracking_mode='mixed', base_unit='each')
+        stranger = individualize_lot_units(other, None, IndividualizationRequest(
+            make_stock_lot(workspace=other, item=item, location=location, quantity='1'), location, 1,
+        ))[0]
+        for payload in ({'inventory_units': []},
+                        {'inventory_units': [unit.pk, unit.pk]},
+                        {'inventory_units': [unit.pk, stranger.pk]},
+                        {'inventory_units': [unit.pk, 0]}):
+            with self.subTest(payload=payload):
+                response = self.client.post(f'{self.base}open-numbered/', payload, format='json')
+                self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(unit.container_fills.exists())
 
     def test_partial_potting_clean_and_correction_round_trip(self):
         """A plant retains its share while the remaining mix is reclaimed and restored."""

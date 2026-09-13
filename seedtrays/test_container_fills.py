@@ -37,7 +37,7 @@ from sales.test_counted_lines import CountedStockTestCase
 from tests.factories import make_location, make_seed_tray_generation, make_specific_plant_location, make_stock_lot
 from workspaces.models import Workspace, get_current_workspace
 
-from .container_fills import clean_empty_fill, open_counted_fill, open_numbered_fill
+from .container_fills import clean_empty_fill, open_counted_fill, open_numbered_fill, open_numbered_fills
 from .generations import CloseRequest, close_generation, reopen_generation
 
 
@@ -233,6 +233,64 @@ class NumberedPotFillTests(CountedStockTestCase):
         confirm_order(line.order, self.user)
         with self.assertRaises(ValidationError):
             self.fill()
+
+
+class NumberedBenchFillTests(CountedStockTestCase):
+    """A run of numbered pots is filled as one act or not at all."""
+
+    def setUp(self):
+        super().setUp()
+        self.lot = self.receive(quantity='6')
+        self.units = self.number(self.lot, 4)
+
+    def bench(self, units=None, **kwargs):
+        """Fill the fixture's whole bench of numbered pots."""
+        return open_numbered_fills(self.workspace, self.user, units or self.units, **kwargs)
+
+    def test_every_pot_gets_its_own_fill_opened_at_one_moment(self):
+        """A bench is one act, so its fills agree about when it happened."""
+        fills = self.bench(notes='Bench by the door.')
+        self.assertEqual([fill.inventory_unit_id for fill in fills], sorted(unit.pk for unit in self.units))
+        self.assertEqual({fill.container_count for fill in fills}, {1})
+        self.assertEqual({fill.sequence for fill in fills}, {1})
+        self.assertEqual({fill.notes for fill in fills}, {'Bench by the door.'})
+        self.assertEqual(len({fill.opened_at for fill in fills}), 1)
+        self.assertEqual([fill.events.get().event_type for fill in fills], ['opened'] * 4)
+        self.assertEqual(unpromised_bulk(self.lot, self.store), 2)
+        self.assertEqual(physical_balance(self.lot, self.store), 6)
+
+    def test_one_unfillable_pot_refuses_the_bench_and_names_every_refusal(self):
+        """Thirty pots in, the operator needs the list, not the first complaint."""
+        open_numbered_fill(self.workspace, self.user, self.units[0])
+        line = self.counted_line(quantity=1, line_type=SalesOrderLine.LineType.UNIT)
+        allocate_targets(line, self.user, unit_ids=[self.units[1].pk])
+        confirm_order(line.order, self.user)
+        with self.assertRaises(ValidationError) as caught:
+            self.bench()
+        messages = caught.exception.message_dict['inventory_units']
+        self.assertEqual(len(messages), 2)
+        self.assertIn(f'Pot #{self.units[0].pk}: Clean the current fill', messages[0])
+        self.assertIn(f'Pot #{self.units[1].pk}: The container is reserved', messages[1])
+        self.assertFalse(self.units[2].container_fills.exists())
+        self.assertFalse(self.units[3].container_fills.exists())
+        self.assertEqual(self.units[0].container_fills.count(), 1)
+
+    def test_a_pot_named_twice_is_filled_once_and_a_stranger_is_refused(self):
+        """The claim is over a set of pots, and only over this nursery's pots."""
+        fills = self.bench(units=[self.units[0], self.units[0], self.units[1]])
+        self.assertEqual(len(fills), 2)
+        other = Workspace.objects.create(name='Other nursery')
+        location = make_location(workspace=other)
+        item = InventoryItem.objects.create(
+            workspace=other, name='Their pot', category=InventoryItem.Category.POT_CONTAINER,
+            base_unit='each', tracking_mode=InventoryItem.TrackingMode.MIXED,
+        )
+        stranger = individualize_lot_units(other, None, IndividualizationRequest(
+            make_stock_lot(workspace=other, item=item, location=location, quantity='1'), location, 1,
+        ))[0]
+        with self.assertRaises(ValidationError):
+            self.bench(units=[self.units[2], stranger])
+        self.assertFalse(self.units[2].container_fills.exists())
 
 
 class EmptyPotFillCleaningTests(CountedStockTestCase):
