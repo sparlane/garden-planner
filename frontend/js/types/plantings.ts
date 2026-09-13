@@ -700,6 +700,7 @@ interface NurseryRegisterRow {
   // Where the plant is physically standing. For a plant in a tray that is
   // wherever the tray has been wheeled, which is why it differs from location.
   standing_at: number | null
+  container_fill: number | null
   standing_at_label: string
   located_since: string | null
   stage: number | null

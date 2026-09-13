@@ -154,6 +154,7 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
             </td>
             <td>
               {row.container_name ?? '—'}
+              {row.container_fill !== null && <div className="small">Fill #{row.container_fill}</div>}
               {row.container !== null && (
                 <div className="text-muted small">
                   {row.container_size || 'Size not set'} × {row.container_count}

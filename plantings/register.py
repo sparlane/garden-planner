@@ -277,6 +277,7 @@ def register_projection(workspace):
         current_garden_square=_current_location('garden_square'),
         current_garden_square_label=_current_location('garden_square__name'),
         current_container_unit=_current_location('container_unit'),
+        current_container_fill=_current_location('container_fill'),
         current_counted_lot=_current_location('container_fill__stock_lot'),
         current_container_unit_label=_current_location('container_unit__asset_code'),
         located_since=_current_location('started'),

@@ -137,6 +137,7 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     container_name = serializers.CharField(source='current_container_name', read_only=True, allow_null=True)
     container_size = serializers.CharField(source='current_container_size', read_only=True, allow_null=True)
     container_count = serializers.IntegerField(source='current_container_count', read_only=True, allow_null=True)
+    container_fill = serializers.IntegerField(source='current_container_fill', read_only=True, allow_null=True)
     expected_ready = serializers.DateField(source='current_expected_ready', read_only=True, allow_null=True)
     stage_overdue = serializers.SerializerMethodField()
     cost = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True, allow_null=True)
