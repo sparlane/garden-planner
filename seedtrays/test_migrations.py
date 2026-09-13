@@ -4,13 +4,15 @@ The backfill is replayed over real rows rather than asserted from the migration
 source, because what matters is the shape of the data an existing deployment
 ends up with: which sowings are grouped, what is flagged, and — most of all —
 what the migration refuses to guess.
+
+The plain backfill cases share one replay, because they only read what it
+produced; see tests/migration_replay.py for why that is worth the trouble. The
+cases that need a different migration target, or a rollback that refuses, still
+replay per test.
 """
 # pylint: disable=duplicate-code
 
-from django.conf import settings
 from django.db import connection
-from django.db.migrations.executor import MigrationExecutor
-from django.test import TransactionTestCase
 from django.utils import timezone
 
 from applications.models import InputApplicationTarget
@@ -27,79 +29,83 @@ from tests.factories import (
     make_seed_tray_generation,
     make_seed_tray_planting,
 )
-from workspaces.models import Workspace
+from tests.migration_replay import (
+    MigrationReplayTestCase,
+    SharedMigrationReplayTestCase,
+    latest_migration_state,
+    migrate_to,
+)
 
 from .models import SeedTrayGeneration, SeedTrayGenerationEvent
 
 
-def latest_seedtrays_state():
-    """Return the newest migration state for the whole project.
+UNLINKED_STATE = [('seedtrays', '0005_seedtraygeneration_seedtraygenerationevent_and_more')]
 
-    Resolved from the graph rather than pinned by name, so a later migration
-    cannot leave the database half-migrated for the rest of the run, and every
-    app's leaf is included because rewinding one app also unapplies the
-    migrations of the apps that depend on it.
+
+def unlink_generations():
+    """Return the database to its pre-generation shape, keeping the sowings."""
+    with connection.cursor() as cursor:
+        cursor.execute('UPDATE plantings_seedtrayplanting SET generation_id = NULL')
+        cursor.execute('DELETE FROM seedtrays_seedtraygenerationevent')
+        cursor.execute('DELETE FROM seedtrays_seedtraygeneration')
+
+
+def run_backfill():
+    """Strip the generation links, then replay the backfill over them."""
+    migrate_to(UNLINKED_STATE)
+    unlink_generations()
+    migrate_to(latest_migration_state())
+
+
+class LegacyGenerationBackfillTests(SharedMigrationReplayTestCase):
+    """Existing trays become usable without inventing what was not recorded.
+
+    Every tray below is its own case, so one replay over all of them says the
+    same thing as one replay each: the backfill groups per tray, and a tray
+    only ever sees its own sowings.
     """
-    executor = MigrationExecutor(connection)
-    executor.loader.build_graph()
-    return list(executor.loader.graph.leaf_nodes())
 
-
-class LegacyGenerationBackfillTests(TransactionTestCase):
-    """Existing trays become usable without inventing what was not recorded."""
-
-    UNLINKED_STATE = [('seedtrays', '0005_seedtraygeneration_seedtraygenerationevent_and_more')]
-
-    def _post_teardown(self):
-        """Restore migration seed data removed by transactional test flushing."""
-        super()._post_teardown()
-        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
-            Workspace.objects.create(
-                pk=settings.CURRENT_WORKSPACE_ID,
-                name='My Garden',
-            )
-
-    def setUp(self):
-        super().setUp()
-        self.addCleanup(self._migrate, latest_seedtrays_state())
-
-    @staticmethod
-    def _migrate(targets):
-        """Move the test database to one explicit migration state."""
-        executor = MigrationExecutor(connection)
-        executor.loader.build_graph()
-        executor.migrate(targets)
-
-    @staticmethod
-    def _unlink_generations():
-        """Return the database to its pre-generation shape, keeping the sowings."""
-        with connection.cursor() as cursor:
-            cursor.execute('UPDATE plantings_seedtrayplanting SET generation_id = NULL')
-            cursor.execute('DELETE FROM seedtrays_seedtraygenerationevent')
-            cursor.execute('DELETE FROM seedtrays_seedtraygeneration')
-
-    def _run_backfill(self):
-        """Strip the generation links, then replay the backfill over them."""
-        self._migrate(self.UNLINKED_STATE)
-        self._unlink_generations()
-        self._migrate(latest_seedtrays_state())
-
-    def test_a_tray_with_sowings_gets_one_reviewable_generation(self):
-        """Every existing sowing on a tray is grouped into one flagged fill."""
-        tray = make_seed_tray()
-        earlier = make_seed_tray_planting(seed_tray=tray)
-        later = make_seed_tray_planting(seed_tray=tray)
-        SeedTrayPlanting.objects.filter(pk=earlier.pk).update(
+    @classmethod
+    def set_up_replay(cls):
+        """Lay down one tray per case, then backfill the lot in one pass."""
+        cls.grouped_tray = make_seed_tray()
+        cls.grouped_earlier = make_seed_tray_planting(seed_tray=cls.grouped_tray)
+        cls.grouped_later = make_seed_tray_planting(seed_tray=cls.grouped_tray)
+        SeedTrayPlanting.objects.filter(pk=cls.grouped_earlier.pk).update(
             planted='2026-03-01T08:00:00Z',
         )
-        SeedTrayPlanting.objects.filter(pk=later.pk).update(
+        SeedTrayPlanting.objects.filter(pk=cls.grouped_later.pk).update(
             planted='2026-04-01T08:00:00Z',
         )
 
-        self._run_backfill()
+        cls.opening_tray = make_seed_tray()
+        cls.opening_first = make_seed_tray_planting(seed_tray=cls.opening_tray)
+        make_seed_tray_planting(seed_tray=cls.opening_tray)
+        SeedTrayPlanting.objects.filter(pk=cls.opening_first.pk).update(
+            planted='2026-02-02T09:30:00Z',
+        )
 
-        generation = SeedTrayGeneration.objects.get(tray=tray)
-        self.assertEqual(generation.code, f'LEGACY-TRAY-{tray.pk}-1')
+        cls.review_tray = make_seed_tray()
+        make_seed_tray_planting(seed_tray=cls.review_tray)
+
+        cls.media_tray = make_seed_tray()
+        cls.media_cell = make_seed_tray_cell(tray=cls.media_tray)
+        make_seed_tray_planting(seed_tray=cls.media_tray)
+
+        cls.unused_tray = make_seed_tray()
+
+        cls.event_tray = make_seed_tray()
+        make_seed_tray_planting(seed_tray=cls.event_tray)
+
+        cls.trayless_sowing = make_seed_tray_planting()
+        SeedTrayPlanting.objects.filter(pk=cls.trayless_sowing.pk).update(seed_tray=None)
+
+        run_backfill()
+
+    def test_a_tray_with_sowings_gets_one_reviewable_generation(self):
+        """Every existing sowing on a tray is grouped into one flagged fill."""
+        generation = SeedTrayGeneration.objects.get(tray=self.grouped_tray)
+        self.assertEqual(generation.code, f'LEGACY-TRAY-{self.grouped_tray.pk}-1')
         self.assertEqual(generation.sequence, 1)
         self.assertEqual(generation.status, SeedTrayGeneration.Status.OPEN)
         self.assertEqual(generation.origin, SeedTrayGeneration.Origin.LEGACY)
@@ -107,80 +113,68 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
             generation.review_state,
             SeedTrayGeneration.ReviewState.NEEDS_REVIEW,
         )
-        self.assertEqual(generation.workspace_id, earlier.workspace_id)
-        self.assertEqual(generation.inventory_unit_id, tray.inventory_unit_id)
+        self.assertEqual(generation.workspace_id, self.grouped_earlier.workspace_id)
+        self.assertEqual(generation.inventory_unit_id, self.grouped_tray.inventory_unit_id)
         self.assertIsNone(generation.created_by)
-        earlier.refresh_from_db()
-        later.refresh_from_db()
+        earlier = SeedTrayPlanting.objects.get(pk=self.grouped_earlier.pk)
+        later = SeedTrayPlanting.objects.get(pk=self.grouped_later.pk)
         self.assertEqual(earlier.generation_id, generation.pk)
         self.assertEqual(later.generation_id, generation.pk)
 
     def test_the_fill_opens_when_its_earliest_sowing_was_recorded(self):
         """No date is invented; the first sowing is the earliest defensible one."""
-        tray = make_seed_tray()
-        first = make_seed_tray_planting(seed_tray=tray)
-        make_seed_tray_planting(seed_tray=tray)
-        SeedTrayPlanting.objects.filter(pk=first.pk).update(
-            planted='2026-02-02T09:30:00Z',
-        )
-
-        self._run_backfill()
-
-        generation = SeedTrayGeneration.objects.get(tray=tray)
-        first.refresh_from_db()
+        generation = SeedTrayGeneration.objects.get(tray=self.opening_tray)
+        first = SeedTrayPlanting.objects.get(pk=self.opening_first.pk)
         self.assertEqual(generation.opened_at, first.planted)
 
     def test_the_review_note_says_what_an_operator_has_to_confirm(self):
         """A bare flag would not tell anybody which decision is outstanding."""
-        tray = make_seed_tray()
-        make_seed_tray_planting(seed_tray=tray)
-
-        self._run_backfill()
-
-        generation = SeedTrayGeneration.objects.get(tray=tray)
+        generation = SeedTrayGeneration.objects.get(tray=self.review_tray)
         self.assertIn('grouped into one fill', generation.review_details)
-        self.assertIn(f'tray #{tray.pk}', generation.review_details)
+        self.assertIn(f'tray #{self.review_tray.pk}', generation.review_details)
 
     def test_historical_media_is_never_attributed_to_the_new_fill(self):
         """An application recorded before generations keeps an unknown one."""
-        tray = make_seed_tray()
-        cell = make_seed_tray_cell(tray=tray)
-        make_seed_tray_planting(seed_tray=tray)
-        target = InputApplicationTarget.objects.filter(seed_tray_cell=cell)
-
-        self._run_backfill()
-
+        target = InputApplicationTarget.objects.filter(seed_tray_cell=self.media_cell)
         self.assertFalse(target.filter(seed_tray_generation__isnull=False).exists())
 
     def test_a_tray_with_no_sowings_gets_no_generation(self):
         """An unused tray has had no fill, and the migration does not claim one."""
-        tray = make_seed_tray()
-
-        self._run_backfill()
-
-        self.assertFalse(SeedTrayGeneration.objects.filter(tray=tray).exists())
+        self.assertFalse(SeedTrayGeneration.objects.filter(tray=self.unused_tray).exists())
 
     def test_the_backfill_records_why_the_generation_exists(self):
         """The opening event names the migration rather than an operator."""
-        tray = make_seed_tray()
-        make_seed_tray_planting(seed_tray=tray)
-
-        self._run_backfill()
-
-        event = SeedTrayGenerationEvent.objects.get(generation__tray=tray)
+        event = SeedTrayGenerationEvent.objects.get(generation__tray=self.event_tray)
         self.assertEqual(event.event_type, SeedTrayGenerationEvent.EventType.OPENED)
         self.assertIn('before tray generations existed', event.reason)
         self.assertIsNone(event.created_by)
 
     def test_sowings_without_a_tray_are_left_alone(self):
         """A sowing that names no tray has no fill to belong to."""
-        trayless = make_seed_tray_planting()
-        SeedTrayPlanting.objects.filter(pk=trayless.pk).update(seed_tray=None)
-
-        self._run_backfill()
-
-        trayless.refresh_from_db()
+        trayless = SeedTrayPlanting.objects.get(pk=self.trayless_sowing.pk)
         self.assertIsNone(trayless.generation_id)
+
+    def test_each_tray_is_grouped_without_reaching_into_another(self):
+        """One pass over many trays still opens exactly one fill per used tray.
+
+        The cases above share a replay, so this is what rules out the backfill
+        gathering sowings across trays: the used trays get one fill each, and
+        the unused one gets none.
+        """
+        used = [self.grouped_tray, self.opening_tray, self.review_tray,
+                self.media_tray, self.event_tray]
+        for tray in used:
+            with self.subTest(tray=tray.pk):
+                self.assertEqual(SeedTrayGeneration.objects.filter(tray=tray).count(), 1)
+        self.assertEqual(SeedTrayGeneration.objects.count(), len(used))
+
+
+class GenerationMigrationTargetTests(MigrationReplayTestCase):
+    """Cases that each need their own migration target, so each replays once."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(migrate_to, latest_migration_state())
 
     def test_replaying_the_backfill_changes_nothing(self):
         """Re-running a deployment migration must not open a second fill.
@@ -190,11 +184,11 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
         """
         tray = make_seed_tray()
         make_seed_tray_planting(seed_tray=tray)
-        self._run_backfill()
+        run_backfill()
         generation = SeedTrayGeneration.objects.get(tray=tray)
 
-        self._migrate(self.UNLINKED_STATE)
-        self._migrate(latest_seedtrays_state())
+        migrate_to(UNLINKED_STATE)
+        migrate_to(latest_migration_state())
 
         self.assertEqual(SeedTrayGeneration.objects.filter(tray=tray).count(), 1)
         self.assertEqual(SeedTrayGeneration.objects.get(tray=tray).pk, generation.pk)
@@ -217,8 +211,8 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
         before = list(SeedTrayGeneration.objects.order_by('pk').values(*fields))
         events = list(SeedTrayGenerationEvent.objects.order_by('pk').values())
 
-        self._migrate([('seedtrays', '0007_retire_tray_models')])
-        self._migrate(latest_seedtrays_state())
+        migrate_to([('seedtrays', '0007_retire_tray_models')])
+        migrate_to(latest_migration_state())
 
         self.assertEqual(list(SeedTrayGeneration.objects.order_by('pk').values(*fields)), before)
         self.assertEqual(list(SeedTrayGenerationEvent.objects.order_by('pk').values()), events)
@@ -235,7 +229,7 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
             container_count=50, code='COUNTED-POTS', sequence=1, opened_at=tray_fill.opened_at,
         )
         with self.assertRaisesMessage(RuntimeError, 'while non-tray fills exist'):
-            self._migrate([('seedtrays', '0008_generation_inventory_unit')])
+            migrate_to([('seedtrays', '0008_generation_inventory_unit')])
 
         # The refusal leaves the database in the state 0009 built, so only the
         # columns of that state can be read back: the model class describes a
@@ -261,7 +255,7 @@ class LegacyGenerationBackfillTests(TransactionTestCase):
         SeedTrayGeneration.objects.filter(pk=fill.pk).update(plant_share_count=3)
 
         with self.assertRaisesMessage(RuntimeError, 'while frozen plant shares exist'):
-            self._migrate([('seedtrays', '0010_replace_tray_models')])
+            migrate_to([('seedtrays', '0010_replace_tray_models')])
 
         fill.refresh_from_db()
         self.assertEqual(fill.plant_share_count, 3)
