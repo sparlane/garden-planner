@@ -298,6 +298,8 @@ def filled_bulk(lot, location):
 
     These containers remain physical stock. Each counted departure leaves one
     empty pot available again, while the original count stays the media basis.
+    Numbering removes a held pot from this anonymous claim too; its later
+    departure must not release a second anonymous pot.
     Read under the lot lock when making a new claim on the pool.
     """
     if lot.item.category != InventoryItem.Category.POT_CONTAINER:
@@ -307,15 +309,17 @@ def filled_bulk(lot, location):
         status=SeedTrayGeneration.Status.OPEN,
     )
     original = fills.aggregate(total=Sum('container_count'))['total'] or 0
-    departed = SpecificPlantLocation.objects.filter(container_fill__in=fills, ended__isnull=False).count()
-    return original - departed
+    released = SpecificPlantLocation.objects.filter(container_fill__in=fills).filter(
+        Q(ended__isnull=False) | Q(numbered_at__isnull=False),
+    ).count()
+    return original - released
 
 
 def unit_has_open_pot_fill(unit):
     """Whether removing this pot would strand a fill's contents and history."""
     if unit.item.category != InventoryItem.Category.POT_CONTAINER:
         return False
-    return unit.container_fills.filter(
+    return unit.standing_plants.filter(container_fill__stock_lot__isnull=False, ended__isnull=True).exists() or unit.container_fills.filter(
         tray__isnull=True, status=SeedTrayGeneration.Status.OPEN,
     ).exists()
 
@@ -708,7 +712,7 @@ def individualize_lot_units(workspace, user, request):
 
 def _numbering_is_unused(unit):
     """Return why a numbered unit is not safe to discard, or None."""
-    if unit.container_fills.exists():
+    if unit.container_fills.exists() or unit.standing_plants.filter(numbered_at__isnull=False).exists():
         return 'The unit has fill history.'
     if unit.movements.exists():
         return 'The unit has stock history.'

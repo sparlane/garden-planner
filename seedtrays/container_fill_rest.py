@@ -15,6 +15,7 @@ from common.rest_query import parse_integer
 from inventory.models import InventoryUnit, StockLot
 from locations.models import Location
 from plantings.counted_fills import plant_counted_fill
+from plantings.fill_numbering import number_counted_pot
 from plantings.rest import SpecificPlantLocationSerializer
 from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
@@ -121,6 +122,12 @@ class PlantCountedFillSerializer(ActionSerializer):
         return value
 
 
+class NumberCountedPotSerializer(ActionSerializer):
+    """Name the plant whose existing anonymous pot needs a label identity."""
+
+    plant = serializers.IntegerField(min_value=1)
+
+
 class PotResidualSerializer(SeedTrayGenerationResidualSerializer):
     """Keep original dispositions visible beside the corrections retiring them."""
 
@@ -153,6 +160,7 @@ def _contents(workspace, fill):
     return {
         'fill': fill.pk, 'status': fill.status,
         'plants': list(fill.plant_locations.filter(ended__isnull=True).values_list('specific_plant_id', flat=True)),
+        'numbered_plants': list(fill.plant_locations.filter(ended__isnull=True, numbered_at__isnull=False).values_list('specific_plant_id', flat=True)),
         'digest': contents_digest({'plants': [], 'seeds': [], 'media': media}),
         'media': [{'lot': row['lot'].pk, 'item': row['lot'].item_id,
                    'base_quantity': f'{row["base_quantity"]:.9f}', 'base_unit': row['base_unit'],
@@ -233,6 +241,14 @@ class PotFillViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # py
         payload.is_valid(raise_exception=True)
         fill = _run(reopen_pot_fill, self.get_current_workspace(), request.user, self.get_object(), payload.validated_data['reason'])
         return Response(self.get_serializer(fill).data)
+
+    @action(detail=True, methods=['post'], url_path='number-pot')
+    def number_pot(self, request, pk=None):  # pylint: disable=unused-argument
+        """Number one occupied counted pot without allocating its media."""
+        payload = NumberCountedPotSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        placement = _run(number_counted_pot, self.get_current_workspace(), request.user, self.get_object(), payload.validated_data['plant'])
+        return Response(SpecificPlantLocationSerializer(placement).data)
 
     @action(detail=True, methods=['post'])
     def plant(self, request, pk=None):  # pylint: disable=unused-argument

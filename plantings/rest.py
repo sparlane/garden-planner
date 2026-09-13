@@ -407,8 +407,9 @@ class SpecificPlantLocationSerializer(CurrentWorkspaceSerializerMixin, serialize
 
     class Meta:
         model = SpecificPlantLocation
-        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit', 'container_unit_code', 'container_fill', 'started', 'ended', 'notes', 'override_reason']
-        read_only_fields = ['override_reason', 'container_fill']
+        fields = ['pk', 'specific_plant', 'location_type', 'seed_tray_cell', 'garden_square', 'location', 'container_unit',
+                  'container_unit_code', 'container_fill', 'started', 'ended', 'notes', 'override_reason', 'numbered_at', 'numbered_by']
+        read_only_fields = ['override_reason', 'container_fill', 'numbered_at', 'numbered_by']
 
     workspace_field_lookups = {
         'specific_plant': 'workspace',

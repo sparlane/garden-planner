@@ -134,6 +134,31 @@ class ContainerFillRESTTests(PotMediaMixin, CountedStockTestCase):
             self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(self.fill.residuals.exists())
 
+    def test_number_an_occupied_pot_and_retry_without_moving_the_plant(self):
+        """The fill preview can issue one identity and expose its numbering audit."""
+        plant = make_specific_plant()
+        planted = self.action('plant', {'plants': [plant.pk]})
+        numbered = self.action('number-pot', {'plant': plant.pk})
+        self.assertEqual(numbered.status_code, 200, numbered.data)
+        self.assertEqual(numbered.data['pk'], planted.data[0]['pk'])
+        self.assertEqual(numbered.data['container_fill'], self.fill.pk)
+        self.assertEqual(numbered.data['location_type'], 'container_unit')
+        self.assertEqual(numbered.data['numbered_by'], self.user.pk)
+        self.assertIsNotNone(numbered.data['numbered_at'])
+        self.assertIsNone(numbered.data['ended'])
+        repeated = self.action('number-pot', {'plant': plant.pk})
+        self.assertEqual(repeated.data['container_unit'], numbered.data['container_unit'])
+        self.assertEqual(self.contents()['numbered_plants'], [plant.pk])
+        self.assertEqual(self.pots.serialized_units.count(), 1)
+
+    def test_numbering_refuses_foreign_and_unplaced_plants(self):
+        """A workspace-scoped fill is not authority to number someone else's pot."""
+        foreign = make_specific_plant(workspace=Workspace.objects.create(name='Foreign nursery'))
+        for payload in ({}, {'plant': foreign.pk}, {'plant': make_specific_plant().pk}, {'plant': 0}):
+            response = self.action('number-pot', payload)
+            self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(self.pots.serialized_units.exists())
+
     def test_invalid_identity_shapes_and_counts_are_refused(self):
         """Identity and quantity branches cannot silently override each other."""
         unit = self.number(self.pots, 1)[0]
