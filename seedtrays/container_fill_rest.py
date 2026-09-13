@@ -16,13 +16,20 @@ from inventory.models import InventoryUnit, StockLot
 from locations.models import Location
 from plantings.counted_fills import plant_counted_fill
 from plantings.rest import SpecificPlantLocationSerializer
+from workspaces.models import get_current_workspace
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
-from .container_fills import clean_pot_fill, lock_pot_fills, open_counted_fill, open_numbered_fill, reopen_pot_fill
+from .container_fills import clean_pot_fill, lock_pot_fills, open_counted_fill, open_numbered_fill, open_numbered_fills, reopen_pot_fill
 from .generation_rest import ActionSerializer, MediaDispositionSerializer, ReasonSerializer, SeedTrayGenerationEventSerializer, SeedTrayGenerationResidualSerializer
 from .generations import CloseRequest, MediaDisposition, contents_digest
 from .models import SeedTrayGeneration
 from .pot_media import pot_fill_cost_breakdown, pot_fill_remaining_media
+
+
+# One request fills one bench. Every pot costs a handful of queries under a row
+# lock held until the whole claim commits, so an unbounded selection would hold
+# the pot ledger against every other writer for as long as it took to walk it.
+MAX_BENCH_POTS = 500
 
 
 def _run(function, *args, **kwargs):
@@ -54,6 +61,42 @@ class OpenPotFillSerializer(CurrentWorkspaceSerializerMixin, ActionSerializer):
         elif data['source_location'] is not None or data['container_count'] not in (None, 1):
             raise ValidationError('A numbered fill uses its container location and a count of one.')
         return data
+
+
+class OpenNumberedFillsSerializer(ActionSerializer):
+    """A bench of numbered pots, claimed by the numbers the operator can read.
+
+    A pot's number is its inventory identity, which is unique across the whole
+    nursery rather than within one catalog item, so a selection names pots and
+    nothing else: which item each belongs to is already settled by which pots
+    they are. Refusals name the pot, because the answer to one bad number in a
+    range of forty is to fix that number.
+    """
+
+    inventory_units = serializers.PrimaryKeyRelatedField(
+        queryset=InventoryUnit.objects.all(), many=True, allow_empty=False,
+    )
+    opened_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+    def validate_inventory_units(self, value):
+        """Refuse a selection this workspace cannot fill, naming every pot in it.
+
+        The workspace filter the single-target serializer gets from its field
+        lookups does not reach a `many` relation — the queryset lives on the
+        child field — so the boundary is checked here as well as in the unit
+        locks the service takes, which are what make it race-proof.
+        """
+        numbers = [unit.pk for unit in value]
+        if len(numbers) != len(set(numbers)):
+            raise ValidationError('Select each pot once.')
+        if len(numbers) > MAX_BENCH_POTS:
+            raise ValidationError(f'Fill at most {MAX_BENCH_POTS} pots in one request.')
+        workspace = get_current_workspace()
+        foreign = [unit.pk for unit in value if unit.workspace_id != workspace.pk]
+        if foreign:
+            raise ValidationError([f'Pot #{number} is not in this nursery.' for number in foreign])
+        return value
 
 
 class CleanPotFillSerializer(ReasonSerializer):
@@ -156,6 +199,16 @@ class PotFillViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # py
             fill = _run(open_counted_fill, self.get_current_workspace(), request.user,
                         data['stock_lot'], data['source_location'], data['container_count'], **common)
         return Response(self.get_serializer(fill).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='open-numbered')
+    def open_numbered(self, request):
+        """Fill a bench of numbered pots in one claim, without consuming them."""
+        payload = OpenNumberedFillsSerializer(data=request.data, context={'request': request})
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        fills = _run(open_numbered_fills, self.get_current_workspace(), request.user,
+                     data['inventory_units'], opened_at=data['opened_at'], notes=data['notes'])
+        return Response(self.get_serializer(fills, many=True).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['get'])
     def contents(self, request, pk=None):  # pylint: disable=unused-argument

@@ -100,6 +100,11 @@ def open_numbered_fill(workspace, user, unit, *, opened_at=None, notes=''):
     pool nor the ledger. Sales and physical unit actions take this lock too.
     """
     unit = lock_units(workspace, [unit.pk])[unit.pk]
+    return _fill_locked_container(workspace, user, unit, opened_at, notes)
+
+
+def _fill_locked_container(workspace, user, unit, opened_at, notes):
+    """Open one fill on a container this caller has already locked."""
     _require_item(unit.item)
     _require_location(workspace, unit.current_location)
     if not unit.active or unit_physical_state(unit) != 'available':
@@ -116,6 +121,46 @@ def open_numbered_fill(workspace, user, unit, *, opened_at=None, notes=''):
     fill = _new_fill(workspace, user, opened_at, notes, inventory_unit=unit)
     fill.sequence = previous.sequence + 1 if previous else 1
     return _record_open(fill, user)
+
+
+def _refusal(unit, error):
+    """Name the pot a refusal is about, because a bench refuses pot by pot."""
+    if hasattr(error, 'message_dict'):
+        messages = [message for group in error.message_dict.values() for message in group]
+    else:
+        messages = list(error.messages)
+    return [f'Pot #{unit.pk}: {message}' for message in messages]
+
+
+@transaction.atomic
+def open_numbered_fills(workspace, user, units, *, opened_at=None, notes=''):
+    """Fill a bench of numbered pots as one claim, or refuse the bench entire.
+
+    Every container is locked before the first fill is written, in the one
+    primary-key order every other writer takes them in, so two operators
+    filling overlapping benches queue instead of deadlocking. The pots share
+    one opening time: a bench is filled in one act, and fills a report later
+    groups by the minute should not disagree about which minute that was.
+
+    A pot that cannot be filled refuses the whole request rather than leaving
+    the operator to work out which of thirty pots were done. Each attempt runs
+    in its own savepoint, so the refusals name every unfillable pot at once
+    instead of stopping at the first — the operator fixes the bench, not one
+    pot per round trip.
+    """
+    locked = lock_units(workspace, [unit.pk for unit in units])
+    opened_at = opened_at or timezone.now()
+    fills, refused = [], []
+    for number in sorted(locked):
+        unit = locked[number]
+        try:
+            with transaction.atomic():
+                fills.append(_fill_locked_container(workspace, user, unit, opened_at, notes))
+        except ValidationError as error:
+            refused.extend(_refusal(unit, error))
+    if refused:
+        raise ValidationError({'inventory_units': refused})
+    return fills
 
 
 def lock_pot_fills(workspace, fill_ids):
