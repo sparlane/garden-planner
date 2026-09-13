@@ -1804,6 +1804,8 @@ class SpecificPlantLocation(models.Model):
     potted plant on a bench in an anonymous container. When that pot belongs
     to a counted fill, `container_fill` retains its cycle and `location` must
     match the fill's fixed location; no individual pot identity is invented.
+    Explicit numbering may later attach a unit to that same interval. Its
+    numbered_at/by audit records this exception without creating a media exit.
 
     Several plants may share one place. The only uniqueness here is one active
     location per plant, so three bulbs in one numbered pot are three rows
@@ -1849,6 +1851,9 @@ class SpecificPlantLocation(models.Model):
     ended = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(null=True, blank=True)
     override_reason = models.TextField(blank=True, default='')
+    #: Set only by counted-pot numbering; the fill and start remain original.
+    numbered_at = models.DateTimeField(null=True, blank=True)
+    numbered_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name='+')
 
     def clean(self):
         super().clean()
@@ -1892,7 +1897,10 @@ class SpecificPlantLocation(models.Model):
         """Keep the historical fill tied to the pot and plant that used it."""
         fill = self.container_fill
         if fill.stock_lot_id:
-            if self.location_type != self.LOCATION or self.location_id != fill.source_location_id or self.container_unit_id:
+            if self.numbered_at is not None:
+                if self.location_type != self.CONTAINER_UNIT or not self.container_unit_id or self.container_unit.source_lot_id != fill.stock_lot_id:
+                    raise ValidationError({'container_fill': 'The numbered pot must come from this fill\'s lot.'})
+            elif self.location_type != self.LOCATION or self.location_id != fill.source_location_id or self.container_unit_id:
                 raise ValidationError({'container_fill': 'Counted pots must stand at their fill location without a numbered identity.'})
         elif self.location_type != self.CONTAINER_UNIT or fill.tray_id or fill.inventory_unit_id != self.container_unit_id:
             raise ValidationError({'container_fill': 'The fill must belong to this numbered pot.'})
@@ -1905,7 +1913,7 @@ class SpecificPlantLocation(models.Model):
         """Do not let an interval edit change which cultivation cycle a plant used."""
         original = type(self).objects.select_for_update().get(pk=self.pk)
         if original.container_fill_id:
-            fields = ('specific_plant_id', 'location_type', 'location_id', 'container_unit_id', 'container_fill_id', 'started')
+            fields = ('specific_plant_id', 'location_type', 'location_id', 'container_unit_id', 'container_fill_id', 'started', 'numbered_at', 'numbered_by_id')
             if any(getattr(original, field) != getattr(self, field) for field in fields):
                 raise ValidationError({'container_fill': 'Move the plant to change its fill; recorded fill placements are immutable.'})
             if original.ended is not None and original.ended != self.ended:
@@ -1916,7 +1924,8 @@ class SpecificPlantLocation(models.Model):
         elif self.container_fill_id:
             raise ValidationError({'container_fill': 'Move the plant to join a fill; historical placements are not backfilled.'})
         elif original.container_unit_id != self.container_unit_id and self.container_unit_id:
-            InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
+            unit = InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
+            self._require_no_counted_occupant(unit)
             if SeedTrayGeneration.objects.filter(
                 inventory_unit_id=self.container_unit_id, status=SeedTrayGeneration.Status.OPEN,
             ).exists():
@@ -1966,9 +1975,15 @@ class SpecificPlantLocation(models.Model):
         either joins the pot's current fill or occupies an unfilled pot; it
         never acquires a later fill simply because the pot was reused.
         """
+        if self.numbered_at is not None:
+            if self._state.adding:
+                raise ValidationError({'numbered_at': 'Number an existing counted placement through the numbering service.'})
+            if self.numbered_at < self.started or (self.ended is not None and self.ended < self.numbered_at):
+                raise ValidationError({'ended': 'A numbered placement cannot end before its pot was numbered.'})
         if self._state.adding and self.container_unit_id:
             SpecificPlant.objects.select_for_update().get(pk=self.specific_plant_id)
             unit = InventoryUnit.objects.select_for_update(of=('self',)).get(pk=self.container_unit_id)
+            self._require_no_counted_occupant(unit)
             fill = SeedTrayGeneration.objects.select_for_update().filter(
                 inventory_unit=unit, tray__isnull=True, status=SeedTrayGeneration.Status.OPEN,
             ).first()
@@ -1992,6 +2007,12 @@ class SpecificPlantLocation(models.Model):
             self.clean()
         super().save(*args, **kwargs)
 
+    @staticmethod
+    def _require_no_counted_occupant(unit):
+        """Numbering one occupied counted pot does not create extra media shares."""
+        if unit.standing_plants.filter(container_fill__stock_lot__isnull=False, ended__isnull=True).exists():
+            raise ValidationError({'container_unit': 'This pot holds a counted-fill plant. Move it out before adding another plant.'})
+
     def _join_counted_fill(self):
         """Claim one unused anonymous pot while cleaning and other arrivals wait."""
         SpecificPlant.objects.select_for_update().get(pk=self.specific_plant_id)
@@ -2012,6 +2033,16 @@ class SpecificPlantLocation(models.Model):
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=(models.Q(numbered_at__isnull=True, numbered_by__isnull=True) | models.Q(
+                    numbered_at__isnull=False, container_fill__isnull=False, container_unit__isnull=False, location_type='container_unit', location__isnull=True,
+                )),
+                name='plant_location_numbering_needs_fill',
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(numbered_at__isnull=True) | (models.Q(numbered_at__gte=models.F('started')) & (models.Q(ended__isnull=True) | models.Q(ended__gte=models.F('numbered_at'))))),
+                name='plant_location_numbering_within_stay',
+            ),
             models.CheckConstraint(
                 condition=(models.Q(container_fill__isnull=True) | models.Q(location_type='container_unit', container_unit__isnull=False) | models.Q(location_type='location', location__isnull=False, container_unit__isnull=True)),
                 name='plant_location_fill_needs_pot',

@@ -1115,10 +1115,10 @@ class InventoryUnit(WorkspaceOwnedModel):
         """Validate direct writes and lock provenance after creation."""
         if self.pk:
             previous = type(self).objects.filter(pk=self.pk).first()
-            if previous and self.movements.exists():
+            if previous and (self.movements.exists() or self.standing_plants.filter(numbered_at__isnull=False).exists()):
                 locked = ('workspace_id', 'item_id', 'source_lot_id', 'asset_code')
                 errors = {
-                    field.removesuffix('_id'): 'Serialized-unit identity is immutable after stock history exists.'
+                    field.removesuffix('_id'): 'Serialized-unit identity is immutable after stock or fill history exists.'
                     for field in locked
                     if getattr(previous, field) != getattr(self, field)
                 }

@@ -189,16 +189,19 @@ def move_specific_plant(plant, move_data, user=None):
     garden square counts: moving a plant onto a nursery bench is still nursery
     work, and calling it planting out would close a production batch early.
     """
-    started = move_data.get('started') or timezone.now()
-    move_payload = {**move_data, 'started': started}
-    planted_out = move_payload.get('location_type') == SpecificPlantLocation.GARDEN_SQUARE
-    destination = move_payload.get('location')
     with transaction.atomic():
         plant = get_object_or_404(
             SpecificPlant.objects.select_for_update(),
             pk=plant.pk,
             workspace=plant.workspace,
         )
+        # An automatic timestamp belongs after the plant lock: a concurrent
+        # numbering may finish while this move waits, and the departure must
+        # not appear to predate it. Explicit operator dates remain unchanged.
+        started = move_data.get('started') or timezone.now()
+        move_payload = {**move_data, 'started': started}
+        planted_out = move_payload.get('location_type') == SpecificPlantLocation.GARDEN_SQUARE
+        destination = move_payload.get('location')
         if destination is not None:
             _check_destination_capacity(
                 destination, move_payload.get('override_reason', ''), plant, move_payload.get('container_fill'),

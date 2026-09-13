@@ -1,5 +1,6 @@
 import { csrfPost, fetchAsJson } from '../utils'
 import { CleanMediaDisposition, SeedTrayGenerationEvent } from '../types/seedtrays'
+import { SpecificPlantLocation } from '../types/plantings'
 
 export type PotFillTarget = { inventory_unit: number } | { stock_lot: number; source_location: number }
 
@@ -22,6 +23,10 @@ export function plantPotFill(pk: number, data: { plants: number[]; override_reas
   return csrfPost(`/seedtrays/container-fills/${pk}/plant/`, data)
 }
 
+export function numberPotFillPlant(pk: number, plant: number): Promise<SpecificPlantLocation> {
+  return csrfPost(`/seedtrays/container-fills/${pk}/number-pot/`, { plant }).then((response) => response.json() as Promise<SpecificPlantLocation>)
+}
+
 export interface PotFillPage {
   count: number
   next: string | null
@@ -33,6 +38,7 @@ export interface PotFillContents {
   digest: string
   status: 'open' | 'closed'
   plants: number[]
+  numbered_plants: number[]
   media: Array<{ lot: number; base_quantity: string; base_unit: string }>
   costs: {
     currency_code: string

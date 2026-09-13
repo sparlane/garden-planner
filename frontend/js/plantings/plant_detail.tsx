@@ -39,6 +39,7 @@ function LocationHistory({ locations }: { locations: Array<SpecificPlantLocation
             <td>
               {placementLabel(location)}
               {location.container_fill != null && <div className="small">Fill #{location.container_fill}</div>}
+              {location.numbered_at != null && <div className="small">Pot numbered {formatDateTime(location.numbered_at)}; previously counted in this fill.</div>}
             </td>
             <td>{formatDateTime(location.started)}</td>
             <td>{location.ended === undefined || location.ended === null ? <span className="text-success">Still there</span> : formatDateTime(location.ended)}</td>

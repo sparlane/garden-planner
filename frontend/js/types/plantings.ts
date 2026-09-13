@@ -446,6 +446,8 @@ interface SpecificPlantLocation {
   // the nursery. Null for every other kind of place.
   container_unit_code?: string | null
   container_fill?: number | null
+  numbered_at?: string | null
+  numbered_by?: number | null
   started: string
   ended?: string
   notes?: string
