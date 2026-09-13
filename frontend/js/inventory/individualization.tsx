@@ -132,11 +132,13 @@ function NumberedUnitsPanel({ item }: NumberedUnitsPanelProps) {
         )}
         {numbered.length > 0 && (
           <Alert className="mt-2 mb-0" variant="success">
-            Numbered {numbered.length}. Each one now has a code to print:{' '}
+            Numbered {numbered.length}. These are their numbers, and each one now has a code to print:{' '}
             {numbered.map((unit, index) => (
               <React.Fragment key={unit.pk}>
                 {index > 0 && ', '}
-                <Link to={`/inventory/serialized-units/${unit.pk}`}>{unit.asset_code}</Link>
+                <Link to={`/inventory/serialized-units/${unit.pk}`}>
+                  #{unit.pk} {unit.asset_code}
+                </Link>
               </React.Fragment>
             ))}
           </Alert>

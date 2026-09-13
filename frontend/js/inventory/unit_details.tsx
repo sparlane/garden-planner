@@ -66,7 +66,7 @@ function NumberedUnitDetails({ unitPk }: NumberedUnitDetailsProps) {
   return (
     <main className="container-fluid mt-3">
       <h1 className="h4">
-        {unit.item_name} <span className="text-muted">{unit.asset_code}</span>
+        {unit.item_name} #{unit.pk} <span className="text-muted">{unit.asset_code}</span>
       </h1>
       <Row className="g-3">
         <Col md={6}>
@@ -88,6 +88,10 @@ function NumberedUnitDetails({ unitPk }: NumberedUnitDetailsProps) {
                   <tr>
                     <th scope="row">Holding a plant</th>
                     <td>{unit.in_use ? 'Yes' : 'No'}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Number</th>
+                    <td>#{unit.pk}</td>
                   </tr>
                   <tr>
                     <th scope="row">Label code</th>
