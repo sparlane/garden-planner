@@ -49,6 +49,25 @@ class SeedTrayRESTContractTests(RESTContractTestCase):
         self.assert_paginated_list_contract(self.list_urls[:3])
         self.assert_list_contract(self.list_urls[3:])
 
+    def test_tray_list_names_the_unit_behind_each_tray(self):
+        """
+        A tray row carries the identities a destination picker puts in its label.
+
+        The move form on the tray screen names a tray by the code printed on it
+        and the inventory unit that code belongs to, not just by the tray
+        number, so the list those options are built from has to nest the unit
+        rather than only point at it.
+        """
+        response = self.client.get('/seedtrays/seedtrays/')
+
+        self.assertEqual(response.status_code, 200)
+        row = {row['pk']: row for row in response.data['results']}[self.tray.pk]
+        unit = self.tray.inventory_unit
+        self.assertEqual(row['inventory_unit'], unit.pk)
+        self.assertEqual(row['inventory']['pk'], unit.pk)
+        self.assertEqual(row['inventory']['asset_code'], unit.asset_code)
+        self.assertTrue(unit.asset_code)
+
     def test_resources_round_trip(self):
         """Tray models, trays, and global cells survive create and retrieve."""
         tray_model = self.assert_create_retrieve(

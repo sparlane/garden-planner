@@ -1,6 +1,7 @@
 import Cookies from 'js-cookie'
 
 import { ApiError, reportApiError, type ApiRequestMethod } from './api/errors'
+import { SelectOption } from './types/others'
 
 const LOGIN_PATH = '/accounts/login/'
 const NOT_AUTHENTICATED_DETAIL = 'Authentication credentials were not provided.'
@@ -235,6 +236,18 @@ function csrfPut(url: string, data: object): Promise<Response> {
   return csrfRequest('PUT', url, data)
 }
 
+// react-select reports a cleared control as null and an option carrying an empty
+// value as undefined; both mean "nothing chosen" to every picker that stores a
+// primary key, so the two cases are collapsed here rather than once per screen —
+// a screen that missed one would post `NaN` as the thing it was pointed at.
+function selectOptionToPk(option: SelectOption | null | undefined): number | undefined {
+  const value = option?.value
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+  return Number(value)
+}
+
 function localDatetimeInputValue(date: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
@@ -363,6 +376,7 @@ export {
   fetchAsJson,
   localDatetimeInputValue,
   parseLocalDatetimeInput,
+  selectOptionToPk,
   formatDate,
   formatDateTime,
   formatDateRange,
