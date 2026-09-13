@@ -310,6 +310,57 @@ class SerializedInventoryTests(SerializedInventoryTestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class AssetCodeLookupTests(SerializedInventoryTestCase):
+    """A unit is found by the code it carries, because that is what is read.
+
+    Potting a seedling on, or counting a pot in a stocktake, starts from a code
+    somebody is holding rather than from a list: one item's numbered containers
+    outgrow any dropdown, and the identity is opaque by design, so there is
+    nothing to guess at from a neighbouring code.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.post_receipt(quantity='3', cost='30.0000')
+        self.units = list(InventoryUnit.objects.order_by('pk'))
+
+    def lookup(self, value):
+        """Return the units the public collection matches against one code."""
+        response = self.client.get(
+            '/inventory/serialized-units/',
+            {'asset_code': value},
+        )
+        self.assertEqual(response.status_code, 200)
+        return [row['pk'] for row in response.data['results']]
+
+    def test_a_whole_code_finds_the_one_unit_that_carries_it(self):
+        """The code is unique in a workspace, so a full one is an answer."""
+        wanted = self.units[1]
+
+        self.assertEqual(self.lookup(wanted.asset_code), [wanted.pk])
+
+    def test_a_code_typed_in_lower_case_still_finds_it(self):
+        """Codes are issued uppercase and are entered by hand as often as scanned."""
+        wanted = self.units[0]
+
+        self.assertEqual(self.lookup(wanted.asset_code.lower()), [wanted.pk])
+
+    def test_a_fragment_matches_every_unit_holding_it(self):
+        """Which is why a caller holding a partial code has to refuse to guess.
+
+        The filter compares on a fragment so that a half-read code still
+        narrows, and every unit shares the `ASSET-` prefix.
+        """
+        self.assertEqual(
+            set(self.lookup('ASSET-')),
+            {unit.pk for unit in self.units},
+        )
+
+    def test_a_code_no_unit_carries_matches_nothing(self):
+        """An empty answer is what lets a screen say the code is unknown."""
+        self.assertEqual(self.lookup('ASSET-NOT-A-CODE'), [])
+
+
 class OpeningReconciliationTests(SerializedInventoryTestCase):
     """A migrated unit leaves its unknown location only by being audited."""
 

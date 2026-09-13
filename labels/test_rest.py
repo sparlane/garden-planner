@@ -6,7 +6,7 @@ from uuid import uuid4
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from tests.factories import make_garden_area, make_inventory_item, make_location, make_specific_plant, make_stock_lot
+from tests.factories import make_garden_area, make_inventory_item, make_location, make_numbered_container, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace, get_current_workspace
 
 from health.models import HealthObservation, HealthObservationType
@@ -109,6 +109,23 @@ class LabelResolutionTests(TestCase):
         )
         sold = self.resolve(self.code.code)
         self.assertIn('order_return', sold.data['capabilities'])
+
+    def test_a_pot_code_resolves_to_the_container_a_plant_can_stand_in(self):
+        """Moving a seedling into a numbered pot starts from the pot's label.
+
+        The unit's asset code is an opaque server identity and is not what is
+        printed on the pot, so a screen naming a pot has to be able to start
+        from the code a grower can actually read and end up with the unit.
+        """
+        pot = make_numbered_container()
+        code = ensure_identity(pot).codes.get(status=LabelCode.Status.ACTIVE)
+
+        resolved = self.resolve(code.code)
+
+        self.assertEqual(resolved.data['status'], 'active')
+        self.assertEqual(resolved.data['target']['target_type'], 'inventoryunit')
+        self.assertEqual(resolved.data['target']['object_id'], pot.pk)
+        self.assertEqual(resolved.data['target']['asset_code'], pot.asset_code)
 
     def test_unknown_replaced_void_and_wrong_workspace_are_explicit(self):
         """Every unusable scan explains its condition without target leakage."""

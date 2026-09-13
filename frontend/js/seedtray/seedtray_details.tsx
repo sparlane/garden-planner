@@ -40,7 +40,7 @@ import {
 } from '../api/plantings'
 import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog } from '../plantings/lifecycle'
 import { PLACEMENT_LABELS, placementLabel } from '../plantings/placements'
-import { potOptionLabel, useNumberedPotDestinations } from '../plantings/pot_destinations'
+import { PotCodeField, potOptionLabel, useNumberedPotDestinations } from '../plantings/pot_destinations'
 import { GerminationSummary } from '../plantings/germination'
 import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
 import { CohortLossCause } from '../types/plantings'
@@ -518,6 +518,9 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
     )}
     {form.locationType === 'container_unit' && (
       <>
+        <div style={{ marginTop: 8 }}>
+          <PotCodeField potItems={potItems} onFound={(pot) => onChange({ ...form, potItemPk: pot.item, containerUnitPk: pot.pk })} />
+        </div>
         <div style={{ marginTop: 8 }}>
           <label>
             Container item:{' '}

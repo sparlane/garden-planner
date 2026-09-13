@@ -13,7 +13,7 @@ import { BulkPlantAction, BulkPlantAtomicity, BulkPlantOperationRequest, BulkPla
 import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
 import { STATE_LABELS } from './lifecycle'
 import { PLACEMENT_LABELS } from './placements'
-import { potOptionLabel, useNumberedPotDestinations } from './pot_destinations'
+import { PotCodeField, potOptionLabel, useNumberedPotDestinations } from './pot_destinations'
 import { EMPTY_SELECTION, RegisterSelection } from './register_list'
 
 const ACTIONS: Array<{ value: BulkPlantAction; label: string }> = [
@@ -244,6 +244,18 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
                     </option>
                   ))}
                 </Form.Select>
+              </Col>
+            )}
+            {destinationType === 'container_unit' && (
+              <Col md={3}>
+                <PotCodeField
+                  potItems={potItems}
+                  onFound={(pot) => {
+                    setContainerItem(pot.item)
+                    setDestination(pot.pk)
+                    invalidateReview()
+                  }}
+                />
               </Col>
             )}
             {destinationType === 'container_unit' && (
