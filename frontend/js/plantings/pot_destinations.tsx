@@ -57,14 +57,19 @@ function useNumberedPotDestinations({ choosing, item }: NumberedPotQuery): Numbe
   }
 }
 
-// What a pot is called while it is being chosen: the code printed on it, then
-// where it is standing, then whether something is already growing in it. A pot
-// in use is still offered — several plants legitimately share one, the way a
-// multigerm cell holds several seedlings — so the option says so rather than
-// disappearing from the list.
+// What a pot is called while it is being chosen: the code printed on it and the
+// unit it is, then where it is standing, then whether something is already
+// growing in it. The printed code comes first because that is what the operator
+// is holding, and the unit id follows it because that is the pot's name
+// everywhere below the label — its own inventory page, its movement history,
+// the URL of both — so a chosen pot can be carried between this screen and
+// those without reading the code back off the container. A pot in use is still
+// offered — several plants legitimately share one, the way a multigerm cell
+// holds several seedlings — so the option says so rather than disappearing from
+// the list.
 function potOptionLabel(pot: SerializedInventoryUnit): string {
   const standing = pot.current_location_full_name ? ` — ${pot.current_location_full_name}` : ''
-  return `${pot.asset_code}${standing}${pot.in_use ? ' (already holding a plant)' : ''}`
+  return `${pot.asset_code} (unit #${pot.pk})${standing}${pot.in_use ? ' (already holding a plant)' : ''}`
 }
 
 // What a typed or scanned code turned out to be: the pot, when it is one that

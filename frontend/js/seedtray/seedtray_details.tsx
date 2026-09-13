@@ -5,10 +5,11 @@ import 'bootstrap/dist/css/bootstrap.css'
 
 import React from 'react'
 import * as ReactDOM from 'react-dom/client'
+import Select from 'react-select'
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { CleanMediaDisposition, CleanPlantDisposition, CleanSeedDisposition, SeedTray, SeedTrayCell, SeedTrayGeneration } from '../types/seedtrays'
-import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime } from '../utils'
+import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, selectOptionToPk } from '../utils'
 import {
   cleanSeedTrayGeneration,
   getSeedTrayCells,
@@ -46,6 +47,7 @@ import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes
 import { CohortLossCause } from '../types/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
 import { GardenSquare } from '../types/garden'
+import { SelectOption } from '../types/others'
 import { InventoryItem, SerializedInventoryUnit } from '../types/inventory'
 import { getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
@@ -418,10 +420,58 @@ type MovePlantFormProps = {
   pots: Array<SerializedInventoryUnit>
   potsLoading: boolean
   onChange: (form: MoveForm) => void
-  onChangeTray: (value: string) => void
-  onChangePotItem: (value: string) => void
+  onChangeTray: (pk: number | undefined) => void
+  onChangePotItem: (pk: number | undefined) => void
   onSave: () => void
   onCancel: () => void
+}
+
+// A destination is typed at rather than scrolled to: a nursery holds more
+// trays, squares, cells and pots than a dropdown can be paged through, and the
+// operator already knows which one they mean. react-select matches anywhere in
+// an option's label, so every identity these labels carry — a tray's printed
+// code, a pot's unit id, a cell's coordinates — is something that can be typed
+// to find it.
+const DESTINATION_PLACEHOLDER = 'Type to search…'
+
+// A tray is named three ways and the option carries all of them: the tray
+// record its cells hang off, the code printed on the tray in the operator's
+// hands, and the inventory unit that code belongs to, which is what the tray
+// answers to on its own page and in its movement history. Trays of one model
+// are otherwise told apart only by the date they were received.
+function trayOptionLabel(tray: SeedTray): string {
+  return `Tray #${tray.pk} — ${tray.inventory.asset_code} (unit #${tray.inventory_unit}) (${formatDate(tray.created)})`
+}
+
+type DestinationPickerProps = {
+  label: string
+  options: Array<SelectOption>
+  value: number | undefined
+  loading?: boolean
+  onChange: (pk: number | undefined) => void
+}
+
+// The searchable box every step of a destination is chosen in. It sits under
+// its caption rather than beside it, because a control that opens a menu of
+// full-length labels is not the word-sized dropdown these captions were written
+// against, and the caption is tied to react-select's own input by id so that
+// clicking it still puts the cursor in the box.
+const DestinationPicker: React.FC<DestinationPickerProps> = ({ label, options, value, loading, onChange }) => {
+  const inputId = React.useId()
+  return (
+    <div style={{ marginTop: 8, maxWidth: 420 }}>
+      <label htmlFor={inputId}>{label}</label>
+      <Select
+        inputId={inputId}
+        options={options}
+        value={options.find((option) => option.value === value) ?? null}
+        onChange={(option) => onChange(selectOptionToPk(option))}
+        isLoading={loading}
+        isClearable
+        placeholder={DESTINATION_PLACEHOLDER}
+      />
+    </div>
+  )
 }
 
 const MovePlantForm: React.FC<MovePlantFormProps> = ({
@@ -438,149 +488,103 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
   onChangePotItem,
   onSave,
   onCancel
-}) => (
-  <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 480 }}>
-    <h5>Move Plant #{form.plantPk}</h5>
-    {form.currentLocationPk && <p style={{ fontSize: '0.9em', color: '#666' }}>This will end the current location on the selected date.</p>}
-    <div>
-      <label>
-        Move to:{' '}
-        <select
-          value={form.locationType}
-          onChange={(e) => {
-            const locationType = e.target.value as MoveForm['locationType']
-            const base = { plantPk: form.plantPk, currentLocationPk: form.currentLocationPk, date: form.date, notes: form.notes }
-            if (locationType === 'garden_square') {
-              onChange({ ...base, locationType, gardenSquarePk: undefined })
-            } else if (locationType === 'seed_tray_cell') {
-              onChange({ ...base, locationType, moveSeedTrayPk: undefined, seedTrayCellPk: undefined })
-            } else {
-              onChange({ ...base, locationType, potItemPk: undefined, containerUnitPk: undefined })
-            }
-          }}
-        >
-          <option value="garden_square">{PLACEMENT_LABELS.garden_square}</option>
-          <option value="seed_tray_cell">{PLACEMENT_LABELS.seed_tray_cell}</option>
-          <option value="container_unit">{PLACEMENT_LABELS.container_unit}</option>
-        </select>
-      </label>
-    </div>
-    {form.locationType === 'garden_square' && (
-      <div style={{ marginTop: 8 }}>
+}) => {
+  const gardenSquareOptions = React.useMemo(() => (gardenSquares ?? []).map((square) => ({ value: square.pk, label: square.name })), [gardenSquares])
+  const trayOptions = React.useMemo(() => (allSeedTrays ?? []).map((tray) => ({ value: tray.pk, label: trayOptionLabel(tray) })), [allSeedTrays])
+  const cellOptions = React.useMemo(() => (moveCells ?? []).map((cell) => ({ value: cell.pk, label: `(${cell.x_position},${cell.y_position})` })), [moveCells])
+  const potItemOptions = React.useMemo(() => potItems.map((item) => ({ value: item.pk, label: item.name })), [potItems])
+  const potOptions = React.useMemo(() => pots.map((pot) => ({ value: pot.pk, label: potOptionLabel(pot) })), [pots])
+
+  return (
+    <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 480 }}>
+      <h5>Move Plant #{form.plantPk}</h5>
+      {form.currentLocationPk && <p style={{ fontSize: '0.9em', color: '#666' }}>This will end the current location on the selected date.</p>}
+      <div>
         <label>
-          Garden Square:{' '}
-          <select value={form.gardenSquarePk ?? ''} onChange={(e) => onChange({ ...form, gardenSquarePk: Number(e.target.value) })}>
-            <option value="">— select —</option>
-            {gardenSquares?.map((sq) => (
-              <option key={sq.pk} value={sq.pk}>
-                {sq.name}
-              </option>
-            ))}
+          Move to:{' '}
+          <select
+            value={form.locationType}
+            onChange={(e) => {
+              const locationType = e.target.value as MoveForm['locationType']
+              const base = { plantPk: form.plantPk, currentLocationPk: form.currentLocationPk, date: form.date, notes: form.notes }
+              if (locationType === 'garden_square') {
+                onChange({ ...base, locationType, gardenSquarePk: undefined })
+              } else if (locationType === 'seed_tray_cell') {
+                onChange({ ...base, locationType, moveSeedTrayPk: undefined, seedTrayCellPk: undefined })
+              } else {
+                onChange({ ...base, locationType, potItemPk: undefined, containerUnitPk: undefined })
+              }
+            }}
+          >
+            <option value="garden_square">{PLACEMENT_LABELS.garden_square}</option>
+            <option value="seed_tray_cell">{PLACEMENT_LABELS.seed_tray_cell}</option>
+            <option value="container_unit">{PLACEMENT_LABELS.container_unit}</option>
           </select>
         </label>
       </div>
-    )}
-    {form.locationType === 'seed_tray_cell' && (
-      <>
-        <div style={{ marginTop: 8 }}>
-          <label>
-            Seed Tray:{' '}
-            <select value={form.moveSeedTrayPk ?? ''} onChange={(e) => onChangeTray(e.target.value)}>
-              <option value="">— select tray —</option>
-              {allSeedTrays?.map((t) => (
-                <option key={t.pk} value={t.pk}>
-                  Tray #{t.pk} ({formatDate(t.created)})
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        {form.moveSeedTrayPk && (
+      {form.locationType === 'garden_square' && (
+        <DestinationPicker label="Garden Square:" options={gardenSquareOptions} value={form.gardenSquarePk} onChange={(pk) => onChange({ ...form, gardenSquarePk: pk })} />
+      )}
+      {form.locationType === 'seed_tray_cell' && (
+        <>
+          <DestinationPicker label="Seed Tray:" options={trayOptions} value={form.moveSeedTrayPk} onChange={onChangeTray} />
+          {form.moveSeedTrayPk && (
+            <DestinationPicker
+              label="Cell:"
+              options={cellOptions}
+              value={form.seedTrayCellPk}
+              loading={moveCellsLoading}
+              onChange={(pk) => onChange({ ...form, seedTrayCellPk: pk })}
+            />
+          )}
+        </>
+      )}
+      {form.locationType === 'container_unit' && (
+        <>
           <div style={{ marginTop: 8 }}>
-            <label>
-              Cell:{' '}
-              {moveCellsLoading ? (
-                <span>Loading…</span>
-              ) : (
-                <select value={form.seedTrayCellPk ?? ''} onChange={(e) => onChange({ ...form, seedTrayCellPk: Number(e.target.value) })}>
-                  <option value="">— select cell —</option>
-                  {moveCells?.map((cell) => (
-                    <option key={cell.pk} value={cell.pk}>
-                      ({cell.x_position},{cell.y_position})
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
+            <PotCodeField potItems={potItems} onFound={(pot) => onChange({ ...form, potItemPk: pot.item, containerUnitPk: pot.pk })} />
           </div>
-        )}
-      </>
-    )}
-    {form.locationType === 'container_unit' && (
-      <>
-        <div style={{ marginTop: 8 }}>
-          <PotCodeField potItems={potItems} onFound={(pot) => onChange({ ...form, potItemPk: pot.item, containerUnitPk: pot.pk })} />
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <label>
-            Container item:{' '}
-            <select value={form.potItemPk ?? ''} onChange={(e) => onChangePotItem(e.target.value)}>
-              <option value="">— select item —</option>
-              {potItems.map((item) => (
-                <option key={item.pk} value={item.pk}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <DestinationPicker label="Container item:" options={potItemOptions} value={form.potItemPk} onChange={onChangePotItem} />
           {potItems.length === 0 && (
             <p style={{ fontSize: '0.9em', color: '#666', marginBottom: 0 }}>
               No pot item is numbered individually yet. A plant stands in a pot by the code printed on it, so number some pots on the inventory item first.
             </p>
           )}
-        </div>
-        {form.potItemPk && (
-          <div style={{ marginTop: 8 }}>
-            <label>
-              Pot:{' '}
-              {potsLoading ? (
-                <span>Loading…</span>
-              ) : (
-                <select value={form.containerUnitPk ?? ''} onChange={(e) => onChange({ ...form, containerUnitPk: Number(e.target.value) })}>
-                  <option value="">— select pot —</option>
-                  {pots.map((pot) => (
-                    <option key={pot.pk} value={pot.pk}>
-                      {potOptionLabel(pot)}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
-            {!potsLoading && pots.length === 0 && <p style={{ fontSize: '0.9em', color: '#666', marginBottom: 0 }}>No pots of this item are numbered and on hand.</p>}
-          </div>
-        )}
-      </>
-    )}
-    <div style={{ marginTop: 8 }}>
-      <label>
-        Date: <input type="datetime-local" value={form.date} onChange={(e) => onChange({ ...form, date: e.target.value })} />
-      </label>
+          {form.potItemPk && (
+            <>
+              <DestinationPicker
+                label="Pot:"
+                options={potOptions}
+                value={form.containerUnitPk}
+                loading={potsLoading}
+                onChange={(pk) => onChange({ ...form, containerUnitPk: pk })}
+              />
+              {!potsLoading && pots.length === 0 && <p style={{ fontSize: '0.9em', color: '#666', marginBottom: 0 }}>No pots of this item are numbered and on hand.</p>}
+            </>
+          )}
+        </>
+      )}
+      <div style={{ marginTop: 8 }}>
+        <label>
+          Date: <input type="datetime-local" value={form.date} onChange={(e) => onChange({ ...form, date: e.target.value })} />
+        </label>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <label>
+          Notes: <input type="text" value={form.notes} onChange={(e) => onChange({ ...form, notes: e.target.value })} placeholder="Optional" />
+        </label>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <Button variant="primary" onClick={onSave} disabled={!form.date || !moveDestinationPk(form)}>
+          Save
+        </Button>{' '}
+        <Button variant="secondary" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
-    <div style={{ marginTop: 8 }}>
-      <label>
-        Notes: <input type="text" value={form.notes} onChange={(e) => onChange({ ...form, notes: e.target.value })} placeholder="Optional" />
-      </label>
-    </div>
-    <div style={{ marginTop: 8 }}>
-      <Button variant="primary" onClick={onSave} disabled={!form.date || !moveDestinationPk(form)}>
-        Save
-      </Button>{' '}
-      <Button variant="secondary" onClick={onCancel}>
-        Cancel
-      </Button>
-    </div>
-  </div>
-)
+  )
+}
 
 type GenerationCardProps = {
   generations: Array<SeedTrayGeneration>
@@ -980,23 +984,23 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     })
   }
 
-  function handleMoveTrayChange(rawValue: string) {
+  function handleMoveTrayChange(trayPk: number | undefined) {
     setMoveForm((currentForm) => {
       if (!currentForm || currentForm.locationType !== 'seed_tray_cell') return currentForm
       return {
         ...currentForm,
-        moveSeedTrayPk: rawValue ? Number(rawValue) : undefined,
+        moveSeedTrayPk: trayPk,
         seedTrayCellPk: undefined
       }
     })
   }
 
-  function handleMovePotItemChange(rawValue: string) {
+  function handleMovePotItemChange(itemPk: number | undefined) {
     setMoveForm((currentForm) => {
       if (!currentForm || currentForm.locationType !== 'container_unit') return currentForm
       return {
         ...currentForm,
-        potItemPk: rawValue ? Number(rawValue) : undefined,
+        potItemPk: itemPk,
         containerUnitPk: undefined
       }
     })

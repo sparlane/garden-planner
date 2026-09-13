@@ -16,7 +16,7 @@ import { SeedTray, SeedTrayModel } from './types/seedtrays'
 import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
 import { getGardenAreas, getGardenBeds, getGardenSquares } from './api/garden'
-import { formatDate, formatDateRange, formatQuantity } from './utils'
+import { formatDate, formatDateRange, formatQuantity, selectOptionToPk } from './utils'
 import {
   getPlantingSeedTrayCurrent,
   getPlantingGardenSquaresCurrent,
@@ -110,16 +110,6 @@ function formatPacketOption(option: PacketOption, meta: { context: string }) {
 // be searchable at all.
 function filterPacketOption(option: { data: PacketOption }, input: string) {
   return option.data.searchText.includes(input.toLowerCase())
-}
-
-// react-select reports a cleared control as null and an empty option value as
-// undefined; both mean "nothing chosen" to every picker in this file.
-function selectOptionToPk(option: SelectOption | null): number | undefined {
-  const value = option?.value
-  if (value === undefined || value === null) {
-    return undefined
-  }
-  return Number(value)
 }
 
 interface SowingCorrectionPanelProps {
