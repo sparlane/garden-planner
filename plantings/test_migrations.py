@@ -10,8 +10,7 @@ from uuid import uuid4
 from django.apps import apps as django_apps
 from django.conf import settings
 from django.db import connection
-from django.db.migrations.executor import MigrationExecutor
-from django.test import SimpleTestCase, TestCase, TransactionTestCase
+from django.test import SimpleTestCase, TestCase
 
 from plants.models import Plant, PlantFamily, PlantVariety
 from seeds.models import SeedPacket, Seeds
@@ -28,6 +27,12 @@ from tests.factories import (
     make_seed_tray_cell_planting,
     make_seed_tray_planting,
     make_specific_plant,
+)
+from tests.migration_replay import (
+    MigrationReplayTestCase,
+    SharedMigrationReplayTestCase,
+    latest_migration_state,
+    migrate_to,
 )
 from workspaces.models import Workspace
 
@@ -58,9 +63,7 @@ def latest_plantings_state():
     leaves their tables dropped for the rest of the process, which surfaces much
     later as an unrelated test failing on a missing relation.
     """
-    executor = MigrationExecutor(connection)
-    executor.loader.build_graph()
-    return list(executor.loader.graph.leaf_nodes())
+    return latest_migration_state()
 
 
 class PlantingsDataMigrationTests(TestCase):  # pylint: disable=too-many-instance-attributes
@@ -353,30 +356,16 @@ class LocationChronologyAuditHelperTests(SimpleTestCase):
         self.assertEqual(count, 1)
 
 
-class ProductionBatchBackfillTests(TransactionTestCase):
-    """The legacy backfill gives every historical sowing one stable batch."""
+class ProductionBatchBackfillTests(SharedMigrationReplayTestCase):
+    """The legacy backfill gives every historical sowing one stable batch.
+
+    Each case below owns its own sowings and reads only those, so one replay
+    over all of them is equivalent to one replay each; the batch totals that
+    used to be asserted per case are counted once, for the whole class, in
+    test_the_backfill_opens_one_batch_per_sowing_and_no_more.
+    """
 
     UNLINKED_STATE = [('plantings', '0019_productionbatch')]
-
-    def _post_teardown(self):
-        """Restore migration seed data removed by transactional test flushing."""
-        super()._post_teardown()
-        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
-            Workspace.objects.create(
-                pk=settings.CURRENT_WORKSPACE_ID,
-                name='My Garden',
-            )
-
-    def setUp(self):
-        super().setUp()
-        self.addCleanup(self._migrate, latest_plantings_state())
-
-    @staticmethod
-    def _migrate(targets):
-        """Move the test database to one explicit migration state."""
-        executor = MigrationExecutor(connection)
-        executor.loader.build_graph()
-        executor.migrate(targets)
 
     @staticmethod
     def _unlink_batches():
@@ -391,26 +380,61 @@ class ProductionBatchBackfillTests(TransactionTestCase):
             cursor.execute('DELETE FROM plantings_productionbatchtransition')
             cursor.execute('DELETE FROM plantings_productionbatch')
 
-    def _run_backfill(self):
-        """Strip the batch links, then replay the backfill over them."""
-        self._migrate(self.UNLINKED_STATE)
-        self._unlink_batches()
-        self._migrate(latest_plantings_state())
+    @classmethod
+    def set_up_replay(cls):
+        """Lay down every case's sowings, then backfill the lot in one pass."""
+        cls.row_sowing = make_garden_row_sowing()
+        cls.square_sowing = make_garden_square_sowing()
+        cls.tray_sowing = make_seed_tray_planting()
+        cls.cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=cls.tray_sowing,
+        )
+        cls.plants = [
+            make_specific_plant(cell_planting=cls.cell_planting),
+            make_specific_plant(cell_planting=cls.cell_planting),
+        ]
+
+        cls.multigerm_sowing = make_seed_tray_planting(quantity=2)
+        cls.multigerm_cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=cls.multigerm_sowing,
+            quantity=2,
+        )
+        cls.recovered = [
+            make_specific_plant(
+                cell_planting=cls.multigerm_cell_planting,
+                notes='Recovered from legacy GardenSquareTransplant #1.',
+            )
+            for _index in range(5)
+        ]
+        cls.legacy_transplant = GardenSquareTransplant.objects.create(
+            original_planting=cls.multigerm_sowing,
+            quantity=5,
+            location=make_garden_square(),
+        )
+
+        cls.anomalous_sowing = make_seed_tray_planting()
+        cls.stray_cell = make_seed_tray_cell()
+        SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=cls.anomalous_sowing,
+            cell=cls.stray_cell,
+            quantity=1,
+        )
+
+        # The five sowings above are every sowing the class creates, so the
+        # backfill must open exactly five batches; see the count test below.
+        cls.sowing_count = 5
+
+        migrate_to(cls.UNLINKED_STATE)
+        cls._unlink_batches()
+        migrate_to(latest_plantings_state())
 
     def test_every_historical_sowing_gets_one_stable_legacy_batch(self):
         """Each sowing keeps its own deterministic code, dates, and identity."""
-        row_sowing = make_garden_row_sowing()
-        square_sowing = make_garden_square_sowing()
-        tray_sowing = make_seed_tray_planting()
-        cell_planting = make_seed_tray_cell_planting(
-            seed_tray_planting=tray_sowing,
-        )
-        plants = [
-            make_specific_plant(cell_planting=cell_planting),
-            make_specific_plant(cell_planting=cell_planting),
-        ]
-
-        self._run_backfill()
+        row_sowing = self.row_sowing
+        square_sowing = self.square_sowing
+        tray_sowing = self.tray_sowing
+        cell_planting = self.cell_planting
+        plants = self.plants
 
         for sowing, code_prefix in (
             (row_sowing, 'LEGACY-ROW'),
@@ -438,110 +462,114 @@ class ProductionBatchBackfillTests(TransactionTestCase):
                     ProductionBatch.Status.ACTIVE,
                 )
 
-        self.assertEqual(ProductionBatch.objects.count(), 3)
         self.assertEqual(
             SpecificPlant.objects.filter(cell_planting=cell_planting).count(),
             len(plants),
         )
 
+    def test_the_backfill_opens_one_batch_per_sowing_and_no_more(self):
+        """No sowing is split in two, and no batch is conjured without one.
+
+        The cases share a replay, so the totals are counted once here for every
+        sowing the class laid down rather than per case.
+        """
+        self.assertEqual(ProductionBatch.objects.count(), self.sowing_count)
+
     def test_multigerm_and_recovered_plants_share_their_sowing_batch(self):
         """Individual plants inherit one batch through their cell planting."""
-        tray_sowing = make_seed_tray_planting(quantity=2)
-        cell_planting = make_seed_tray_cell_planting(
-            seed_tray_planting=tray_sowing,
-            quantity=2,
-        )
-        recovered = [
-            make_specific_plant(
-                cell_planting=cell_planting,
-                notes='Recovered from legacy GardenSquareTransplant #1.',
-            )
-            for _index in range(5)
-        ]
-        square = make_garden_square()
-        legacy_transplant = GardenSquareTransplant.objects.create(
-            original_planting=tray_sowing,
-            quantity=5,
-            location=square,
-        )
-
-        self._run_backfill()
-
-        tray_sowing.refresh_from_db()
+        tray_sowing = SeedTrayPlanting.objects.get(pk=self.multigerm_sowing.pk)
         batches = {
             plant.cell_planting.seed_tray_planting.batch_id
-            for plant in SpecificPlant.objects.filter(pk__in=[p.pk for p in recovered])
+            for plant in SpecificPlant.objects.filter(
+                pk__in=[plant.pk for plant in self.recovered]
+            )
         }
         self.assertEqual(batches, {tray_sowing.batch_id})
-        legacy_transplant.refresh_from_db()
+        legacy_transplant = GardenSquareTransplant.objects.get(pk=self.legacy_transplant.pk)
         self.assertEqual(
             legacy_transplant.original_planting.batch_id,
             tray_sowing.batch_id,
         )
-        self.assertEqual(ProductionBatch.objects.count(), 1)
         self.assertEqual(legacy_transplant.quantity, 5)
 
     def test_anomalous_cell_membership_is_flagged_for_repair(self):
         """A stray cell allocation is reported instead of silently guessed at."""
-        tray_sowing = make_seed_tray_planting()
-        stray_cell = make_seed_tray_cell()
-        SeedTrayCellPlanting.objects.create(
-            seed_tray_planting=tray_sowing,
-            cell=stray_cell,
-            quantity=1,
-        )
-
-        self._run_backfill()
-
-        tray_sowing.refresh_from_db()
+        tray_sowing = SeedTrayPlanting.objects.get(pk=self.anomalous_sowing.pk)
         batch = tray_sowing.batch
         self.assertEqual(batch.repair_state, ProductionBatch.RepairState.NEEDS_REPAIR)
-        self.assertIn(str(stray_cell.pk), batch.repair_details)
+        self.assertIn(str(self.stray_cell.pk), batch.repair_details)
         self.assertIn(f'seed tray #{tray_sowing.seed_tray_id}', batch.repair_details)
 
 
-class PlantLifecycleBackfillTests(TransactionTestCase):
-    """The lifecycle backfill records only the facts already on file."""
+class PlantLifecycleBackfillTests(SharedMigrationReplayTestCase):
+    """The lifecycle backfill records only the facts already on file.
+
+    Every case reads the events of its own plant, so the four share one replay.
+    """
 
     EMPTY_STATE = [('plantings', '0022_plantlifecycleevent')]
 
-    def _post_teardown(self):
-        """Restore migration seed data removed by transactional test flushing."""
-        super()._post_teardown()
-        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
-            Workspace.objects.create(
-                pk=settings.CURRENT_WORKSPACE_ID,
-                name='My Garden',
+    @classmethod
+    def set_up_replay(cls):
+        """Lay down every case's plants, then replay the backfill over them."""
+        cls.germinated_cell_planting = make_seed_tray_cell_planting()
+        cls.germinated_plants = [
+            make_specific_plant(cell_planting=cls.germinated_cell_planting),
+            make_specific_plant(cell_planting=cls.germinated_cell_planting),
+        ]
+
+        cls.planted_out = make_specific_plant(
+            germinated=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=cls.planted_out,
+            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+            seed_tray_cell=cls.planted_out.cell_planting.cell,
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=cls.planted_out,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=make_garden_square(),
+            started=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+        removed_sowing = make_seed_tray_planting(removed=True)
+        removed_cell_planting = make_seed_tray_cell_planting(
+            seed_tray_planting=removed_sowing,
+        )
+        cls.removed_plant = make_specific_plant(cell_planting=removed_cell_planting)
+        SpecificPlantLocation.objects.create(
+            specific_plant=cls.removed_plant,
+            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
+            seed_tray_cell=removed_cell_planting.cell,
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+        cls.clamped_plant = make_specific_plant(
+            germinated=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+        SpecificPlantLocation.objects.create(
+            specific_plant=cls.clamped_plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=make_garden_square(),
+            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
+        )
+
+        migrate_to(cls.EMPTY_STATE)
+        if PlantLifecycleEvent.objects.exists():
+            raise AssertionError(
+                'Rewinding to 0022 left lifecycle events behind, so the replay '
+                'below would assert against rows it did not create.'
             )
-
-    def setUp(self):
-        super().setUp()
-        self.addCleanup(self._migrate, latest_plantings_state())
-
-    @staticmethod
-    def _migrate(targets):
-        """Move the test database to one explicit migration state."""
-        executor = MigrationExecutor(connection)
-        executor.loader.build_graph()
-        executor.migrate(targets)
-
-    def _run_backfill(self):
-        """Unapply the backfill and replay it over the existing data."""
-        self._migrate(self.EMPTY_STATE)
-        self.assertEqual(PlantLifecycleEvent.objects.count(), 0)
-        self._migrate(latest_plantings_state())
+        migrate_to(latest_plantings_state())
 
     def test_every_existing_plant_gets_its_recorded_germination(self):
         """Germination time is already on file, so it becomes a fact."""
-        cell_planting = make_seed_tray_cell_planting()
-        plants = [
-            make_specific_plant(cell_planting=cell_planting),
-            make_specific_plant(cell_planting=cell_planting),
-        ]
-
-        self._run_backfill()
-
-        for plant in plants:
+        cell_planting = self.germinated_cell_planting
+        for plant in self.germinated_plants:
             with self.subTest(plant=plant.pk):
                 event = PlantLifecycleEvent.objects.get(
                     plant_id=plant.pk,
@@ -557,25 +585,7 @@ class PlantLifecycleBackfillTests(TransactionTestCase):
 
     def test_planting_out_is_backfilled_from_trusted_location_history(self):
         """A garden-square interval is the evidence a plant was planted out."""
-        plant = make_specific_plant(
-            germinated=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
-        )
-        SpecificPlantLocation.objects.create(
-            specific_plant=plant,
-            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
-            seed_tray_cell=plant.cell_planting.cell,
-            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
-            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
-        )
-        SpecificPlantLocation.objects.create(
-            specific_plant=plant,
-            location_type=SpecificPlantLocation.GARDEN_SQUARE,
-            garden_square=make_garden_square(),
-            started=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
-        )
-
-        self._run_backfill()
-
+        plant = self.planted_out
         events = list(
             PlantLifecycleEvent.objects.filter(plant_id=plant.pk).order_by('occurred_at', 'pk')
         )
@@ -590,21 +600,7 @@ class PlantLifecycleBackfillTests(TransactionTestCase):
 
     def test_no_final_outcome_is_invented_from_removal_or_ended_locations(self):
         """A closed activity says nothing about what became of a plant."""
-        tray_sowing = make_seed_tray_planting(removed=True)
-        cell_planting = make_seed_tray_cell_planting(
-            seed_tray_planting=tray_sowing,
-        )
-        plant = make_specific_plant(cell_planting=cell_planting)
-        SpecificPlantLocation.objects.create(
-            specific_plant=plant,
-            location_type=SpecificPlantLocation.SEED_TRAY_CELL,
-            seed_tray_cell=cell_planting.cell,
-            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
-            ended=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
-        )
-
-        self._run_backfill()
-
+        plant = self.removed_plant
         self.assertEqual(
             list(
                 PlantLifecycleEvent.objects
@@ -620,18 +616,7 @@ class PlantLifecycleBackfillTests(TransactionTestCase):
 
     def test_a_location_predating_germination_cannot_reverse_the_history(self):
         """Clamping keeps the replayed order sane on inconsistent data."""
-        plant = make_specific_plant(
-            germinated=datetime(2026, 5, 1, 8, 0, tzinfo=datetime_timezone.utc),
-        )
-        SpecificPlantLocation.objects.create(
-            specific_plant=plant,
-            location_type=SpecificPlantLocation.GARDEN_SQUARE,
-            garden_square=make_garden_square(),
-            started=datetime(2026, 4, 1, 8, 0, tzinfo=datetime_timezone.utc),
-        )
-
-        self._run_backfill()
-
+        plant = self.clamped_plant
         transplanted = PlantLifecycleEvent.objects.get(
             plant_id=plant.pk,
             event_type='transplanted',
@@ -639,30 +624,14 @@ class PlantLifecycleBackfillTests(TransactionTestCase):
         self.assertEqual(transplanted.occurred_at, plant.germinated)
 
 
-class CohortLossCauseBackfillTests(TransactionTestCase):
+class CohortLossCauseBackfillTests(MigrationReplayTestCase):
     """Losses taken before a cause was required are recorded, not guessed at."""
 
     UNCAUSED_STATE = [('plantings', '0044_gardenplantingstatusevent')]
 
-    def _post_teardown(self):
-        """Restore migration seed data removed by transactional test flushing."""
-        super()._post_teardown()
-        if not Workspace.objects.filter(pk=settings.CURRENT_WORKSPACE_ID).exists():
-            Workspace.objects.create(
-                pk=settings.CURRENT_WORKSPACE_ID,
-                name='My Garden',
-            )
-
     def setUp(self):
         super().setUp()
-        self.addCleanup(self._migrate, latest_plantings_state())
-
-    @staticmethod
-    def _migrate(targets):
-        """Move the test database to one explicit migration state."""
-        executor = MigrationExecutor(connection)
-        executor.loader.build_graph()
-        executor.migrate(targets)
+        self.addCleanup(migrate_to, latest_plantings_state())
 
     def test_a_loss_recorded_before_the_field_reads_as_unspecified(self):
         """Its reason text hints at a cause; the backfill refuses to infer one."""
@@ -681,8 +650,8 @@ class CohortLossCauseBackfillTests(TransactionTestCase):
             quantity=3,
         )
 
-        self._migrate(self.UNCAUSED_STATE)
-        self._migrate(latest_plantings_state())
+        migrate_to(self.UNCAUSED_STATE)
+        migrate_to(latest_plantings_state())
 
         replayed = CohortOperation.objects.get(pk=operation.pk)
         self.assertEqual(
