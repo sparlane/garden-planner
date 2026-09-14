@@ -1,5 +1,5 @@
 django==6.1.1
-djangorestframework==3.18.0
+djangorestframework==3.18.1
 drf-nested-routers==0.95.3
 markdown==3.10.3
 Pillow==12.3.0
