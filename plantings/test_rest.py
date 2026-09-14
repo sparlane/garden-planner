@@ -9,6 +9,7 @@ from tests.factories import (
     make_seed_tray_cell,
     make_seed_tray_cell_planting,
     make_seed_tray_generation,
+    make_seed_tray_model,
     make_seed_tray_planting,
     make_specific_plant,
     make_specific_plant_location,
@@ -47,8 +48,8 @@ class PlantingRESTContractTests(RESTContractTestCase):
         )
 
     @property
-    def list_urls(self):
-        """Return every planting collection registered with the REST router."""
+    def paged_list_urls(self):
+        """Return the planting collections that answer with a page."""
         return (
             '/plantings/directsowgardenrow/',
             '/plantings/directsowgardensquare/',
@@ -57,10 +58,26 @@ class PlantingRESTContractTests(RESTContractTestCase):
             '/plantings/specificplants/',
             '/plantings/specificplantlocations/',
             '/plantings/harvests/',
-            f'/plantings/seedtray-data/{self.tray.pk}/plantings/',
-            f'/plantings/seedtray-data/{self.tray.pk}/specificplants/',
             f'/plantings/specificplants/{self.specific_plant.pk}/locations/',
         )
+
+    @property
+    def whole_list_urls(self):
+        """Return the collections a caller is given entire.
+
+        Both are one tray read for its screen, which draws a single grid out of
+        the sowings and the plants together and counts each cell from what it
+        was sent, so neither can answer with part of a tray.
+        """
+        return (
+            f'/plantings/seedtray-data/{self.tray.pk}/plantings/',
+            f'/plantings/seedtray-data/{self.tray.pk}/specificplants/',
+        )
+
+    @property
+    def list_urls(self):
+        """Return every planting collection registered with the REST router."""
+        return self.paged_list_urls + self.whole_list_urls
 
     def test_list_routes_require_authentication(self):
         """Anonymous requests cannot list planting resources."""
@@ -68,7 +85,8 @@ class PlantingRESTContractTests(RESTContractTestCase):
 
     def test_list_routes_return_lists(self):
         """Authenticated planting collections use the common list contract."""
-        self.assert_paginated_list_contract(self.list_urls)
+        self.assert_paginated_list_contract(self.paged_list_urls)
+        self.assert_list_contract(self.whole_list_urls)
 
     def test_writable_planting_resources_round_trip(self):
         """Each current aggregate planting resource survives create and retrieve."""
@@ -237,10 +255,8 @@ class PlantingRESTContractTests(RESTContractTestCase):
         )
         for url, expected_pk, excluded_pk in route_cases:
             with self.subTest(url=url):
-                response = self.client.get(url)
-                self.assertEqual(response.status_code, 200)
                 self.assertEqual(
-                    {resource['pk'] for resource in response.data['results']},
+                    {resource['pk'] for resource in self.listed_rows(url)},
                     {expected_pk},
                 )
                 response = self.client.get(f'{url}{expected_pk}/')
@@ -262,3 +278,64 @@ class PlantingRESTContractTests(RESTContractTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['plant'], variety.plant.name)
         self.assertEqual(response.data['variety'], variety.name)
+
+
+class TrayScreenWholeTrayTests(RESTContractTestCase):
+    """A tray big enough to have been cut in half by a page of a hundred.
+
+    The screen counts each cell's germinations out of the plants it was sent
+    while the figure beside the sowing is counted in the database, so a tray
+    handed over in pieces used to report a cell as empty and its sowing as
+    germinated in the same view. No JavaScript test runner exists to check what
+    the screen draws, so what it is given is checked here instead.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.packet = make_seed_packet()
+        self.tray = make_seed_tray(
+            model=make_seed_tray_model(x_cells=12, y_cells=1),
+        )
+        make_seed_tray_generation(tray=self.tray)
+        self.sowing = make_seed_tray_planting(
+            seeds_used=self.packet,
+            quantity=144,
+            seed_tray=self.tray,
+        )
+        self.plants = []
+        for x_position in range(12):
+            cell_planting = make_seed_tray_cell_planting(
+                seed_tray_planting=self.sowing,
+                cell=make_seed_tray_cell(tray=self.tray, x_position=x_position),
+                quantity=12,
+            )
+            self.plants.extend(
+                make_specific_plant(cell_planting=cell_planting)
+                for _ in range(12)
+            )
+
+    def test_every_seedling_of_the_tray_reaches_the_screen(self):
+        """A hundred and forty-four germinations are a hundred and forty-four rows."""
+        rows = self.listed_rows(
+            f'/plantings/seedtray-data/{self.tray.pk}/specificplants/'
+        )
+
+        self.assertEqual(
+            {row['pk'] for row in rows},
+            {plant.pk for plant in self.plants},
+        )
+
+    def test_the_plants_sent_add_up_to_the_germination_count(self):
+        """The two figures one screen shows are counted off the same seedlings."""
+        plants = self.listed_rows(
+            f'/plantings/seedtray-data/{self.tray.pk}/specificplants/'
+        )
+        sowings = self.listed_rows(
+            f'/plantings/seedtray-data/{self.tray.pk}/plantings/'
+        )
+
+        self.assertEqual(len(sowings), 1)
+        self.assertEqual(
+            sowings[0]['germination']['observed_count'],
+            len(plants),
+        )

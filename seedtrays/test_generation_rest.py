@@ -445,7 +445,7 @@ class GenerationArchiveTests(GenerationRESTTestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data['results'], [])
+        self.assertEqual(response.data, [])
 
     def test_history_brings_the_archived_sowing_straight_back(self):
         """The archive is a filter, so nothing was lost."""
@@ -453,8 +453,8 @@ class GenerationArchiveTests(GenerationRESTTestCase):
             f'/plantings/seedtray-data/{self.tray.pk}/plantings/?history=true'
         )
 
-        self.assertEqual([row['pk'] for row in response.data['results']], [self.sowing.pk])
-        self.assertEqual(response.data['results'][0]['generation'], self.generation)
+        self.assertEqual([row['pk'] for row in response.data], [self.sowing.pk])
+        self.assertEqual(response.data[0]['generation'], self.generation)
 
     def test_an_explicit_generation_reads_one_closed_fill(self):
         """Traceability asks for the fill, not for everything ever."""
@@ -463,7 +463,7 @@ class GenerationArchiveTests(GenerationRESTTestCase):
             f'?generation={self.generation}'
         )
 
-        self.assertEqual([row['pk'] for row in response.data['results']], [self.sowing.pk])
+        self.assertEqual([row['pk'] for row in response.data], [self.sowing.pk])
 
     def test_the_new_fill_starts_with_no_sowings(self):
         """Reusing the tray must not inherit the previous crop."""
@@ -477,7 +477,7 @@ class GenerationArchiveTests(GenerationRESTTestCase):
             f'/plantings/seedtray-data/{self.tray.pk}/plantings/'
         )
 
-        self.assertEqual(response.data['results'], [])
+        self.assertEqual(response.data, [])
         self.assertEqual(following['sequence'], 2)
 
     def test_an_archived_plant_leaves_the_tray_view_but_keeps_its_history(self):
@@ -489,8 +489,8 @@ class GenerationArchiveTests(GenerationRESTTestCase):
             f'/plantings/seedtray-data/{self.tray.pk}/specificplants/?history=true'
         )
 
-        self.assertEqual(current.data['results'], [])
-        self.assertEqual([row['pk'] for row in history.data['results']], [self.plant.pk])
+        self.assertEqual(current.data, [])
+        self.assertEqual([row['pk'] for row in history.data], [self.plant.pk])
 
     def test_a_sowing_predating_generations_stays_visible(self):
         """It has no fill to hide behind, so hiding it would lose it."""
@@ -500,7 +500,7 @@ class GenerationArchiveTests(GenerationRESTTestCase):
             f'/plantings/seedtray-data/{self.tray.pk}/plantings/'
         )
 
-        self.assertEqual([row['pk'] for row in response.data['results']], [legacy.pk])
+        self.assertEqual([row['pk'] for row in response.data], [legacy.pk])
 
     def test_a_bad_history_flag_is_reported_as_a_field_error(self):
         """A typo should not silently read as the default view."""

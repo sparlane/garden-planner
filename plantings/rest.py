@@ -894,11 +894,16 @@ class SeedTrayPlantingViewSeedTraySet(
 ):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SeedTrayPlanting filtered by SeedTray
+
+    Unpaginated, like the cells this is laid over: the tray screen draws one
+    grid out of the sowings, the plants, and the cells together, so a page of
+    sowings would draw a grid of a tray that does not exist.
     """
     queryset = SeedTrayPlanting.objects.select_related(
         'seeds_used__seeds__plant_variety__plant',
     ).order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
+    pagination_class = None
 
     def get_queryset(self):
         tray = self.get_parent_seed_tray()
@@ -970,9 +975,18 @@ class SpecificPlantViewSet(PlantTimelineViewSetMixin, PlantOutcomeViewSetMixin, 
 class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
     """
     ViewSet of SpecificPlant filtered by SeedTray
+
+    Unpaginated, because a tray is asked for whole. Every seedling of the fill
+    is one cell's worth of the grid the screen draws, and the count each cell
+    shows is that grid counted, while the germination figure beside the sowing
+    is counted here from every plant the sowing ever produced. A hundredth row
+    cutting the first count short and not the second would leave a tray saying
+    a cell grew nothing and its sowing saying otherwise. One fill of one tray
+    bounds it: seedlings can outnumber cells, but not without limit.
     """
     queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'locations__container_unit', 'lifecycle_events').order_by('pk')
     serializer_class = SpecificPlantSerializer
+    pagination_class = None
     generation_lookup = 'cell_planting__seed_tray_planting__generation'
 
     def get_queryset(self):
