@@ -22,6 +22,7 @@ Three rules keep the numbers honest:
 
 from decimal import Decimal
 
+from plantings.lifecycle import observed_only
 from plantings.models import SpecificPlant
 from inventory.models import COST_DECIMAL_PLACES
 
@@ -38,10 +39,20 @@ def quantize_cost(value):
 
 
 def _plants_by_cell(generation):
-    """Return the plants observed in each cell of this fill."""
+    """Return the plants observed in each cell of this fill.
 
-    plants = SpecificPlant.objects.filter(
-        cell_planting__seed_tray_planting__generation=generation,
+    Observed is meant exactly: a seedling whose germination has been withdrawn
+    never came up, so it takes no share of its cell and is not listed as having
+    been supplied by anything. Its share goes back to the seedlings that did
+    come up, and a cell whose only seedlings were withdrawn has raised nothing
+    at all — provisional while the fill is open, production loss once it is
+    closed, the same as a cell nothing was ever recorded in.
+    """
+
+    plants = observed_only(
+        SpecificPlant.objects.filter(
+            cell_planting__seed_tray_planting__generation=generation,
+        )
     ).select_related('cell_planting').order_by('pk')
     grouped = {}
     for plant in plants:
