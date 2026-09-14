@@ -1,6 +1,7 @@
 """REST contract tests for reviewed bulk plant operations."""
 
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
 from uuid import uuid4
 
 from django.conf import settings
@@ -11,9 +12,15 @@ from django.test import TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
 from applications.models import InputApplication
+from applications.services import ApplicationRequest, LineRequest, TargetRequest, create_application_draft, post_application
+from costing.models import FillDepartureRecalculation
+from costing.services import effective_allocations, reallocate_batch
+from inventory.ledger import bulk_balance, unpromised_bulk
 from inventory.models import InventoryItem, StockMovement
 from inventory.units import UnitCode
 from locations.models import Location
+from seedtrays.container_fills import clean_empty_fill, open_counted_fill
+from seedtrays.models import SeedTrayGeneration
 from tests.api import RESTContractTestCase
 from tests.factories import (
     make_location,
@@ -44,7 +51,7 @@ from .models import (
 )
 
 
-class BulkPlantOperationRESTTests(RESTContractTestCase):
+class BulkPlantOperationRESTTests(RESTContractTestCase):  # pylint: disable=too-many-public-methods
     """Confirmed actions retain one result and domain record per plant."""
 
     def setUp(self):
@@ -429,46 +436,132 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):
         self.assertEqual(len(observation_ids), 1)
         self.assertTrue(all(current_growth(plant)['stage'] == stage for plant in self.plants))
 
-    def test_repot_preview_rolls_back_and_confirmation_posts_stock_atomically(self):
-        """Review writes nothing while confirmation consumes the exact pot count."""
-        stockroom = make_location()
+    def repot_payload(self, count=3):
+        """Choose an already filled lot of anonymous pots."""
+        location = make_location()
         item = make_inventory_item(
             category=InventoryItem.Category.POT_CONTAINER,
-            base_unit=UnitCode.EACH,
-            container_size_label='P9',
+            base_unit=UnitCode.EACH, container_size_label='P9',
             container_footprint_m2='0.008100',
         )
-        lot = make_stock_lot(item=item, location=stockroom, quantity='10')
-        action_payload = {
-            'container_item': item.pk,
-            'container_count': 2,
-            'notes': 'Two shared pots.',
-            'application': {
-                'applied_at': timezone.now().isoformat(),
-                'source_location': stockroom.pk,
-                'batch': None,
-                'notes': 'Potting inputs.',
-                'lines': [{
-                    'item': item.pk,
-                    'lot': lot.pk,
-                    'applied_quantity': '2',
-                    'unit_code': UnitCode.EACH,
-                }],
-            },
-        }
-        payload = self.payload(BulkPlantOperation.Action.REPOT, action_payload=action_payload)
+        lot = make_stock_lot(item=item, location=location, quantity='10', base_unit_cost=Decimal('3'))
+        fill = open_counted_fill(self.workspace, self.user, lot, location, count)
+        return fill, self.payload(BulkPlantOperation.Action.REPOT, action_payload={'container_fill': fill.pk})
+
+    def test_repot_preview_rolls_back_and_confirmation_lends_pots(self):
+        """A reviewed, retried repot records placements without consuming pots."""
+        fill, payload = self.repot_payload()
+        original = list(SpecificPlantLocation.objects.values_list('pk', 'ended'))
         preview = self.client.post('/plantings/bulk-operations/preview/', payload, format='json')
         self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(list(SpecificPlantLocation.objects.values_list('pk', 'ended')), original)
+        self.assertFalse(fill.plant_locations.exists())
+        self.assertFalse(BulkPlantOperation.objects.exists())
+        for expected_status in (201, 200):
+            response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+            self.assertEqual(response.status_code, expected_status, response.data)
         self.assertFalse(InputApplication.objects.exists())
+        self.assertFalse(StockMovement.objects.filter(movement_type=StockMovement.MovementType.CONSUMPTION).exists())
+        self.assertEqual(fill.plant_locations.count(), 3)
+        self.assertEqual(bulk_balance(fill.stock_lot, fill.source_location), 10)
+        self.assertEqual(unpromised_bulk(fill.stock_lot, fill.source_location), 7)
+        self.assertEqual(current_growth(self.plants[0])['container_count'], 1)
+        operation = BulkPlantOperation.objects.get()
+        self.assertEqual(operation.results.filter(location__container_fill=fill, nursery_observation=None).count(), 3)
 
+    def test_repot_on_releases_empty_pots_without_consuming_destination_pots(self):
+        """A second repot releases the original claim without adding pot costs."""
+        first, payload = self.repot_payload()
         response = self.client.post('/plantings/bulk-operations/', payload, format='json')
         self.assertEqual(response.status_code, 201, response.data)
-        self.assertEqual(InputApplication.objects.get().status, InputApplication.Status.POSTED)
-        self.assertEqual(
-            StockMovement.objects.filter(movement_type=StockMovement.MovementType.CONSUMPTION).count(),
-            1,
-        )
-        self.assertEqual(current_growth(self.plants[0])['container_count'], 2)
+        second, payload = self.repot_payload()
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(first.plant_locations.filter(ended__isnull=False).count(), 3)
+        self.assertEqual(second.plant_locations.filter(ended__isnull=True).count(), 3)
+        self.assertEqual(unpromised_bulk(first.stock_lot, first.source_location), 10)
+        self.assertEqual(unpromised_bulk(second.stock_lot, second.source_location), 7)
+        self.assertFalse(InputApplication.objects.exists())
+
+    def test_repot_refuses_insufficient_or_closed_fills_without_partial_moves(self):
+        """Preview and confirmation both validate the whole selection again."""
+        fill, payload = self.repot_payload(count=2)
+        for endpoint in ('preview/', ''):
+            response = self.client.post(f'/plantings/bulk-operations/{endpoint}', payload, format='json')
+            self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(fill.plant_locations.exists())
+        self.assertFalse(BulkPlantOperation.objects.exists())
+        clean_empty_fill(self.workspace, self.user, fill, reason='Wrong fill.')
+        payload['plants'] = [self.plants[0].pk]
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(fill.plant_locations.exists())
+
+    def test_repot_rechecks_a_fill_closed_after_review(self):
+        """A successful preview cannot authorize planting into a later clean."""
+        fill, payload = self.repot_payload()
+        response = self.client.post('/plantings/bulk-operations/preview/', payload, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        clean_empty_fill(self.workspace, self.user, fill, reason='Cleaned meanwhile.')
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(BulkPlantOperation.objects.exists())
+
+    def test_repot_media_departure_preserves_legacy_container_layers(self):
+        """Fill departures add mix once while old pot charges keep their identities."""
+        first, payload = self.repot_payload()
+        plant = self.plants[0]
+        legacy = create_application_draft(self.workspace, self.user, ApplicationRequest(
+            timezone.now(), first.source_location, lines=(LineRequest(
+                first.stock_lot.item, first.stock_lot, '1', 'each',
+                targets=(TargetRequest('specific_plant', plant),),
+            ),),
+        ))
+        post_application(legacy, self.user)
+        reallocate_batch(plant.batch, self.user, 'manual_recalculate')
+        original = [(row.pk, row.amount) for row in effective_allocations(plant.batch)]
+        self.assertTrue(original)
+        media = make_stock_lot(location=first.source_location, base_unit_cost=Decimal('2'))
+        application = create_application_draft(self.workspace, self.user, ApplicationRequest(
+            timezone.now(), first.source_location, lines=(LineRequest(
+                media.item, media, '6', 'l', usage_basis='manual',
+                targets=(TargetRequest('container_fill', first),),
+            ),),
+        ))
+        post_application(application, self.user)
+        # Apply media before the planting time recorded in the operation.
+        payload['occurred_at'] = timezone.now().isoformat()
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        _second, payload = self.repot_payload()
+        with self.captureOnCommitCallbacks(execute=True) as callbacks:
+            response = self.client.post('/plantings/bulk-operations/preview/', payload, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(callbacks, [])
+        self.assertFalse(FillDepartureRecalculation.objects.exists())
+        self.assertEqual([(row.pk, row.amount) for row in effective_allocations(plant.batch)], original)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        layers = effective_allocations(plant.batch)
+        self.assertEqual([(row.pk, row.amount) for row in layers if row.application_line_id == legacy.lines.get().pk], original)
+        mix, = [row for row in layers if row.application_line_id == application.lines.get().pk]
+        self.assertEqual(mix.base_quantity, 2)
+        self.assertEqual(mix.amount, 4)
+        self.assertFalse(FillDepartureRecalculation.objects.exists())
+
+    def test_repot_rejects_foreign_fills_and_legacy_stock_payloads(self):
+        """Neither another workspace nor an old client can consume pots here."""
+        fill, payload = self.repot_payload()
+        payload['action_payload']['application'] = {'lines': []}
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        payload['action_payload'].pop('application')
+        other = Workspace.objects.create(name='Other nursery')
+        SeedTrayGeneration.objects.filter(pk=fill.pk).update(workspace=other)
+        response = self.client.post('/plantings/bulk-operations/', payload, format='json')
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(BulkPlantOperation.objects.exists())
 
 
 @skipUnlessDBFeature('has_select_for_update')

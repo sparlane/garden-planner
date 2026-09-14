@@ -547,10 +547,11 @@ def application_sources(batch, generation_ids, cell_weights):
     }
     sources = []
     for line in lines:
-        # A tray is lent to a crop and comes back, so it is genuinely not a
-        # seedling's input. Anything else that happens to carry an identity —
-        # a numbered pot, say — was still consumed, and skipping it on the
-        # strength of its tracking mode would silently leave it out.
+        # Legacy pot applications really consumed stock and must retain their
+        # charges, including after the repot cutover to counted fills. New
+        # fill-based repots create placements, not container application lines;
+        # their media reaches plants through pot_media_sources on departure.
+        # Do not broaden this skip and rewrite historical pot costs.
         if line.item.category == InventoryItem.Category.TRAY:
             continue
         reach = _line_reach(batch, line, context)

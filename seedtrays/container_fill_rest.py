@@ -188,6 +188,8 @@ class PotFillViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # py
             value = parse_integer(self.request.query_params.get(field), field)
             if value is not None:
                 queryset = queryset.filter(**{f'{field}_id': value})
+        if self.request.query_params.get('kind') == 'counted':
+            queryset = queryset.filter(stock_lot__isnull=False)
         state = self.request.query_params.get('status')
         if state is not None:
             if state not in SeedTrayGeneration.Status.values:

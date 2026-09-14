@@ -214,6 +214,9 @@ class ContainerFillRESTTests(PotMediaMixin, CountedStockTestCase):
         unit = self.number(self.pots, 1)[0]
         response = self.client.post(self.base, {'inventory_unit': unit.pk}, format='json')
         numbered = SeedTrayGeneration.objects.get(pk=response.data['pk'])
+        choices = self.client.get(self.base, {'kind': 'counted', 'status': 'open'})
+        self.assertEqual(choices.status_code, 200, choices.data)
+        self.assertEqual([row['pk'] for row in choices.data['results']], [self.fill.pk])
         plants = [make_specific_plant(), make_specific_plant()]
         self.assertEqual(self.action('plant', {'plants': [plants[0].pk]}, numbered).status_code, 400)
         counted = open_counted_fill(self.workspace, self.user, self.pots, self.store, 1)
