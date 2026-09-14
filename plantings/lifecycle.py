@@ -11,7 +11,7 @@ from typing import NamedTuple
 
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
-from django.db.models import Case, F, OuterRef, Subquery, Value, When
+from django.db.models import Case, Exists, F, OuterRef, Subquery, Value, When
 from django.utils import timezone
 
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
@@ -38,6 +38,7 @@ class LifecycleState(models.TextChoices):
     SOLD = 'sold', 'Sold'
     QUARANTINED = 'quarantined', 'Returned quarantined'
     DISCARDED = 'discarded', 'Returned discarded'
+    WITHDRAWN = 'withdrawn', 'Never observed'
 
 
 #: The state each fact leaves behind. `transplanted` and `corrected` are absent
@@ -128,6 +129,12 @@ ALLOWED_FROM = {
 
 #: States that resolve a plant. Retained is final for availability without
 #: ending biological growth, so failure or harvest may still follow it.
+#:
+#: `withdrawn` resolves a plant the other way: not by saying what became of it,
+#: but by saying there was never one to become anything. It is final because
+#: nothing can follow a seedling that did not come up, and it is the only state
+#: no event in `STATE_AFTER` produces — `derive_state` reads it off the
+#: correction that struck the germination out.
 FINAL_STATES = {
     LifecycleState.RETAINED,
     LifecycleState.DONATED,
@@ -137,6 +144,7 @@ FINAL_STATES = {
     LifecycleState.HARVESTED,
     LifecycleState.SOLD,
     LifecycleState.DISCARDED,
+    LifecycleState.WITHDRAWN,
 }
 
 #: States in which a plant is offerable to somebody else.
@@ -266,8 +274,41 @@ def _surviving_state_events(events):
     ]
 
 
+def germination_correction(events):
+    """Return the correction that struck this plant's germination out, or None.
+
+    A plant exists because somebody recorded that it came up, so correcting
+    that one fact does not leave a plant in an earlier state the way every
+    other correction does — it leaves no plant. `derive_state` therefore reads
+    this before replaying anything, and `_surviving_state_events` has already
+    dropped both rows by the time the replay would reach them.
+    """
+    germination_ids = {
+        event.pk
+        for event in events
+        if event.event_type == EventType.GERMINATED
+    }
+    return next(
+        (
+            event
+            for event in sorted(events, key=lambda event: (event.occurred_at, event.pk))
+            if event.reversal_of_id in germination_ids
+        ),
+        None,
+    )
+
+
 def derive_state(events):
     """Replay one plant's facts into its current summary."""
+    withdrawal = germination_correction(events)
+    if withdrawal is not None:
+        return LifecycleSummary(
+            state=LifecycleState.WITHDRAWN,
+            sellable=False,
+            final_outcome=EventType.CORRECTED,
+            final_outcome_at=withdrawal.occurred_at,
+            state_since=withdrawal.occurred_at,
+        )
     state = LifecycleState.GROWING
     outcome = None
     outcome_at = None
@@ -350,6 +391,37 @@ def effective_state_events(plant_ref):
     )
 
 
+def germination_withdrawals(plant_ref):
+    """Return the corrections striking out one plant's germination.
+
+    The database's reading of `germination_correction`, and the one predicate
+    every count of observed seedlings is filtered by, so no caller can decide
+    for itself what "this plant came up" means.
+    """
+    return (
+        PlantLifecycleEvent.objects
+        .filter(
+            plant=plant_ref,
+            event_type=EventType.CORRECTED,
+            reversal_of__event_type=EventType.GERMINATED,
+        )
+        .order_by('occurred_at', 'pk')
+    )
+
+
+def observed_only(queryset):
+    """Return the plants of `queryset` whose germination still stands.
+
+    A withdrawn plant is not a plant that was lost, failed or was culled: those
+    came up and then something happened to them, and the germination rate is
+    right to keep counting them. This one never came up at all, so every figure
+    derived from what a sowing produced has to drop it, and the cost it was
+    holding goes back to the cell for the seedlings that did come up — or to
+    the ungerminated remainder if none did.
+    """
+    return queryset.filter(~Exists(germination_withdrawals(OuterRef('pk'))))
+
+
 def with_lifecycle_state(queryset):
     """Annotate derived lifecycle state onto a `SpecificPlant` queryset.
 
@@ -374,21 +446,33 @@ def with_lifecycle_state(queryset):
         )
         .order_by('occurred_at', 'pk')
     )
+    withdrawals = germination_withdrawals(OuterRef('pk'))
     return (
         queryset
         .annotate(
             last_state_event=Subquery(events.values('event_type')[:1]),
-            last_state_at=Subquery(events.values('occurred_at')[:1]),
+            recorded_state_at=Subquery(events.values('occurred_at')[:1]),
+            withdrawn_at=Subquery(withdrawals.values('occurred_at')[:1]),
             first_ready_at=Subquery(offers.values('occurred_at')[:1]),
         )
         .annotate(
+            # A withdrawal is checked before the replayed facts for the reason
+            # `derive_state` checks it first: it strikes out the one fact that
+            # brought the plant into being, so there is no earlier state left
+            # for the replay to land on.
             lifecycle_state=Case(
+                When(withdrawn_at__isnull=False, then=Value(LifecycleState.WITHDRAWN)),
                 *[
                     When(last_state_event=event_type, then=Value(state))
                     for event_type, state in STATE_AFTER.items()
                 ],
                 default=Value(LifecycleState.GROWING),
                 output_field=models.CharField(),
+            ),
+            last_state_at=Case(
+                When(withdrawn_at__isnull=False, then=F('withdrawn_at')),
+                default=F('recorded_state_at'),
+                output_field=models.DateTimeField(null=True),
             ),
         )
         .annotate(
@@ -401,6 +485,7 @@ def with_lifecycle_state(queryset):
                 output_field=models.BooleanField(),
             ),
             final_outcome=Case(
+                When(withdrawn_at__isnull=False, then=Value(EventType.CORRECTED)),
                 When(lifecycle_state__in=sorted(FINAL_STATES), then=F('last_state_event')),
                 default=Value(None),
                 output_field=models.CharField(null=True),
@@ -597,7 +682,11 @@ def reverse_lifecycle_event(event, user, reason, occurred_at=None):
         raise ValidationError({'event': 'A correction cannot itself be corrected.'})
     if event.event_type == EventType.GERMINATED:
         raise ValidationError({
-            'event': 'Germination created this plant and cannot be reversed.',
+            'event': (
+                'Germination created this plant, so correcting it here would '
+                'leave a plant with no beginning. Withdraw the germination '
+                'instead.'
+            ),
         })
     if hasattr(event, 'reversal'):
         raise ValidationError({'event': 'That event has already been corrected.'})
@@ -609,6 +698,165 @@ def reverse_lifecycle_event(event, user, reason, occurred_at=None):
         OutcomeRequest(EventType.CORRECTED, occurred_at=occurred_at, reason=reason),
         reversal_of=event,
     )
+
+
+#: What a plant may still be attached to and have been imagined. Each of these
+#: is either the germination's own paperwork or a ledger that reverses rather
+#: than deletes, so none of them is somebody having treated the plant as real.
+#:
+#: Every other relation blocks, and the blocking set is derived from the model
+#: rather than listed, so a relation added later denies the withdrawal until
+#: somebody decides it belongs here. That is the safe default: admitting a new
+#: way of using a plant would silently let a withdrawal strand it.
+WITHDRAWAL_KEEPS = frozenset({
+    'lifecycle_events',
+    'locations',
+    'bulk_operation_results',
+    'cost_allocations',
+})
+
+
+def withdrawal_blocking_relations(keeps=None):
+    """Return the relations whose rows deny that a plant was never observed."""
+    keeps = WITHDRAWAL_KEEPS if keeps is None else keeps
+    return tuple(sorted(
+        relation.get_accessor_name()
+        for relation in SpecificPlant._meta.related_objects
+        if relation.get_accessor_name() not in keeps
+    ))
+
+
+def _require_withdrawable(plant):
+    """Return the germination this plant may withdraw, or explain why it may not."""
+    events = _plant_events(plant)
+    germination = next(
+        (event for event in events if event.event_type == EventType.GERMINATED),
+        None,
+    )
+    if germination is None:
+        raise ValidationError({
+            'plant': 'No germination was ever recorded for this plant.',
+        })
+    if germination_correction(events) is not None:
+        raise ValidationError({
+            'plant': "This plant's germination has already been withdrawn.",
+        })
+    recorded = sorted({
+        EventType(event.event_type).label.lower()
+        for event in events
+        if event.pk != germination.pk
+    })
+    if recorded:
+        raise ValidationError({
+            'plant': (
+                'This plant has been worked on since it came up '
+                f'({", ".join(recorded)}), so its germination is not the only '
+                'thing that would have to be untrue. Record what actually '
+                'happened to it instead.'
+            ),
+        })
+    # Moving a plant records no lifecycle event, so the events alone would let
+    # a seedling somebody carried to a garden square be called imaginary. The
+    # one placement germination itself created is the only one allowed, and it
+    # has to be the one the plant is still standing in.
+    locations = list(plant.locations.all())
+    if len(locations) > 1 or any(location.ended is not None for location in locations):
+        raise ValidationError({
+            'plant': (
+                'This plant has been moved since it came up, so somebody '
+                'handled it. Record what actually happened to it instead.'
+            ),
+        })
+    attached = [
+        name for name in withdrawal_blocking_relations()
+        if getattr(plant, name).exists()
+    ]
+    if attached:
+        raise ValidationError({
+            'plant': (
+                'This plant is referred to by records that assume it existed '
+                f'({", ".join(attached)}). Resolve those first.'
+            ),
+        })
+    return germination
+
+
+def _withdraw_one(plant, user, reason, occurred_at):
+    """Append one plant's withdrawal, leaving its batch to the caller."""
+    germination = _require_withdrawable(plant)
+    _require_chronology(_plant_events(plant), occurred_at)
+    _close_active_location(plant, occurred_at)
+    return _create_event(
+        plant,
+        user,
+        OutcomeRequest(EventType.CORRECTED, occurred_at=occurred_at, reason=reason),
+        reversal_of=germination,
+    )
+
+
+@transaction.atomic
+def withdraw_germination(plant, user, reason, occurred_at=None):
+    """Withdraw a germination that was recorded but never happened.
+
+    This is the correction for a seedling that was entered twice, or entered
+    against a tray the operator was not looking at. It is not the way to record
+    one that came up and then died: that is `failed`, and the germination rate
+    is right to keep counting it.
+
+    The plant row stays, because the audit that created it and the cost layers
+    that named it are both immutable and both still refer to it. What changes
+    is that every figure derived from what came up stops counting it, the cost
+    it was holding is reallocated back to its cell, and its state reads
+    `withdrawn` rather than a seedling growing somewhere nobody can find.
+    """
+    return withdraw_germinations([plant.pk], user, reason, occurred_at)[0]
+
+
+@transaction.atomic
+def withdraw_germinations(plant_ids, user, reason, occurred_at=None):
+    """Withdraw a selection of germinations as one all-or-nothing correction.
+
+    The tray screen's pagination bug put whole fills in twice, so a selection
+    rather than a plant is the unit an operator actually has to correct. Every
+    plant is withdrawn or none is, for the reason the bulk outcomes are: half a
+    correction leaves a germination figure that is wrong in a new way.
+
+    Each affected batch is locked once, in key order, and reallocated once
+    after the last withdrawal, so a hundred and forty-four corrections cost one
+    reallocation rather than a hundred and forty-four of them.
+    """
+    # Withdrawal calls back into costing, which reads germination balances.
+    from costing.models import CostAllocationRun  # pylint: disable=import-outside-toplevel,cyclic-import
+    from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel,cyclic-import
+    from .batches import lock_batch_with_plants  # pylint: disable=import-outside-toplevel,cyclic-import
+
+    _require_reason(reason)
+    wanted = sorted(set(plant_ids))
+    if not wanted:
+        raise ValidationError({'plants': 'Select at least one plant.'})
+    # Read unlocked first, only to learn which batches are involved. Locking
+    # the selection here instead would take the plants a caller happens to
+    # name and then reach for the rest through `lock_batch_with_plants`, which
+    # is the subset deadlock that function exists to avoid.
+    batches = {}
+    for plant in SpecificPlant.objects.filter(pk__in=wanted).order_by('pk'):
+        batch = _plant_batch(plant)
+        batches[batch.pk] = batch
+    locked = [lock_batch_with_plants(batches[key]) for key in sorted(batches)]
+    plants = list(
+        SpecificPlant.objects.filter(pk__in=wanted).order_by('pk')
+    )
+    if len(plants) != len(wanted):
+        raise ValidationError({'plants': 'One or more plants are unavailable.'})
+    occurred_at = occurred_at or timezone.now()
+    corrections = [
+        _withdraw_one(plant, user, reason, occurred_at)
+        for plant in plants
+    ]
+    reallocate_batches(
+        locked, user, CostAllocationRun.Trigger.GERMINATION_WITHDRAWN,
+    )
+    return corrections
 
 
 @transaction.atomic

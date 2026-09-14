@@ -38,6 +38,7 @@ from .lifecycle import (
     record_lifecycle_event,
     record_transplant_event,
     reverse_lifecycle_event,
+    withdraw_germination,
     states_without_exits,
     with_lifecycle_state,
 )
@@ -255,6 +256,20 @@ class LifecycleStateAnnotationTests(TestCase):
             plants['transplanted'],
             self.user,
             start + timedelta(days=2),
+        )
+
+        # A germination struck out is the one state no event in STATE_AFTER
+        # produces, so it is built from the fact that created the plant rather
+        # than from an outcome recorded after it.
+        plants['withdrawn'] = self.germinated_plant(start)
+        make_specific_plant_location(
+            specific_plant=plants['withdrawn'], started=start,
+        )
+        withdraw_germination(
+            plants['withdrawn'],
+            self.user,
+            'Entered twice from the tray screen.',
+            occurred_at=start + timedelta(days=1),
         )
 
         plants['corrected'] = self.germinated_plant(start)

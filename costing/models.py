@@ -120,6 +120,7 @@ class CostAllocationRun(WorkspaceOwnedModel):
         SOWING_CORRECTED = 'sowing_corrected', 'Sowing corrected'
         GERMINATION = 'germination', 'Germination observed'
         GERMINATION_CLOSED = 'germination_closed', 'Germination closed'
+        GERMINATION_WITHDRAWN = 'germination_withdrawn', 'Germination withdrawn'
         GENERATION_CLOSED = 'generation_closed', 'Tray generation cleaned'
         OUTPUT_FINALIZED = 'output_finalized', 'Batch output finalized'
         CONTAINER_SOLD = 'container_sold', 'Container sold with its plants'

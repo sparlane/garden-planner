@@ -40,6 +40,7 @@ from django.utils import timezone
 
 from costing.models import CostAllocationRun
 from .batches import lock_batch_with_plants
+from .lifecycle import observed_only
 from .models import (
     SeedTrayCellPlanting,
     SeedTrayPlanting,
@@ -96,9 +97,13 @@ def observed_plants(sowing):
     Counted from every plant raised on its cells, including plants that later
     failed or were sold: germination rate is a question about what came up, not
     about what survived to be counted later.
+
+    A plant whose germination has been withdrawn is the one exclusion, and it
+    is not an exception to that rule but the same rule read exactly: it never
+    came up, so there is nothing about it for this figure to count.
     """
-    return SpecificPlant.objects.filter(
-        cell_planting__seed_tray_planting=sowing,
+    return observed_only(
+        SpecificPlant.objects.filter(cell_planting__seed_tray_planting=sowing)
     ).count()
 
 
@@ -116,16 +121,27 @@ def ungerminated_by_cell(sowing):
     """
     if not is_closed(sowing):
         return {}
-    rows = (
+    sown = dict(
         SeedTrayCellPlanting.objects
         .filter(seed_tray_planting=sowing)
-        .annotate(observed=Count('specific_plants'))
-        .values_list('cell_id', 'quantity', 'observed')
+        .values_list('cell_id', 'quantity')
+    )
+    # Counted off the plants rather than annotated onto the cells, because the
+    # withdrawal that disqualifies a plant is itself a row on a second
+    # multi-valued relation, and a join across both would count cells once per
+    # lifecycle event instead of once per seedling.
+    observed = dict(
+        observed_only(
+            SpecificPlant.objects.filter(cell_planting__seed_tray_planting=sowing)
+        )
+        .values('cell_planting__cell')
+        .annotate(total=Count('pk'))
+        .values_list('cell_planting__cell', 'total')
     )
     return {
-        cell_id: quantity - observed
-        for cell_id, quantity, observed in rows
-        if quantity > observed
+        cell_id: quantity - observed.get(cell_id, 0)
+        for cell_id, quantity in sown.items()
+        if quantity > observed.get(cell_id, 0)
     }
 
 
@@ -156,9 +172,11 @@ def germination_summary(sowing, closure=None):
     closure = closure if closure is not None else current_closure(sowing)
     late = 0
     if closure is not None:
-        late = SpecificPlant.objects.filter(
-            cell_planting__seed_tray_planting=sowing,
-            germinated__gt=closure.closed_at,
+        late = observed_only(
+            SpecificPlant.objects.filter(
+                cell_planting__seed_tray_planting=sowing,
+                germinated__gt=closure.closed_at,
+            )
         ).count()
     return _summary(sown_into_cells(sowing), observed_plants(sowing), closure, late)
 
@@ -181,8 +199,10 @@ def germination_summaries(sowings):
         .values_list('seed_tray_planting', 'total')
     )
     observed = dict(
-        SpecificPlant.objects
-        .filter(cell_planting__seed_tray_planting_id__in=ids)
+        observed_only(
+            SpecificPlant.objects
+            .filter(cell_planting__seed_tray_planting_id__in=ids)
+        )
         .values('cell_planting__seed_tray_planting')
         .annotate(total=Count('pk'))
         .values_list('cell_planting__seed_tray_planting', 'total')
@@ -204,8 +224,7 @@ def germination_summaries(sowings):
                 germinated__gt=closure.closed_at,
             )
         late = dict(
-            SpecificPlant.objects
-            .filter(condition)
+            observed_only(SpecificPlant.objects.filter(condition))
             .values('cell_planting__seed_tray_planting')
             .annotate(total=Count('pk'))
             .values_list('cell_planting__seed_tray_planting', 'total')

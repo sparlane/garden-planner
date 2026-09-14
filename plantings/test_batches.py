@@ -38,6 +38,7 @@ from .batches import (
 )
 from .lifecycle import (
     EventType,
+    LifecycleState,
     OutcomeRequest,
     record_lifecycle_event,
     reverse_lifecycle_event,
@@ -374,20 +375,15 @@ class BatchPlantResolutionTests(TestCase):
         record_lifecycle_event(retained, self.user, OutcomeRequest(EventType.RETAINED))
         self.assertEqual(batch_unresolved_plant_ids(batch), [])
         self.assertEqual(batch_final_outcome_count(batch), 2)
+        # The vocabulary is derived rather than listed, so adding a state does
+        # not fail a test about two plants that never reach it. Every state the
+        # batch did not reach still has to read zero.
         self.assertEqual(
             batch_lifecycle_counts(batch),
             {
-                'growing': 0,
-                'available': 0,
+                **{state.value: 0 for state in LifecycleState},
                 'retained': 1,
-                'donated': 0,
                 'failed': 1,
-                'lost': 0,
-                'culled': 0,
-                'harvested': 0,
-                'sold': 0,
-                'quarantined': 0,
-                'discarded': 0,
             },
         )
 
