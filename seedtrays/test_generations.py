@@ -23,6 +23,8 @@ from plantings.lifecycle import (
     LifecycleState,
     plant_lifecycle_summary,
     record_germination_event,
+    withdraw_germination,
+    withdraw_germinations,
 )
 from plantings.models import SeedTrayPlanting, SpecificPlant
 from seeds.services import ensure_packet_inventory_identity
@@ -749,6 +751,44 @@ class GenerationCostTests(GenerationContentsTestCase):
         )
         self.assertEqual(sowing.quantity, 4)
         self.assertEqual(SpecificPlant.objects.count(), 2)
+
+    def test_a_withdrawn_seedling_is_not_supplied_by_anything(self):
+        """It never came up, so no media reached it and none is listed for it."""
+        self.apply_media()
+        sowing = self.sow(quantity=4, allocations=((0, 2),))
+        first = self.germinate(sowing)
+        second = self.germinate(sowing)
+        withdraw_germination(
+            second, self.user, 'Entered twice from the tray screen.',
+        )
+
+        breakdown = generation_cost_breakdown(self.generation)
+
+        self.assertEqual(
+            breakdown['plants'],
+            [{'plant': first.pk, 'cost': Decimal('0.080000000000')}],
+        )
+
+    def test_a_cell_whose_only_seedlings_were_withdrawn_raised_nothing(self):
+        """Both entries were imagined, so the cell is as empty as an unsown one."""
+        self.apply_media()
+        sowing = self.sow(quantity=4, allocations=((0, 2), (1, 2)))
+        plants = [
+            self.germinate(sowing, cell_index=0),
+            self.germinate(sowing, cell_index=0),
+        ]
+        withdraw_germinations(
+            [plant.pk for plant in plants],
+            self.user,
+            'The whole fill went in twice.',
+        )
+
+        breakdown = generation_cost_breakdown(self.generation)
+
+        self.assertEqual(breakdown['plants'], [])
+        self.assertEqual(breakdown['allocated_cost'], Decimal('0'))
+        self.assertEqual(breakdown['unallocated_cost'], Decimal('0.160000000000'))
+        self.assertTrue(all(row['provisional'] for row in breakdown['cells']))
 
     def test_an_empty_cell_is_provisional_until_the_fill_is_closed(self):
         """A seedling may still come up in it."""
