@@ -6,6 +6,7 @@ export type PotFillTarget = { inventory_unit: number } | { stock_lot: number; so
 
 export interface PotFill {
   pk: number
+  source_location: number | null
   stock_lot: number | null
   inventory_unit: number | null
   code: string
@@ -65,7 +66,7 @@ export function reopenPotFill(pk: number, reason: string): Promise<PotFill> {
   return csrfPost(`/seedtrays/container-fills/${pk}/reopen/`, { reason }).then((response) => response.json() as Promise<PotFill>)
 }
 
-export function getPotFills(target: PotFillTarget, page: number, signal?: AbortSignal): Promise<PotFillPage> {
+export function getPotFills(target: PotFillTarget | { kind: 'counted'; status: 'open' }, page: number, signal?: AbortSignal): Promise<PotFillPage> {
   const params = new URLSearchParams({ ...Object.fromEntries(Object.entries(target).map(([key, value]) => [key, String(value)])), page: String(page) })
   return fetchAsJson<PotFillPage>(`/seedtrays/container-fills/?${params}`, signal, true)
 }

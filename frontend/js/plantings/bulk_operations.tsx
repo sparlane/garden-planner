@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 
 import { getGardenSquares } from '../api/garden'
-import { getInventoryItems } from '../api/inventory'
+import { getPotFills, PotFill } from '../api/container_fills'
 import { getGrowthStages, getNurseryRegisterSelection, getPlantGrades, postBulkPlantOperation, previewBulkPlantOperation } from '../api/plantings'
 import { getSeedTrayCells, getSeedTrays } from '../api/seedtrays'
 import { activeChoices } from '../catalog'
@@ -57,10 +57,8 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   const [overrideReason, setOverrideReason] = React.useState('')
   const [stage, setStage] = React.useState<number | ''>('')
   const [grade, setGrade] = React.useState<number | ''>('')
-  const [container, setContainer] = React.useState<number | ''>('')
-  const [containerCount, setContainerCount] = React.useState(1)
-  const [sourceLocation, setSourceLocation] = React.useState<number | ''>('')
-  const [containerLot, setContainerLot] = React.useState<number | ''>('')
+  const [fill, setFill] = React.useState<PotFill>()
+  const [fillPage, setFillPage] = React.useState(1)
   const [request, setRequest] = React.useState<BulkPlantOperationRequest>()
   const [preview, setPreview] = React.useState<BulkPlantPreview>()
 
@@ -73,13 +71,12 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   })
   const stagesQuery = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.stages, queryFn: ({ signal }) => getGrowthStages(signal) })
   const gradesQuery = useQuery({ queryKey: queryKeys.plantings.growthCatalogs.grades, queryFn: ({ signal }) => getPlantGrades(signal) })
-  const containersQuery = useQuery({
-    queryKey: queryKeys.inventory.items('', 'pot_container', '', 'active'),
-    queryFn: ({ signal }) => getInventoryItems({ category: 'pot_container', active: true }, signal)
+  const fillTarget = { kind: 'counted', status: 'open' } as const
+  const fillsQuery = useQuery({
+    queryKey: queryKeys.containerFills.list(fillTarget, fillPage),
+    queryFn: ({ signal }) => getPotFills(fillTarget, fillPage, signal),
+    enabled: action === 'repot'
   })
-  // Which pots can be stood in is the same question here as on a tray page, so
-  // both ask `useNumberedPotDestinations`. The repot picker above wants the
-  // whole active pot catalog, and shares the cache entry the hook reads.
   const { potItems, pots } = useNumberedPotDestinations({ choosing: destinationType === 'container_unit', item: containerItem })
 
   function invalidateReview() {
@@ -87,23 +84,10 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
     setRequest(undefined)
   }
 
-  function actionPayload(appliedAt: string): Record<string, unknown> {
+  function actionPayload(): Record<string, unknown> {
     if (action === 'stage') return { stage, notes: reason }
     if (action === 'grade') return { grade, notes: reason }
-    if (action === 'repot') {
-      return {
-        container_item: container,
-        container_count: containerCount,
-        notes: reason,
-        application: {
-          applied_at: appliedAt,
-          source_location: sourceLocation,
-          batch: null,
-          notes: reason,
-          lines: [{ item: container, lot: containerLot, applied_quantity: String(containerCount), unit_code: 'each' }]
-        }
-      }
-    }
+    if (action === 'repot') return { container_fill: fill?.pk, override_reason: overrideReason, notes: reason }
     if (action !== 'move') return {}
     if (destinationType === 'location') {
       return { location_type: destinationType, location: destination, override_reason: overrideReason }
@@ -134,7 +118,11 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
         cache.invalidateQueries({ queryKey: queryKeys.plantings.registerAll }),
         cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
         cache.invalidateQueries({ queryKey: queryKeys.plantings.batchesAll }),
-        cache.invalidateQueries({ queryKey: queryKeys.locations.all })
+        cache.invalidateQueries({ queryKey: queryKeys.locations.all }),
+        cache.invalidateQueries({ queryKey: queryKeys.containerFills.all }),
+        cache.invalidateQueries({ queryKey: queryKeys.inventory.all }),
+        cache.invalidateQueries({ queryKey: queryKeys.costing.all }),
+        cache.invalidateQueries({ queryKey: queryKeys.reports.all })
       ])
     }
   })
@@ -151,16 +139,13 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
       reason,
       plants: resolved.plants,
       selection_source: sourceLabels ? { mode: 'scan', labels: sourceLabels } : selection.mode === 'filter' ? { mode: 'filter', filters } : { mode: 'ids' },
-      action_payload: actionPayload(parsed.toISOString())
+      action_payload: actionPayload()
     }
     previewMutation.mutate(reviewedRequest)
   }
 
   const actionIncomplete =
-    (action === 'move' && destination === '') ||
-    (action === 'stage' && stage === '') ||
-    (action === 'grade' && grade === '') ||
-    (action === 'repot' && (container === '' || sourceLocation === '' || containerLot === '' || containerCount < 1))
+    (action === 'move' && destination === '') || (action === 'stage' && stage === '') || (action === 'grade' && grade === '') || (action === 'repot' && !fill)
   return (
     <Card className="mb-3">
       <Card.Body>
@@ -373,66 +358,49 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
           </Row>
         )}
         {action === 'repot' && (
-          <Row className="g-2 mt-1">
-            <Col md={3}>
-              <Form.Label>Container</Form.Label>
-              <Form.Select
-                value={container}
-                onChange={(event) => {
-                  setContainer(event.target.value ? Number(event.target.value) : '')
-                  invalidateReview()
-                }}
-              >
-                <option value="">Select container</option>
-                {(containersQuery.data ?? []).map((entry) => (
-                  <option key={entry.pk} value={entry.pk}>
-                    {entry.name} {entry.container_size_label}
-                  </option>
-                ))}
-              </Form.Select>
-            </Col>
-            <Col md={2}>
-              <Form.Label>Container count</Form.Label>
-              <Form.Control
-                type="number"
-                min={1}
-                value={containerCount}
-                onChange={(event) => {
-                  setContainerCount(Number(event.target.value))
+          <div className="mt-3">
+            <Form.Label>Counted pot fill</Form.Label>
+            <p className="text-muted">Choose a fill opened in Inventory. Each selected plant moves into one unused pot at the fill location.</p>
+            {fill && (
+              <p>
+                Selected: {fill.code} · lot #{fill.stock_lot} · {locations.find((entry) => entry.pk === fill.source_location)?.full_name ?? `location #${fill.source_location}`}
+              </p>
+            )}
+            {fillsQuery.isError && <Alert variant="danger">{fillsQuery.error.message}</Alert>}
+            {fillsQuery.isPending && <p>Loading fills…</p>}
+            {fillsQuery.data?.results.map((entry) => (
+              <Form.Check
+                key={entry.pk}
+                type="radio"
+                name="repot-fill"
+                id={`repot-fill-${entry.pk}`}
+                checked={fill?.pk === entry.pk}
+                label={`${entry.code} · lot #${entry.stock_lot} · ${locations.find((location) => location.pk === entry.source_location)?.full_name ?? `location #${entry.source_location}`} · ${entry.container_count} pots originally filled`}
+                onChange={() => {
+                  setFill(entry)
                   invalidateReview()
                 }}
               />
-            </Col>
-            <Col md={3}>
-              <Form.Label>Stock location</Form.Label>
-              <Form.Select
-                value={sourceLocation}
-                onChange={(event) => {
-                  setSourceLocation(event.target.value ? Number(event.target.value) : '')
-                  invalidateReview()
-                }}
-              >
-                <option value="">Select location</option>
-                {locations.map((entry) => (
-                  <option key={entry.pk} value={entry.pk}>
-                    {entry.full_name}
-                  </option>
-                ))}
-              </Form.Select>
-            </Col>
-            <Col md={2}>
-              <Form.Label>Container lot ID</Form.Label>
-              <Form.Control
-                type="number"
-                min={1}
-                value={containerLot}
-                onChange={(event) => {
-                  setContainerLot(event.target.value ? Number(event.target.value) : '')
-                  invalidateReview()
-                }}
-              />
-            </Col>
-          </Row>
+            ))}
+            {fillsQuery.data?.count === 0 && <p>No open counted fills. Open one from the pot lot in Inventory first.</p>}
+            <div className="d-flex gap-2 my-2">
+              <Button size="sm" variant="outline-secondary" disabled={fillPage === 1 || fillsQuery.isFetching} onClick={() => setFillPage(fillPage - 1)}>
+                Previous
+              </Button>
+              <span>Page {fillPage}</span>
+              <Button size="sm" variant="outline-secondary" disabled={!fillsQuery.data?.next || fillsQuery.isFetching} onClick={() => setFillPage(fillPage + 1)}>
+                Next
+              </Button>
+            </div>
+            <Form.Label>Capacity override reason (optional)</Form.Label>
+            <Form.Control
+              value={overrideReason}
+              onChange={(event) => {
+                setOverrideReason(event.target.value)
+                invalidateReview()
+              }}
+            />
+          </div>
         )}
 
         <Button className="mt-3" variant="outline-primary" disabled={actionIncomplete || previewMutation.isPending} onClick={review}>

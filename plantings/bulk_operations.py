@@ -11,12 +11,10 @@ from django.utils import timezone
 
 from costing.services import reallocate_batch
 from costing.models import CostAllocationRun
-from applications.services import TargetRequest, application_state, create_application_draft, post_application
-from applications.requests import build_request
-from applications.models import InputApplicationTarget
 from locations.models import Location
 from locations.occupancy import capacity_chain, location_occupancy
 
+from .counted_fills import plant_counted_fill
 from .movement import move_specific_plant
 from .batches import lock_batch_with_plants
 from .germination import validate_late_germination
@@ -265,37 +263,26 @@ def _plant_preview(workspace, request, lock=False):  # pylint: disable=too-many-
         'capacity': capacity,
     }
     if request.action == BulkPlantOperation.Action.REPOT:
-        preview['application'] = _preview_repot_application(workspace, plants, request)
+        _preview_repot_fill(workspace, request)
     return preview
 
 
-def _application_request(workspace, plants, values):
-    """Build an application whose targets are the reviewed concrete plants."""
-
-    request = build_request(workspace, values)
-    targets = tuple(
-        TargetRequest(
-            target_type=InputApplicationTarget.TargetType.SPECIFIC_PLANT,
-            target=plant,
-        )
-        for plant in plants
+def _repot_fill(workspace, user, request):
+    """Use the same stock locks and frozen media shares as fill-page planting."""
+    if request.atomicity != BulkPlantOperation.Atomicity.ALL_OR_NOTHING:
+        raise ValidationError({'atomicity': 'Repotting is always all or nothing.'})
+    return plant_counted_fill(
+        workspace, user, request.action_payload['container_fill'], request.plants,
+        started=request.occurred_at,
+        override_reason=request.action_payload.get('override_reason', ''),
     )
-    return request._replace(lines=tuple(
-        line._replace(targets=targets) for line in request.lines
-    ))
 
 
-def _preview_repot_application(workspace, plants, request):
-    """Use the posting service's calculations but roll its draft back."""
-
+def _preview_repot_fill(workspace, request):
+    """Validate the complete move, rolling back placements and costing callbacks."""
     with transaction.atomic():
-        draft = create_application_draft(
-            workspace, None,
-            _application_request(workspace, plants, request.action_payload['application']),
-        )
-        state = application_state(draft)
+        _repot_fill(workspace, None, request)
         transaction.set_rollback(True)
-    return state
 
 
 def _germination_preview(workspace, request, lock=False):
@@ -384,7 +371,6 @@ def _apply_plant_operation(operation, user, request, preview):
     if request.action in {
         BulkPlantOperation.Action.STAGE,
         BulkPlantOperation.Action.GRADE,
-        BulkPlantOperation.Action.REPOT,
     }:
         values = {
             'occurred_at': request.occurred_at,
@@ -392,17 +378,16 @@ def _apply_plant_operation(operation, user, request, preview):
         }
         if request.action == BulkPlantOperation.Action.STAGE:
             values['stage'] = request.action_payload['stage']
-        elif request.action == BulkPlantOperation.Action.GRADE:
-            values['grade'] = request.action_payload['grade']
         else:
-            values.update(_post_repot_application(
-                operation.workspace, user, eligible_plants, request,
-            ))
+            values['grade'] = request.action_payload['grade']
         observation = record_observation(
             operation.workspace, user,
             plant_ids=[plant.pk for plant in eligible_plants],
             **values,
         )
+    repotted = {}
+    if request.action == BulkPlantOperation.Action.REPOT:
+        repotted = {row.specific_plant_id: row for row in _repot_fill(operation.workspace, user, request)}
     for plant_id, row in rows.items():
         plant = plants[plant_id]
         if not row['eligible']:
@@ -415,7 +400,7 @@ def _apply_plant_operation(operation, user, request, preview):
             )
             continue
         event = None
-        location = None
+        location = repotted.get(plant_id)
         if request.action == BulkPlantOperation.Action.MOVE:
             location = move_specific_plant(plant, _move_data(request), user=user)
         elif request.action in ACTION_EVENTS:
@@ -438,21 +423,6 @@ def _apply_plant_operation(operation, user, request, preview):
             location=location,
             nursery_observation=observation,
         )
-
-
-def _post_repot_application(workspace, user, plants, request):
-    """Post exact potting inputs and return their container observation facts."""
-
-    draft = create_application_draft(
-        workspace, user,
-        _application_request(workspace, plants, request.action_payload['application']),
-    )
-    posted, _movements = post_application(draft, user)
-    return {
-        'container_item': request.action_payload['container_item'],
-        'container_count': request.action_payload['container_count'],
-        'input_application': posted,
-    }
 
 
 def _create_germinated_plant(operation, user, request, allocation, notes):

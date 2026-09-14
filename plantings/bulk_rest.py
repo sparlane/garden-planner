@@ -6,9 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
-from applications.rest import ApplicationDraftSerializer
-from inventory.models import InventoryItem
-from inventory.units import UnitCode
+from seedtrays.models import SeedTrayGeneration
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -146,33 +144,18 @@ class NurseryFactPayloadSerializer(
 class RepotPayloadSerializer(
     CurrentWorkspaceSerializerMixin, serializers.Serializer,
 ):  # pylint: disable=abstract-method
-    """Validate a container assignment and the stock document funding it."""
+    """Choose an existing counted fill; pots are lent to the selected plants."""
 
-    container_item = serializers.PrimaryKeyRelatedField(
-        queryset=InventoryItem.objects.all(),
+    container_fill = serializers.PrimaryKeyRelatedField(
+        queryset=SeedTrayGeneration.objects.filter(stock_lot__isnull=False),
     )
-    container_count = serializers.IntegerField(min_value=1)
-    application = ApplicationDraftSerializer()
+    override_reason = serializers.CharField(allow_blank=True, required=False, default='')
     notes = serializers.CharField(allow_blank=True, required=False, default='')
-    workspace_field_lookups = {'container_item': 'workspace'}
+    workspace_field_lookups = {'container_fill': 'workspace'}
 
     def validate(self, attrs):
-        item = attrs['container_item']
-        if item.category != InventoryItem.Category.POT_CONTAINER:
-            raise ValidationError({'container_item': 'Choose a pot or container item.'})
-        if item.base_unit != UnitCode.EACH:
-            raise ValidationError({'container_item': 'Container stock must be measured in each.'})
-        matching = [
-            line for line in attrs['application']['lines']
-            if line['item'] == item
-        ]
-        if len(matching) != 1:
-            raise ValidationError({'application': 'Include exactly one line for the assigned container.'})
-        line = matching[0]
-        if line['applied_quantity'] != attrs['container_count'] or line.get('unit_code') != UnitCode.EACH:
-            raise ValidationError({'application': 'The container line must consume the assigned count in each.'})
-        if any(line.get('targets') or line.get('tray') for line in attrs['application']['lines']):
-            raise ValidationError({'application': 'Repot targets come from the reviewed plant selection.'})
+        if set(self.initial_data) - set(self.fields):
+            raise ValidationError('Repotting now requires a counted fill. Refresh and select a fill instead of consuming container stock.')
         return attrs
 
 
