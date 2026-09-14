@@ -77,6 +77,15 @@ DISPOSITION_OF_STATE = {
     LifecycleState.SOLD: 'cogs',
     LifecycleState.QUARANTINED: 'plant_inventory',
     LifecycleState.DISCARDED: 'production_loss',
+    # A withdrawn plant never came up, so it holds no production value: the
+    # reallocation that follows the withdrawal reverses every layer naming it
+    # and sends the cost back to its cell. This entry is what a layer would
+    # fall into if one somehow outlived that, and `unattributed` is the honest
+    # bucket for it — cost against a plant that was never there is exactly what
+    # cannot be attributed to a plant. `production_loss` would be wrong twice
+    # over: nothing was lost, and the seed itself may yet be counted as an
+    # ungerminated remainder once the sowing closes.
+    LifecycleState.WITHDRAWN: 'unattributed',
 }
 
 #: Every bucket a batch's value can sit in. `cogs` stays empty until tasks 44

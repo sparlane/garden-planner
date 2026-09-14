@@ -7,7 +7,7 @@ from django.db.models import Q
 
 from costing.services import batch_cost_breakdown
 from plantings.germination import germination_summaries
-from plantings.lifecycle import lifecycle_summaries
+from plantings.lifecycle import lifecycle_summaries, observed_only
 from plantings.loss import LOSS_CAUSES, batch_loss_by_cause
 from plantings.models import (
     CohortOperation,
@@ -80,7 +80,14 @@ def _batch_germination(batch):
 
 
 def _batch_row(batch):  # pylint: disable=too-many-locals
-    plants = list(SpecificPlant.objects.filter(batch=batch).order_by('pk'))
+    # A withdrawn germination never produced anything, so it is dropped before
+    # any of the figures below are counted rather than added to the states that
+    # mean a plant left production. It is not output and it is not loss: the
+    # cost it briefly held went back to its cell, and the seed it was credited
+    # with is counted by the germination figures above as never having come up.
+    plants = list(
+        observed_only(SpecificPlant.objects.filter(batch=batch)).order_by('pk')
+    )
     summaries = lifecycle_summaries([plant.pk for plant in plants])
     states = Counter(summary.state for summary in summaries.values())
     cohorts = list(PlantCohort.objects.filter(batch=batch))

@@ -24,6 +24,7 @@ from .lifecycle import (
     record_bulk_outcome,
     record_lifecycle_event,
     reverse_lifecycle_event,
+    withdraw_germinations,
 )
 from .models import PlantLifecycleEvent, SpecificPlant
 
@@ -104,6 +105,23 @@ class ReverseEventSerializer(ActionSerializer):  # pylint: disable=abstract-meth
     """
 
     event = serializers.IntegerField()
+    reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    occurred_at = serializers.DateTimeField(required=False)
+
+
+class WithdrawGerminationSerializer(ActionSerializer):  # pylint: disable=abstract-method
+    """Validate which recorded germinations never happened, and why.
+
+    A selection rather than one plant, because the tray screen recorded them a
+    fill at a time and that is how an operator finds them again. The reason is
+    mandatory for the reason every correction's is: by the time somebody reads
+    the trail, an unexplained withdrawal and a mis-click look identical.
+    """
+
+    plants = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False,
+    )
     reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
     occurred_at = serializers.DateTimeField(required=False)
 
@@ -280,6 +298,28 @@ class PlantOutcomeViewSetMixin:
         )
         return Response(
             PlantLifecycleEventSerializer(correction).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=False, methods=['post'], url_path='withdraw-germination')
+    def withdraw_germination(self, request):
+        """Withdraw germinations that were recorded but never happened.
+
+        For a seedling entered twice, or entered against a tray the operator
+        was not looking at. Not for one that came up and then died — that is
+        `fail`, and the germination rate is right to keep counting it.
+        """
+        values = _action_values(request, WithdrawGerminationSerializer)
+        plant_ids = self._resolve_plant_ids(values['plants'])
+        corrections = _run_domain_action(
+            withdraw_germinations,
+            plant_ids,
+            request.user,
+            values['reason'],
+            occurred_at=values.get('occurred_at'),
+        )
+        return Response(
+            PlantLifecycleEventSerializer(corrections, many=True).data,
             status=status.HTTP_201_CREATED,
         )
 

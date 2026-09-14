@@ -35,7 +35,7 @@ from .germination import (
     reopen_germination,
     validate_late_germination,
 )
-from .lifecycle import record_germination_event
+from .lifecycle import observed_only, record_germination_event
 from .lifecycle_rest import PlantLifecycleEventSerializer, PlantLifecycleSerializerMixin, PlantOutcomeViewSetMixin, register_lifecycle_routes
 from .models import (
     CohortOperation,
@@ -983,6 +983,12 @@ class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspace
     cutting the first count short and not the second would leave a tray saying
     a cell grew nothing and its sowing saying otherwise. One fill of one tray
     bounds it: seedlings can outnumber cells, but not without limit.
+
+    A withdrawn germination is dropped here for the same reason and not as a
+    separate policy: the sowing's figure has already stopped counting it, so a
+    cell that kept drawing it would put the two numbers back out of step — the
+    other way round this time, with the grid claiming seedlings the sowing says
+    never came up.
     """
     queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'locations__container_unit', 'lifecycle_events').order_by('pk')
     serializer_class = SpecificPlantSerializer
@@ -1000,7 +1006,7 @@ class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspace
             queryset.filter(cell_planting__seed_tray_planting__seed_tray__pk=tray.pk),
             tray,
         )
-        return (currently_here | originated_here).distinct()
+        return observed_only((currently_here | originated_here).distinct())
 
 
 class SpecificPlantLocationViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # pylint: disable=too-many-ancestors

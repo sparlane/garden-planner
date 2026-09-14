@@ -35,7 +35,10 @@ from plantings.lifecycle import (
     EventType,
     LifecycleState,
     OutcomeRequest,
+    record_germination_event,
     record_lifecycle_event,
+    withdraw_germination,
+    withdraw_germinations,
 )
 from plantings.models import (
     CohortOperation,
@@ -467,6 +470,78 @@ class MultigermTests(CostingServiceTestCase):
             batch_cost_breakdown(self.batch)['provisional_total'],
             '1.0800',
         )
+
+
+class WithdrawnGerminationTests(CostingServiceTestCase):
+    """A seedling that was recorded but never came up holds no cost.
+
+    The tray screen's pagination bug entered whole fills twice, so a cell could
+    be carrying a seedling that does not exist. Withdrawing it must send that
+    seedling's share back to the cell rather than leave it stranded against a
+    plant nobody can find, and must not turn it into production loss — nothing
+    was lost, and the seed may yet be counted as an ungerminated remainder.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.sowing = self.sow([(self.cells[0], 4)])
+        self.apply_media([self.cells[0]], '0.04')
+        self.plants = self.germinate(self.sowing, self.cells[0], count=2)
+        for plant in self.plants:
+            record_germination_event(plant, self.user)
+        self.reallocate()
+
+    def test_the_survivor_takes_the_whole_cell_back(self):
+        """Two seedlings at 0.54 become one at 1.08 when one never existed."""
+        withdraw_germination(
+            self.plants[1], self.user, 'Entered twice from the tray screen.',
+        )
+
+        self.assertEqual(
+            plant_cost_breakdown(self.plants[0])['provisional_value'],
+            '1.0800',
+        )
+
+    def test_the_withdrawn_seedling_holds_nothing(self):
+        """Every layer that named it is reversed, not merely re-bucketed."""
+        withdraw_germination(
+            self.plants[1], self.user, 'Entered twice from the tray screen.',
+        )
+
+        self.assertEqual(
+            CostAllocation.objects
+            .filter(
+                specific_plant=self.plants[1],
+                reversal_of__isnull=True,
+                reversal__isnull=True,
+            )
+            .count(),
+            0,
+        )
+
+    def test_the_batch_total_is_unchanged(self):
+        """Correcting who a cost belongs to never changes what it was."""
+        withdraw_germination(
+            self.plants[1], self.user, 'Entered twice from the tray screen.',
+        )
+
+        breakdown = batch_cost_breakdown(self.batch)
+        self.assertEqual(breakdown['provisional_total'], '1.0800')
+        self.assertEqual(breakdown['totals']['plant_inventory'], '1.0800')
+        self.assertEqual(breakdown['totals']['production_loss'], '0.0000')
+
+    def test_withdrawing_every_seedling_leaves_the_cell_empty(self):
+        """A cell whose only seedlings were imagined raised nothing at all."""
+        withdraw_germinations(
+            [plant.pk for plant in self.plants],
+            self.user,
+            'The whole fill went in twice.',
+        )
+        self.finalize()
+
+        breakdown = batch_cost_breakdown(self.batch)
+        self.assertEqual(breakdown['totals']['plant_inventory'], '0.0000')
+        self.assertEqual(breakdown['final_total'], '1.0800')
 
 
 class EmptyCellTests(CostingServiceTestCase):

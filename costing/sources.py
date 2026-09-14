@@ -36,6 +36,7 @@ from plantings.models import (
     SpecificPlantLocation,
     PlantCohort,
 )
+from plantings.lifecycle import observed_only
 from plantings.sowing import current_sowing_consumption
 from seedtrays.generations import cell_shares
 from seedtrays.models import SeedTrayGenerationResidual
@@ -130,10 +131,17 @@ def plants_by_cell(batch):
     Every observed plant counts, including one that later failed. It held its
     share of the cell while it was alive; what became of that share is a question
     its lifecycle answers, not a reason to pretend it never grew.
+
+    A plant whose germination has been withdrawn is the one that never grew, so
+    it takes no share at all. Dropping it here is what sends its cost back to
+    the cell, to be shared among the seedlings that did come up or retired with
+    the ungerminated remainder once the sowing closes.
     """
     grouped = {}
-    rows = SpecificPlant.objects.filter(
-        cell_planting__seed_tray_planting__batch=batch,
+    rows = observed_only(
+        SpecificPlant.objects.filter(
+            cell_planting__seed_tray_planting__batch=batch,
+        )
     ).values_list('pk', 'cell_planting__cell_id').order_by('pk')
     for plant_id, cell_id in rows:
         grouped.setdefault(cell_id, []).append(plant_id)
