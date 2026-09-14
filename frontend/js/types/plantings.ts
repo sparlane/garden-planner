@@ -563,6 +563,14 @@ interface ReversePlantEvent {
   occurred_at?: string
 }
 
+// A selection rather than one plant: the tray screen recorded these a fill at
+// a time, so a fill is what an operator has to take back out.
+interface WithdrawGermination {
+  plants: Array<number>
+  reason: string
+  occurred_at?: string
+}
+
 interface SpecificPlant {
   pk: number
   label_code: string
@@ -1358,6 +1366,7 @@ export {
   PlantTimelinePage,
   PlantTimelineSource,
   ReversePlantEvent,
+  WithdrawGermination,
   NewBatchInline,
   NurseryRegisterFilters,
   NurseryRegisterOrdering,

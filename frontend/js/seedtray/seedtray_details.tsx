@@ -35,6 +35,7 @@ import {
   getSpecificPlantsBySeedTray,
   getSpecificPlantLifecycleEvents,
   postBulkPlantOperation,
+  withdrawGermination,
   previewBulkPlantOperation,
   moveSpecificPlant,
   reverseSpecificPlantEvent
@@ -163,6 +164,7 @@ type SeedTrayCellViewProps = {
   selectedCellPlantingPks: Array<number>
   onToggleGermination: (cellPlantingPk: number, cellLabel: string) => void
   onOpenMove: (plant: SpecificPlant) => void
+  onWithdrawGermination: (plant: SpecificPlant) => void
   locationLabel: (loc: SpecificPlantLocation) => string
 }
 
@@ -175,6 +177,7 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
   selectedCellPlantingPks,
   onToggleGermination,
   onOpenMove,
+  onWithdrawGermination,
   locationLabel
 }) => {
   const totalGerminated = entries.reduce((sum, e) => sum + (germinatedByCellPlanting[e.cellPlantingPk] ?? 0), 0)
@@ -208,6 +211,13 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
             </div>
             <Button size="sm" variant="outline-primary" style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 2 }} onClick={() => onOpenMove(plant)}>
               Move
+            </Button>{' '}
+            {/* Withdrawal says this seedling was never here, which is why it sits
+                beside Move rather than among the outcome buttons: a seedling that
+                came up and then died is a loss, and the germination rate is right
+                to keep counting it. */}
+            <Button size="sm" variant="outline-secondary" style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 2 }} onClick={() => onWithdrawGermination(plant)}>
+              Never came up
             </Button>
             {plant.locations.length > 1 && (
               <details style={{ marginTop: 2 }}>
@@ -803,6 +813,12 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     mutationFn: ({ plantPk, event, reason }: { plantPk: number; event: number; reason: string }) => reverseSpecificPlantEvent(plantPk, { event, reason }),
     onSuccess: (_event, variables) => invalidatePlantLifecycle(variables.plantPk)
   })
+  // A withdrawal moves the sowing's germination figure as well as the grid, so
+  // it revalidates what the germination entry does and not only the plant.
+  const withdrawGerminationMutation = useMutation({
+    mutationFn: withdrawGermination,
+    onSuccess: (_events, variables) => Promise.all([invalidateGermination(), ...variables.plants.map(invalidatePlantLifecycle)])
+  })
   // Filling, cleaning, and correcting all change which sowings and plants the
   // tray shows, so each one revalidates the same family of keys.
   function invalidateGenerations() {
@@ -967,6 +983,12 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
       cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares })
     ])
+  }
+
+  async function handleWithdrawGermination(plant: SpecificPlant) {
+    const reason = globalThis.prompt('Why was this germination recorded in error? A seedling that came up and then died is not this — record the outcome instead.')
+    if (!reason || !reason.trim()) return
+    await withdrawGerminationMutation.mutateAsync({ plants: [plant.pk], reason })
   }
 
   async function handleReverseEvent(plant: SpecificPlant, event: PlantLifecycleEvent) {
@@ -1363,6 +1385,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
                     selectedCellPlantingPks={selectedCellPlantingPks}
                     onToggleGermination={toggleGerminationSelection}
                     onOpenMove={openMoveForm}
+                    onWithdrawGermination={handleWithdrawGermination}
                     locationLabel={locationLabel}
                   />
                 ))}

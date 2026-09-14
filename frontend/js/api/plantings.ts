@@ -20,6 +20,7 @@ import {
   PlantOutcome,
   PlantOutcomeAction,
   ReversePlantEvent,
+  WithdrawGermination,
   ProductionBatch,
   ProductionBatchCreate,
   ProductionBatchDetail,
@@ -278,6 +279,10 @@ function reverseSpecificPlantEvent(plantPk: number, data: ReversePlantEvent): Pr
   return csrfPost(`/plantings/specificplants/${plantPk}/reverse-event/`, data).then((response) => response.json() as Promise<PlantLifecycleEvent>)
 }
 
+function withdrawGermination(data: WithdrawGermination): Promise<Array<PlantLifecycleEvent>> {
+  return csrfPost('/plantings/specificplants/withdraw-germination/', data).then((response) => response.json() as Promise<Array<PlantLifecycleEvent>>)
+}
+
 function postBulkPlantOutcome(data: BulkPlantOutcome): Promise<Array<PlantLifecycleEvent>> {
   return csrfPost('/plantings/specificplants/bulk-outcome/', data).then((response) => response.json() as Promise<Array<PlantLifecycleEvent>>)
 }
@@ -500,6 +505,7 @@ export {
   postBulkPlantOutcome,
   previewBulkPlantOperation,
   postBulkPlantOperation,
+  withdrawGermination,
   addGrowthCatalogValue,
   getGrowthStages,
   getPlantGrades,
