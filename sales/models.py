@@ -13,7 +13,7 @@ from django.db import models
 from django.db.models.functions import Floor
 
 from inventory.models import InventoryItem, InventoryUnit, MONEY_DECIMAL_PLACES, MONEY_MAX_DIGITS
-from inventory.models import StockLot, StockMovement
+from inventory.models import StockLot, StockMovement, COST_MAX_DIGITS, COST_DECIMAL_PLACES
 from inventory.units import UnitCode
 from locations.models import Location
 from plantings.models import CohortEvent, PlantCohort, PlantLifecycleEvent, SpecificPlant
@@ -877,6 +877,33 @@ class FulfillmentRider(models.Model):
         return f'Plant {self.plant_id} in fulfillment line {self.fulfillment_line_id}'
 
 
+class FulfillmentContainer(models.Model):
+    """The exact pot which accompanied a directly sold plant, at its own cost."""
+
+    fulfillment_line = models.OneToOneField(FulfillmentLine, on_delete=models.PROTECT, related_name='container_dispatch')
+    placement = models.ForeignKey('plantings.SpecificPlantLocation', on_delete=models.PROTECT, related_name='container_dispatches')
+    stock_movement = models.ForeignKey(StockMovement, on_delete=models.PROTECT, related_name='plant_container_dispatches')
+    base_quantity = models.DecimalField(max_digits=20, decimal_places=9, default=1)
+    cogs_amount = models.DecimalField(max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES, null=True, blank=True)
+    unit_cost = models.DecimalField(max_digits=COST_MAX_DIGITS, decimal_places=COST_DECIMAL_PLACES, null=True, blank=True)
+    currency_code = models.CharField(max_length=3)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Container dispatch records are immutable.')
+        self.full_clean()
+        if self.placement.specific_plant_id != self.fulfillment_line.allocation.plant_id:
+            raise ValidationError('The container placement belongs to another plant.')
+        if self.stock_movement.unit_id != self.placement.container_unit_id:
+            raise ValidationError('The dispatched container differs from the occupied pot.')
+        if self.stock_movement.workspace_id != self.fulfillment_line.fulfillment.workspace_id:
+            raise ValidationError('The dispatched pot belongs to another workspace.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Container dispatch records cannot be deleted.')
+
+
 class FulfillmentPackagingLine(models.Model):
     """An exact packaging-lot quantity consumed by one fulfillment."""
 
@@ -1038,6 +1065,8 @@ class SalesReturnLine(models.Model):
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
         null=True, blank=True,
     )
+    container_fill = models.ForeignKey('seedtrays.SeedTrayGeneration', on_delete=models.PROTECT, null=True, blank=True, related_name='container_returns')
+
     quantity = models.DecimalField(max_digits=20, decimal_places=9, default=1)
     unit = models.CharField(max_length=16, choices=UnitCode.choices, default=UnitCode.EACH)
 

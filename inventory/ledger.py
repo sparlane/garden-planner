@@ -914,11 +914,23 @@ def _linked_to_tray_generation(movement):
     return hasattr(movement, 'tray_generation_residual')
 
 
+def _linked_to_plant_container(movement):
+    """A plant's accompanying pot is corrected through its commerce document."""
+    if movement.plant_container_dispatches.exists():
+        return True
+    for relation in ('sales_return_line', 'sales_return_discard_line'):
+        row = getattr(movement, relation, None)
+        if row is not None and hasattr(row.fulfillment_line, 'container_dispatch'):
+            return True
+    return False
+
+
 #: Documents that own the movements they post, keyed by the name a caller passes
 #: as ``document_kind``. A row one of these wrote may only be reversed through
 #: its own document, so the document restores every row it posted together
 #: instead of leaving some of them stranded.
 DOCUMENT_LINKS = {
+    'plant_container': (_linked_to_plant_container, 'Reverse accompanying pots through their sale or return.'),
     'receipt': (
         _linked_to_receipt,
         'Reverse receipt movements through their receipt.',
@@ -955,10 +967,13 @@ def _validate_reversible(original, reason, document_kind=None):
         if kind != document_kind and is_linked(original):
             raise ValidationError({'movement': message})
     if original.destination_id and balance_is_known(original.lot):
+        if original.unit_id and original.unit.current_location_id != original.destination_id:
+            raise ValidationError({'unit': 'The numbered unit has moved since this movement.'})
         _validate_source_balance(
             original.lot,
             original.destination,
             original.quantity,
+            original.unit,
         )
     removes_unit = original.unit_id and original.destination_id and not original.source_id
     if removes_unit and unit_is_in_use(original.unit):
@@ -987,7 +1002,7 @@ def _create_reversal(original, user, reason, occurred_at):
 
 
 @transaction.atomic
-def reverse_movement(original, user, reason, occurred_at=None):
+def reverse_movement(original, user, reason, occurred_at=None, *, document_kind=None):
     """Reverse one standalone movement while retaining the original row."""
     lot = lock_lots(original.workspace, [original.lot_id])[original.lot_id]
     unit = None
@@ -1000,7 +1015,7 @@ def reverse_movement(original, user, reason, occurred_at=None):
     ).get(pk=original.pk)
     original.lot = lot
     original.unit = unit
-    _validate_reversible(original, reason)
+    _validate_reversible(original, reason, document_kind)
     return _create_reversal(
         original,
         user,

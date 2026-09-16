@@ -31,11 +31,11 @@ from .models import PotFillResidualCorrection, SeedTrayGeneration, SeedTrayGener
 from .pot_media import pot_fill_contents, pot_fill_remaining_media
 
 
-def _require_location(workspace, location):
+def _require_location(workspace, location, *, returned=False):
     """Require a known, active nursery location for the pots being filled."""
     if location is None or location.workspace_id != workspace.pk or not location.active:
         raise ValidationError({'source_location': 'Choose an active location in this workspace.'})
-    if location.location_type == Location.LocationType.QUARANTINE or location.code == 'SYSTEM-TRAY-UNKNOWN':
+    if (location.location_type == Location.LocationType.QUARANTINE and not returned) or location.code == 'SYSTEM-TRAY-UNKNOWN':
         raise ValidationError({'source_location': 'Reconcile or release these containers before filling them.'})
 
 
@@ -69,7 +69,7 @@ def _new_fill(workspace, user, opened_at, notes, **target):
 
 
 @transaction.atomic
-def open_counted_fill(workspace, user, lot, location, count, *, opened_at=None, notes=''):  # pylint: disable=too-many-arguments
+def open_counted_fill(workspace, user, lot, location, count, *, opened_at=None, notes='', returned=False):  # pylint: disable=too-many-arguments
     """Claim whole empty pots, serialized with reservations, numbering and stock moves.
 
     The count remains on hand; the open fill removes it from unpromised stock.
@@ -77,7 +77,7 @@ def open_counted_fill(workspace, user, lot, location, count, *, opened_at=None, 
     """
     lot = lock_lots(workspace, [lot.pk])[lot.pk]
     _require_item(lot.item)
-    _require_location(workspace, location)
+    _require_location(workspace, location, returned=returned)
     if not balance_is_known(lot):
         raise ValidationError({'stock_lot': 'Count the stock before opening a pot fill.'})
     fill = _new_fill(
@@ -93,21 +93,22 @@ def open_counted_fill(workspace, user, lot, location, count, *, opened_at=None, 
 
 
 @transaction.atomic
-def open_numbered_fill(workspace, user, unit, *, opened_at=None, notes=''):
+def open_numbered_fill(workspace, user, unit, *, opened_at=None, notes='', returned=False):  # pylint: disable=too-many-arguments
     """Claim an empty numbered pot, locking even its first fill against competing claims.
 
     Only the unit lock is needed: this action changes neither the anonymous
     pool nor the ledger. Sales and physical unit actions take this lock too.
     """
     unit = lock_units(workspace, [unit.pk])[unit.pk]
-    return _fill_locked_container(workspace, user, unit, opened_at, notes)
+    return _fill_locked_container(workspace, user, unit, opened_at, notes, returned=returned)
 
 
-def _fill_locked_container(workspace, user, unit, opened_at, notes):
+def _fill_locked_container(workspace, user, unit, opened_at, notes, *, returned=False):  # pylint: disable=too-many-arguments
     """Open one fill on a container this caller has already locked."""
     _require_item(unit.item)
-    _require_location(workspace, unit.current_location)
-    if not unit.active or unit_physical_state(unit) != 'available':
+    _require_location(workspace, unit.current_location, returned=returned)
+    available_states = {'available', 'returned', 'quarantined'} if returned else {'available'}
+    if not unit.active or unit_physical_state(unit) not in available_states:
         raise ValidationError({'inventory_unit': 'The container is not available to fill.'})
     if unit_is_in_use(unit):
         raise ValidationError({'inventory_unit': 'Move the plants before opening a new fill.'})
@@ -294,6 +295,8 @@ def reopen_pot_fill(workspace, user, fill, reason):
     fill = lock_pot_fills(workspace, [fill.pk])[0]
     if fill.status != SeedTrayGeneration.Status.CLOSED:
         raise ValidationError({'fill': 'Only a closed pot fill can be reopened.'})
+    if fill.events.filter(event_type=SeedTrayGenerationEvent.EventType.DISPATCHED).exists():
+        raise ValidationError({'fill': 'A dispatched fill cannot be reopened as a mistaken clean.'})
     if fill.review_state != SeedTrayGeneration.ReviewState.NONE:
         raise ValidationError({'fill': 'Review this fill before reopening it.'})
     _require_reclaimable_containers(fill)

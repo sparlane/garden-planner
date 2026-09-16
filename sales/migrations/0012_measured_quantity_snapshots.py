@@ -27,6 +27,11 @@ def restore_implicit_identity_quantities(apps, schema_editor):
     model.objects.using(schema_editor.connection.alias).filter(
         models.Q(plant__isnull=False) | models.Q(inventory_unit__isnull=False),
     ).update(quantity=None)
+    # PostgreSQL must finish deferred FK checks from the data update before
+    # the remaining reverse operations remove columns from this table.
+    if schema_editor.connection.vendor == 'postgresql':
+        schema_editor.execute('SET CONSTRAINTS ALL IMMEDIATE')
+        schema_editor.execute('SET CONSTRAINTS ALL DEFERRED')
 
 
 def refuse_measured_rollback(apps, schema_editor):

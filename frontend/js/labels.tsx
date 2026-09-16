@@ -7,7 +7,7 @@ import { Link, useParams } from 'react-router'
 
 import { createLabelPrintJob, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel } from './api/labels'
 import { getLocations } from './api/locations'
-import { queryKeys } from './query'
+import { queryClient, queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
 import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
 import { sheetLayout } from './labels/sheet'
@@ -280,6 +280,7 @@ function ScannerView() {
   const [salesOrder, setSalesOrder] = React.useState<number | ''>('')
   const [salesLine, setSalesLine] = React.useState<number | ''>('')
   const [orderMode, setOrderMode] = React.useState<'allocate' | 'fulfill' | 'return'>('allocate')
+  const [includeScannedPots, setIncludeScannedPots] = React.useState(false)
   const [orderScanned, setOrderScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
   const [returnDestination, setReturnDestination] = React.useState<number | ''>('')
   const [orderConflict, setOrderConflict] = React.useState('')
@@ -294,6 +295,16 @@ function ScannerView() {
     queryFn: ({ signal }) => getFulfillments(salesOrder as number, signal),
     enabled: salesOrder !== '' && orderMode === 'return'
   })
+  const scannedLines = (scannedFulfillments.data ?? []).filter((entry) => entry.status === 'posted').flatMap((entry) => entry.lines)
+  const scannedPots = new Set(
+    scannedLines
+      .filter((line) => orderScanned.some((entry) => entry.id === line.pk))
+      .map((line) => line.container_dispatch?.stock_movement)
+      .filter((pk) => pk !== undefined)
+  )
+  const scannedReturnLines = scannedLines.filter(
+    (line) => orderScanned.some((entry) => entry.id === line.pk) || (line.container_dispatch && scannedPots.has(line.container_dispatch.stock_movement))
+  )
   const orderAllocation = useMutation({
     mutationFn: async (resolved: LabelResolution) => {
       if (!chosenOrder || !chosenLine || !resolved.target) throw new Error('Choose an order line before scanning stock.')
@@ -332,18 +343,37 @@ function ScannerView() {
     mutationFn: async () => {
       if (!chosenOrder) throw new Error('Choose an order first.')
       if (orderMode === 'fulfill') {
-        return await postFulfillment(chosenOrder.pk, { operation_key: crypto.randomUUID(), allocation_ids: orderScanned.map((entry) => entry.id) })
+        return await postFulfillment(chosenOrder.pk, {
+          operation_key: crypto.randomUUID(),
+          allocation_ids: orderScanned.map((entry) => entry.id),
+          container_allocations: includeScannedPots
+            ? chosenOrder.lines
+                .flatMap((line) => line.allocations)
+                .filter((allocation) => allocation.plant && orderScanned.some((entry) => entry.id === allocation.pk))
+                .map((allocation) => allocation.pk)
+            : []
+        })
       }
       return await postReturn(chosenOrder.pk, {
         operation_key: crypto.randomUUID(),
         reason: 'Returned through label scan.',
-        items: orderScanned.map((entry) => ({ fulfillment_line: entry.id, outcome: 'available', destination: returnDestination }))
+        items: scannedReturnLines.map((line) => ({ fulfillment_line: line.pk, outcome: 'available', destination: returnDestination }))
       })
     },
     onSuccess: () => {
       setOrderScanned([])
       void orders.refetch()
       void scannedFulfillments.refetch()
+      for (const queryKey of [
+        queryKeys.containerFills.all,
+        queryKeys.inventory.all,
+        queryKeys.plantings.all,
+        queryKeys.costing.all,
+        queryKeys.reports.all,
+        queryKeys.locations.all
+      ]) {
+        void queryClient.invalidateQueries({ queryKey })
+      }
     }
   })
 
@@ -555,6 +585,16 @@ function ScannerView() {
           )}
           {orderMode === 'fulfill' && chosenOrder && (
             <p className="text-muted">Scans stage reserved plants or trays from this order. Posting happens only when you confirm below.</p>
+          )}
+          {orderMode === 'fulfill' && (
+            <Form.Check
+              label="Include pots from scanned plants’ fills (otherwise bare-root)"
+              checked={includeScannedPots}
+              onChange={(event) => setIncludeScannedPots(event.target.checked)}
+            />
+          )}
+          {orderMode === 'return' && scannedReturnLines.length > orderScanned.length && (
+            <p>Shared pots include {scannedReturnLines.length} sold plants. All will return together.</p>
           )}
           {orderMode === 'return' && chosenOrder && (
             <Form.Select className="mb-2" value={returnDestination} onChange={(event) => setReturnDestination(event.target.value === '' ? '' : Number(event.target.value))}>

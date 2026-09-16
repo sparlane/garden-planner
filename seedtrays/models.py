@@ -453,6 +453,7 @@ class SeedTrayGenerationEvent(models.Model):
 
         OPENED = 'opened', 'Opened'
         CLOSED = 'closed', 'Closed'
+        DISPATCHED = 'dispatched', 'Dispatched with its plants'
         REOPENED = 'reopened', 'Reopened'
         REVIEWED = 'reviewed', 'Reviewed'
 

@@ -62,7 +62,7 @@ from workspaces.models import WorkspaceOwnedModel
 #: the ``source_type`` value selecting it, which lets the identity constraint be
 #: generated rather than written out once per source. It is kept in step with
 #: `CostAllocation.SourceType` by a test.
-SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting', 'container_unit')
+SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting', 'container_unit', 'container_dispatch')
 
 #: The same names as a type-to-column mapping, so the identity check can be one
 #: routine over both sides even though only the target side needs the indirection.
@@ -200,6 +200,7 @@ class CostAllocation(WorkspaceOwnedModel):
         # allocating earlier would also double-count a plant moved from one
         # numbered pot into another.
         CONTAINER_UNIT = 'container_unit', 'Container sold with the plant'
+        CONTAINER_DISPATCH = 'container_dispatch', 'Pot accompanying a sold plant'
 
     class TargetType(models.TextChoices):
         """What the cost was allocated to.
@@ -276,6 +277,10 @@ class CostAllocation(WorkspaceOwnedModel):
         null=True,
         blank=True,
         related_name='cost_allocations',
+    )
+    container_dispatch = models.ForeignKey(
+        'sales.FulfillmentContainer', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='cost_allocations',
     )
     # Nullable because a discarded remainder posts no movement at all: the
     # application already consumed it, and a second ledger row would report
