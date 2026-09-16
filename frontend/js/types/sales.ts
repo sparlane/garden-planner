@@ -166,6 +166,7 @@ interface SalesCommerceSummary {
 }
 
 interface FulfillmentLine {
+  container_dispatch: { pk: number; placement: number; stock_movement: number; unit_cost: string | null; currency_code: string } | null
   quantity: CommerceQuantity
   unit: UnitCode
   pk: number

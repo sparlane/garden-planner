@@ -2,7 +2,7 @@ import { PlantLifecycleState, ProductionBatchStatus } from './plantings'
 
 // Where a layer's cost came from. Each value is also the name of the column
 // holding it on the server, so a layer can be walked back to its document.
-type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual' | 'garden_planting' | 'container_unit'
+type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual' | 'garden_planting' | 'container_unit' | 'container_dispatch'
 
 // What the cost was allocated to. `cohort_sale` names the block a quantity was
 // sold out of: anonymous stock keeps no identity to carry its cost away with,

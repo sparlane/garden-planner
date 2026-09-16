@@ -84,17 +84,22 @@ function FillContents({ pk }: { pk: number }) {
           ))}
         </tbody>
       </Table>
-      <PotFillClean key={`${data.status}:${data.digest}:${data.plants.join(',')}`} pk={pk} contents={data} />
-      <h3 className="h6 mt-3">Clean and correction history</h3>
+      {history.data?.events.some((event) => event.event_type === 'dispatched') ? (
+        <p>This fill left with its plants. Corrections are recorded through the sale.</p>
+      ) : (
+        <PotFillClean key={`${data.status}:${data.digest}:${data.plants.join(',')}`} pk={pk} contents={data} />
+      )}
+      <h3 className="h6 mt-3">Fill history</h3>
       {history.isPending && <p>Loading history…</p>}
       {history.isError && <Alert variant="danger">Could not load clean history.</Alert>}
       {history.data && (
         <>
           {history.data.events
-            .filter((event) => event.event_type === 'closed' || event.event_type === 'reopened')
+            .filter((event) => event.event_type === 'closed' || event.event_type === 'reopened' || event.event_type === 'dispatched')
             .map((event) => (
               <p key={event.pk}>
-                #{event.pk} · {new Date(event.occurred_at).toLocaleString()} · {event.event_type === 'closed' ? 'Cleaned' : 'Clean corrected'} — {event.reason}
+                #{event.pk} · {new Date(event.occurred_at).toLocaleString()} ·{' '}
+                {event.event_type === 'closed' ? 'Cleaned' : event.event_type === 'dispatched' ? 'Dispatched' : 'Clean corrected'} — {event.reason}
               </p>
             ))}
           {history.data.residuals.map((residual) => (
@@ -103,7 +108,9 @@ function FillContents({ pk }: { pk: number }) {
               {residual.correction_event !== null && ` (reversed by correction #${residual.correction_event})`}
             </p>
           ))}
-          {history.data.events.every((event) => event.event_type !== 'closed' && event.event_type !== 'reopened') && <p>No cleans recorded.</p>}
+          {history.data.events.every((event) => event.event_type !== 'closed' && event.event_type !== 'reopened' && event.event_type !== 'dispatched') && (
+            <p>No cleans recorded.</p>
+          )}
         </>
       )}
     </div>

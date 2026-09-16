@@ -9,7 +9,8 @@ const COST_SOURCE_LABELS: Record<CostSourceType, string> = {
   application_line: 'Input applied',
   generation_residual: 'Discarded when the tray was cleaned',
   garden_planting: 'Bought as a plant',
-  container_unit: 'Container sold with the plant'
+  container_unit: 'Container sold with the plant',
+  container_dispatch: 'Pot dispatched with the plant'
 }
 
 // A container names the pot rather than the lot, because that is the thing the

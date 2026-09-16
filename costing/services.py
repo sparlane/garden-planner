@@ -476,6 +476,8 @@ def _source_lot(row):
         return row.sowing_posting.movement.lot
     if row.generation_residual is not None:
         return row.generation_residual.lot
+    if row.container_dispatch_id is not None:
+        return row.container_dispatch.stock_movement.lot
     if row.container_unit is not None:
         return row.container_unit.source_lot
     return None
@@ -495,6 +497,7 @@ def _source_reference(row):
         'sowing_posting': posting.pk if posting is not None else None,
         'generation_residual': residual.pk if residual is not None else None,
         'container_unit': row.container_unit_id,
+        'container_dispatch': row.container_dispatch_id,
         'movement': row.movement_id,
         'lot': lot.pk if lot is not None else None,
         'item': lot.item_id if lot is not None else None,
@@ -533,6 +536,7 @@ def _loaded_allocations(batch):
             'sowing_posting__movement__lot__item',
             'generation_residual__lot__item',
             'container_unit__source_lot__item',
+            'container_dispatch__stock_movement__lot__item',
         )
         .order_by('pk')
     )
@@ -618,6 +622,7 @@ def plant_cost_breakdown(plant):
             'sowing_posting__movement__lot__item',
             'generation_residual__lot__item',
             'container_unit__source_lot__item',
+            'container_dispatch__stock_movement__lot__item',
         )
         .order_by('pk')
     )
@@ -665,6 +670,7 @@ def cohort_cost_breakdown(cohort):
             'sowing_posting__movement__lot__item',
             'generation_residual__lot__item',
             'container_unit__source_lot__item',
+            'container_dispatch__stock_movement__lot__item',
         )
         .order_by('pk')
     )

@@ -41,8 +41,9 @@ from plantings.lifecycle import (
     record_lifecycle_event,
     reverse_lifecycle_event,
 )
-from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
+from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, SpecificPlantLocation
 
+from .fill_containers import selected_pots, dispatch_selected_pots, return_pot, withdraw_returned_pot, validate_pot_returns, lock_container_commerce
 from .calculations import line_position_amounts, measured_amounts, money, proportional_refund
 from .cohort_stock import (
     dispatch_cohort_stock,
@@ -301,7 +302,7 @@ def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfil
 
 @transaction.atomic
 def post_fulfillment(order, user, *, operation_key, allocation_ids,
-                     packaging=(), fulfilled_at=None, notes='', quantities=None):
+                     packaging=(), fulfilled_at=None, notes='', quantities=None, container_allocations=()):
     """Dispatch exact reserved stock and recognize its revenue and direct cost."""
     try:
         quantities = {int(key): positive_quantity(value).normalize() for key, value in (quantities or {}).items()}
@@ -316,6 +317,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         'packaging': sorted(packaging, key=lambda row: (row['lot'].pk, row['source'].pk)),
         'fulfilled_at': requested_at, 'notes': notes,
         **({'quantities': quantities} if quantities else {}),
+        **({'container_allocations': sorted(set(container_allocations))} if container_allocations else {}),
     }
     fingerprint = request_fingerprint(payload)
     existing = _existing(Fulfillment, order.workspace, operation_key, fingerprint)
@@ -342,26 +344,38 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         raise ValidationError({'allocations': 'One or more active reservations are unavailable.'})
     plant_ids = [row.plant_id for row in allocations if row.plant_id]
     unit_ids = [row.inventory_unit_id for row in allocations if row.inventory_unit_id]
+    # Departure media must reach the COGS snapshot before this transaction
+    # commits, so acquire batch locks before the plant and container locks.
+    list(ProductionBatch.objects.select_for_update().filter(pk__in=[row.plant.batch_id for row in allocations if row.plant_id]).order_by('pk'))
     plants = {
         row.pk: row for row in SpecificPlant.objects.select_for_update(of=('self',))
         .select_related('batch').filter(workspace=order.workspace, pk__in=plant_ids)
         .order_by('pk')
     }
-    units = lock_units(order.workspace, unit_ids)
+    pots = selected_pots(order, allocations, container_allocations)
+    fill_plant_ids = set(SpecificPlantLocation.objects.filter(
+        specific_plant_id__in=plant_ids, ended__isnull=True, container_fill__isnull=False,
+    ).values_list('specific_plant_id', flat=True))
     # One lock covering both the packaging drawn down and the counted stock
     # dispatched, so a fulfillment cannot deadlock against its own two halves.
     lot_ids = [row['lot'].pk for row in packaging]
     lot_ids += [row.stock_lot_id for row in allocations if row.stock_lot_id]
+    lot_ids += [row.container_fill.stock_lot_id for row in pots.values() if row.container_fill.stock_lot_id]
     lots = lock_lots(order.workspace, lot_ids)
+    units = lock_units(order.workspace, unit_ids + [row.container_unit_id for row in pots.values() if row.container_unit_id])
+    pots = selected_pots(order, allocations, container_allocations)
     cohorts = lock_cohorts(
         order.workspace,
         [row.plant_cohort_id for row in allocations if row.plant_cohort_id],
     )
     _require_ready_cohorts(allocations, cohorts)
-    riders = resolve_riders(units, set(plant_ids))
+    riders = resolve_riders({pk: unit for pk, unit in units.items() if pk in unit_ids}, set(plant_ids))
     validate_riders_are_free(riders, order)
     positions = _available_positions(order)
     passengers = []
+    # An omitted timestamp means now, after any competing numbering or move
+    # has committed. Explicit historical timestamps still undergo validation.
+    fulfilled_at = requested_at or timezone.now()
     fulfillment = Fulfillment.objects.create(
         workspace=order.workspace, order=order,
         fulfillment_number=_number(order.workspace), fulfilled_at=fulfilled_at,
@@ -403,7 +417,10 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
                     reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
                 ),
             )
+            if plant.pk in fill_plant_ids:
+                recost_container_plants([plant], user, 'Media taken on fulfillment departure.')
             cogs_amount, provisional = _plant_cost(plant)
+
         elif allocation.stock_lot_id:
             stock_movement, cogs_amount, provisional = _dispatch_counted_stock(
                 order, user, allocation, lots[allocation.stock_lot_id],
@@ -455,6 +472,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             allocation=allocation, event_type=ReservationEvent.EventType.FULFILLED,
             occurred_at=fulfilled_at, created_by=_actor(user),
         )
+    dispatch_selected_pots(order, user, fulfillment, pots)
+    passengers.extend(plants[pk] for pk in pots)
     for item in packaging:
         lot = lots[item['lot'].pk]
         if lot.item.category != InventoryItem.Category.PACKAGING:
@@ -691,6 +710,9 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
     if len(lines) != len(line_ids):
         raise ValidationError({'items': 'One or more fulfillment lines are unavailable.'})
     _validate_whole_allocation_returns(items, lines)
+    validate_pot_returns(items, lines)
+    lock_container_commerce(order.workspace, lines.values(), [item.get('destination') for item in items])
+    recovered_pots = {}
     lock_lots(order.workspace, [
         row.allocation.stock_lot_id for row in lines.values()
         if row.allocation.stock_lot_id
@@ -726,6 +748,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         return_movement = None
         discard_movement = None
         cohort_event = None
+        returned_fill = None
         if allocation.plant_cohort_id:
             cohort_event = return_cohort_stock(
                 order, user, line, sales_return,
@@ -749,7 +772,12 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
                     reference=f'return:{sales_return.pk}:line:{line.pk}',
                 ),
             )
-            if destination:
+            return_movement, discard_movement, returned_fill = return_pot(
+                user, line, sales_return, item, recovered_pots,
+            )
+            if hasattr(line, 'container_dispatch'):
+                returned_riders.append(allocation.plant)
+            if destination and returned_fill is None and outcome != SalesReturnLine.Outcome.DISCARDED:
                 move_specific_plant(allocation.plant, {
                     'location_type': SpecificPlantLocation.LOCATION,
                     'location': destination,
@@ -796,7 +824,7 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
             ),
             destination=destination, lifecycle_event=lifecycle_event,
             cohort_event=cohort_event,
-            return_movement=return_movement, discard_movement=discard_movement,
+            return_movement=return_movement, discard_movement=discard_movement, container_fill=returned_fill,
         )
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(
             status=(SalesOrderAllocation.Status.RESERVED if remaining_quantity(allocation) > 0
@@ -1009,6 +1037,7 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
     if _effective(Refund.objects.filter(
             lines__fulfillment_line__fulfillment=original)).exists():
         raise ValidationError({'fulfillment': 'Reverse linked refunds first.'})
+    lock_container_commerce(original.workspace, original.lines.all())
     sources = [
         (line.allocation.stock_lot, line.stock_movement.source)
         for line in original.lines.all()
@@ -1026,9 +1055,13 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
         request_fingerprint=fingerprint, created_by=_actor(user),
     )
     restored = []
+    restored_pots = set()
     for line in original.lines.all():
         if line.lifecycle_event_id:
             reverse_lifecycle_event(line.lifecycle_event, user, reason, occurred_at)
+        if hasattr(line, 'container_dispatch') and line.container_dispatch.stock_movement_id not in restored_pots:
+            reverse_movement(line.container_dispatch.stock_movement, user, reason, occurred_at, document_kind='plant_container')
+            restored_pots.add(line.container_dispatch.stock_movement_id)
         if line.stock_movement_id:
             reverse_movement(line.stock_movement, user, reason, occurred_at)
         if line.cohort_event_id:
@@ -1042,7 +1075,7 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
         reverse_movement(packaging.stock_movement, user, reason, occurred_at)
     _check_restored_reservations(sources)
     recost_container_plants(
-        [rider.plant for rider in riders_of(original)], user, reason,
+        [rider.plant for rider in riders_of(original)] + [line.allocation.plant for line in original.lines.all() if hasattr(line, 'container_dispatch')], user, reason,
     )
     recost_cohort_batches(restored, user, reason)
     recompute_order_status(original.order)
@@ -1116,6 +1149,7 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
     _refuse_reversed(original, 'sales_return', 'return')
     if _effective(original.refunds.all()).exists():
         raise ValidationError({'sales_return': 'Reverse linked refunds first.'})
+    lock_container_commerce(original.workspace, [line.fulfillment_line for line in original.lines.all()])
     sources = [
         (line.fulfillment_line.allocation.stock_lot, line.return_movement.destination)
         for line in original.lines.all()
@@ -1140,11 +1174,15 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         created_by=_actor(user),
     )
     withdrawn = []
+    withdrawn_fills = set()
     for line in original.lines.all():
+        if line.container_fill_id not in withdrawn_fills:
+            withdraw_returned_pot(line, user, occurred_at, reason)
+            withdrawn_fills.add(line.container_fill_id)
         if line.discard_movement_id:
-            reverse_movement(line.discard_movement, user, reason, occurred_at)
+            reverse_movement(line.discard_movement, user, reason, occurred_at, document_kind='plant_container')
         if line.return_movement_id:
-            reverse_movement(line.return_movement, user, reason, occurred_at)
+            reverse_movement(line.return_movement, user, reason, occurred_at, document_kind='plant_container')
         if line.cohort_event_id:
             withdrawn.append(withdraw_returned_cohort(
                 user, line, reversal, occurred_at=occurred_at, reason=reason,
@@ -1178,7 +1216,7 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         rider.plant
         for line in original.lines.all()
         for rider in line.fulfillment_line.riders.select_related('plant')
-    ], user, reason)
+    ] + [line.fulfillment_line.allocation.plant for line in original.lines.all() if hasattr(line.fulfillment_line, 'container_dispatch')], user, reason)
     recost_cohort_batches(withdrawn, user, reason)
     recompute_order_status(original.order)
     return reversal

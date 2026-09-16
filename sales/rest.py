@@ -39,6 +39,7 @@ from .models import (
     Customer,
     Fulfillment,
     FulfillmentLine,
+    FulfillmentContainer,
     FulfillmentPackagingLine,
     Payment,
     Refund,
@@ -394,7 +395,16 @@ class CommerceRecordSerializer(serializers.ModelSerializer):
         return 'posted'
 
 
+class FulfillmentContainerSerializer(serializers.ModelSerializer):
+    """The recorded pot which travelled with this plant."""
+
+    class Meta:
+        model = FulfillmentContainer
+        fields = ['pk', 'placement', 'stock_movement', 'unit_cost', 'base_quantity', 'cogs_amount', 'currency_code']
+
+
 class FulfillmentLineSerializer(serializers.ModelSerializer):
+    container_dispatch = FulfillmentContainerSerializer(read_only=True)
     quantity = CommerceQuantityField()
 
     class Meta:
@@ -403,7 +413,7 @@ class FulfillmentLineSerializer(serializers.ModelSerializer):
             'pk', 'allocation', 'quantity', 'unit', 'commercial_position', 'gross_ex_tax',
             'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
             'total_incl_tax', 'tax_treatment', 'cogs_amount', 'cogs_provisional',
-            'currency_code', 'lifecycle_event', 'stock_movement',
+            'currency_code', 'lifecycle_event', 'stock_movement', 'container_dispatch',
         ]
 
 
@@ -446,7 +456,7 @@ class SalesReturnLineSerializer(serializers.ModelSerializer):
         model = SalesReturnLine
         fields = [
             'pk', 'fulfillment_line', 'quantity', 'unit', 'cogs_amount', 'outcome', 'destination',
-            'lifecycle_event', 'return_movement', 'discard_movement',
+            'lifecycle_event', 'return_movement', 'discard_movement', 'container_fill',
         ]
 
 
@@ -491,6 +501,7 @@ class PackagingWriteSerializer(serializers.Serializer):
 
 
 class FulfillmentWriteSerializer(ActionSerializer):
+    container_allocations = serializers.ListField(child=serializers.IntegerField(min_value=1), required=False, default=list)
     operation_key = serializers.UUIDField()
     allocation_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1), allow_empty=False,

@@ -117,6 +117,7 @@ class BatchCostBreakdownTests(CostingServiceTestCase):
                 'base_unit',
                 'basis',
                 'basis_weight',
+                'container_dispatch',
                 'container_unit',
                 'currency_code',
                 'generation_residual',

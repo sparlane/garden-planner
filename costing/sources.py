@@ -19,7 +19,7 @@ from typing import NamedTuple
 
 from django.db.models import Q, Sum
 
-from sales.models import SalesOrderAllocation, FulfillmentRider
+from sales.models import SalesOrderAllocation, FulfillmentRider, FulfillmentContainer, SalesReturnLine
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
 from garden.models import GardenSquare
@@ -748,6 +748,23 @@ def container_sources(batch):
     return sources
 
 
+def dispatched_pot_sources(batch):
+    """Charge only pots still dispatched, using their immutable sale snapshot."""
+    rows = FulfillmentContainer.objects.filter(
+        fulfillment_line__allocation__plant__batch=batch,
+        fulfillment_line__fulfillment__reversal__isnull=True,
+    ).exclude(fulfillment_line_id__in=SalesReturnLine.objects.filter(
+        sales_return__reversal__isnull=True, sales_return__reversal_of__isnull=True,
+    ).values('fulfillment_line_id'))
+    return [SourceInput(
+        source_type=SourceType.CONTAINER_DISPATCH, source=row,
+        movement=row.stock_movement, base_quantity=row.base_quantity, base_unit='each',
+        exact_amount=row.cogs_amount,
+        unit_cost=row.unit_cost, currency_code=row.currency_code,
+        shares=tuple(plant_shares([row.fulfillment_line.allocation.plant_id])),
+    ) for row in rows.select_related('stock_movement', 'fulfillment_line__allocation')]
+
+
 def batch_sources(batch):
     """Return every posted input this batch drew on, resolved to its targets.
 
@@ -762,6 +779,7 @@ def batch_sources(batch):
     sources += pot_media_sources(batch)
     sources += residual_sources(batch, generation_ids)
     sources += container_sources(batch)
+    sources += dispatched_pot_sources(batch)
     observed = plants_by_cell(batch)
     outputs = cohort_outputs(batch)
     resolved = []

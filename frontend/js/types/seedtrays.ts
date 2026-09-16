@@ -46,7 +46,7 @@ interface SeedTray {
 type SeedTrayGenerationStatus = 'open' | 'closed'
 type SeedTrayGenerationOrigin = 'operator' | 'legacy'
 type SeedTrayGenerationReviewState = 'none' | 'needs_review'
-type SeedTrayGenerationEventType = 'opened' | 'closed' | 'reopened' | 'reviewed'
+type SeedTrayGenerationEventType = 'opened' | 'closed' | 'dispatched' | 'reopened' | 'reviewed'
 type ResidualKind = 'media' | 'seed'
 type SeedDispositionChoice = 'removed' | 'returned'
 type MediaDispositionChoice = 'waste' | 'reclaimed'

@@ -13,6 +13,7 @@ from inventory.models import InventoryItem
 from locations.models import Location
 from reporting.commerce import profitability_report
 from tests.factories import make_specific_plant, make_stock_lot
+from tests.migration_replay import migrate_to
 from workspaces.models import get_current_workspace
 
 from .test_concurrency import ReservationConcurrencyTestCase
@@ -27,6 +28,8 @@ class MeasuredHistoryMigrationTests(ReservationConcurrencyTestCase):
     def test_backfill_changes_no_existing_commercial_value(self):
         """Every old column survives byte-for-byte apart from implicit ones."""
         executor = MigrationExecutor(connection)
+        current_schema = list(executor.loader.graph.leaf_nodes())
+        self.addCleanup(migrate_to, current_schema)
         executor.migrate(self.previous)
         try:
             apps = executor.loader.project_state(self.previous).apps
@@ -49,11 +52,14 @@ class MeasuredHistoryMigrationTests(ReservationConcurrencyTestCase):
         returned = current.get_model('sales', 'SalesReturnLine')
         self.assertEqual(list(returned.objects.order_by('pk').values_list('quantity', flat=True)), [1, 5])
         self.assertEqual(list(returned.objects.order_by('pk').values_list('cogs_amount', flat=True)), [Decimal('0.4321')] * 2)
+        # Live reporting models require today's schema, while the assertions
+        # above deliberately inspect the historical measured-quantity target.
+        migrate_to(current_schema)
         first_report = profitability_report(get_current_workspace(), {})
         # A safe rollback and repeat backfill must also leave profitability
         # unchanged, including the cost restoration attributed to each return.
-        executor.migrate(self.previous)
-        MigrationExecutor(connection).migrate(self.latest)
+        migrate_to(self.previous)
+        migrate_to(current_schema)
         repeated_report = profitability_report(get_current_workspace(), {})
         repeated_report.generated_at = first_report.generated_at
         self.assertEqual(repeated_report, first_report)

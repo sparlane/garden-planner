@@ -799,6 +799,7 @@ function CommercePanel({ order }: { order: SalesOrder }) {
     queryFn: ({ signal }) => getInventoryItems({ category: 'packaging', tracking_mode: 'lot', active: true }, signal)
   })
   const [selectedAllocations, setSelectedAllocations] = React.useState<Array<number>>([])
+  const [containerAllocations, setContainerAllocations] = React.useState<Array<number>>([])
   const [dispatchQuantities, setDispatchQuantities] = React.useState<Record<number, string>>({})
   const [returnQuantity, setReturnQuantity] = React.useState('')
   const [packagingItem, setPackagingItem] = React.useState<number | ''>('')
@@ -823,10 +824,22 @@ function CommercePanel({ order }: { order: SalesOrder }) {
   const [refundReason, setRefundReason] = React.useState('')
   const reserved = order.lines.flatMap((line) => line.allocations.filter((allocation) => allocation.status === 'reserved'))
   const activeFulfillmentLines = (fulfillments.data ?? []).filter((entry) => entry.status === 'posted').flatMap((entry) => entry.lines)
+  const returnedPot = activeFulfillmentLines.find((line) => line.pk === returnLine)?.container_dispatch?.stock_movement
+  const returnLines = activeFulfillmentLines.filter((line) => line.pk === returnLine || (returnedPot !== undefined && line.container_dispatch?.stock_movement === returnedPot))
   const activePayments = (payments.data ?? []).filter((entry) => entry.status === 'posted')
 
   function refreshCommerce() {
     invalidateSales(order.pk)
+    for (const queryKey of [
+      queryKeys.containerFills.all,
+      queryKeys.inventory.all,
+      queryKeys.plantings.all,
+      queryKeys.costing.all,
+      queryKeys.reports.all,
+      queryKeys.locations.all
+    ]) {
+      void queryClient.invalidateQueries({ queryKey })
+    }
     void fulfillments.refetch()
     void payments.refetch()
     void returns.refetch()
@@ -839,12 +852,14 @@ function CommercePanel({ order }: { order: SalesOrder }) {
       return postFulfillment(order.pk, {
         operation_key: crypto.randomUUID(),
         allocation_ids: selectedAllocations,
+        container_allocations: containerAllocations.filter((pk) => selectedAllocations.includes(pk)),
         quantities: Object.fromEntries(selectedAllocations.filter((pk) => dispatchQuantities[pk]).map((pk) => [pk, dispatchQuantities[pk]])),
         packaging: balance && Number(packagingQuantity) > 0 ? [{ lot: balance.lot, source: balance.location, quantity: packagingQuantity }] : []
       })
     },
     onSuccess: () => {
       setSelectedAllocations([])
+      setContainerAllocations([])
       setDispatchQuantities({})
       setPackagingQuantity('')
       refreshCommerce()
@@ -868,14 +883,12 @@ function CommercePanel({ order }: { order: SalesOrder }) {
       postReturn(order.pk, {
         operation_key: crypto.randomUUID(),
         reason: returnReason,
-        items: [
-          {
-            fulfillment_line: returnLine,
-            ...(returnQuantity && activeFulfillmentLines.find((line) => line.pk === returnLine)?.unit !== 'each' ? { quantity: returnQuantity } : {}),
-            outcome: returnOutcome,
-            destination: returnOutcome === 'discarded' ? null : returnDestination
-          }
-        ],
+        items: returnLines.map((line) => ({
+          fulfillment_line: line.pk,
+          ...(returnQuantity && line.unit !== 'each' ? { quantity: returnQuantity } : {}),
+          outcome: returnOutcome,
+          destination: returnOutcome === 'discarded' ? null : returnDestination
+        })),
         ...(returnOutcome === 'quarantined' ? { observation_type: healthType, severity: healthSeverity } : {})
       }),
     onSuccess: () => {
@@ -910,7 +923,7 @@ function CommercePanel({ order }: { order: SalesOrder }) {
       kind: 'fulfillments' as const,
       pk: entry.pk,
       at: entry.fulfilled_at,
-      label: `${entry.fulfillment_number} · ${entry.lines.length} dispatched`,
+      label: `${entry.fulfillment_number} · ${entry.lines.length} dispatched${entry.lines.some((line) => line.container_dispatch) ? ` · ${new Set(entry.lines.filter((line) => line.container_dispatch).map((line) => line.container_dispatch!.stock_movement)).size} pots included` : ''}`,
       status: entry.status
     })),
     ...(payments.data ?? []).map((entry) => ({
@@ -979,6 +992,16 @@ function CommercePanel({ order }: { order: SalesOrder }) {
                 checked={selectedAllocations.includes(allocation.pk)}
                 onChange={() => setSelectedAllocations((current) => (current.includes(allocation.pk) ? current.filter((pk) => pk !== allocation.pk) : [...current, allocation.pk]))}
               />
+              {allocation.plant && selectedAllocations.includes(allocation.pk) && (
+                <Form.Check
+                  className="ms-4"
+                  label="Send the pot from this plant’s fill (otherwise bare-root)"
+                  checked={containerAllocations.includes(allocation.pk)}
+                  onChange={() =>
+                    setContainerAllocations((current) => (current.includes(allocation.pk) ? current.filter((pk) => pk !== allocation.pk) : [...current, allocation.pk]))
+                  }
+                />
+              )}
               {allocation.unit !== 'each' && selectedAllocations.includes(allocation.pk) && (
                 <Form.Control
                   aria-label={`Dispatch quantity in ${allocation.unit}`}
@@ -1070,6 +1093,7 @@ function CommercePanel({ order }: { order: SalesOrder }) {
                 </option>
               ))}
             </Form.Select>
+            {returnLines.length > 1 && <p>These {returnLines.length} plants shared one pot. They will all return together with the selected outcome.</p>}
             <Form.Select className="mb-2" value={returnOutcome} onChange={(event) => setReturnOutcome(event.target.value as typeof returnOutcome)}>
               <option value="available">Available</option>
               <option value="quarantined">Quarantined</option>
