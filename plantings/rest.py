@@ -49,7 +49,7 @@ from .models import (
     SpecificPlant,
     SpecificPlantLocation,
 )
-from .movement_rest import SpecificPlantMoveSerializer
+from .movement_rest import BulkRepotSerializer, SpecificPlantMoveSerializer
 from .movement import (
     FIELD_MISSING,
     move_specific_plant,
@@ -58,6 +58,7 @@ from .movement import (
     validate_specific_plant_location,
 )
 from .register_rest import register_register_routes
+from .repotting import repot_into_pots
 from .timeline_rest import PlantTimelineViewSetMixin
 from .growth_rest import NurseryObservationSerializer, register_growth_routes
 from .planning_rest import register_planning_routes
@@ -970,6 +971,33 @@ class SpecificPlantViewSet(PlantTimelineViewSetMixin, PlantOutcomeViewSetMixin, 
             user=request.user,
         )
         return Response(SpecificPlantLocationSerializer(location).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='bulk-repot')
+    def bulk_repot(self, request):
+        """Stand each selected seedling in the pot it was paired with.
+
+        A tray is emptied into a bench of pots in one pass, so the whole run is
+        one request: either every seedling reaches the number written on its
+        pot, or none of them moves and the tray still says where they all are.
+        """
+        payload = BulkRepotSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        values = payload.validated_data
+        try:
+            locations = repot_into_pots(
+                self.get_current_workspace(),
+                request.user,
+                [(row['plant'], row['container_unit']) for row in values['placements']],
+                started=values['started'],
+                notes=values['notes'],
+                override_reason=values['override_reason'],
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_model_errors(exc)) from exc
+        return Response(
+            SpecificPlantLocationSerializer(locations, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):  # pylint: disable=too-many-ancestors
