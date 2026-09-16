@@ -36,3 +36,25 @@ class SpecificPlantMoveSerializer(CurrentWorkspaceSerializerMixin, serializers.M
             },
         )
         return data
+
+
+class RepotPairingSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """One seedling and the numbered pot it is being stood in."""
+
+    plant = serializers.IntegerField(min_value=1)
+    container_unit = serializers.IntegerField(min_value=1)
+
+
+class BulkRepotSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """A whole repotting run, paired here rather than one destination for all.
+
+    The bulk move on the register sends every selected plant to one place,
+    which is what a bench or a garden square is. A pot is not: the run pairs
+    each seedling with the number written on the pot it went into, so the
+    table of pairings is the request.
+    """
+
+    placements = RepotPairingSerializer(many=True, allow_empty=False)
+    started = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    override_reason = serializers.CharField(required=False, allow_blank=True, default='')
