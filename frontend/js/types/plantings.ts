@@ -454,6 +454,16 @@ interface SpecificPlantLocation {
   override_reason: string
 }
 
+// A repotting run: one seedling per pot, posted as the table of pairings the
+// operator built rather than as one destination for every plant. A bench or a
+// garden square is one place many plants go to; a pot is not.
+interface PlantRepotting {
+  placements: Array<{ plant: number; container_unit: number }>
+  started?: string
+  notes?: string
+  override_reason?: string
+}
+
 interface SpecificPlantLocationCreate {
   specific_plant: number
   location_type: PlantPlacementType
@@ -1429,6 +1439,7 @@ export {
   PlantPlacementType,
   SpecificPlantLocation,
   SpecificPlantLocationCreate,
+  PlantRepotting,
   SpecificPlantMove,
   SowingCorrection,
   CohortAction,

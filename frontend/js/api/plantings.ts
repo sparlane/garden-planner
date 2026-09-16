@@ -16,6 +16,7 @@ import {
   NurseryRegisterPage,
   NurseryRegisterSelection,
   PlantLifecycleEvent,
+  PlantRepotting,
   PlantTimelinePage,
   PlantOutcome,
   PlantOutcomeAction,
@@ -45,6 +46,7 @@ import {
   SeedTrayPlantingDetails,
   SpecificPlant,
   SpecificPlantCreate,
+  SpecificPlantLocation,
   SpecificPlantDetail,
   SpecificPlantLocationCreate,
   SpecificPlantMove,
@@ -256,6 +258,14 @@ function endSpecificPlantLocation(locationPk: number): Promise<Response> {
 
 function moveSpecificPlant(plantPk: number, data: SpecificPlantMove): Promise<Response> {
   return csrfPost(`/plantings/specificplants/${plantPk}/move/`, data)
+}
+
+// One request for the whole run. The server takes every plant and pot lock
+// before the first move, so a tray either empties into the bench or stays as
+// it was; a half-finished run would leave the operator reading the grid to
+// find out which seedlings still had to go.
+function repotSpecificPlants(data: PlantRepotting): Promise<Array<SpecificPlantLocation>> {
+  return csrfPost('/plantings/specificplants/bulk-repot/', data).then((response) => response.json() as Promise<Array<SpecificPlantLocation>>)
 }
 
 function getSpecificPlant(plantPk: number, signal?: AbortSignal): Promise<SpecificPlantDetail> {
@@ -497,6 +507,7 @@ export {
   addSpecificPlantLocation,
   endSpecificPlantLocation,
   moveSpecificPlant,
+  repotSpecificPlants,
   getSpecificPlant,
   getSpecificPlantLifecycleEvents,
   getSpecificPlantTimeline,

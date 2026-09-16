@@ -27,7 +27,16 @@ import {
 import { GenerationCleanForm, GenerationCostPanel } from './generation_clean'
 import { buildSeedTrayCellGrid } from './grid'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
-import { BulkPlantOperationRequest, PlantLifecycleEvent, PlantOutcomeAction, SeedTrayPlanting, SpecificPlant, SpecificPlantLocation, SpecificPlantMove } from '../types/plantings'
+import {
+  BulkPlantOperationRequest,
+  PlantLifecycleEvent,
+  PlantOutcomeAction,
+  PlantRepotting,
+  SeedTrayPlanting,
+  SpecificPlant,
+  SpecificPlantLocation,
+  SpecificPlantMove
+} from '../types/plantings'
 import {
   closeSowingGermination,
   getPlantingSeedTray,
@@ -38,11 +47,13 @@ import {
   withdrawGermination,
   previewBulkPlantOperation,
   moveSpecificPlant,
+  repotSpecificPlants,
   reverseSpecificPlantEvent
 } from '../api/plantings'
 import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog } from '../plantings/lifecycle'
 import { PLACEMENT_LABELS, placementLabel } from '../plantings/placements'
 import { PotCodeField, potOptionLabel, useNumberedPotDestinations } from '../plantings/pot_destinations'
+import { RepotCandidate, RepotRunForm } from '../plantings/repot_run'
 import { GerminationSummary } from '../plantings/germination'
 import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
 import { CohortLossCause } from '../types/plantings'
@@ -162,7 +173,9 @@ type SeedTrayCellViewProps = {
   plants: Array<SpecificPlant>
   germinatedByCellPlanting: { [cellPlantingPk: number]: number }
   selectedCellPlantingPks: Array<number>
+  selectedRepotPlantPks: Array<number>
   onToggleGermination: (cellPlantingPk: number, cellLabel: string) => void
+  onToggleRepot: (plant: SpecificPlant, cellLabel: string) => void
   onOpenMove: (plant: SpecificPlant) => void
   onWithdrawGermination: (plant: SpecificPlant) => void
   locationLabel: (loc: SpecificPlantLocation) => string
@@ -175,7 +188,9 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
   plants,
   germinatedByCellPlanting,
   selectedCellPlantingPks,
+  selectedRepotPlantPks,
   onToggleGermination,
+  onToggleRepot,
   onOpenMove,
   onWithdrawGermination,
   locationLabel
@@ -197,8 +212,10 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
       {plants.map((plant) => {
         const loc = currentLocation(plant)
         const sortedLocations = [...plant.locations].sort((a, b) => new Date(a.started).getTime() - new Date(b.started).getTime())
+        const selectedForRepotting = selectedRepotPlantPks.includes(plant.pk)
+        const cellLabel = cell ? `Cell ${cell.x_position}, ${cell.y_position} · Plant #${plant.pk}` : `Plant #${plant.pk}`
         return (
-          <div key={plant.pk} style={{ marginTop: 4, fontSize: '0.8em', borderTop: '1px solid #eee', paddingTop: 2 }}>
+          <div key={plant.pk} style={{ marginTop: 4, fontSize: '0.8em', borderTop: '1px solid #eee', paddingTop: 2, background: selectedForRepotting ? '#e3f2fd' : undefined }}>
             <div>
               {/* A plain hash anchor, not a <Link>: this screen also mounts on its own Django
                   page, which has no router around it. Both templates set <base href="/">, so
@@ -209,7 +226,22 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
             <div style={{ marginTop: 2 }}>
               <PlantLifecycleBadge plant={plant} />
             </div>
-            <Button size="sm" variant="outline-primary" style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 2 }} onClick={() => onOpenMove(plant)}>
+            {/* Repotting is a run rather than a move each: the whole tray goes
+                onto the bench in one pass, so a seedling is selected here and
+                paired with its pot in the form under the grid. `Move` is still
+                the way to send one plant somewhere that is not a pot. */}
+            {!plant.final_outcome_at && (
+              <Button
+                size="sm"
+                variant={selectedForRepotting ? 'primary' : 'outline-primary'}
+                style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 2 }}
+                onClick={() => onToggleRepot(plant, cellLabel)}
+                aria-pressed={selectedForRepotting}
+              >
+                {selectedForRepotting ? 'Selected' : 'Repot'}
+              </Button>
+            )}{' '}
+            <Button size="sm" variant="outline-dark" style={{ fontSize: '0.75em', padding: '1px 4px', marginTop: 2 }} onClick={() => onOpenMove(plant)}>
               Move
             </Button>{' '}
             {/* Withdrawal says this seedling was never here, which is why it sits
@@ -699,6 +731,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const [germinationDate, setGerminationDate] = React.useState(localDatetimeInputValue())
   const [germinationNotes, setGerminationNotes] = React.useState('')
   const [moveForm, setMoveForm] = React.useState<MoveForm>()
+  const [repotSelections, setRepotSelections] = React.useState<Array<RepotCandidate>>([])
   const [inventoryAction, setInventoryAction] = React.useState<InventoryAction>()
   const [inventoryDestination, setInventoryDestination] = React.useState<number>()
   const [inventoryReason, setInventoryReason] = React.useState('')
@@ -795,19 +828,28 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     mutationFn: ({ planting, reason }: { planting: number; reason: string }) => reopenSowingGermination(planting, reason),
     onSuccess: invalidateGermination
   })
+  // Standing a plant in a numbered pot is what puts that pot in use, so the
+  // pot lists are revalidated too: the next plant off this tray would
+  // otherwise be offered the pot as though it were still empty.
+  function invalidateMovedPlants() {
+    return Promise.all([
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
+      cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
+      cache.invalidateQueries({ queryKey: queryKeys.inventory.all }),
+      cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
+    ])
+  }
   const moveMutation = useMutation({
     mutationFn: ({ plantPk, move }: { plantPk: number; move: SpecificPlantMove }) => moveSpecificPlant(plantPk, move),
-    // Standing a plant in a numbered pot is what puts that pot in use, so the
-    // pot lists are revalidated too: the next plant off this tray would
-    // otherwise be offered the pot as though it were still empty.
-    onSuccess: () =>
-      Promise.all([
-        cache.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
-        cache.invalidateQueries({ queryKey: queryKeys.plantings.currentSeedTrays }),
-        cache.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares }),
-        cache.invalidateQueries({ queryKey: queryKeys.inventory.all }),
-        cache.invalidateQueries({ queryKey: queryKeys.seeds.packets.all })
-      ])
+    onSuccess: invalidateMovedPlants
+  })
+  // A run ends as many placements as it begins, and every pot it fills leaves
+  // the list of pots a plant can be stood in, so it revalidates what a single
+  // move does.
+  const repotMutation = useMutation({
+    mutationFn: repotSpecificPlants,
+    onSuccess: invalidateMovedPlants
   })
   const reverseMutation = useMutation({
     mutationFn: ({ plantPk, event, reason }: { plantPk: number; event: number; reason: string }) => reverseSpecificPlantEvent(plantPk, { event, reason }),
@@ -884,6 +926,19 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       }))
     })
   )
+  // Every seedling still standing in the tray, read in the order the grid draws
+  // them: a run of pots typed as a range is paired with the selection in that
+  // order, so selecting the whole tray fills the bench the way it is walked.
+  // A finished seedling is not offered — repotting a culled plant would be
+  // recording where something that no longer exists is standing.
+  const allRepotCandidates = seedTrayCells.flatMap((row) =>
+    row.flatMap((cell) =>
+      (cell ? (cellCurrentPlantMap[cell.pk] ?? []) : [])
+        .filter((plant) => !plant.final_outcome_at)
+        .map((plant) => ({ plantPk: plant.pk, label: `Cell ${cell?.x_position}, ${cell?.y_position} · Plant #${plant.pk}` }))
+    )
+  )
+  const selectedRepotPlantPks = repotSelections.map((candidate) => candidate.plantPk)
   // Which sowing each selectable cell belongs to, so the entry form can tell
   // whether a seedling recorded now is a late arrival against a closed sowing.
   const sowingOfCellPlanting = plantings.reduce<Record<number, SeedTrayPlanting>>((sowings, planting) => {
@@ -951,6 +1006,19 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         ? selected.filter((selection) => selection.cellPlantingPk !== cellPlantingPk)
         : [...selected, { cellPlantingPk, cellLabel, quantity: 1 }]
     )
+  }
+
+  function toggleRepotSelection(plant: SpecificPlant, cellLabel: string) {
+    setRepotSelections((selected) =>
+      selected.some((candidate) => candidate.plantPk === plant.pk)
+        ? selected.filter((candidate) => candidate.plantPk !== plant.pk)
+        : [...selected, { plantPk: plant.pk, label: cellLabel }]
+    )
+  }
+
+  async function handleRepotRun(run: PlantRepotting) {
+    await repotMutation.mutateAsync(run)
+    setRepotSelections([])
   }
 
   function changeGerminationQuantity(cellPlantingPk: number, quantity: number) {
@@ -1369,6 +1437,17 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           </Button>
         )}
       </div>
+      <div className="d-flex align-items-center gap-2 mb-2">
+        <span className="text-muted">Select seedlings to pot the tray on into numbered pots.</span>
+        <Button size="sm" variant="outline-primary" onClick={() => setRepotSelections(allRepotCandidates)} disabled={allRepotCandidates.length === 0}>
+          Select every seedling
+        </Button>
+        {repotSelections.length > 0 && (
+          <Button size="sm" variant="outline-secondary" onClick={() => setRepotSelections([])}>
+            Clear selection
+          </Button>
+        )}
+      </div>
       <Table border={2} cellPadding={5} cellSpacing={0}>
         <tbody>
           {seedTrayModel &&
@@ -1383,7 +1462,9 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
                     plants={cell ? (cellCurrentPlantMap[cell.pk] ?? []) : []}
                     germinatedByCellPlanting={germinatedByCellPlanting}
                     selectedCellPlantingPks={selectedCellPlantingPks}
+                    selectedRepotPlantPks={selectedRepotPlantPks}
                     onToggleGermination={toggleGerminationSelection}
+                    onToggleRepot={toggleRepotSelection}
                     onOpenMove={openMoveForm}
                     onWithdrawGermination={handleWithdrawGermination}
                     locationLabel={locationLabel}
@@ -1404,6 +1485,28 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           onChangeNotes={setGerminationNotes}
           onSave={handleRecordGermination}
           onCancel={() => setGerminationSelections([])}
+        />
+      )}
+      {/* Both forms open directly under the grid they were opened from. The
+          plant list below is long enough to scroll past, and a form that
+          appeared beyond it would ask the operator to leave the cells they are
+          reading to answer it. */}
+      {repotSelections.length > 0 && <RepotRunForm candidates={repotSelections} busy={repotMutation.isPending} onRepot={handleRepotRun} onCancel={() => setRepotSelections([])} />}
+      {moveForm && (
+        <MovePlantForm
+          form={moveForm}
+          gardenSquares={gardenSquares}
+          allSeedTrays={seedTrays}
+          moveCells={moveCellsQuery.data}
+          moveCellsLoading={moveCellsQuery.isPending}
+          potItems={potItems}
+          pots={pots}
+          potsLoading={potsLoading}
+          onChange={setMoveForm}
+          onChangeTray={handleMoveTrayChange}
+          onChangePotItem={handleMovePotItemChange}
+          onSave={handleRecordMove}
+          onCancel={() => setMoveForm(undefined)}
         />
       )}
       <Card className="mb-3">
@@ -1439,23 +1542,6 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           )}
         </Card.Body>
       </Card>
-      {moveForm && (
-        <MovePlantForm
-          form={moveForm}
-          gardenSquares={gardenSquares}
-          allSeedTrays={seedTrays}
-          moveCells={moveCellsQuery.data}
-          moveCellsLoading={moveCellsQuery.isPending}
-          potItems={potItems}
-          pots={pots}
-          potsLoading={potsLoading}
-          onChange={setMoveForm}
-          onChangeTray={handleMoveTrayChange}
-          onChangePotItem={handleMovePotItemChange}
-          onSave={handleRecordMove}
-          onCancel={() => setMoveForm(undefined)}
-        />
-      )}
       <PlantOutcomeDialog
         plant={selectedOutcome?.plant}
         outcome={selectedOutcome?.outcome}
