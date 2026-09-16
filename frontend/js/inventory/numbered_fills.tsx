@@ -6,6 +6,7 @@ import { Link } from 'react-router'
 import { PotFill, openNumberedPotFills } from '../api/container_fills'
 import { InputApplicationForm } from '../applications/application_form'
 import { getSerializedUnits } from '../api/inventory'
+import { NAMED_IN_A_MESSAGE, NumberRange, numberList, parseBenchNumbers, rangeNumbers } from './bench_numbers'
 import { PotCodeField, useNumberedPotDestinations } from '../plantings/pot_destinations'
 import { queryKeys } from '../query'
 import { InventoryItem, SerializedInventoryUnit } from '../types/inventory'
@@ -16,55 +17,6 @@ import { messagesByField } from '../utils'
 // rather than a formality; saying it here stops a wide range being typed,
 // fetched and sent only to come back refused.
 const MAX_BENCH_POTS = 500
-
-// How many numbers a message spells out before it starts counting instead. A
-// dozen is enough to go and look at the pots; two hundred is a wall.
-const NAMED_IN_A_MESSAGE = 12
-
-interface NumberRange {
-  from: number
-  to: number
-}
-
-interface TypedBench {
-  ranges: Array<NumberRange>
-  unreadable: Array<string>
-  count: number
-}
-
-// A bench is described the way it is written on the bench card: `81-123`, or
-// `81-123, 130`, or one number on its own. An en dash is accepted because a
-// phone keyboard and a copied spreadsheet cell both produce one, and `to`
-// because that is how a range gets read out loud.
-function parseBenchNumbers(text: string): TypedBench {
-  const ranges: Array<NumberRange> = []
-  const unreadable: Array<string> = []
-  for (const part of text.split(',').map((entry) => entry.trim())) {
-    if (!part) continue
-    const match = /^#?(\d+)(?:\s*(?:-|–|—|to)\s*#?(\d+))?$/.exec(part)
-    const from = match ? Number(match[1]) : 0
-    const to = match?.[2] === undefined ? from : Number(match[2])
-    if (!match || to < from) unreadable.push(part)
-    else ranges.push({ from, to })
-  }
-  return { ranges, unreadable, count: ranges.reduce((running, range) => running + range.to - range.from + 1, 0) }
-}
-
-function rangeNumbers(ranges: Array<NumberRange>): Array<number> {
-  const numbers = new Set<number>()
-  for (const range of ranges) {
-    for (let number = range.from; number <= range.to; number += 1) numbers.add(number)
-  }
-  return [...numbers].sort((first, second) => first - second)
-}
-
-function numberList(numbers: Array<number>): string {
-  const named = numbers
-    .slice(0, NAMED_IN_A_MESSAGE)
-    .map((number) => `#${number}`)
-    .join(', ')
-  return numbers.length > NAMED_IN_A_MESSAGE ? `${named} and ${numbers.length - NAMED_IN_A_MESSAGE} more` : named
-}
 
 // Why a pot that exists still cannot be filled. The same conditions are
 // enforced by the server under a lock, which is what makes them true; saying

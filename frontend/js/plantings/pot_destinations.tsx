@@ -133,16 +133,27 @@ async function findPotByNumber(number: number): Promise<SerializedInventoryUnit 
   return found
 }
 
+// Why a pot that exists still cannot be stood in, in the words the operator
+// needs: they are holding the container, so a dropped scan has to say what was
+// wrong with it. A pot already holding a plant is not one of these — several
+// plants legitimately share one — which is why that is said in the label
+// instead of refused here.
+function potRefusal(unit: SerializedInventoryUnit, potItems: Array<InventoryItem>): string | undefined {
+  if (!potItems.some((item) => item.pk === unit.item)) {
+    return `${unit.item_name} #${unit.pk} is not a pot a plant can stand in.`
+  }
+  if (!unit.active || unit.physical_state !== 'available') {
+    return `#${unit.pk} ${unit.asset_code} is not on hand.`
+  }
+  return undefined
+}
+
 // The checks every way of naming a pot shares: that it is a pot at all, and
 // that it is still in the nursery.
 function standablePot(unit: SerializedInventoryUnit | undefined, potItems: Array<InventoryItem>): PotLookup {
   if (!unit) return { message: 'No pot carries that number.' }
-  if (!potItems.some((item) => item.pk === unit.item)) {
-    return { message: `${unit.item_name} #${unit.pk} is not a pot a plant can stand in.` }
-  }
-  if (!unit.active || unit.physical_state !== 'available') {
-    return { message: `#${unit.pk} ${unit.asset_code} is not on hand.` }
-  }
+  const refusal = potRefusal(unit, potItems)
+  if (refusal) return { message: refusal }
   return { pot: unit, message: `Selected ${potOptionLabel(unit)}.` }
 }
 
@@ -189,4 +200,4 @@ function PotCodeField({ potItems, onFound }: PotCodeFieldProps) {
   )
 }
 
-export { PotCodeField, potOptionLabel, useNumberedPotDestinations }
+export { PotCodeField, potOptionLabel, potRefusal, useNumberedPotDestinations }
