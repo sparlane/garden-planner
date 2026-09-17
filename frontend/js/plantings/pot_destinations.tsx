@@ -2,8 +2,8 @@ import React from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Button, Form } from 'react-bootstrap'
 
-import { getInventoryItems, getSerializedUnit, getSerializedUnits } from '../api/inventory'
-import { resolveLabel } from '../api/labels'
+import { getInventoryItems, getSerializedUnits } from '../api/inventory'
+import { findPotByCode } from '../inventory/code_lookup'
 import { queryKeys } from '../query'
 import { InventoryItem, SerializedInventoryUnit } from '../types/inventory'
 
@@ -81,56 +81,13 @@ interface PotLookup {
   message: string
 }
 
-// Find the pot a code belongs to, trying the two codes a pot answers to. The
-// label code is what is printed on the pot, and `/labels/resolve/` is asked
-// first because it is also what a QR scan pastes in and what knows about a
-// code that has been replaced or belongs to another workspace. An asset code
-// is the identity the unit itself carries, which is what the pickers show and
-// what the container's own page prints, so it is tried when no label uses the
-// value.
-//
-// `potItems` is the gate on what the code is allowed to be. A numbered seed
-// tray is an inventory unit with a label too, and the placement rules check
-// only that a container is individually numbered, so nothing downstream would
-// stop a tray's code from standing a plant "in" the tray: a plant in a tray is
-// described by its cell.
-async function findPotByCode(value: string, potItems: Array<InventoryItem>): Promise<PotLookup> {
-  const typed = value.trim()
-  // Digits are the pot's number rather than part of a code. Nothing else it
-  // answers to can be read that way — both a label code and an asset code carry
-  // their prefix — and the asset-code filter matches on a fragment, so `81`
-  // left to the code path would quietly find every pot with 81 in its hex.
-  if (/^#?\d+$/.test(typed)) return standablePot(await findPotByNumber(Number(typed.replace('#', ''))), potItems)
-  const resolution = await resolveLabel(typed)
-  let unit: SerializedInventoryUnit | undefined
-  if (resolution.status === 'unknown') {
-    // The asset-code filter matches on a fragment, so a partial code that
-    // names two pots has to be refused rather than guessed at.
-    const matches = await getSerializedUnits({ asset_code: typed })
-    const exact = matches.find((candidate) => candidate.asset_code.toUpperCase() === typed.toUpperCase())
-    if (!exact && matches.length > 1) {
-      return { message: `${matches.length} pots match ${typed}. Type or scan the whole code.` }
-    }
-    unit = exact ?? matches[0]
-    if (!unit) return { message: `No label or pot carries the code ${typed}.` }
-  } else if (resolution.status !== 'active' || !resolution.target) {
-    return { message: resolution.message }
-  } else if (resolution.target.target_type !== 'inventoryunit') {
-    return { message: `${resolution.target.display} is not a pot.` }
-  } else {
-    unit = await getSerializedUnit(resolution.target.object_id)
-  }
-  return standablePot(unit, potItems)
-}
-
-// The number is a whole answer on its own: it names one unit in the nursery,
-// so there is no fragment to disambiguate and nothing to guess at. The range
-// filter is what asks, rather than the unit's own route, because a number
-// nobody has issued has to come back as an empty answer to report rather than
-// as a failed request.
-async function findPotByNumber(number: number): Promise<SerializedInventoryUnit | undefined> {
-  const [found] = await getSerializedUnits({ number_from: number, number_to: number })
-  return found
+// Resolution is shared with navigation; only choosing a destination applies
+// these placement refusals.
+async function choosePotByCode(value: string, potItems: Array<InventoryItem>): Promise<PotLookup> {
+  const found = await findPotByCode(value)
+  if (found.target) return { message: `${found.target.display} is not a pot.` }
+  if (!found.unit) return { message: found.message }
+  return standablePot(found.unit, potItems)
 }
 
 // Why a pot that exists still cannot be stood in, in the words the operator
@@ -171,7 +128,7 @@ interface PotCodeFieldProps {
 function PotCodeField({ potItems, onFound }: PotCodeFieldProps) {
   const [value, setValue] = React.useState('')
   const lookup = useMutation({
-    mutationFn: (code: string) => findPotByCode(code, potItems),
+    mutationFn: (code: string) => choosePotByCode(code, potItems),
     onSuccess: (found) => {
       if (found.pot) onFound(found.pot)
     }

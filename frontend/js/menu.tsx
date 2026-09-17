@@ -18,7 +18,8 @@ function GPTopBar({ workspace }: GPTopBarProps) {
   const advanced = isAdvanced(workspace)
   const seedsActive = pathname === '/seeds' || pathname.startsWith('/seeds/')
   const plantingActive = pathname === '/plantings' || pathname.startsWith('/plantings/') || pathname === '/health' || pathname.startsWith('/health/')
-  const inventoryActive = pathname === '/inventory' || pathname.startsWith('/applications') || pathname.startsWith('/locations')
+  const inventoryActive =
+    pathname === '/inventory' || pathname.startsWith('/inventory/serialized-units') || pathname.startsWith('/applications') || pathname.startsWith('/locations')
   const salesActive = pathname === '/sales' || pathname.startsWith('/sales/')
   const purchasingActive = pathname === '/purchasing' || pathname.startsWith('/purchasing/')
   const bookkeepingActive = pathname === '/bookkeeping' || pathname.startsWith('/bookkeeping/')
@@ -165,6 +166,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
           <NavDropdown title="Inventory" active={inventoryActive}>
             <NavDropdown.Item as={NavLink} to="/inventory" end>
               Catalog
+            </NavDropdown.Item>
+            <NavDropdown.Item as={NavLink} to="/inventory/serialized-units">
+              Find a numbered pot
             </NavDropdown.Item>
             <NavDropdown.Item as={NavLink} to="/locations">
               Locations

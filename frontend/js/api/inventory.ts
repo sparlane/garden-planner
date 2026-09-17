@@ -91,6 +91,22 @@ function getSerializedUnits(filters: SerializedUnitFilters = {}, signal?: AbortS
   return fetchAsJson<Array<SerializedInventoryUnit>>(`${SERIALIZED_UNITS_URL}${query}`, signal)
 }
 
+// A fragment can match more than a page. The resolver needs all matches to
+// prefer an exact code and report the true ambiguity count.
+async function getSerializedUnitsByCode(code: string): Promise<Array<SerializedInventoryUnit>> {
+  const matches: Array<SerializedInventoryUnit> = []
+  let page = 1
+  while (true) {
+    const params = new URLSearchParams({ asset_code: code, page: String(page) })
+    const result = await fetchAsJson<{ results: Array<SerializedInventoryUnit>; next: string | null }>(`${SERIALIZED_UNITS_URL}?${params}`, undefined, true)
+    matches.push(...result.results)
+    if (!result.next) return matches
+    page += 1
+  }
+}
+
+export { getSerializedUnitsByCode }
+
 function getInventoryUnits(signal?: AbortSignal): Promise<Array<InventoryUnit>> {
   return fetchAsJson<Array<InventoryUnit>>('/inventory/units/', signal)
 }
