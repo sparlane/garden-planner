@@ -24,6 +24,7 @@ import { InventoryCatalog } from './inventory.js'
 import { LocationsCatalog } from './locations.js'
 import { InventoryReceiptsView } from './inventory/receipts.js'
 import { StocktakeDetailView, StocktakeListView } from './inventory/stocktakes.js'
+import { NumberedUnitLookup, NumberedUnitByNumberRoute } from './inventory/lookup.js'
 import { NumberedUnitDetails } from './inventory/unit_details.js'
 import { InputApplicationsView } from './applications/applications.js'
 import { ProductionBatchDetailView, ProductionBatchTable } from './plantings/batches.js'
@@ -246,6 +247,8 @@ function FrontEndPage() {
         <Route path="/inventory/receipts" element={<InventoryReceiptsView />} />
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
+        <Route path="/inventory/serialized-units" element={<NumberedUnitLookup />} />
+        <Route path="/inventory/serialized-units/by-number/:number" element={<NumberedUnitByNumberRoute />} />
         <Route path="/inventory/serialized-units/:unitId" element={<NumberedUnitDetailsRoute />} />
         <Route path="/purchasing" element={<PurchasingView workspace={workspace} />} />
         <Route

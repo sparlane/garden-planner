@@ -96,6 +96,7 @@ const queryKeys = {
     receipts: (status: string, seedPacket: string) => ['inventory', 'receipts', status, seedPacket] as const,
     balances: (itemPk: number | '') => ['inventory', 'balances', itemPk] as const,
     serializedUnit: (pk: number) => ['inventory', 'serialized-units', pk] as const,
+    serializedUnitByNumber: (number: string) => ['inventory', 'serialized-unit-by-number', number] as const,
     serializedUnits: (itemPk: number | '', state: string) => ['inventory', 'serialized-units', 'list', itemPk, state] as const,
     stocktakes: ['inventory', 'stocktakes'] as const,
     stocktake: (pk: number) => ['inventory', 'stocktakes', pk] as const

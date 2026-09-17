@@ -25,3 +25,22 @@ function labelTargetLabel(targetType: string): string {
 }
 
 export { LABEL_TARGET_LABELS, LABEL_TARGET_TYPES, labelTargetLabel }
+
+// A location has a catalog but no record page yet. Keep it explicit, so a scan
+// never appears to succeed by opening an unrelated collection.
+const LABEL_TARGET_ROUTES: Record<string, string | null> = {
+  inventoryunit: '/inventory/serialized-units/',
+  specificplant: '/plantings/plants/',
+  plantcohort: '/plantings/cohorts/',
+  seedtray: '/seedtrays/',
+  productionbatch: '/plantings/batches/',
+  location: null,
+  gardenarea: '/gardens/'
+}
+
+function labelTargetRoute(targetType: string, objectId: number): string | undefined {
+  const route = LABEL_TARGET_ROUTES[targetType]
+  return route ? `${route}${objectId}` : undefined
+}
+
+export { labelTargetRoute }
