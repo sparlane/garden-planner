@@ -578,6 +578,19 @@ def application_sources(batch, generation_ids, cell_weights):
     return sources
 
 
+def pot_media_line_parts(line, fill, participants, share_count):
+    """Reserve identical per-line slots for departure posting and previews."""
+    unit_cost = line.lot.base_unit_cost
+    amount = None if unit_cost is None else quantize_money(line.applied_base_quantity * unit_cost)
+    if fill.stock_lot_id:
+        return (
+            counted_parts(line.applied_base_quantity, fill.container_count, participants, QUANTITY_QUANTUM),
+            counted_parts(amount, fill.container_count, participants, MONEY_QUANTUM),
+        )
+    weights = [Decimal('1')] * share_count
+    return distribute_exactly(line.applied_base_quantity, weights, QUANTITY_QUANTUM), distribute_exactly(amount, weights)
+
+
 def pot_media_sources(batch):
     """Value pot-fill departures against the original sharing basis, once.
 
@@ -603,14 +616,7 @@ def pot_media_sources(batch):
             # Incomplete history cannot allocate the missing participants' mix.
             continue
         unit_cost = line.lot.base_unit_cost
-        amount = None if unit_cost is None else quantize_money(line.applied_base_quantity * unit_cost)
-        if fill.stock_lot_id:
-            quantities = counted_parts(line.applied_base_quantity, fill.container_count, len(participants), QUANTITY_QUANTUM)
-            amounts = counted_parts(amount, fill.container_count, len(participants), MONEY_QUANTUM)
-        else:
-            weights = [Decimal('1')] * fill.plant_share_count
-            quantities = distribute_exactly(line.applied_base_quantity, weights, QUANTITY_QUANTUM)
-            amounts = distribute_exactly(amount, weights)
+        quantities, amounts = pot_media_line_parts(line, fill, len(participants), fill.plant_share_count)
         for placement, quantity, cost in zip(participants, quantities, amounts):
             if placement.ended is None or placement.specific_plant.batch_id != batch.pk:
                 continue

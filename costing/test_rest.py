@@ -163,6 +163,8 @@ class PlantCostBreakdownTests(CostingServiceTestCase):
         response = self.client.get(f'/costing/plants/{self.plant.pk}/')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data['provisional_value'], '1.0800')
+        self.assertEqual(response.data['sale_without_pot'], '1.0800')
+        self.assertEqual([row['amount'] for row in response.data['pending']], ['0.0000', '0.0000'])
         self.assertIsNone(response.data['final_value'])
         self.assertEqual(response.data['disposition'], 'plant_inventory')
         self.assertEqual(response.data['state'], 'growing')
@@ -178,11 +180,16 @@ class PlantCostBreakdownTests(CostingServiceTestCase):
                 'disposition',
                 'final_value',
                 'layers',
+                'pending',
                 'plant',
+                'pot_requires_plants',
                 'provisional',
                 'provisional_value',
+                'sale_with_pot',
+                'sale_without_pot',
                 'state',
                 'unknown_cost',
+                'with_pot_available',
             ],
         )
 
