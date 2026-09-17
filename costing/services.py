@@ -41,6 +41,7 @@ from plantings.lifecycle import LifecycleState, lifecycle_summaries
 from plantings.models import ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .allocation import combine, loss_shares, value_shares
+from .pending import plant_pending_cost, plant_sale_totals
 from .models import CostAllocation, CostAllocationRun, FillDepartureRecalculation
 from .sources import batch_sources, sold_cohort_quantities
 
@@ -630,7 +631,10 @@ def plant_cost_breakdown(plant):
     value = sum(known, Decimal('0'))
     state, disposition = plant_dispositions(batch).get(plant.pk, (None, None))
     frozen = is_frozen(batch)
+    pending = plant_pending_cost(plant)
     return {
+        **pending,
+        **plant_sale_totals(value, len(known) != len(rows), pending),
         'plant': plant.pk,
         'batch': batch.pk,
         'currency_code': batch.workspace.currency_code,
