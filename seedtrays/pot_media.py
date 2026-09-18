@@ -100,6 +100,11 @@ def pot_fill_cost_breakdown(fill):
     Unknown acquisition costs remain unknown. The media ledger and these
     residuals are the source of the report; the pot's acquisition cost never
     changes when it is filled or cleaned.
+
+    `held_cost` is all media still in the fill, including the share in any
+    unplanted counted pots, and excludes both the pots and what the plants
+    cost to raise. It is not what the planted pots would cost to dispatch;
+    `costing.pot_pending.pot_fill_pending_cost` reports that.
     """
     media = pot_fill_contents(fill)
     departures = [row for row in pot_fill_shares(fill) if row['departed_at'] is not None]

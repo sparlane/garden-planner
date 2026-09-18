@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework_nested import routers
 
 from common.rest_query import parse_integer
+from costing.pot_pending import pot_fill_pending_cost
 from inventory.models import InventoryUnit, StockLot
 from locations.models import Location
 from plantings.counted_fills import plant_counted_fill
@@ -168,6 +169,8 @@ def _contents(workspace, fill):
                   for row in media],
         'costs': {key: format(value, 'f') if isinstance(value, Decimal) else value
                   for key, value in pot_fill_cost_breakdown(fill).items()},
+        # What would leave with the planted pots; `costs.held_cost` is not this.
+        'pot_costs': pot_fill_pending_cost(fill),
     }
 
 
@@ -222,7 +225,7 @@ class PotFillViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):  # py
 
     @action(detail=True, methods=['get'])
     def contents(self, request, pk=None):  # pylint: disable=unused-argument
-        """Preview held plants, remaining media, costs and the clean confirmation digest."""
+        """Preview held plants, remaining media, costs, planted-pot costs and the clean digest."""
         return Response(_run(_contents, self.get_current_workspace(), self.get_object()))
 
     @action(detail=True, methods=['post'])
