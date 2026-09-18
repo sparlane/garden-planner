@@ -156,8 +156,10 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
   return (
     <main className="container py-3">
       <h1>
-        Plant #{plant.pk} <LifecycleStateBadge state={plant.lifecycle_state} />
+        {plant.plant_name === null ? 'Plant' : `${plant.plant_name} - ${plant.variety_name}`} <small className="text-muted">#{plant.pk}</small>{' '}
+        <LifecycleStateBadge state={plant.lifecycle_state} />
       </h1>
+      {plant.name !== '' && <p className="lead mb-1">{plant.name}</p>}
       <p>
         Raised in batch <NavLink to={`/plantings/batches/${plant.batch}`}>#{plant.batch}</NavLink>, germinated {formatDateTime(plant.germinated)}.
       </p>

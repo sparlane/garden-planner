@@ -585,7 +585,10 @@ interface SpecificPlant {
   pk: number
   label_code: string
   cell_planting: number
+  name: string
   batch: number
+  plant_name: string | null
+  variety_name: string | null
   germinated: string
   notes?: string
   locations: Array<SpecificPlantLocation>

@@ -380,6 +380,26 @@ class PositiveQuantityAPITests(TestCase):  # pylint: disable=too-many-public-met
         self.assertEqual(plant.notes, 'Updated notes')
         self.assertEqual(plant.cell_planting, cell_planting)
 
+    def test_specific_plant_detail_names_what_the_plant_is(self):
+        """The plant screen can say what it is without a second batch lookup."""
+        cell_planting = SeedTrayCellPlanting.objects.create(
+            seed_tray_planting=self.original_planting,
+            cell=self.cell,
+            quantity=1,
+        )
+        create_response = self.client.post(
+            '/plantings/specificplants/',
+            data=json.dumps({'cell_planting': cell_planting.pk}),
+            content_type='application/json',
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        response = self.client.get(f'/plantings/specificplants/{create_response.json()["pk"]}/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['plant_name'], 'Carrot')
+        self.assertEqual(response.json()['variety_name'], 'Nantes')
+
     def test_specific_plant_cannot_be_reassigned(self):
         """Changing a plant's origin cannot bypass another cell's capacity."""
         first_cell_planting = SeedTrayCellPlanting.objects.create(
