@@ -53,6 +53,12 @@ Features
   - Individual plant locations are the source of truth for new transplant workflows. Legacy aggregate rows remain visible and completable but cannot be created through the REST API.
   - Views compute germination/maturity dates (using variety/plant metadata) and return JSON summaries without double-counting legacy and individual transplant representations.
 
+- One plant's whole history
+  - The nursery cost panel separates committed ledger cost from pending mix and pot shares, and previews sale cost with and without the pot. Shared-pot totals require every occupant to leave together; unknown prices and incomplete fill histories leave totals unavailable. Reading the panel does not post costs early.
+  - A plant's screen opens with everything recorded about it in one sequence: what became of it, what was done to it in the nursery, when health held or released it, and what a customer was promised, plus the block's history from before a promoted plant had an identity.
+  - It is a projection over those existing records and writes nothing, so no fact is stored twice and the sequence cannot drift from the per-source histories, all of which stay on the same screen.
+  - A corrected fact stays visible, struck through, and the entry that corrected it says so. The traceability report reads the same projection.
+
 - Nursery planning feedback
   - Planning assumptions are effective-dated, and each version is compared with the batches sown under it: assumed and observed germination rate, stage durations, stage loss rates, and clusters per tray, each with the sample size behind it.
   - A batch is measured against the assumption its approved plan requirement names, or failing that the version in force on the day it was first sown.

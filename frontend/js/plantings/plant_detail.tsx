@@ -11,7 +11,7 @@ import { PlantCostBreakdown } from '../types/costing'
 import { SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
 import { formatDate, formatDateTime, formatMoney } from '../utils'
-import { costSourceLabel } from './cost_sources'
+import { costSourceLabel, PENDING_COST_LABELS } from './cost_sources'
 import { placementLabel } from './placements'
 import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
 import { PlantTimeline } from './timeline'
@@ -56,14 +56,14 @@ function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
   return (
     <>
       <dl className="row mb-2">
-        <dt className="col-sm-5">Provisional value</dt>
+        <dt className="col-sm-5">Committed (provisional)</dt>
         <dd className="col-sm-7">{formatMoney(breakdown.provisional_value, breakdown.currency_code, 'Final')}</dd>
-        <dt className="col-sm-5">Final value</dt>
+        <dt className="col-sm-5">Committed (final)</dt>
         <dd className="col-sm-7">{formatMoney(breakdown.final_value, breakdown.currency_code, 'Still provisional')}</dd>
       </dl>
       {breakdown.unknown_cost && <p className="text-muted small">Some inputs reaching this plant have no recorded unit cost, so this figure is incomplete.</p>}
       {breakdown.layers.length === 0 ? (
-        <p className="text-muted mb-0">No cost has reached this plant yet.</p>
+        <p className="text-muted mb-0">No cost has been posted to this plant yet.</p>
       ) : (
         <Table size="sm" className="mb-0">
           <thead>
@@ -85,6 +85,37 @@ function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
             ))}
           </tbody>
         </Table>
+      )}
+      <h3 className="h6 mt-3">Pending cost</h3>
+      <Table size="sm">
+        <thead>
+          <tr>
+            <th>Input</th>
+            <th>Amount</th>
+            <th>Why pending</th>
+          </tr>
+        </thead>
+        <tbody>
+          {breakdown.pending.map((entry) => (
+            <tr key={entry.kind}>
+              <td>{PENDING_COST_LABELS[entry.kind]}</td>
+              <td>{formatMoney(entry.amount, entry.currency_code, entry.not_yet_allocatable ? 'Not yet allocatable' : 'Unknown')}</td>
+              <td>{entry.reason}</td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      <dl className="row mb-0">
+        <dt className="col-sm-5">Sold without its pot</dt>
+        <dd className="col-sm-7">{formatMoney(breakdown.sale_without_pot, breakdown.currency_code, 'Unknown')}</dd>
+        <dt className="col-sm-5">Sold in its pot</dt>
+        <dd className="col-sm-7">{formatMoney(breakdown.sale_with_pot, breakdown.currency_code, breakdown.with_pot_available ? 'Unknown' : 'Unavailable')}</dd>
+      </dl>
+      {breakdown.pot_requires_plants.length > 1 && (
+        <p className="small">
+          The with-pot total is this plant’s share and applies only if all {breakdown.pot_requires_plants.length} occupants go together:{' '}
+          {breakdown.pot_requires_plants.map((pk) => `#${pk}`).join(', ')}.
+        </p>
       )}
     </>
   )
