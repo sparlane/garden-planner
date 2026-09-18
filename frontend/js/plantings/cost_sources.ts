@@ -1,4 +1,4 @@
-import { CostLayer, CostSourceType } from '../types/costing'
+import { CostLayer, CostSourceType, PendingPlantCost } from '../types/costing'
 
 // What each kind of input actually was, in a grower's words rather than the
 // subledger's column names. The batch breakdown and the plant breakdown both
@@ -23,3 +23,8 @@ function costSourceLabel(layer: CostLayer): string {
 }
 
 export { COST_SOURCE_LABELS, costSourceLabel }
+
+export const PENDING_COST_LABELS: Record<PendingPlantCost['kind'], string> = {
+  held_media: 'Mix held in the pot',
+  pot: 'Pot share if sold with the plant'
+}

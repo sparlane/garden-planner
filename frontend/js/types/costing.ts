@@ -101,7 +101,21 @@ interface BatchCostBreakdown {
   last_run: CostRunSummary | null
 }
 
+interface PendingPlantCost {
+  kind: 'held_media' | 'pot'
+  amount: string | null
+  currency_code: string
+  unknown_cost: boolean
+  not_yet_allocatable: boolean
+  reason: string
+}
+
 interface PlantCostBreakdown {
+  pending: Array<PendingPlantCost>
+  pot_requires_plants: Array<number>
+  with_pot_available: boolean
+  sale_without_pot: string | null
+  sale_with_pot: string | null
   plant: number
   batch: number
   currency_code: string
@@ -130,5 +144,6 @@ export type {
   CostSourceType,
   CostTargetType,
   PlantCostBreakdown,
+  PendingPlantCost,
   RecalculateCostsResponse
 }
