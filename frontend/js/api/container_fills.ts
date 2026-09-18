@@ -1,6 +1,7 @@
 import { csrfPost, fetchAsJson } from '../utils'
 import { CleanMediaDisposition, SeedTrayGenerationEvent } from '../types/seedtrays'
 import { SpecificPlantLocation } from '../types/plantings'
+import { PendingPlantCost } from '../types/costing'
 
 export type PotFillTarget = { inventory_unit: number } | { stock_lot: number; source_location: number }
 
@@ -35,6 +36,35 @@ export interface PotFillPage {
   results: PotFill[]
 }
 
+// Per currency, never added across currencies; `total` only when nothing is unknown
+// and there is exactly one currency to report.
+export interface PotCostSummary {
+  totals: Array<{ currency_code: string; amount: string | null }>
+  unknown_cost: boolean
+  mixed_currency: boolean
+  currency_code: string | null
+  total: string | null
+}
+
+export interface PlantedPotCost extends PotCostSummary {
+  container_unit: number | null
+  placement: number | null
+  container_cost: { amount: string | null; currency_code: string; unknown_cost: boolean }
+  dispatchable: boolean
+  plants: Array<{
+    plant: number
+    batch: number
+    committed: PotCostSummary
+    pending: PendingPlantCost[]
+    dispatch_blocked: 'quarantined' | 'not_sellable' | null
+  }>
+}
+
+export interface PotFillPendingCost extends PotCostSummary {
+  pot_count: number
+  pots: PlantedPotCost[]
+}
+
 export interface PotFillContents {
   digest: string
   status: 'open' | 'closed'
@@ -52,6 +82,7 @@ export interface PotFillContents {
     recovered_cost: string | null
     rounding_difference: string | null
   }
+  pot_costs: PotFillPendingCost
 }
 
 export function getPotFill(pk: number, signal?: AbortSignal): Promise<PotFill> {

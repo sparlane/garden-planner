@@ -10,6 +10,7 @@ import { queryKeys } from '../query'
 import { InventoryItem } from '../types/inventory'
 import { errorsByField, formatMoney, formatQuantity } from '../utils'
 import { PotFillClean } from './pot_fill_clean'
+import { PotFillCosts } from './pot_fill_costs'
 import { PotFillPlant } from './pot_fill_plant'
 import { PotFillNumber } from './pot_fill_number'
 
@@ -84,6 +85,8 @@ function FillContents({ pk }: { pk: number }) {
           ))}
         </tbody>
       </Table>
+      <p className="small text-muted">“Held in the fill” is all media still in it, including any unplanted pots, and excludes the pots themselves.</p>
+      <PotFillCosts costs={data.pot_costs} />
       {history.data?.events.some((event) => event.event_type === 'dispatched') ? (
         <p>This fill left with its plants. Corrections are recorded through the sale.</p>
       ) : (

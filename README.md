@@ -55,6 +55,7 @@ Features
 
 - One plant's whole history
   - The nursery cost panel separates committed ledger cost from pending mix and pot shares, and previews sale cost with and without the pot. Shared-pot totals require every occupant to leave together; unknown prices and incomplete fill histories leave totals unavailable. Reading the panel does not post costs early.
+  - A pot fill's preview prices each planted pot as it stands: its plants' committed and pending cost plus the container once, matching the cost of sale a with-pot dispatch records. Media in unplanted pots is not counted, currencies are never combined, and plants that cannot yet be dispatched are flagged but still costed.
   - A plant's screen opens with everything recorded about it in one sequence: what became of it, what was done to it in the nursery, when health held or released it, and what a customer was promised, plus the block's history from before a promoted plant had an identity.
   - It is a projection over those existing records and writes nothing, so no fact is stored twice and the sequence cannot drift from the per-source histories, all of which stay on the same screen.
   - A corrected fact stays visible, struck through, and the entry that corrected it says so. The traceability report reads the same projection.
