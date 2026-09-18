@@ -503,6 +503,11 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
     locations = SpecificPlantLocationSerializer(many=True, read_only=True)
     batch = serializers.IntegerField(source='batch_id', read_only=True)
     garden_planting = serializers.IntegerField(source='garden_planting_id', read_only=True)
+    #: What the plant is. Every origin carries a batch, and the batch is where
+    #: the variety was chosen, so this reads the same for tray, cohort and
+    #: garden plants.
+    plant_name = serializers.CharField(source='batch.variety.plant.name', read_only=True, allow_null=True)
+    variety_name = serializers.CharField(source='batch.variety.name', read_only=True, allow_null=True)
     lifecycle_state = serializers.SerializerMethodField()
     sellable = serializers.SerializerMethodField()
     final_outcome = serializers.SerializerMethodField()
@@ -525,6 +530,8 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
             'garden_planting',
             'name',
             'batch',
+            'plant_name',
+            'variety_name',
             'germinated',
             'notes',
             'reason',
@@ -934,7 +941,7 @@ class SpecificPlantViewSet(PlantTimelineViewSetMixin, PlantOutcomeViewSetMixin, 
     """
     ViewSet of SpecificPlant
     """
-    queryset = SpecificPlant.objects.prefetch_related(
+    queryset = SpecificPlant.objects.select_related('batch__variety__plant').prefetch_related(
         'locations', 'locations__seed_tray_cell', 'locations__garden_square',
         'locations__container_unit',
         'lifecycle_events', 'image_attachments',
@@ -1018,7 +1025,7 @@ class SpecificPlantBySeedTrayViewSet(TrayGenerationFilterMixin, CurrentWorkspace
     other way round this time, with the grid claiming seedlings the sowing says
     never came up.
     """
-    queryset = SpecificPlant.objects.prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'locations__container_unit', 'lifecycle_events').order_by('pk')
+    queryset = SpecificPlant.objects.select_related('batch__variety__plant').prefetch_related('locations', 'locations__seed_tray_cell', 'locations__garden_square', 'locations__container_unit', 'lifecycle_events').order_by('pk')
     serializer_class = SpecificPlantSerializer
     pagination_class = None
     generation_lookup = 'cell_planting__seed_tray_planting__generation'
