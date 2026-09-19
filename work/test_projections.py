@@ -15,13 +15,17 @@ from plantings.assumption_variance import revise_assumption
 from plantings.germination import close_germination, reopen_germination
 from plantings.models import (
     GardenSquareTransplant,
+    NurseryPlanDemand,
+    NurseryProductionPlan,
     ProductionBatch,
     SeedTrayPlanting,
     SpecificPlantLocation,
 )
+from plantings.planning import approve_plan, calculate_plan
 from tests.factories import (
     make_garden_row_sowing,
     make_garden_square,
+    make_location,
     make_plant_variety,
     make_planning_assumption,
     make_planning_stage_assumption,
@@ -514,3 +518,43 @@ class MergedRuleProjectionTests(TestCase):
         keys = [task.key for task in projected_tasks(self.workspace)]
         self.assertEqual(len(WorkTask.objects.filter(workspace=self.workspace)), 0)
         self.assertEqual(len(keys), 1)
+
+
+class MilestoneLocationLabelTests(TestCase):
+    """A milestone that names a bench names it the way every other screen does."""
+
+    def setUp(self):
+        self.workspace = get_current_workspace()
+        self.workspace.mode = self.workspace.Mode.NURSERY
+        self.workspace.timezone = 'Pacific/Auckland'
+        self.workspace.save()
+        WorkTaskRule.objects.filter(workspace=self.workspace).exclude(
+            code='planned-milestone',
+        ).delete()
+
+    def test_the_location_link_is_labelled_with_its_ancestry(self):
+        """`full_name` is a serializer field, not a model attribute (task 154)."""
+        user = get_user_model().objects.create_user(username='planner')
+        variety = make_plant_variety(workspace=self.workspace)
+        greenhouse = make_location(workspace=self.workspace, name='Greenhouse')
+        bench = make_location(
+            workspace=self.workspace, name='Bench 2', parent=greenhouse,
+        )
+        assumption = make_planning_assumption(variety=variety)
+        make_planning_stage_assumption(assumption=assumption, location=bench)
+        plan = NurseryProductionPlan.objects.create(
+            workspace=self.workspace, code='PLAN-1',
+        )
+        NurseryPlanDemand.objects.create(
+            plan=plan, variety=variety, target_quantity=10,
+            ready_from=date(2026, 4, 1), ready_until=date(2026, 4, 30),
+            source=NurseryPlanDemand.Source.FORECAST,
+        )
+        calculate_plan(plan)
+        approve_plan(plan, user)
+
+        tasks = projected_tasks(self.workspace)
+
+        self.assertEqual(len(tasks), 1)
+        labels = [link.label for link in tasks[0].targets if link.url == '/locations']
+        self.assertEqual(labels, ['Greenhouse / Bench 2'])
