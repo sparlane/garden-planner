@@ -95,8 +95,24 @@ DISPOSITION_OF_STATE = {
     LifecycleState.WITHDRAWN: 'unattributed',
 }
 
-#: Every bucket a batch's value can sit in. `cogs` stays empty until tasks 44
-#: and 45 introduce the orders that sell a plant; it is listed so a report never
+#: Where the value still standing in an anonymous block goes, by the block's
+#: state. The block's sold and lost units are already their own targets, so
+#: this only ever sorts the units it still holds, and every state that holds
+#: units is stock on hand, exactly as the same plants are once promoted. A
+#: quarantined block is not a state here: quarantine is a health overlay a
+#: block carries in any state, and it is still stock the workspace holds, as
+#: `quarantined` is on the plant side. A depleted block holds no units, so it
+#: never has a layer left standing against it; one that somehow outlived the
+#: reallocation is a fault upstream, and `unresolved` is where it shows as one
+#: rather than being absorbed as stock or loss.
+DISPOSITION_OF_COHORT_STATE = {
+    PlantCohort.LifecycleState.GROWING: 'plant_inventory',
+    PlantCohort.LifecycleState.AVAILABLE: 'plant_inventory',
+    PlantCohort.LifecycleState.RETAINED: 'plant_inventory',
+    PlantCohort.LifecycleState.DEPLETED: 'unresolved',
+}
+
+#: Every bucket a batch's value can sit in, listed in full so a report never
 #: has to guess whether a missing key means zero or means unsupported.
 VALUE_BUCKETS = (
     'plant_inventory',
@@ -595,10 +611,21 @@ def plant_dispositions(batch):
     }
 
 
-def _bucket_of(row, dispositions):
+def cohort_dispositions(batch):
+    """Return the bucket the stock standing in each of a batch's blocks belongs in."""
+    return {
+        cohort_id: DISPOSITION_OF_COHORT_STATE[state]
+        for cohort_id, state in
+        PlantCohort.objects.filter(batch=batch).values_list('pk', 'lifecycle_state')
+    }
+
+
+def _bucket_of(row, dispositions, cohorts):
     """Return which value bucket one layer belongs in."""
     if row.target_type == TargetType.SPECIFIC_PLANT:
         return dispositions.get(row.specific_plant_id, (None, 'plant_inventory'))[1]
+    if row.target_type == TargetType.PLANT_COHORT:
+        return cohorts.get(row.plant_cohort_id, 'plant_inventory')
     if row.target_type == TargetType.COHORT_SALE:
         return 'cogs'
     if row.target_type in (TargetType.PRODUCTION_LOSS, TargetType.COHORT_LOSS):
@@ -686,7 +713,7 @@ def _loaded_allocations(batch):
     )
 
 
-def _totals(rows, dispositions):
+def _totals(rows, dispositions, cohorts):
     """Total each value bucket, reporting unknown cost rather than zero."""
     totals = {bucket: Decimal('0') for bucket in VALUE_BUCKETS}
     unknown = False
@@ -694,7 +721,7 @@ def _totals(rows, dispositions):
         if row.amount is None:
             unknown = True
             continue
-        totals[_bucket_of(row, dispositions)] += row.amount
+        totals[_bucket_of(row, dispositions, cohorts)] += row.amount
     return totals, unknown
 
 
@@ -709,7 +736,7 @@ def batch_cost_breakdown(batch):
     """
     rows = _loaded_allocations(batch)
     dispositions = plant_dispositions(batch)
-    totals, unknown = _totals(rows, dispositions)
+    totals, unknown = _totals(rows, dispositions, cohort_dispositions(batch))
     frozen = is_frozen(batch)
     allocated = sum(totals.values(), Decimal('0'))
     plants = {}
