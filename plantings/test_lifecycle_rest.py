@@ -311,6 +311,27 @@ class PlantEventReversalActionTests(PlantLifecycleRESTTestCase):
         self.assertIn(failure['pk'], history)
         self.assertEqual(history[failure['pk']]['reversed_by'], response.data['pk'])
 
+    def test_reversing_a_failure_puts_the_plant_back_in_its_cell(self):
+        """The plant never left, so it can be repotted from where it stands."""
+        failure = self.post_outcome(self.plant.pk, 'fail').data
+        response = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/reverse-event/',
+            {'event': failure['pk'], 'reason': 'Recorded against the wrong plant.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+
+        moved = self.client.post(
+            f'/plantings/specificplants/{self.plant.pk}/move/',
+            {'location_type': SpecificPlantLocation.GARDEN_SQUARE, 'garden_square': make_garden_square().pk},
+            format='json',
+        )
+        self.assertEqual(moved.status_code, 201, moved.data)
+        self.location.refresh_from_db()
+        self.assertIsNotNone(self.location.ended)
+
     def test_a_reversal_requires_a_reason(self):
         """Audited corrections always say why they were needed."""
         failure = self.post_outcome(self.plant.pk, 'fail').data

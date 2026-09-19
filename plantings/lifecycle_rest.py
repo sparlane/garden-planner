@@ -295,6 +295,7 @@ class PlantOutcomeViewSetMixin:
             request.user,
             values['reason'],
             occurred_at=values.get('occurred_at'),
+            restore_location=True,
         )
         return Response(
             PlantLifecycleEventSerializer(correction).data,
