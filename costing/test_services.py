@@ -26,6 +26,7 @@ from applications.services import (
     reverse_application,
 )
 from applications.models import InputApplicationTarget
+from inventory.ledger import quantize_money
 from inventory.models import InventoryItem, QuantityCertainty
 from inventory.units import UnitCode
 from plantings.batches import finalize_batch_output
@@ -68,6 +69,7 @@ from tests.factories import (
 from workspaces.models import Workspace
 
 from .models import CostAllocation, CostAllocationRun
+from .sources import batch_sources
 from .services import (
     DISPOSITION_OF_STATE,
     VALUE_BUCKETS,
@@ -266,6 +268,35 @@ class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-
             totals[row.target_type] = totals.get(row.target_type, Decimal('0')) + (row.amount or 0)
         return totals
 
+    def assert_sources_reconcile(self):
+        """Assert every source's effective layers add back up to the source.
+
+        This is `costing.allocation`'s invariant stated over what is actually
+        stored, so it holds however the layers got there: a layer reversed
+        without its replacement, or posted twice, breaks it whichever operation
+        did so. An unpriced source is checked by count rather than by amount.
+        """
+        layers = {}
+        for row in self.effective():
+            layers.setdefault((row.source_type, row.source_id), []).append(row)
+        live = set()
+        for source in batch_sources(self.batch):
+            if not source.shares:
+                continue
+            key = (source.source_type, source.source.pk)
+            live.add(key)
+            rows = layers.get(key, [])
+            self.assertTrue(rows, f'{key} has no effective layer.')
+            if source.amount is None:
+                self.assertTrue(all(row.amount is None for row in rows))
+                continue
+            self.assertEqual(
+                sum((row.amount for row in rows), Decimal('0')),
+                quantize_money(source.amount),
+                f'{key} does not reconcile to its source.',
+            )
+        self.assertEqual(set(layers) - live, set())
+
 
 class SingleSeedlingTests(CostingServiceTestCase):
     """Criterion 1: reconcile one cell and one plant back to receipt cost."""
@@ -313,6 +344,7 @@ class SingleSeedlingTests(CostingServiceTestCase):
         """Seed and media each arrive whole, without a rounding residue."""
         amounts = sorted(row.amount for row in self.effective())
         self.assertEqual(amounts, [Decimal('0.0800'), Decimal('1.0000')])
+        self.assert_sources_reconcile()
 
 
 class CohortCostTests(CostingServiceTestCase):
@@ -346,15 +378,11 @@ class CohortCostTests(CostingServiceTestCase):
         self.assertEqual(after[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
         self.assertEqual(after[CostAllocation.TargetType.SPECIFIC_PLANT], Decimal('0.2700'))
         self.assertEqual(plant_cost_breakdown(plants[0])['provisional_value'], '0.2700')
+        self.assert_sources_reconcile()
 
 
-class CohortSaleCostTests(CostingServiceTestCase):
-    """A count somebody buys takes its share of the batch's cost with it.
-
-    Without this the units that sold would simply stop being outputs, and their
-    cost would re-divide over the stock that never moved — quietly restating
-    what the remaining plants are worth every time an order shipped.
-    """
+class CohortStockTestCase(CostingServiceTestCase):
+    """Four anonymous units worth 1.08, ready to sell out of one block."""
 
     def setUp(self):
         super().setUp()
@@ -398,6 +426,15 @@ class CohortSaleCostTests(CostingServiceTestCase):
             allocation_ids=[line.allocations.get().pk],
         )
 
+
+class CohortSaleCostTests(CohortStockTestCase):
+    """A count somebody buys takes its share of the batch's cost with it.
+
+    Without this the units that sold would simply stop being outputs, and their
+    cost would re-divide over the stock that never moved — quietly restating
+    what the remaining plants are worth every time an order shipped.
+    """
+
     def test_a_sold_count_becomes_cost_of_sale_and_the_rest_is_unmoved(self):
         """Three quarters stays with the stock; a quarter left with the order."""
         self.sell()
@@ -414,6 +451,7 @@ class CohortSaleCostTests(CostingServiceTestCase):
         self.assertEqual(breakdown['provisional_total'], '1.0800')
         self.assertEqual(breakdown['totals']['cogs'], '0.2700')
         self.assertEqual(sum(Decimal(value) for value in breakdown['totals'].values()), Decimal('1.0800'))
+        self.assert_sources_reconcile()
 
     def test_the_dispatch_is_charged_the_unit_cost_it_was_worth(self):
         """One of four units of a block that cost 1.08 is worth 0.27."""
@@ -435,6 +473,7 @@ class CohortSaleCostTests(CostingServiceTestCase):
         totals = self.totals_by_target()
         self.assertEqual(totals[CostAllocation.TargetType.PLANT_COHORT], Decimal('1.0800'))
         self.assertNotIn(CostAllocation.TargetType.COHORT_SALE, totals)
+        self.assert_sources_reconcile()
 
 
 class MultigermTests(CostingServiceTestCase):
@@ -470,6 +509,7 @@ class MultigermTests(CostingServiceTestCase):
             batch_cost_breakdown(self.batch)['provisional_total'],
             '1.0800',
         )
+        self.assert_sources_reconcile()
 
 
 class WithdrawnGerminationTests(CostingServiceTestCase):
@@ -529,6 +569,7 @@ class WithdrawnGerminationTests(CostingServiceTestCase):
         self.assertEqual(breakdown['provisional_total'], '1.0800')
         self.assertEqual(breakdown['totals']['plant_inventory'], '1.0800')
         self.assertEqual(breakdown['totals']['production_loss'], '0.0000')
+        self.assert_sources_reconcile()
 
     def test_withdrawing_every_seedling_leaves_the_cell_empty(self):
         """A cell whose only seedlings were imagined raised nothing at all."""
@@ -575,6 +616,7 @@ class EmptyCellTests(CostingServiceTestCase):
         self.assertIsNone(breakdown['provisional_total'])
         self.assertEqual(breakdown['totals']['plant_inventory'], '1.0800')
         self.assertEqual(breakdown['totals']['production_loss'], '1.0800')
+        self.assert_sources_reconcile()
 
     def test_the_retired_cell_layer_is_reversed_not_edited(self):
         """The mistake stays readable next to what replaced it."""
@@ -636,6 +678,7 @@ class ClosedGerminationTests(CostingServiceTestCase):
         totals = breakdown['totals']
         booked = sum(Decimal(totals[bucket]) for bucket in VALUE_BUCKETS)
         self.assertEqual(booked, Decimal('2.1600'))
+        self.assert_sources_reconcile()
 
     def test_an_open_sowing_retires_nothing(self):
         """Before the close, a cell with no seedling might still produce one."""
@@ -756,6 +799,7 @@ class ReversalTests(CostingServiceTestCase):
             plant_cost_breakdown(self.plant)['provisional_value'],
             '1.0000',
         )
+        self.assert_sources_reconcile()
 
     def test_the_reversal_names_the_layer_it_cancels(self):
         """A balanced pair is what makes the correction auditable."""
@@ -812,12 +856,16 @@ class FrozenBatchTests(CostingServiceTestCase):
         self.germinate(self.sowing, self.cells[0])
         self.reallocate(Trigger.GERMINATION)
         self.assertEqual(plant_cost_breakdown(self.plant)['final_value'], '1.0800')
+        # Not `assert_sources_reconcile`: the late seedling's share of the same
+        # frozen sowing is still posted on top of the first one's, so the seed
+        # source carries 1.50 against a 1.00 cost. Task 134 records the finding.
 
     def test_a_later_application_posts_its_own_layer(self):
         """A top-up after finalization is new cost, not a reopened split."""
         self.apply_media([self.cells[0]], '0.04')
         self.reallocate(Trigger.APPLICATION_POSTED)
         self.assertEqual(plant_cost_breakdown(self.plant)['final_value'], '1.1600')
+        self.assert_sources_reconcile()
 
 
 class UnknownCostTests(CostingServiceTestCase):
@@ -842,6 +890,7 @@ class UnknownCostTests(CostingServiceTestCase):
         breakdown = plant_cost_breakdown(self.plant)
         self.assertTrue(breakdown['unknown_cost'])
         self.assertEqual(breakdown['provisional_value'], '1.0000')
+        self.assert_sources_reconcile()
 
     def test_the_unpriced_layer_still_records_its_quantity(self):
         """What was applied is known even when what it cost is not."""
