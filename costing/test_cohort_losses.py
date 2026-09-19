@@ -15,10 +15,13 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 
-from plantings.cohorts import change_cohort, observe_cohort
+from plantings.cohorts import change_cohort, correct_cohort_loss, observe_cohort
 from plantings.loss import batch_loss_by_cause
 from plantings.models import CohortOperation, PlantCohort
 from reporting.commerce import profitability_report
+from sales.commerce import post_return
+from sales.models import SalesReturnLine
+from tests.factories import make_plant, make_plant_variety, make_production_batch
 from workspaces.models import Workspace
 
 from . import services, sources
@@ -29,7 +32,7 @@ from .services import (
     plant_cost_breakdown,
     recalculate_batch_costs,
 )
-from .test_services import CohortStockTestCase
+from .test_services import CohortStockTestCase, CostingServiceTestCase
 
 
 LossCause = CohortOperation.LossCause
@@ -164,6 +167,36 @@ class CohortLossCostTests(CohortStockTestCase):
         with self.assertRaises(ValidationError):
             self.correct(made_ready)
 
+    def test_a_correction_cannot_predate_its_loss(self):
+        """The history stays in the order things happened."""
+        loss = self.lose(occurred_at=AUGUST)
+
+        with self.assertRaises(ValidationError):
+            correct_cohort_loss(
+                self.workspace, self.user, operation_id=loss.pk, idempotency_key=uuid4(),
+                occurred_at=datetime(2020, 1, 1, tzinfo=dt_timezone.utc), reason='Backdated.',
+            )
+        self.assertEqual(self.totals_by_target()[Target.COHORT_LOSS], Decimal('0.2700'))
+
+    def test_a_discarded_return_is_not_corrected_here(self):
+        """The write-off belongs to the customer return that recorded it."""
+        fulfillment = self.sell()
+        post_return(
+            fulfillment.order, self.user, operation_key=uuid4(),
+            items=[{
+                'fulfillment_line': fulfillment.lines.get(),
+                'outcome': SalesReturnLine.Outcome.DISCARDED,
+                'destination': self.location,
+            }],
+            reason='Arrived back crushed.',
+        )
+        write_off = CohortOperation.objects.get(
+            workspace=self.workspace, action=CohortOperation.Action.LOSS,
+        )
+
+        with self.assertRaises(ValidationError):
+            self.correct(write_off)
+
     def test_the_correction_can_be_requested_over_rest(self):
         """The cohort endpoint names the loss by the operation in its history."""
         self.workspace.mode = Workspace.Mode.NURSERY
@@ -181,6 +214,52 @@ class CohortLossCostTests(CohortStockTestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data['quantity'], 4)
         self.assertNotIn(Target.COHORT_LOSS, self.totals_by_target())
+
+    def test_rest_refuses_a_loss_recorded_against_another_cohort(self):
+        """The endpoint only withdraws losses from the cohort it names."""
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save(update_fields=['mode'])
+        loss = self.lose()
+        other, _observed = observe_cohort(
+            self.workspace, self.user, batch=self.batch, quantity=2, idempotency_key=uuid4(),
+        )
+
+        response = self.client.post(f'/plantings/cohorts/{other.pk}/correct-loss/', {
+            'operation': loss.pk,
+            'idempotency_key': str(uuid4()),
+            'reason': 'Wrong block.',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('operation', response.data)
+        self.assertFalse(CohortOperation.objects.filter(reversal_of=loss).exists())
+        other.refresh_from_db()
+        self.assertEqual(other.quantity, 2)
+
+    def test_rest_cannot_reach_another_workspaces_cohort(self):
+        """A cohort in another workspace is not there to correct."""
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save(update_fields=['mode'])
+        other_workspace = Workspace.objects.create(name='Other nursery', currency_code='NZD')
+        variety = make_plant_variety(workspace=other_workspace, plant=make_plant(workspace=other_workspace))
+        batch = make_production_batch(workspace=other_workspace, variety=variety)
+        cohort, _observed = observe_cohort(
+            other_workspace, self.user, batch=batch, quantity=3, idempotency_key=uuid4(),
+        )
+        cohort, loss = change_cohort(
+            other_workspace, self.user, cohort_id=cohort.pk, expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS, quantity=1, loss_cause=LossCause.FAILED,
+            reason='Damped off.', idempotency_key=uuid4(),
+        )
+
+        response = self.client.post(f'/plantings/cohorts/{cohort.pk}/correct-loss/', {
+            'operation': loss.pk,
+            'idempotency_key': str(uuid4()),
+            'reason': 'Not ours.',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(CohortOperation.objects.filter(reversal_of=loss).exists())
 
 
 class FrozenCohortLossTests(CohortStockTestCase):
@@ -212,7 +291,7 @@ class FrozenCohortLossTests(CohortStockTestCase):
         """
         plant = self.promote_one()
         with mock.patch.object(sources, 'lost_cohort_quantities', return_value={}), \
-                mock.patch.object(services, '_redivide_around_frozen', lambda intended, _stored: intended):
+                mock.patch.object(services, '_redivide_around_frozen', lambda intended, *_rest: intended):
             self.lose()
         self.assertEqual(batch_cost_breakdown(self.batch)['final_total'], '0.9900')
 
@@ -297,5 +376,81 @@ class UnevenCohortLossTests(CohortStockTestCase):
             idempotency_key=uuid4(),
         )
 
+        self.assertEqual(batch_cost_breakdown(self.batch)['final_total'], '1.0800')
+        self.assert_sources_reconcile()
+
+
+class LegacyWholeBlockLossTests(CohortStockTestCase):
+    """A block lost whole before task 136, then finalized.
+
+    With the loss not an output, finalization found nowhere to put the batch's
+    cost and retired all 1.0800 into the pool `PRODUCTION_LOSS`, undated and
+    uncaused. A recalculation after the fix kept that pool row as frozen and
+    posted 0.0000 cohort-loss layers beside it, so a later correction restored
+    four units worth nothing while 1.0800 stayed in loss.
+    """
+
+    def setUp(self):
+        super().setUp()
+        with mock.patch.object(sources, 'lost_cohort_quantities', return_value={}), \
+                mock.patch.object(services, '_reclaimed_losses', lambda *_args: set()), \
+                mock.patch.object(services, '_redivide_around_frozen', lambda intended, *_rest: intended):
+            self.loss = self.lose(quantity=4)
+            self.finalize()
+
+    def test_the_legacy_state_is_all_pool_loss(self):
+        """The reproduction: every cent of the batch sits in the pool."""
+        totals = self.totals_by_target()
+        self.assertEqual(totals, {Target.PRODUCTION_LOSS: Decimal('1.0800')})
+
+    def test_a_recalculation_moves_the_pool_loss_onto_the_block(self):
+        """The loss is dated and caused by the block it came out of."""
+        recalculate_batch_costs(self.batch, self.user, 'Book cohort losses as production loss (task 136).')
+
+        totals = self.totals_by_target()
+        self.assertEqual(totals, {Target.COHORT_LOSS: Decimal('1.0800')})
+        self.assertEqual(batch_cost_breakdown(self.batch)['final_total'], '1.0800')
+        self.assert_sources_reconcile()
+        self.assertIsNone(self.reallocate())
+
+    def test_correcting_it_afterwards_restores_the_block_at_full_value(self):
+        """The four units come back worth what they cost, not nothing."""
+        recalculate_batch_costs(self.batch, self.user, 'Book cohort losses as production loss (task 136).')
+
+        self.correct(self.loss)
+
+        self.assertEqual(self.cohort.quantity, 4)
+        self.assertEqual(self.totals_by_target(), {Target.PLANT_COHORT: Decimal('1.0800')})
+        self.assertEqual(batch_cost_breakdown(self.batch)['totals']['production_loss'], '0.0000')
+        self.assert_sources_reconcile()
+        self.assertIsNone(self.reallocate())
+
+
+class LateCohortLossTests(CostingServiceTestCase):
+    """A batch finalized with nothing up keeps its pool loss.
+
+    Everything became pool loss at finalization because nothing had been
+    observed. A block first recorded afterwards and then lost claims none of
+    it: whether a late arrival may take a frozen batch's cost is task 147's.
+    """
+
+    def test_a_block_observed_after_finalization_claims_no_pool_loss(self):
+        """The pool loss stays exactly where finalization put it."""
+        self.sow([(self.cells[0], 4)])
+        self.apply_media([self.cells[0]], '0.04')
+        self.finalize()
+        self.assertEqual(self.totals_by_target(), {Target.PRODUCTION_LOSS: Decimal('1.0800')})
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user, batch=self.batch, quantity=2, idempotency_key=uuid4(),
+        )
+
+        change_cohort(
+            self.workspace, self.user, cohort_id=cohort.pk, expected_revision=cohort.revision,
+            action=CohortOperation.Action.LOSS, quantity=2, loss_cause=LossCause.FAILED,
+            reason='Damped off.', idempotency_key=uuid4(),
+        )
+
+        totals = self.totals_by_target()
+        self.assertEqual(totals[Target.PRODUCTION_LOSS], Decimal('1.0800'))
         self.assertEqual(batch_cost_breakdown(self.batch)['final_total'], '1.0800')
         self.assert_sources_reconcile()

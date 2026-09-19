@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from costing.services import reallocate_batch
 from health.availability import is_quarantined
+from health.models import QuarantineActionResult
 from locations.occupancy import check_capacity, cohort_contribution
 
 from .lifecycle import EventType, OutcomeRequest, record_germination_event, record_lifecycle_event
@@ -282,6 +283,23 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
     return cohort, operation
 
 
+def _require_unowned(loss, lost):
+    """Refuse a loss that another document recorded and still describes."""
+    if QuarantineActionResult.objects.filter(cohort_operation=loss).exists():
+        raise ValidationError({
+            'operation': 'This loss is a quarantine cull; correct it through its health case.',
+        })
+    # `SalesReturnLine.Outcome.DISCARDED`, named by value: `sales` builds on
+    # this module, so importing its models here would run the wrong way.
+    discarded = CohortEvent.objects.filter(
+        cohort_id=lost.cohort_id, sales_return_line__outcome='discarded',
+    )
+    if discarded.exists():
+        raise ValidationError({
+            'operation': 'This loss writes off a discarded customer return; correct the return instead.',
+        })
+
+
 @transaction.atomic
 def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
                         occurred_at=None, reason=''):
@@ -297,7 +315,15 @@ def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
 
     No revision is checked, for the reason `sell_cohort` gives: the operator
     names the fact to withdraw, not a count they read, and the row lock is what
-    keeps the block consistent while its units come back.
+    keeps the block consistent while its units come back. Nor is capacity, for
+    the reason `_restore_into` skips it on a reversed dispatch: the units were
+    standing there when the mistaken record took them away, so the count only
+    returns to what the place already held.
+
+    A loss another record owns is refused rather than withdrawn under it: a
+    quarantine cull belongs to its health action, and the write-off of a
+    discarded customer return to the return. Correcting either here would
+    leave that record describing a destruction the cohort no longer shows.
     """
     _require_reason(reason)
     payload = {'loss': operation_id}
@@ -313,6 +339,10 @@ def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
     cohort = _locked(lost.cohort_id, workspace)
     if CohortOperation.objects.filter(reversal_of=loss).exists():
         raise ValidationError({'operation': 'That loss has already been corrected.'})
+    _require_unowned(loss, lost)
+    occurred_at = occurred_at or timezone.now()
+    if occurred_at < loss.occurred_at:
+        raise ValidationError({'occurred_at': 'A correction cannot predate the loss it withdraws.'})
     before = _snapshot(cohort)
     cohort.quantity -= lost.quantity_delta
     if before['state'] == PlantCohort.LifecycleState.DEPLETED:
@@ -323,7 +353,7 @@ def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
         created_by=_actor(user),
         action=CohortOperation.Action.CORRECTED,
         idempotency_key=idempotency_key,
-        occurred_at=occurred_at or timezone.now(),
+        occurred_at=occurred_at,
         reason=reason,
         payload=payload,
         reversal_of=loss,

@@ -38,7 +38,7 @@ from applications.models import FACTOR_DECIMAL_PLACES
 from inventory.ledger import QUANTITY_QUANTUM, distribute_exactly, quantize_money, quantize_quantity
 from plantings.batches import lock_batch_with_plants
 from plantings.lifecycle import LifecycleState, lifecycle_summaries
-from plantings.models import ProductionBatch, SpecificPlant, SpecificPlantLocation
+from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .allocation import combine, loss_shares, value_shares
 from .pending import plant_pending_cost, plant_sale_totals
@@ -309,7 +309,41 @@ def _left_over(source_layers, fixed_layers):
     return amount, quantity
 
 
-def _redivide_around_frozen(intended, stored):
+def _reclaimed_losses(intended, stored, standing_at_freeze):
+    """Return stored pool losses a finalized batch owes back to its cohorts.
+
+    Before task 136 a block lost whole stopped being an output, so a batch
+    finalized after that had nowhere to put its cost and `_resolve_for_freeze`
+    retired all of it into the pool `PRODUCTION_LOSS`, undated and uncaused.
+    Now the lost units are outputs again, but the pool row is not a cohort
+    layer and its source is live, so the freeze would keep it and hand the
+    cohort side only what it leaves — nothing.
+
+    Such a row is recognised by its source: it has no stored cohort-side layer
+    at all, yet today it resolves to a block that already existed when output
+    was finalized. That block's units were outputs then, and the pool row is
+    only what stood in for them. Its reversal is reposted from today's split,
+    so whatever part of it really is pool loss (seed that never germinated)
+    stays pool loss. A block first observed after finalization claims nothing
+    this way; whether a late arrival may is task 147's question.
+    """
+    divided = {
+        (row.source_type, row.source_id)
+        for row in stored.values() if row.target_type in REDIVIDED_TARGETS
+    }
+    owed = {
+        (spec['source_type'], spec['source'].pk)
+        for spec in intended.values()
+        if spec['target_type'] in REDIVIDED_TARGETS and spec['plant_cohort_id'] in standing_at_freeze
+    }
+    stranded = owed - divided
+    return {
+        key for key, row in stored.items()
+        if row.target_type == TargetType.PRODUCTION_LOSS and (row.source_type, row.source_id) in stranded
+    }
+
+
+def _redivide_around_frozen(intended, stored, reclaimed=frozenset()):
     """Fit a frozen batch's cohort layers to what its frozen shares left over.
 
     `intended_layers` splits every source afresh over all of today's outputs,
@@ -331,8 +365,8 @@ def _redivide_around_frozen(intended, stored):
     for key, spec in intended.items():
         by_source.setdefault((spec['source_type'], spec['source'].pk), []).append(key)
     kept = {}
-    for row in stored.values():
-        if row.target_type in REDIVIDED_TARGETS or row.target_type in UNRESOLVED_TARGETS:
+    for key, row in stored.items():
+        if row.target_type in REDIVIDED_TARGETS or row.target_type in UNRESOLVED_TARGETS or key in reclaimed:
             continue
         kept.setdefault((row.source_type, row.source_id), []).append({
             'amount': row.amount, 'base_quantity': row.base_quantity,
@@ -341,7 +375,7 @@ def _redivide_around_frozen(intended, stored):
     for source_key, keys in by_source.items():
         posted = [
             intended[key] for key in keys
-            if intended[key]['target_type'] not in REDIVIDED_TARGETS and key not in stored
+            if intended[key]['target_type'] not in REDIVIDED_TARGETS and (key not in stored or key in reclaimed)
         ]
         fitted.update(_fit_source(intended, keys, posted + kept.get(source_key, [])))
     return fitted
@@ -365,7 +399,7 @@ def _fit_source(intended, keys, fixed_layers):
     }
 
 
-def _frozen_plan(intended, stored):
+def _frozen_plan(intended, stored, standing_at_freeze=frozenset()):
     """Return the only two changes a finalized batch still admits.
 
     Retire what never reached a seedling, and cancel what an input reversal took
@@ -385,8 +419,13 @@ def _frozen_plan(intended, stored):
     because the two have to agree about which stored rows are going away — a
     layer reversed without its replacement takes its cost off the batch, and a
     finalized total is the one that must not move.
+
+    The one pool loss a frozen batch gives back is the one that stood in for a
+    block's lost units before they were outputs; `_reclaimed_losses` says how
+    it is told apart from loss that belongs in the pool.
     """
-    intended = _redivide_around_frozen(intended, stored)
+    reclaimed = _reclaimed_losses(intended, stored, standing_at_freeze)
+    intended = _redivide_around_frozen(intended, stored, reclaimed)
     live_sources = {
         (spec['source_type'], spec['source'].pk)
         for spec in intended.values()
@@ -394,7 +433,7 @@ def _frozen_plan(intended, stored):
 
     def retired(row):
         """Return whether a frozen batch still has to cancel this layer."""
-        if row.target_type in UNRESOLVED_TARGETS:
+        if row.target_type in UNRESOLVED_TARGETS or _stored_key(row) in reclaimed:
             return True
         if row.target_type in REDIVIDED_TARGETS:
             key = _stored_key(row)
@@ -415,7 +454,12 @@ def _plan(batch):
     intended = intended_layers(batch)
     stored = {_stored_key(row): row for row in effective_allocations(batch)}
     if is_frozen(batch):
-        return _frozen_plan(intended, stored)
+        standing_at_freeze = frozenset(
+            PlantCohort.objects
+            .filter(batch=batch, created__lt=batch.output_finalized_at)
+            .values_list('pk', flat=True)
+        )
+        return _frozen_plan(intended, stored, standing_at_freeze)
     reverse = [
         row for key, row in stored.items()
         if key not in intended or not _matches(row, intended[key])
