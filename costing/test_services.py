@@ -8,6 +8,7 @@ and germinations recorded against its cells.
 
 # pylint: disable=duplicate-code
 
+import unittest
 from decimal import Decimal
 from uuid import uuid4
 
@@ -856,9 +857,21 @@ class FrozenBatchTests(CostingServiceTestCase):
         self.germinate(self.sowing, self.cells[0])
         self.reallocate(Trigger.GERMINATION)
         self.assertEqual(plant_cost_breakdown(self.plant)['final_value'], '1.0800')
-        # Not `assert_sources_reconcile`: the late seedling's share of the same
-        # frozen sowing is still posted on top of the first one's, so the seed
-        # source carries 1.50 against a 1.00 cost. Task 134 records the finding.
+
+    @unittest.expectedFailure
+    def test_a_later_germination_leaves_the_final_total_where_it_was(self):
+        """A late seedling from a frozen cell must not be charged on top of it.
+
+        Known failure, owned by task 147. The late seedling's shares of the
+        same sowing and media are posted beside the frozen plant's, so the seed
+        carries 1.50 against 1.00, the media 0.12 against 0.08, and the final
+        total reads 1.62. When task 147 lands this passes and the decorator
+        comes off.
+        """
+        self.germinate(self.sowing, self.cells[0])
+        self.reallocate(Trigger.GERMINATION)
+        self.assertEqual(batch_cost_breakdown(self.batch)['final_total'], '1.0800')
+        self.assert_sources_reconcile()
 
     def test_a_later_application_posts_its_own_layer(self):
         """A top-up after finalization is new cost, not a reopened split."""

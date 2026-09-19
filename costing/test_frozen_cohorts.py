@@ -5,6 +5,7 @@ dispatched and reversed, a recorded loss, a promotion and a customer return,
 each out of a block of four units whose batch was finalized first.
 """
 
+import unittest
 from decimal import Decimal
 from unittest import mock
 from uuid import uuid4
@@ -94,8 +95,9 @@ class FrozenCohortCostTests(CohortStockTestCase):
         self.assertNotIn(CostAllocation.TargetType.COHORT_SALE, totals)
         self.assert_total_held()
 
-    def test_a_loss_keeps_the_final_total(self):
-        """Where a lost unit's cost belongs is task 136's; that it stays is this one's."""
+    def lose_one(self):
+        """Record one unit of the block as having failed."""
+        self.cohort.refresh_from_db()
         change_cohort(
             self.workspace, self.user,
             cohort_id=self.cohort.pk,
@@ -107,10 +109,9 @@ class FrozenCohortCostTests(CohortStockTestCase):
             idempotency_key=uuid4(),
         )
 
-        self.assert_total_held()
-
-    def test_a_promotion_transfers_rather_than_duplicates(self):
-        """The named plant takes its quarter out of the block, not on top of it."""
+    def promote_one(self):
+        """Give one unit of the block its own plant identity."""
+        self.cohort.refresh_from_db()
         plants, _promoted = promote_cohort(
             self.workspace, self.user,
             cohort_id=self.cohort.pk,
@@ -119,6 +120,33 @@ class FrozenCohortCostTests(CohortStockTestCase):
             idempotency_key=uuid4(),
             reason='Assign one sale plant.',
         )
+        return plants
+
+    def test_a_loss_keeps_the_final_total(self):
+        """Where a lost unit's cost belongs is task 136's; that it stays is this one's."""
+        self.lose_one()
+
+        self.assert_total_held()
+
+    @unittest.expectedFailure
+    def test_a_loss_after_a_promotion_keeps_the_final_total(self):
+        """A loss must not shrink the divisor a frozen plant share was cut from.
+
+        Known failure, owned by task 136. The promoted plant's 0.27 is frozen,
+        but the loss re-divides the block's layer over three units instead of
+        four, so the cohort drops from 0.81 to 0.72 and the final total from
+        1.0800 to 0.9900. Re-dividing the plant share would break the freeze,
+        so the fix is booking the loss without shrinking the divisor; when task
+        136 lands this passes and the decorator comes off.
+        """
+        self.promote_one()
+        self.lose_one()
+
+        self.assert_total_held()
+
+    def test_a_promotion_transfers_rather_than_duplicates(self):
+        """The named plant takes its quarter out of the block, not on top of it."""
+        plants = self.promote_one()
 
         totals = self.totals_by_target()
         self.assertEqual(totals[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
