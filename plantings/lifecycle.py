@@ -802,7 +802,10 @@ def reverse_lifecycle_event(event, user, reason, occurred_at=None, restore_locat
 #: Every other relation blocks, and the blocking set is derived from the model
 #: rather than listed, so a relation added later denies the withdrawal until
 #: somebody decides it belongs here. That is the safe default: admitting a new
-#: way of using a plant would silently let a withdrawal strand it.
+#: way of using a plant would silently let a withdrawal strand it. That sees
+#: reverse relations only, so forward keys are weighed by hand — did the
+#: germination create the plant? `cell_planting` yes; `batch` says nothing; a
+#: cohort promotion is refused; a direct-sown individual is not yet (task 151).
 WITHDRAWAL_KEEPS = frozenset({
     'lifecycle_events',
     'locations',
@@ -823,6 +826,15 @@ def withdrawal_blocking_relations(keeps=None):
 
 def _require_withdrawable(plant):
     """Return the germination this plant may withdraw, or explain why it may not."""
+    # A promotion's germination is the cohort's count carried onto an identity.
+    # Its forward key is invisible below, and asking it first keeps the answer
+    # independent of whatever else the promotion recorded.
+    if plant.promoted_from_cohort_id is not None:
+        raise ValidationError({'plant': (
+            f'This plant was promoted from cohort {plant.promoted_from_cohort_id}, so '
+            'it never came up as a seedling and there is no germination to withdraw. '
+            'A promotion entered wrongly is corrected on the cohort.'
+        )})
     events = _plant_events(plant)
     germination = next(
         (event for event in events if event.event_type == EventType.GERMINATED),

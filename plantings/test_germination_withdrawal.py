@@ -15,6 +15,8 @@ figures it is supposed to move, and the ones it must leave alone.
 """
 # pylint: disable=duplicate-code
 
+from uuid import uuid4
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -32,6 +34,7 @@ from tests.factories import (
 )
 from workspaces.models import Workspace
 
+from .cohorts import observe_cohort, promote_cohort
 from .growth import record_observation
 from .movement import move_specific_plant
 from .germination import (
@@ -56,6 +59,7 @@ from .lifecycle import (
 )
 from .models import (
     CohortOperation,
+    PlantCohort,
     PlantLifecycleEvent,
     SpecificPlant,
     SpecificPlantLocation,
@@ -313,6 +317,102 @@ class WithdrawalEligibilityTests(WithdrawalTestCase):
 
         with self.assertRaisesMessage(ValidationError, 'nursery_observation_targets'):
             self.withdraw(plant)
+
+
+class WithdrawingAPromotedPlantTests(WithdrawalTestCase):
+    """A plant promoted out of a cohort was counted, not seen to come up.
+
+    Its germination is the cohort's observation carried onto an identity, and
+    the promotion took the unit out of the cohort. Withdrawing it would deny a
+    fact the cohort's history still asserts and leave that unit nowhere.
+    """
+
+    def promote(self, stage=None):
+        """Observe a block of four, optionally staged, and promote one of it."""
+        cohort, _operation = observe_cohort(
+            self.workspace, self.user,
+            batch=self.sowing.batch, source_sowing=self.sowing,
+            quantity=4, idempotency_key=uuid4(),
+        )
+        if stage is not None:
+            record_observation(
+                self.workspace, self.user, cohort_id=cohort.pk, stage=stage,
+            )
+            cohort.refresh_from_db()
+        plants, _operation = promote_cohort(
+            self.workspace, self.user,
+            cohort_id=cohort.pk, expected_revision=cohort.revision,
+            quantity=1, idempotency_key=uuid4(),
+            reason='This one needs its own sale label.',
+        )
+        return cohort, plants[0]
+
+    def test_a_plant_promoted_from_a_bare_count_is_refused_by_its_cohort(self):
+        """Nothing else would stop it: the promotion recorded no observation."""
+        cohort, plant = self.promote()
+
+        with self.assertRaisesMessage(
+            ValidationError, f'promoted from cohort {cohort.pk}',
+        ):
+            self.withdraw(plant)
+
+        cohort.refresh_from_db()
+        self.assertEqual(cohort.quantity, 3)
+        self.assertEqual(
+            derive_state(list(plant.lifecycle_events.all())).state,
+            LifecycleState.GROWING,
+        )
+
+    def test_the_refusal_does_not_depend_on_what_the_promotion_recorded(self):
+        """A staged cohort's observation would block too, but for the wrong reason."""
+        cohort, plant = self.promote(
+            stage=make_growth_stage(workspace=self.workspace),
+        )
+        self.assertTrue(plant.nursery_observation_targets.exists())
+
+        with self.assertRaisesMessage(
+            ValidationError, f'promoted from cohort {cohort.pk}',
+        ):
+            self.withdraw(plant)
+
+    def test_a_selection_holding_a_promoted_plant_withdraws_nothing(self):
+        """The tray seedlings beside it are still correctable on their own."""
+        seedlings = self.germinate(self.allocations[0], 2)
+        cohort, plant = self.promote()
+
+        with self.assertRaises(ValidationError):
+            withdraw_germinations(
+                [seedling.pk for seedling in seedlings] + [plant.pk],
+                self.user, 'The whole fill went in twice.',
+            )
+        self.assertEqual(germination_summary(self.sowing)['observed_count'], 2)
+
+        withdraw_germinations(
+            [seedling.pk for seedling in seedlings], self.user,
+            'The whole fill went in twice.',
+        )
+        self.assertEqual(germination_summary(self.sowing)['observed_count'], 0)
+        self.assertEqual(
+            PlantCohort.objects.get(pk=cohort.pk).quantity, 3,
+        )
+
+    def test_the_route_names_the_cohort_in_the_plant_field(self):
+        """The operator is pointed at the cohort rather than a generic refusal."""
+        cohort, plant = self.promote()
+
+        response = self.client.post(
+            '/plantings/specificplants/withdraw-germination/',
+            {'plants': [plant.pk], 'reason': 'Promoted one too many.'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(f'cohort {cohort.pk}', str(response.data['plant']))
+        self.assertFalse(
+            PlantLifecycleEvent.objects.filter(
+                plant=plant, event_type=EventType.CORRECTED,
+            ).exists()
+        )
 
 
 class WithdrawalSelectionTests(WithdrawalTestCase):
