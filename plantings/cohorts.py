@@ -5,6 +5,7 @@
 # contract and merely move the same branching and local state elsewhere.
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
 
+from django.apps import apps
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -311,8 +312,20 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
     return cohort, operation
 
 
-def _require_unowned(loss, lost):
+def _require_unowned(loss, lost, stocktake_reversal=False):
     """Refuse a loss that another document recorded and still describes."""
+    # Named through the app registry: `inventory.stocktakes` builds on this
+    # module, so importing its models here would run the wrong way.
+    reconciliation = apps.get_model('inventory', 'StocktakeReconciliation')
+    posted = reconciliation.objects.filter(
+        phase=reconciliation.Phase.POST, result_app=loss._meta.app_label,
+        result_model=loss._meta.model_name, result_object_id=loss.pk,
+        reversed_by__isnull=True,
+    )
+    if not stocktake_reversal and posted.exists():
+        raise ValidationError({
+            'operation': 'This loss was posted by a stocktake; reverse the stocktake instead.',
+        })
     if QuarantineActionResult.objects.filter(cohort_operation=loss).exists():
         raise ValidationError({
             'operation': 'This loss is a quarantine cull; correct it through its health case.',
@@ -330,7 +343,7 @@ def _require_unowned(loss, lost):
 
 @transaction.atomic
 def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
-                        occurred_at=None, reason=''):
+                        occurred_at=None, reason='', stocktake_reversal=False):
     """Withdraw a recorded loss and put its units back where they were lost.
 
     This says the loss never happened, as `reverse_lifecycle_event` does for a
@@ -352,6 +365,9 @@ def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
     quarantine cull belongs to its health action, and the write-off of a
     discarded customer return to the return. Correcting either here would
     leave that record describing a destruction the cohort no longer shows.
+    So is a recount shortfall a posted stocktake recorded: the stocktake's
+    own reversal corrects it, and passes `stocktake_reversal` to say so.
+    Corrected here first, that reversal could never succeed.
     """
     _require_reason(reason)
     payload = {'loss': operation_id}
@@ -367,7 +383,7 @@ def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
     cohort = _locked(lost.cohort_id, workspace)
     if CohortOperation.objects.filter(reversal_of=loss).exists():
         raise ValidationError({'operation': 'That loss has already been corrected.'})
-    _require_unowned(loss, lost)
+    _require_unowned(loss, lost, stocktake_reversal)
     occurred_at = occurred_at or timezone.now()
     if occurred_at < loss.occurred_at:
         raise ValidationError({'occurred_at': 'A correction cannot predate the loss it withdraws.'})

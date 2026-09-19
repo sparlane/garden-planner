@@ -27,6 +27,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from plantings.models import CohortEvent, CohortOperation
+from sales.models import FulfillmentLine, SalesOrderAllocation, SalesReturnLine
 
 Action = CohortOperation.Action
 
@@ -86,11 +87,61 @@ def _operations(batch):
     return grouped.values()
 
 
+class _Sales:
+    """Which order allocation each sale and return in a batch's history belongs to.
+
+    A sold unit's weight is the one it left with, and a return has to give
+    back exactly that weight, not the average of every sale out of the block:
+    the sales that stay dispatched keep what they were charged. So each sale
+    is weighed on its own, and a return finds the sale it undoes through the
+    allocation both belong to. A dispatch and a customer return are linked to
+    their events directly; a reversed dispatch and a reversed return name
+    their document line in the operation's reference, as `sales.cohort_stock`
+    writes it.
+
+    What counts as sold is still the allocations that stand fulfilled, so a
+    re-sale out of the block a return landed in counts against the cohort the
+    allocation drew on, where `costing.sources.sold_cohort_quantities` counts it.
+    """
+
+    def __init__(self, batch):
+        lines = FulfillmentLine.objects.filter(allocation__plant_cohort__batch=batch)
+        returns = SalesReturnLine.objects.filter(fulfillment_line__allocation__plant_cohort__batch=batch)
+        self.by_event = {}
+        self.lines = {'fulfillment': {}, 'return': {}}
+        for kind, rows in (
+                ('fulfillment', lines.values_list('pk', 'cohort_event_id', 'allocation_id')),
+                ('return', returns.values_list('pk', 'cohort_event_id', 'fulfillment_line__allocation_id'))):
+            for line_id, event_id, allocation_id in rows:
+                self.lines[kind][line_id] = allocation_id
+                if event_id is not None:
+                    self.by_event[event_id] = allocation_id
+        self.batch = batch
+
+    def fulfilled(self):
+        """Return each allocation standing fulfilled, with its cohort and quantity."""
+        return (
+            SalesOrderAllocation.objects
+            .filter(plant_cohort__batch=self.batch, status=SalesOrderAllocation.Status.FULFILLED)
+            .values_list('pk', 'plant_cohort_id', 'quantity')
+        )
+
+    def allocation_of(self, operation, event):
+        """Return the allocation a sale or return moved units for, if it is known."""
+        if event.pk in self.by_event:
+            return self.by_event[event.pk]
+        parts = str(operation.payload.get('reference', '')).split(':')
+        if len(parts) == 4 and parts[2] == 'line' and parts[3].isdigit():
+            return self.lines.get(parts[0], {}).get(int(parts[3]))
+        return None
+
+
 class _Replay:
     """The running state of one batch's blocks while their history is replayed."""
 
-    def __init__(self):
+    def __init__(self, sales):
         self.blocks = {}
+        self.sales = sales
         self.sold = {}
         self.lost = {}
         self.losses = {}
@@ -139,6 +190,19 @@ class _Replay:
         for event in arriving:
             self.put(event, event.quantity_delta, moving * event.quantity_delta / units)
 
+    def returned(self, operation, event, units):
+        """Give back the weight the sale this return undoes took, and return it.
+
+        A sale nothing links it to comes back at full weight.
+        """
+        allocation = self.sales.allocation_of(operation, event)
+        sold = self.sold.get(allocation)
+        if sold is None or not sold.units:
+            return Decimal(units)
+        weight = sold.weight * min(units, sold.units) / sold.units
+        self.sold[allocation] = sold.add(-min(units, sold.units), -weight)
+        return weight + max(units - sold.units, 0)
+
     def apply(self, operation, event):
         """Apply one single-block event."""
         units = abs(event.quantity_delta)
@@ -154,7 +218,9 @@ class _Replay:
                 self.losses[operation.pk] = weight
                 self._out(self.lost, event.cohort_id, units, weight)
             elif action == Action.SOLD:
-                self._out(self.sold, event.cohort_id, units, weight)
+                allocation = self.sales.allocation_of(operation, event)
+                if allocation is not None:
+                    self.sold[allocation] = self.sold.get(allocation, EMPTY).add(units, weight)
             else:
                 for plant_id in operation.payload.get('plants', []):
                     self.plants[plant_id] = weight / units
@@ -163,16 +229,26 @@ class _Replay:
             self._out(self.lost, event.cohort_id, -units, -weight)
             self.put(event, units, weight)
         elif action == Action.RETURN:
-            source = operation.payload.get('source', event.cohort_id)
-            rate = self.sold.get(source, Pool(0, Decimal('0'))).rate() or Decimal('1')
-            self._out(self.sold, source, -units, -rate * units)
-            self.put(event, units, rate * units)
+            self.put(event, units, self.returned(operation, event, units))
         else:
             self.put(event, event.quantity_delta, Decimal(event.quantity_delta))
 
+    def sold_rates(self):
+        """Return each cohort's weight per unit over the allocations still fulfilled."""
+        pools = {}
+        for allocation, cohort_id, quantity in self.sales.fulfilled():
+            units = int(quantity)
+            sold = self.sold.get(allocation)
+            weight = Decimal(units) if sold is None or not sold.units else sold.weight * units / sold.units
+            self._out(pools, cohort_id, units, weight)
+        return _rates(pools)
+
     @staticmethod
     def _out(table, cohort_id, units, weight):
-        table[cohort_id] = table.get(cohort_id, Pool(0, Decimal('0'))).add(units, weight)
+        table[cohort_id] = table.get(cohort_id, EMPTY).add(units, weight)
+
+
+EMPTY = Pool(0, Decimal('0'))
 
 
 def _rates(table):
@@ -190,7 +266,7 @@ def cohort_weights(batch):
     ).exclude(quantity_delta=0)
     if not recounted.exists():
         return UNWEIGHTED
-    replay = _Replay()
+    replay = _Replay(_Sales(batch))
     for events in _operations(batch):
         operation = events[0].operation
         if operation.action in TRANSFERS:
@@ -200,7 +276,7 @@ def cohort_weights(batch):
                 replay.apply(operation, event)
     return CohortWeights(
         standing=_rates(replay.blocks),
-        sold=_rates(replay.sold),
+        sold=replay.sold_rates(),
         lost=_rates(replay.lost),
         plants=replay.plants,
     )

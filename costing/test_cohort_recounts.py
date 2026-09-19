@@ -16,8 +16,9 @@ from uuid import uuid4
 
 from plantings.cohorts import change_cohort, split_cohort
 from plantings.loss import batch_loss_by_cause
-from plantings.models import CohortOperation
+from plantings.models import CohortOperation, PlantCohort
 from reporting.commerce import profitability_report
+from sales.commerce import reverse_fulfillment, reverse_return
 from workspaces.models import Workspace
 
 from .models import CostAllocation
@@ -239,6 +240,45 @@ class FoundRecountTests(CohortStockTestCase):
 
         self.assertEqual(cohort_cost_breakdown(child)['provisional_value'], '0.3240')
         self.assertEqual(self.totals_by_target()[Target.COHORT_SALE], Decimal('0.2700'))
+        self.assert_sources_reconcile()
+
+    def test_a_return_gives_back_the_weight_its_own_sale_took(self):
+        """Returning the first sale leaves the second at the diluted 0.1620 it was charged."""
+        first = self.sell()
+        recount(self, 5)
+        second = self.sell()
+
+        self.return_sale(first)
+
+        self.assertEqual(second.lines.get().cogs_amount, Decimal('0.1620'))
+        totals = self.totals_by_target()
+        self.assertEqual(totals[Target.COHORT_SALE], Decimal('0.1620'))
+        returned = PlantCohort.objects.exclude(pk=self.cohort.pk).get(batch=self.batch)
+        self.assertEqual(cohort_cost_breakdown(returned)['provisional_value'], '0.2700')
+        self.assert_sources_reconcile()
+
+    def test_reversing_a_return_sells_the_unit_at_the_weight_it_came_back_with(self):
+        """The re-sale out of the returned block counts against the original cohort."""
+        recount(self, 6)
+        first = self.sell()
+        self.assertEqual(first.lines.get().cogs_amount, Decimal('0.1800'))
+
+        reverse_return(self.return_sale(first), self.user, operation_key=uuid4(), reason='Returned in error.')
+
+        self.assertEqual(self.totals_by_target()[Target.COHORT_SALE], Decimal('0.1800'))
+        self.assert_sources_reconcile()
+        self.assertIsNone(self.reallocate())
+
+    def test_a_reversed_dispatch_puts_its_weight_back(self):
+        """A dispatch that never happened returns the block to what it held."""
+        fulfillment = self.sell()
+        recount(self, 5)
+
+        reverse_fulfillment(fulfillment, self.user, operation_key=uuid4(), reason='Never left.')
+
+        totals = self.totals_by_target()
+        self.assertNotIn(Target.COHORT_SALE, totals)
+        self.assertEqual(totals[Target.PLANT_COHORT], Decimal('1.0800'))
         self.assert_sources_reconcile()
 
     def test_a_second_recalculation_changes_nothing(self):

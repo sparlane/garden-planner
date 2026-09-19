@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from types import SimpleNamespace
+from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -687,6 +688,26 @@ class StocktakeDomainReconciliationTests(APITestCase):
         self.assertTrue(CohortOperation.objects.filter(
             reversal_of=loss, action=CohortOperation.Action.CORRECTED,
         ).exists())
+
+    def test_a_posted_shortfall_is_corrected_only_by_reversing_the_stocktake(self):
+        """Corrected on its own, the loss would leave the stocktake unreversible."""
+        cohort = self.bench_cohort()
+        stocktake_id, target_id = self.open_over('cohort')
+        self.count(stocktake_id, target_id, counted_quantity='8')
+        self.resolve_and_post(stocktake_id, 'adjust', 'Two plants missing')
+        loss = CohortOperation.objects.get(events__cohort=cohort)
+        self.workspace.mode = Workspace.Mode.NURSERY
+        self.workspace.save(update_fields=['mode'])
+
+        response = self.client.post(f'/plantings/cohorts/{cohort.pk}/correct-loss/', {
+            'operation': loss.pk, 'idempotency_key': str(uuid4()), 'reason': 'Found them.',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('reverse the stocktake', str(response.data['operation']))
+        self.reverse(stocktake_id)
+        cohort.refresh_from_db()
+        self.assertEqual(cohort.quantity, 10)
 
     def test_a_high_cohort_count_is_posted_and_withdrawn(self):
         """Found units are a bare adjustment, and so is taking them back."""
