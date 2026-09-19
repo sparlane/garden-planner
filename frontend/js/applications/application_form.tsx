@@ -5,7 +5,7 @@ import { Alert, Button, Card, Col, Form, Row } from 'react-bootstrap'
 import { addInputApplication, deleteInputApplication, postInputApplication, previewInputApplication, updateInputApplication } from '../api/applications'
 import { getInventoryBalances, getInventoryItems } from '../api/inventory'
 import { queryKeys } from '../query'
-import { formatMeasure, formatQuantity, localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
+import { formatMeasure, formatQuantity, useNowDatetimeInput } from '../utils'
 import { ApplicationLineInput, ApplicationPreview, ApplicationTargetType, InputApplication } from '../types/applications'
 import { invalidateApplications } from './application_list'
 
@@ -48,7 +48,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
   const [wasteReason, setWasteReason] = React.useState('')
   const [overrideReason, setOverrideReason] = React.useState('')
   const [fillFactor, setFillFactor] = React.useState('')
-  const [appliedAt, setAppliedAt] = React.useState(localDatetimeInputValue())
+  const appliedAt = useNowDatetimeInput()
   const [selected, setSelected] = React.useState<Array<string>>(defaultTargetKeys ?? [])
   const [draft, setDraft] = React.useState<InputApplication>()
   const [preview, setPreview] = React.useState<ApplicationPreview>()
@@ -138,7 +138,7 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
 
   const checkMutation = useMutation({
     mutationFn: async () => {
-      const applied = parseLocalDatetimeInput(appliedAt)
+      const applied = appliedAt.instant()
       if (applied === null) {
         throw new Error('Enter when this input was applied.')
       }
@@ -246,9 +246,9 @@ function InputApplicationForm({ targets, batch = null, defaultTargetKeys, tray, 
               <Form.Label>Applied</Form.Label>
               <Form.Control
                 type="datetime-local"
-                value={appliedAt}
+                value={appliedAt.value}
                 onChange={(event) => {
-                  setAppliedAt(event.target.value)
+                  appliedAt.change(event.target.value)
                   discardPreview()
                 }}
               />

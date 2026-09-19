@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query'
 
 import { postSpecificPlantOutcome } from '../api/plantings'
 import { clearApiError } from '../api/errors'
-import { errorsByField, formatDateTime, localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
+import { errorsByField, formatDateTime, useNowDatetimeInput } from '../utils'
 import { AvailabilityInterval, PlantLifecycleEvent, PlantLifecycleEventType, PlantLifecycleState, PlantOutcomeAction, SpecificPlant } from '../types/plantings'
 
 // Every derived state and recorded fact the server can report, including the
@@ -140,7 +140,7 @@ interface PlantOutcomeDialogProps {
 }
 
 function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcomeDialogProps) {
-  const [occurredAt, setOccurredAt] = React.useState('')
+  const occurredAt = useNowDatetimeInput()
   const [reason, setReason] = React.useState('')
   const mutation = useMutation({
     mutationFn: ({ plantPk, action, occurredAt: occurred, reason: explanation }: { plantPk: number; action: PlantOutcomeAction; occurredAt: string; reason: string }) =>
@@ -156,7 +156,7 @@ function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcom
 
   React.useEffect(() => {
     if (plant !== undefined && outcome !== undefined) {
-      setOccurredAt(localDatetimeInputValue())
+      occurredAt.reset()
       setReason('')
       mutation.reset()
     }
@@ -165,7 +165,7 @@ function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcom
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     if (plant === undefined || outcome === undefined) return
-    const parsed = parseLocalDatetimeInput(occurredAt)
+    const parsed = occurredAt.instant()
     if (parsed === null) return
     try {
       await mutation.mutateAsync({ plantPk: plant.pk, action: outcome, occurredAt: parsed.toISOString(), reason })
@@ -188,7 +188,7 @@ function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcom
           {(errors.non_field_errors || errors.event_type || errors.detail) && <Alert variant="danger">{errors.non_field_errors || errors.event_type || errors.detail}</Alert>}
           <Form.Group className="mb-3" controlId="plant-outcome-occurred-at">
             <Form.Label>When did this happen?</Form.Label>
-            <Form.Control type="datetime-local" value={occurredAt} required isInvalid={'occurred_at' in errors} onChange={(event) => setOccurredAt(event.target.value)} />
+            <Form.Control type="datetime-local" value={occurredAt.value} required isInvalid={'occurred_at' in errors} onChange={(event) => occurredAt.change(event.target.value)} />
             <Form.Control.Feedback type="invalid">{errors.occurred_at}</Form.Control.Feedback>
           </Form.Group>
           <Form.Group controlId="plant-outcome-reason">
@@ -201,7 +201,7 @@ function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcom
           <Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button type="submit" variant={actionDetails?.variant ?? 'primary'} disabled={mutation.isPending || !occurredAt || (reasonRequired && !reason.trim())}>
+          <Button type="submit" variant={actionDetails?.variant ?? 'primary'} disabled={mutation.isPending || !occurredAt.value || (reasonRequired && !reason.trim())}>
             {mutation.isPending ? 'Recording…' : `Confirm ${actionDetails?.label ?? 'outcome'}`}
           </Button>
         </Modal.Footer>
