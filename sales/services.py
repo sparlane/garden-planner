@@ -22,7 +22,6 @@ from plantings.models import PlantCohort, SpecificPlant
 
 from .calculations import money
 from .quantities import positive_quantity, remaining_quantity, returned_quantity
-from .reservations import HOLDING_STATUSES, close_reservations, record_reservation_event
 from .models import (
     FulfillmentLine,
     ReservationEvent,
@@ -32,6 +31,7 @@ from .models import (
     SalesOrderNumberSequence,
     SalesOrderShortfall,
 )
+from .reservations import HOLDING_STATUSES, close_reservations, record_reservation_event
 
 
 TENTATIVE_CLAIM = 'tentatively_claimed'

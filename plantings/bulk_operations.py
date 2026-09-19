@@ -492,7 +492,11 @@ def _execute(workspace, user, request, digest):
     operation = _create_operation(workspace, user, request, digest)
     if ACTION_EVENTS.get(request.action) in RELEASES_HOLD:
         # Sales takes an order before its plants, and these outcomes end holds.
-        lock_plant_holders(request.plants)
+        lock_plant_holders(
+            SpecificPlant.objects
+            .filter(workspace=workspace, pk__in=request.plants)
+            .values_list('pk', flat=True)
+        )
     preview = preview_bulk_operation(workspace, request, lock=True)
     has_conflicts = preview['conflicts'] > 0
     if has_conflicts and request.atomicity == BulkPlantOperation.Atomicity.ALL_OR_NOTHING:

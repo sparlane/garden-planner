@@ -32,6 +32,7 @@ from django.utils import timezone
 from applications.models import InputApplication, InputApplicationLine
 from plantings.batches import lock_batch_with_plants
 from plantings.lifecycle import (
+    RELEASES_HOLD,
     is_final,
     plant_lifecycle_summary,
     OutcomeRequest,
@@ -573,7 +574,13 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     generation = lock_generation(generation)
     _require_tray(generation)
     _require_cleanable(generation)
-    lock_plant_holders(generation_plants(generation).values_list('pk', flat=True))
+    lock_plant_holders(
+        generation_plants(generation)
+        .filter(pk__in=[
+            row.plant_id for row in request.plants if row.outcome in RELEASES_HOLD
+        ])
+        .values_list('pk', flat=True)
+    )
     batches = _lock_generation_batches(generation)
     occurred_at = request.occurred_at or timezone.now()
 

@@ -198,7 +198,8 @@ class DecisionRefusedUnderHoldTests(PlantLossHoldTestCase):
         refused = self.outcome(plant, 'hold-back', 'Gone leggy.')
 
         self.assertEqual(refused.status_code, 400, refused.data)
-        self.assertIn(order.order_number, str(refused.data))
+        # Keyed like the transition refusal these same endpoints already give.
+        self.assertIn(order.order_number, str(refused.data['event_type']))
         self.assertIn('Release that hold', str(refused.data))
         self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.AVAILABLE)
         allocation.refresh_from_db()
@@ -254,24 +255,50 @@ class DecisionRefusedUnderHoldTests(PlantLossHoldTestCase):
 class DispatchSaysWhatBecameOfThePlantTests(PlantLossHoldTestCase):
     """A hold older than the fix fails at dispatch with a diagnosis."""
 
-    def test_a_hold_left_on_a_culled_plant_names_the_cull(self):
+    def stale(self, event_type, reason, reversal_of=None):
+        """Write a fact directly, as one under a hold that predates the fix was."""
         order, (plant,), (allocation,) = self.held()
-        # Written directly, as a deployed hold that predates the release was.
-        culled = PlantLifecycleEvent.objects.create(
+        if reversal_of is not None:
+            reversal_of = plant.lifecycle_events.get(event_type=reversal_of)
+        fact = PlantLifecycleEvent.objects.create(
             workspace=self.workspace, plant=plant, batch=plant.batch,
-            event_type=EventType.CULLED, occurred_at=timezone.now(),
-            reason='Botrytis.',
+            event_type=event_type, occurred_at=timezone.now(),
+            reason=reason, reversal_of=reversal_of,
         )
+        return order, plant, allocation, self.local_day(fact.occurred_at)
 
+    def refusal(self, order, allocation):
         response = self.client.post(
             f"{self.orders_url}{order.pk}/fulfillments/",
             {'operation_key': str(uuid4()), 'allocation_ids': [allocation.pk]},
             format='json',
         )
-
         self.assertEqual(response.status_code, 400, response.data)
-        day = self.local_day(culled.occurred_at)
-        self.assertEqual(response.data['allocations'], [
-            f'Plant {plant.pk} was recorded as culled on {day} (Botrytis.).',
+        self.assertEqual(
+            response.data['allocations'][-1],
             'Release those holds and allocate other plants, or record a shortfall.',
+        )
+        return response.data['allocations'][:-1]
+
+    def test_a_hold_left_on_a_culled_plant_names_the_cull(self):
+        order, plant, allocation, day = self.stale(EventType.CULLED, 'Botrytis.')
+
+        self.assertEqual(self.refusal(order, allocation), [
+            f'Plant {plant.pk} was recorded as culled on {day} (Botrytis).',
+        ])
+
+    def test_a_hold_left_on_a_held_back_plant_names_the_hold_back(self):
+        order, plant, allocation, day = self.stale(EventType.HELD_BACK, 'Gone leggy.')
+
+        self.assertEqual(self.refusal(order, allocation), [
+            f'Plant {plant.pk} was recorded as held back from sale on {day} (Gone leggy).',
+        ])
+
+    def test_a_hold_left_on_a_plant_whose_ready_was_corrected_names_the_correction(self):
+        order, plant, allocation, day = self.stale(
+            EventType.CORRECTED, 'Never graded', reversal_of=EventType.READY,
+        )
+
+        self.assertEqual(self.refusal(order, allocation), [
+            f'Plant {plant.pk}: its ready for sale or use was corrected on {day} (Never graded).',
         ])

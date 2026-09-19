@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from costing.services import plant_cost_breakdown
@@ -40,12 +40,12 @@ from plantings.lifecycle import (
     EventType,
     LifecycleState,
     OutcomeRequest,
-    effective_state_events,
+    STATE_EVENT_TYPES,
     plant_lifecycle_summary,
     record_lifecycle_event,
     reverse_lifecycle_event,
 )
-from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, SpecificPlantLocation
+from plantings.models import PlantCohort, PlantLifecycleEvent, ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .fill_containers import selected_pots, dispatch_selected_pots, return_pot, withdraw_returned_pot, validate_pot_returns, lock_container_commerce
 from .calculations import line_position_amounts, measured_amounts, money, proportional_refund
@@ -281,6 +281,28 @@ def _require_ready_cohorts(allocations, cohorts):
     })
 
 
+def _last_offer_change(plant):
+    """Return the newest fact that could have taken a plant off offer.
+
+    That is either a surviving state-changing fact or a correction, because
+    striking out a `ready` takes a plant off offer without appending any fact
+    `effective_state_events` would return: reading only those would date the
+    change by the germination.
+    """
+    return (
+        PlantLifecycleEvent.objects
+        .filter(plant=plant)
+        .filter(Q(
+            Q(event_type__in=STATE_EVENT_TYPES, reversal__isnull=True),
+            Q(event_type=EventType.CORRECTED),
+            _connector=Q.OR,
+        ))
+        .select_related('reversal_of')
+        .order_by('-occurred_at', '-pk')
+        .first()
+    )
+
+
 def _require_offered_plants(order, allocations, plants):
     """Refuse a dispatch of a held plant that is no longer on offer, saying why.
 
@@ -299,17 +321,21 @@ def _require_offered_plants(order, allocations, plants):
         summary = plant_lifecycle_summary(plant)
         if summary.sellable:
             continue
-        described = LifecycleState(summary.state).label.lower()
-        latest = effective_state_events(plant).first()
+        latest = _last_offer_change(plant)
         if latest is None:
+            described = LifecycleState(summary.state).label.lower()
             problems.append(f'Plant {plant.pk} is {described} and has not been graded ready.')
             continue
-        message = (
-            f'Plant {plant.pk} was recorded as {described} on '
-            f'{latest.occurred_at.astimezone(zone).date().isoformat()}'
-        )
-        if latest.reason.strip():
-            message += f' ({latest.reason.strip()})'
+        day = latest.occurred_at.astimezone(zone).date().isoformat()
+        if latest.event_type == EventType.CORRECTED:
+            struck = EventType(latest.reversal_of.event_type).label.lower()
+            message = f'Plant {plant.pk}: its {struck} was corrected on {day}'
+        else:
+            described = EventType(latest.event_type).label.lower()
+            message = f'Plant {plant.pk} was recorded as {described} on {day}'
+        reason = latest.reason.strip().rstrip('.')
+        if reason:
+            message += f' ({reason})'
         problems.append(f'{message}.')
     if problems:
         raise ValidationError({

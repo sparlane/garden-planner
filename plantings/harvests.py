@@ -150,7 +150,11 @@ def record_harvest(workspace, user, request):
     all, as they do in every sales service.
     """
     if request.finish_plants:
-        lock_plant_holders(request.plant_ids)
+        lock_plant_holders(
+            batch_specific_plants(request.batch)
+            .filter(pk__in=request.plant_ids)
+            .values_list('pk', flat=True)
+        )
     plants = _resolve_plants(request.batch, request.plant_ids)
     batch = lock_batch(request.batch)
     _require_harvestable(batch)
