@@ -10,14 +10,14 @@ from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from billing.models import SupplyCorrection, SupplyDocument
 from costing.models import CostAllocation
 from inventory.models import InputTaxAdjustment, InventoryItem, StockLot, StockMovement, StockReceiptLine
 from plantings.lifecycle import LifecycleState, derive_state
-from plantings.models import PlantCohort, PlantLifecycleEvent, SpecificPlant
+from plantings.models import CohortEvent, PlantCohort, PlantLifecycleEvent, SpecificPlant
 from purchasing.models import BusinessExpense, SupplierInvoice, SupplierPayment
 from sales.models import Payment, Refund
 
@@ -184,11 +184,20 @@ def _capture_cohorts(income_year, user, end):
     counts the first half, so the value has to be drawn from the same half;
     the sold half is cost of sale, and counting it here as well would raise
     profit by the amount it was meant to lower it.
+
+    Both halves are read as they stand at capture, not at the balance instant,
+    so a block that was sold, returned, lost, promoted, split or recounted at
+    or after `end` has a line that describes a later day. Such a line is
+    marked provisional rather than valued as at year end, which is task 148's;
+    a block emptied only after `end` is still captured, as a provisional zero,
+    so the units it held at year end do not silently drop out.
     """
+    changed_later = set(CohortEvent.objects.filter(
+        workspace=income_year.workspace, operation__occurred_at__gte=end,
+    ).values_list('cohort_id', flat=True))
     cohorts = PlantCohort.objects.filter(
-        workspace=income_year.workspace, quantity__gt=0,
-        created__lt=end,
-    ).select_related('batch__variety')
+        workspace=income_year.workspace, created__lt=end,
+    ).filter(Q(quantity__gt=0) | Q(pk__in=changed_later)).select_related('batch__variety')
     rows = []
     for cohort in cohorts:
         allocations = CostAllocation.objects.filter(
@@ -207,7 +216,7 @@ def _capture_cohorts(income_year, user, end):
             currency_code=income_year.workspace.currency_code,
             assumptions='Cohort quantity frozen from the latest observation available at capture time.',
             derived=True,
-            provisional=cohort.observed_at >= end or len(known) != allocations.count(),
+            provisional=cohort.observed_at >= end or cohort.pk in changed_later or len(known) != allocations.count(),
             created_by=user,
         ))
     return rows
