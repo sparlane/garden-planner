@@ -13,6 +13,7 @@ from django.db.models import Exists, OuterRef
 from django.utils import timezone
 
 from health.models import HealthFollowUp, HealthObservation, HealthTreatment
+from locations.models import location_full_name
 from plantings.assumption_variance import assumption_variance_rows
 from plantings.growth import current_growth
 from plantings.models import (
@@ -382,7 +383,9 @@ def _milestone_tasks(rule):
             batch = milestone.requirement.batch
             targets.append(TargetLink(batch, f'Batch {batch.code}', f'/plantings/batches/{batch.pk}'))
         if milestone.location_id:
-            targets.append(TargetLink(milestone.location, milestone.location.full_name, '/locations'))
+            targets.append(TargetLink(
+                milestone.location, location_full_name(milestone.location), '/locations',
+            ))
         tasks.append(_source_task(
             rule, f'milestone:{milestone.pk}',
             f'{milestone.stage.name}: {demand.variety}',
@@ -444,7 +447,7 @@ def _growth_tasks(rule, expected_ready=False):
         location = targets[0].location if isinstance(targets[0], PlantCohort) else _plant_location(targets[0])
         links = [TargetLink(batch, f'Batch {batch.code}', f'/plantings/batches/{batch.pk}')]
         if location:
-            links.append(TargetLink(location, location.full_name, '/locations'))
+            links.append(TargetLink(location, location_full_name(location), '/locations'))
         for target in targets:
             kind = 'cohorts' if isinstance(target, PlantCohort) else 'plants'
             links.append(TargetLink(target, f'{kind[:-1].title()} {target.pk}', f'/plantings/{kind}/{target.pk}'))
