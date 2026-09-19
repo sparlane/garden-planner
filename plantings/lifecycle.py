@@ -296,6 +296,9 @@ def absent_states_with_exits(
     both questions. The one legitimate exception is a state every fact reaches
     by closing the plant's location: `sold` admits the return facts, but those
     bring a plant back from a customer rather than act on one still here.
+    A state with exits that no fact produces also counts as departed, because
+    `all()` over no producing facts is true. Such a state is unreachable, so
+    nothing is lost by not reporting it here.
 
     The vocabularies default to this module's, and are arguments so a proposed
     one can be checked before it ships.

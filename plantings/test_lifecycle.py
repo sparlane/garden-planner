@@ -554,7 +554,13 @@ class LifecycleReachabilityTests(SimpleTestCase):
         )
 
     def test_every_state_with_an_exit_is_present_unless_it_departed(self):
-        """A plant somebody can still act on is never treated as gone."""
+        """A plant somebody can still act on is never treated as gone.
+
+        With the module's own tables this cannot fail: `PRESENT_STATES` and the
+        departed exception are both derived from `STATE_AFTER` and
+        `CLOSES_LOCATION`. It holds the invariant as a statement; the real
+        guards are the mutation test below and the by-value pin after it.
+        """
         self.assertEqual(absent_states_with_exits(), set())
 
     def test_a_state_with_exits_left_out_of_present_is_reported(self):
