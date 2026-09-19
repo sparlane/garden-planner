@@ -12,6 +12,7 @@ import hashlib
 import json
 from decimal import Decimal
 from uuid import uuid5
+from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -37,7 +38,10 @@ from plantings.cohort_availability import DISPATCHABLE_STATES
 from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import (
     EventType,
+    LifecycleState,
     OutcomeRequest,
+    effective_state_events,
+    plant_lifecycle_summary,
     record_lifecycle_event,
     reverse_lifecycle_event,
 )
@@ -277,6 +281,45 @@ def _require_ready_cohorts(allocations, cohorts):
     })
 
 
+def _require_offered_plants(order, allocations, plants):
+    """Refuse a dispatch of a held plant that is no longer on offer, saying why.
+
+    A loss recorded under a hold ends the hold (task 125), so this is reached
+    by a hold older than that fix, or by one some other route left standing.
+    `record_lifecycle_event` would refuse the sale anyway, but as a state
+    machine: "a culled plant cannot be recorded as sold" tells the loading bay
+    nothing about when or why. This says both, for every such plant at once.
+    """
+    zone = ZoneInfo(order.workspace.timezone)
+    problems = []
+    for allocation in allocations:
+        if not allocation.plant_id:
+            continue
+        plant = plants[allocation.plant_id]
+        summary = plant_lifecycle_summary(plant)
+        if summary.sellable:
+            continue
+        described = LifecycleState(summary.state).label.lower()
+        latest = effective_state_events(plant).first()
+        if latest is None:
+            problems.append(f'Plant {plant.pk} is {described} and has not been graded ready.')
+            continue
+        message = (
+            f'Plant {plant.pk} was recorded as {described} on '
+            f'{latest.occurred_at.astimezone(zone).date().isoformat()}'
+        )
+        if latest.reason.strip():
+            message += f' ({latest.reason.strip()})'
+        problems.append(f'{message}.')
+    if problems:
+        raise ValidationError({
+            'allocations': [
+                *problems,
+                'Release those holds and allocate other plants, or record a shortfall.',
+            ],
+        })
+
+
 def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfilled_at, quantity):
     """Ship anonymous stock by the count and value it from its own lot.
 
@@ -369,6 +412,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         [row.plant_cohort_id for row in allocations if row.plant_cohort_id],
     )
     _require_ready_cohorts(allocations, cohorts)
+    _require_offered_plants(order, allocations, plants)
     riders = resolve_riders({pk: unit for pk, unit in units.items() if pk in unit_ids}, set(plant_ids))
     validate_riders_are_free(riders, order)
     positions = _available_positions(order)

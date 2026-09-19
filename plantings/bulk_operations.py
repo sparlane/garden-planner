@@ -13,12 +13,14 @@ from costing.services import reallocate_batch
 from costing.models import CostAllocationRun
 from locations.models import Location
 from locations.occupancy import capacity_chain, location_occupancy
+from sales.reservations import lock_plant_holders
 
 from .counted_fills import plant_counted_fill
 from .movement import move_specific_plant
 from .batches import lock_batch_with_plants
 from .germination import validate_late_germination
 from .lifecycle import (
+    RELEASES_HOLD,
     STATE_AFTER,
     EventType,
     OutcomeRequest,
@@ -488,6 +490,9 @@ def _apply_germination(operation, user, request):
 def _execute(workspace, user, request, digest):
     """Execute a new request atomically; callers handle idempotent races."""
     operation = _create_operation(workspace, user, request, digest)
+    if ACTION_EVENTS.get(request.action) in RELEASES_HOLD:
+        # Sales takes an order before its plants, and these outcomes end holds.
+        lock_plant_holders(request.plants)
     preview = preview_bulk_operation(workspace, request, lock=True)
     has_conflicts = preview['conflicts'] > 0
     if has_conflicts and request.atomicity == BulkPlantOperation.Atomicity.ALL_OR_NOTHING:

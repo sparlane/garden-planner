@@ -53,6 +53,7 @@ from inventory.ledger import (
     reverse_tray_generation_movements,
 )
 from inventory.models import StockMovement
+from sales.reservations import lock_plant_holders
 
 from .models import (
     SeedTrayCell,
@@ -560,7 +561,10 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     ``applications.services.post_application`` documents why the last three run
     in that order; the generation is a new outermost level that nothing else
     takes, so extending the chain rather than starting a new one keeps this
-    compatible with sowing, harvesting, and posting an application.
+    compatible with sowing, harvesting, and posting an application. The orders
+    holding plants in the tray come between the generation and the plants,
+    because a plant cleaned out as lost ends its hold and sales takes an order
+    before its plants.
 
     Repeating a submission is refused rather than half-applied: the status check
     runs under the lock, and everything happens in one transaction.
@@ -569,6 +573,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     generation = lock_generation(generation)
     _require_tray(generation)
     _require_cleanable(generation)
+    lock_plant_holders(generation_plants(generation).values_list('pk', flat=True))
     batches = _lock_generation_batches(generation)
     occurred_at = request.occurred_at or timezone.now()
 

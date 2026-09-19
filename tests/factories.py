@@ -52,6 +52,8 @@ from plantings.models import (
 from plants.models import Plant, PlantFamily, PlantVariety
 from purchasing.models import ExpenseCategory
 from purchasing.services import confirm_invoice, create_invoice
+from sales.models import SalesOrder, SalesOrderLine
+from sales.services import allocate_targets, confirm_order, create_order
 from seeds.models import SeedPacket, Seeds
 from seedtrays.models import (
     SeedTray,
@@ -780,3 +782,29 @@ def make_plant_at_location(location, **overrides):
         location=location,
     )
     return plant
+
+
+def reserve_plants(workspace, user, plants, expires_at=None):
+    """Confirm one order whose single seedling line holds exactly these plants.
+
+    The plants have to be on offer already. Shared so the lifecycle, health,
+    stocktake and tray suites can put a live hold on a plant without each
+    carrying its own copy of the order workflow (task 125).
+    """
+    order = create_order(workspace, user)
+    line = SalesOrderLine.objects.create(
+        order=order,
+        line_type=SalesOrderLine.LineType.SEEDLING,
+        variety=plants[0].batch.variety,
+        description='Held seedlings',
+        quantity=len(plants),
+        unit_price=Decimal('10'),
+        tax_rate=Decimal('15'),
+    )
+    allocations = allocate_targets(
+        line, user, plant_ids=[plant.pk for plant in plants], expires_at=expires_at,
+    )
+    confirm_order(order, user)
+    for allocation in allocations:
+        allocation.refresh_from_db()
+    return SalesOrder.objects.get(pk=order.pk), allocations

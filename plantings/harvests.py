@@ -18,6 +18,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from inventory.ledger import quantize_quantity
+from sales.reservations import lock_plant_holders
 
 from .batches import batch_specific_plants, lock_batch
 from .lifecycle import EventType, OutcomeRequest, record_bulk_outcome
@@ -144,8 +145,12 @@ def record_harvest(workspace, user, request):
     ordering is load-bearing. Recording any plant outcome writes a lifecycle
     event carrying a batch reference, so it holds the plant while the database
     takes a key-share lock on the batch row. Taking the batch first here would
-    close the cycle and deadlock the two writers against each other.
+    close the cycle and deadlock the two writers against each other. Finishing
+    a plant ends any sales hold on it, so the orders holding them come first of
+    all, as they do in every sales service.
     """
+    if request.finish_plants:
+        lock_plant_holders(request.plant_ids)
     plants = _resolve_plants(request.batch, request.plant_ids)
     batch = lock_batch(request.batch)
     _require_harvestable(batch)

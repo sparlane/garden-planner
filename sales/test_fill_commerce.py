@@ -20,7 +20,7 @@ from tests.factories import make_inventory_item, make_stock_lot
 
 from .commerce import post_fulfillment, post_return, reverse_fulfillment, reverse_return
 from .models import SalesOrder, FulfillmentContainer
-from .services import close_reservations
+from .reservations import close_reservations
 from .test_commerce import CommerceFixtureTestCase
 
 

@@ -33,6 +33,7 @@ from plantings.models import (
     SpecificPlant,
     SpecificPlantLocation,
 )
+from sales.reservations import lock_plant_holders
 
 from .availability import case_is_active
 from .models import (
@@ -361,6 +362,14 @@ def act_on_quarantine(
         return existing
     if not case_is_active(case):
         raise ValidationError({'case': 'This quarantine case is already closed.'})
+    if action_name == QuarantineAction.Action.CULL:
+        # A cull ends any sales hold on its plants, and sales takes an order
+        # before its plants, so the holders are locked before the members.
+        lock_plant_holders(
+            SpecificPlant.objects
+            .filter(quarantine_memberships__case=case)
+            .values_list('pk', flat=True)
+        )
     plants, cohorts = _member_rows(case, lock=True)
     _validate_members(case, plants, cohorts)
     action = QuarantineAction.objects.create(
