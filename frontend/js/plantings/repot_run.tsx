@@ -6,7 +6,7 @@ import { getSerializedUnits } from '../api/inventory'
 import { NumberRange, numberList, parseBenchNumbers, rangeNumbers } from '../inventory/bench_numbers'
 import { InventoryItem, SerializedInventoryUnit } from '../types/inventory'
 import { PlantRepotting } from '../types/plantings'
-import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
+import { useNowDatetimeInput } from '../utils'
 import { PotCodeField, potOptionLabel, potRefusal, useNumberedPotDestinations } from './pot_destinations'
 
 // What one run may hold, mirroring `plantings.repotting.MAX_REPOTTED_PLANTS`.
@@ -103,7 +103,7 @@ function RepotRunForm({ candidates, busy, onRepot, onCancel }: RepotRunFormProps
   const [assignments, setAssignments] = React.useState<PotAssignments>({})
   const [typed, setTyped] = React.useState('')
   const [notice, setNotice] = React.useState<Array<string>>([])
-  const [date, setDate] = React.useState(localDatetimeInputValue())
+  const date = useNowDatetimeInput()
   const [notes, setNotes] = React.useState('')
   const { potItems } = useNumberedPotDestinations({ choosing: true, item: '' })
 
@@ -159,7 +159,7 @@ function RepotRunForm({ candidates, busy, onRepot, onCancel }: RepotRunFormProps
   }
 
   async function save() {
-    const parsed = parseLocalDatetimeInput(date)
+    const parsed = date.instant()
     if (!parsed) return
     await onRepot({
       placements: pairings.filter((pairing) => pairing.pot).map((pairing) => ({ plant: pairing.candidate.plantPk, container_unit: (pairing.pot as SerializedInventoryUnit).pk })),
@@ -231,7 +231,7 @@ function RepotRunForm({ candidates, busy, onRepot, onCancel }: RepotRunFormProps
         <div className="d-flex gap-3 flex-wrap align-items-end">
           <Form.Group controlId="repot-date">
             <Form.Label>When</Form.Label>
-            <Form.Control type="datetime-local" value={date} onChange={(event) => setDate(event.target.value)} />
+            <Form.Control type="datetime-local" value={date.value} onChange={(event) => date.change(event.target.value)} />
           </Form.Group>
           <Form.Group controlId="repot-notes" className="flex-grow-1">
             <Form.Label>Notes (optional)</Form.Label>
@@ -244,7 +244,7 @@ function RepotRunForm({ candidates, busy, onRepot, onCancel }: RepotRunFormProps
           </p>
         )}
         <div className="d-flex gap-2 mt-2">
-          <Button onClick={save} disabled={busy || !date || unpaired > 0 || candidates.length === 0 || candidates.length > MAX_REPOTTED_PLANTS}>
+          <Button onClick={save} disabled={busy || !date.value || unpaired > 0 || candidates.length === 0 || candidates.length > MAX_REPOTTED_PLANTS}>
             {busy ? 'Repotting…' : `Repot ${candidates.length} seedling${candidates.length === 1 ? '' : 's'}`}
           </Button>
           <Button variant="secondary" onClick={onCancel} disabled={busy}>

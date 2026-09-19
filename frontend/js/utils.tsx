@@ -1,4 +1,5 @@
 import Cookies from 'js-cookie'
+import React from 'react'
 
 import { ApiError, reportApiError, type ApiRequestMethod } from './api/errors'
 import { SelectOption } from './types/others'
@@ -259,6 +260,26 @@ function parseLocalDatetimeInput(value: string): Date | null {
   return isNaN(d.getTime()) ? null : d
 }
 
+// A datetime-local field that starts at "now". The input holds only minutes and
+// its default is read when the form opens, so sent as shown it can land before
+// a fill the server opened seconds ago, and the write is refused until the
+// clock turns over. Until the operator edits it, `instant()` is the moment it
+// is called; once they have, it is exactly the time they chose.
+function useNowDatetimeInput() {
+  const [value, setValue] = React.useState(() => localDatetimeInputValue())
+  const [chosen, setChosen] = React.useState(false)
+  const change = React.useCallback((next: string) => {
+    setValue(next)
+    setChosen(true)
+  }, [])
+  const reset = React.useCallback(() => {
+    setValue(localDatetimeInputValue())
+    setChosen(false)
+  }, [])
+  const instant = (): Date | null => (chosen ? parseLocalDatetimeInput(value) : new Date())
+  return { value, change, reset, instant }
+}
+
 function formatDate(s: string): string {
   if (!s) return ''
   const d = new Date(s)
@@ -391,6 +412,7 @@ export {
   fetchAsJson,
   localDatetimeInputValue,
   parseLocalDatetimeInput,
+  useNowDatetimeInput,
   selectOptionToPk,
   formatDate,
   formatDateTime,

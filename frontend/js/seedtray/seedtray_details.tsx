@@ -9,7 +9,7 @@ import Select from 'react-select'
 import { QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { CleanMediaDisposition, CleanPlantDisposition, CleanSeedDisposition, SeedTray, SeedTrayCell, SeedTrayGeneration } from '../types/seedtrays'
-import { localDatetimeInputValue, parseLocalDatetimeInput, formatDate, formatDateTime, selectOptionToPk } from '../utils'
+import { useNowDatetimeInput, formatDate, formatDateTime, selectOptionToPk } from '../utils'
 import {
   cleanSeedTrayGeneration,
   getSeedTrayCells,
@@ -73,7 +73,6 @@ interface SeedTrayDetailsProps {
 type BaseMoveForm = {
   plantPk: number
   currentLocationPk?: number
-  date: string
   notes: string
 }
 
@@ -457,6 +456,7 @@ const GerminationCloseForm: React.FC<GerminationCloseFormProps> = ({ sowing, cau
 
 type MovePlantFormProps = {
   form: MoveForm
+  date: string
   gardenSquares: GardenSquare[] | undefined
   allSeedTrays: SeedTray[] | undefined
   moveCells: SeedTrayCell[] | undefined
@@ -465,6 +465,7 @@ type MovePlantFormProps = {
   pots: Array<SerializedInventoryUnit>
   potsLoading: boolean
   onChange: (form: MoveForm) => void
+  onChangeDate: (value: string) => void
   onChangeTray: (pk: number | undefined) => void
   onChangePotItem: (pk: number | undefined) => void
   onSave: () => void
@@ -521,6 +522,7 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ label, options, v
 
 const MovePlantForm: React.FC<MovePlantFormProps> = ({
   form,
+  date,
   gardenSquares,
   allSeedTrays,
   moveCells,
@@ -529,6 +531,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
   pots,
   potsLoading,
   onChange,
+  onChangeDate,
   onChangeTray,
   onChangePotItem,
   onSave,
@@ -551,7 +554,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
             value={form.locationType}
             onChange={(e) => {
               const locationType = e.target.value as MoveForm['locationType']
-              const base = { plantPk: form.plantPk, currentLocationPk: form.currentLocationPk, date: form.date, notes: form.notes }
+              const base = { plantPk: form.plantPk, currentLocationPk: form.currentLocationPk, notes: form.notes }
               if (locationType === 'garden_square') {
                 onChange({ ...base, locationType, gardenSquarePk: undefined })
               } else if (locationType === 'seed_tray_cell') {
@@ -611,7 +614,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
       )}
       <div style={{ marginTop: 8 }}>
         <label>
-          Date: <input type="datetime-local" value={form.date} onChange={(e) => onChange({ ...form, date: e.target.value })} />
+          Date: <input type="datetime-local" value={date} onChange={(e) => onChangeDate(e.target.value)} />
         </label>
       </div>
       <div style={{ marginTop: 8 }}>
@@ -620,7 +623,7 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
         </label>
       </div>
       <div style={{ marginTop: 8 }}>
-        <Button variant="primary" onClick={onSave} disabled={!form.date || !moveDestinationPk(form)}>
+        <Button variant="primary" onClick={onSave} disabled={!date || !moveDestinationPk(form)}>
           Save
         </Button>{' '}
         <Button variant="secondary" onClick={onCancel}>
@@ -728,9 +731,10 @@ const GenerationCard: React.FC<GenerationCardProps> = ({ generations, active, bu
 function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const cache = useQueryClient()
   const [germinationSelections, setGerminationSelections] = React.useState<Array<GerminationSelection>>([])
-  const [germinationDate, setGerminationDate] = React.useState(localDatetimeInputValue())
+  const germinationDate = useNowDatetimeInput()
   const [germinationNotes, setGerminationNotes] = React.useState('')
   const [moveForm, setMoveForm] = React.useState<MoveForm>()
+  const moveDate = useNowDatetimeInput()
   const [repotSelections, setRepotSelections] = React.useState<Array<RepotCandidate>>([])
   const [inventoryAction, setInventoryAction] = React.useState<InventoryAction>()
   const [inventoryDestination, setInventoryDestination] = React.useState<number>()
@@ -954,7 +958,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
 
   async function handleRecordGermination() {
     if (germinationSelections.length === 0) return
-    const parsedDate = parseLocalDatetimeInput(germinationDate)
+    const parsedDate = germinationDate.instant()
     if (!parsedDate) return
     const request: BulkPlantOperationRequest = {
       idempotency_key: globalThis.crypto.randomUUID(),
@@ -1027,7 +1031,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
 
   async function handleRecordMove() {
     if (!moveForm) return
-    const parsedMoveDate = parseLocalDatetimeInput(moveForm.date)
+    const parsedMoveDate = moveDate.instant()
     if (!parsedMoveDate) return
     await moveMutation.mutateAsync({
       plantPk: moveForm.plantPk,
@@ -1072,9 +1076,9 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       currentLocationPk: current?.pk,
       locationType: 'garden_square',
       gardenSquarePk: undefined,
-      date: localDatetimeInputValue(),
       notes: ''
     })
+    moveDate.reset()
   }
 
   function handleMoveTrayChange(trayPk: number | undefined) {
@@ -1477,10 +1481,10 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       {selectedCellPlantingPks.length > 0 && (
         <GerminationForm
           selections={germinationSelections}
-          date={germinationDate}
+          date={germinationDate.value}
           notes={germinationNotes}
           late={selectionIsLate}
-          onChangeDate={setGerminationDate}
+          onChangeDate={germinationDate.change}
           onChangeQuantity={changeGerminationQuantity}
           onChangeNotes={setGerminationNotes}
           onSave={handleRecordGermination}
@@ -1495,6 +1499,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
       {moveForm && (
         <MovePlantForm
           form={moveForm}
+          date={moveDate.value}
           gardenSquares={gardenSquares}
           allSeedTrays={seedTrays}
           moveCells={moveCellsQuery.data}
@@ -1503,6 +1508,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           pots={pots}
           potsLoading={potsLoading}
           onChange={setMoveForm}
+          onChangeDate={moveDate.change}
           onChangeTray={handleMoveTrayChange}
           onChangePotItem={handleMovePotItemChange}
           onSave={handleRecordMove}

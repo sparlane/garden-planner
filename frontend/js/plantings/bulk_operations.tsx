@@ -10,7 +10,7 @@ import { activeChoices } from '../catalog'
 import { queryKeys } from '../query'
 import { Location } from '../types/locations'
 import { BulkPlantAction, BulkPlantAtomicity, BulkPlantOperationRequest, BulkPlantPreview, NurseryRegisterFilters } from '../types/plantings'
-import { localDatetimeInputValue, parseLocalDatetimeInput } from '../utils'
+import { useNowDatetimeInput } from '../utils'
 import { STATE_LABELS } from './lifecycle'
 import { PLACEMENT_LABELS } from './placements'
 import { PotCodeField, potOptionLabel, useNumberedPotDestinations } from './pot_destinations'
@@ -48,7 +48,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   const cache = useQueryClient()
   const [action, setAction] = React.useState<BulkPlantAction>('move')
   const [atomicity, setAtomicity] = React.useState<BulkPlantAtomicity | ''>('')
-  const [occurredAt, setOccurredAt] = React.useState(localDatetimeInputValue())
+  const occurredAt = useNowDatetimeInput()
   const [reason, setReason] = React.useState('')
   const [destinationType, setDestinationType] = React.useState<DestinationType>('location')
   const [destination, setDestination] = React.useState<number | ''>('')
@@ -128,7 +128,7 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
   })
 
   async function review() {
-    const parsed = parseLocalDatetimeInput(occurredAt)
+    const parsed = occurredAt.instant()
     if (!parsed) return
     const resolved = selection.mode === 'filter' ? await getNurseryRegisterSelection(filters) : { plants: selection.ids, count: selection.ids.length }
     const reviewedRequest: BulkPlantOperationRequest = {
@@ -172,9 +172,9 @@ function BulkOperationPanel({ selection, filters, locations, setSelection, sourc
             <Form.Label>When</Form.Label>
             <Form.Control
               type="datetime-local"
-              value={occurredAt}
+              value={occurredAt.value}
               onChange={(event) => {
-                setOccurredAt(event.target.value)
+                occurredAt.change(event.target.value)
                 invalidateReview()
               }}
             />
