@@ -55,6 +55,7 @@ from .allocation import (
     unattributable_share,
     whole_source_share,
 )
+from .cohort_weights import cohort_weights
 from .models import CostAllocation
 
 
@@ -208,21 +209,28 @@ def cohort_outputs(batch):
     own kind so its cost becomes production loss. Dropping it would re-divide
     what the dead plants cost over the survivors and over units already
     dispatched, which reads as a price rise rather than as a loss.
+
+    Each output's weight is its units, except where a recount found units that
+    carried no cost; `costing.cohort_weights` says how those are weighed.
     """
 
     outputs = []
     sold = sold_cohort_quantities(batch)
     lost = lost_cohort_quantities(batch)
+    weights = cohort_weights(batch)
     cohorts = PlantCohort.objects.filter(batch=batch).prefetch_related('promoted_plants')
     for cohort in cohorts:
-        if cohort.quantity:
-            outputs.append(('cohort', cohort.pk, cohort.quantity))
-        if sold.get(cohort.pk):
-            outputs.append(('cohort_sale', cohort.pk, sold[cohort.pk]))
-        if lost.get(cohort.pk):
-            outputs.append(('cohort_loss', cohort.pk, lost[cohort.pk]))
+        counts = (
+            ('cohort', cohort.quantity),
+            ('cohort_sale', sold.get(cohort.pk)),
+            ('cohort_loss', lost.get(cohort.pk)),
+        )
         outputs.extend(
-            ('plant', plant_id, 1)
+            (kind, cohort.pk, weights.weigh(kind, cohort.pk, units))
+            for kind, units in counts if units
+        )
+        outputs.extend(
+            ('plant', plant_id, weights.weigh('plant', plant_id, 1))
             for plant_id in cohort.promoted_plants.values_list('pk', flat=True)
         )
     return outputs

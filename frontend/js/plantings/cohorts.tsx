@@ -425,6 +425,7 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
             <Col md={2}>
               <Form.Label>Quantity</Form.Label>
               <Form.Control type="number" min={actionName === 'adjust' ? 0 : 1} value={quantity} onChange={(event) => setQuantity(Number(event.target.value))} />
+              {actionName === 'adjust' && quantity < cohort.quantity && <Form.Text>The shortfall is recorded as lost during stocktake.</Form.Text>}
             </Col>
           )}
           {cohort.container !== null && ['split', 'promote'].includes(actionName) && (
