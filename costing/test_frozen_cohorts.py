@@ -20,9 +20,9 @@ from .test_services import CohortStockTestCase
 fixed_frozen_plan = services._frozen_plan  # pylint: disable=protected-access
 
 
-def frozen_plan_before_the_fix(intended, stored):
+def frozen_plan_before_the_fix(intended, stored, *args):
     """Plan as the frozen branch did before task 134: repost only missing keys."""
-    reverse, _post = fixed_frozen_plan(intended, stored)
+    reverse, _post = fixed_frozen_plan(intended, stored, *args)
     return reverse, [spec for key, spec in intended.items() if key not in stored]
 
 

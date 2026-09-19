@@ -7,9 +7,9 @@ type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residu
 // What the cost was allocated to. `cohort_sale` and `cohort_loss` name the
 // block a quantity was sold or lost out of: anonymous stock keeps no identity
 // to carry its cost away with, so the units that left stay an output of their
-// batch under their own type. The last three name no individual thing: a pool has not reached one yet, a
-// loss never will, and unattributed cost never could — a direct-sown row
-// produces a crop rather than a set of seedlings.
+// batch under their own type. The last three name no individual thing: a pool
+// has not reached one yet, a loss never will, and unattributed cost never
+// could — a direct-sown row produces a crop rather than a set of seedlings.
 type CostTargetType = 'seed_tray_cell' | 'specific_plant' | 'plant_cohort' | 'cohort_sale' | 'cohort_loss' | 'batch_pool' | 'production_loss' | 'unattributed'
 
 // How a layer's share of its source was arrived at.

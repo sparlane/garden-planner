@@ -20,7 +20,7 @@ from applications.services import (
     post_application,
 )
 from inventory.units import UnitCode
-from plantings.cohorts import change_cohort
+from plantings.cohorts import change_cohort, correct_cohort_loss
 from plantings.lifecycle import (
     EventType,
     LifecycleState,
@@ -515,6 +515,21 @@ class QuarantineCaseLifecycleTests(HealthOperationTestCase):
         self.assertEqual(operation.loss_cause, CohortOperation.LossCause.CULLED)
         self.assertFalse(case_is_active(case))
         self.assertFalse(is_quarantined(cohort))
+
+    def test_a_cull_is_corrected_through_its_case_not_the_cohort(self):
+        """The case still records the destruction, so the loss stays."""
+        case, cohort = self.open_case_for_cohort()
+        action = self.act(
+            case, QuarantineAction.Action.CULL, reason='Disease confirmed.',
+        )
+        operation = action.results.get().cohort_operation
+        with self.assertRaises(ValidationError):
+            correct_cohort_loss(
+                self.workspace, None, operation_id=operation.pk,
+                idempotency_key=uuid4(), reason='Culled the wrong bench.',
+            )
+        cohort.refresh_from_db()
+        self.assertEqual(cohort.quantity, 0)
 
     def test_an_escalated_cohort_case_still_closes(self):
         """A cohort escalation is no more a dead end than a plant one."""
