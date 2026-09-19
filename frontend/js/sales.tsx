@@ -389,6 +389,14 @@ function allocationTarget(allocation: SalesAllocation): string {
   return allocation.asset_code ?? 'Unknown'
 }
 
+// A hold that ended says why, so a line left short by a culled plant reads as
+// that rather than as a promise that silently went away.
+function closingReason(allocation: SalesAllocation): string {
+  if (allocation.status !== 'released' && allocation.status !== 'expired') return ''
+  const closing = [...allocation.events].reverse().find((event) => event.event_type === 'released' || event.event_type === 'expired' || event.event_type === 'cancelled')
+  return closing?.reason ?? ''
+}
+
 function selectedLotDraws(preview: AllocationPreview | undefined): Array<LotDraw> {
   return ((preview?.selected ?? []) as Array<LotDrawPreview>).map((row) => ({
     lot: row.id,
@@ -554,6 +562,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         {line.allocations.map((allocation) => (
           <li key={allocation.pk}>
             {allocationTarget(allocation)} · {allocation.status}
+            {closingReason(allocation) && ` · ${closingReason(allocation)}`}
             {allocation.status === 'reserved' && ` · hold ${formatHoldRemaining(allocation.expires_at)}`}
             {allocation.expires_at && ` · expiry ${formatDateTime(allocation.expires_at)}`}
             {allocation.status === 'reserved' && (

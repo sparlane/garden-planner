@@ -20,15 +20,19 @@ from inventory.ledger import physical_balance, reverse_movement
 from inventory.models import InventoryItem, StockLot, StockMovement
 from inventory.units import UnitCode
 from plantings.lifecycle import (
+    EventType,
     LifecycleState,
+    OutcomeRequest,
     plant_lifecycle_summary,
     record_germination_event,
+    record_lifecycle_event,
 )
 from plantings.withdrawal import (
     withdraw_germination,
     withdraw_germinations,
 )
 from plantings.models import SeedTrayPlanting, SpecificPlant
+from sales.models import SalesOrderAllocation
 from seeds.services import ensure_packet_inventory_identity
 from tests.factories import (
     make_batch_for_packet,
@@ -44,6 +48,7 @@ from tests.factories import (
     make_specific_plant,
     make_specific_plant_location,
     make_stock_lot,
+    reserve_plants,
 )
 from workspaces.models import Workspace
 
@@ -364,6 +369,20 @@ class CleanGenerationTests(GenerationContentsTestCase):  # pylint: disable=too-m
 
         self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.RETAINED)
         self.assertFalse(plant.locations.filter(ended__isnull=True).exists())
+
+    def test_cleaning_out_a_held_plant_releases_or_refuses_its_hold(self):
+        """Task 125: a loss ends the hold, and retaining a held plant is refused."""
+        sowing = self.sow()
+        plant = self.germinate(sowing)
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        order, (allocation,) = reserve_plants(self.workspace, self.user, [plant])
+
+        with self.assertRaisesMessage(ValidationError, order.order_number):
+            self.close(plants=(PlantDisposition(plant.pk, 'retained', 'Keeping it.'),))
+        self.close(plants=(PlantDisposition(plant.pk, 'culled', 'Tray dropped.'),))
+
+        allocation.refresh_from_db()
+        self.assertEqual(allocation.status, SalesOrderAllocation.Status.RELEASED)
 
     def test_every_leftover_seed_needs_an_explicit_disposition(self):
         """Seed drawn from the packet went somewhere; the record says where."""

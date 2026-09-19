@@ -27,6 +27,16 @@ objects for both application endpoints and bulk repotting. Both extracted
 services retain the existing DRF validation-error contract; the extraction does
 not change transaction boundaries or error responses.
 
+`sales.reservations` holds what a live hold is and how one ends
+(`close_reservations`), and reads sales models only. `plantings.lifecycle`
+imports it at module level to end or refuse the hold on a plant a lifecycle
+fact takes off offer (task 125), and so do the coordinators that record those
+facts under their own plant locks (tray clean, quarantine cull, stocktake,
+harvest, bulk plant work), which take the holding orders first because every
+sales service locks an order before its plants. `sales.services` imports
+`plantings.lifecycle`, so the primitive sits below both rather than behind a
+deferred callback import.
+
 Inventory's catalog router composes ledger, serialized-unit, and nursery
 stocktake endpoints. Ledger serializers do not import those consumers back.
 

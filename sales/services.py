@@ -22,6 +22,7 @@ from plantings.models import PlantCohort, SpecificPlant
 
 from .calculations import money
 from .quantities import positive_quantity, remaining_quantity, returned_quantity
+from .reservations import HOLDING_STATUSES, close_reservations, record_reservation_event
 from .models import (
     FulfillmentLine,
     ReservationEvent,
@@ -42,11 +43,6 @@ ALLOCATABLE_ORDER_STATUSES = frozenset({
     SalesOrder.Status.CONFIRMED,
     SalesOrder.Status.PARTIALLY_FULFILLED,
 })
-
-#: The statuses that hold stock away from anybody else. A pending selection is
-#: tentative by design and warns rather than blocks, exactly as it does for a
-#: plant somebody else has put in a draft.
-HOLDING_STATUSES = (SalesOrderAllocation.Status.RESERVED,)
 
 
 class LotRequest(NamedTuple):
@@ -519,7 +515,7 @@ def _allocate_cohort_requests(line, order, user, cohort_requests, expires_at):
             created_by=user,
         )
         if immediate:
-            _event(allocation, ReservationEvent.EventType.RESERVED, user)
+            record_reservation_event(allocation, ReservationEvent.EventType.RESERVED, user)
         created.append(allocation)
     return created
 
@@ -550,7 +546,7 @@ def _allocate_identities(line, order, user, ids, expires_at):
                 **{column: target},
             )
             if immediate:
-                _event(allocation, ReservationEvent.EventType.RESERVED, user)
+                record_reservation_event(allocation, ReservationEvent.EventType.RESERVED, user)
             created.append(allocation)
     except IntegrityError as exc:
         raise ValidationError({'allocations': 'One or more targets were reserved concurrently.'}) from exc
@@ -600,7 +596,7 @@ def _allocate_lot_requests(line, order, user, lot_requests, expires_at):
             created_by=user,
         )
         if immediate:
-            _event(allocation, ReservationEvent.EventType.RESERVED, user)
+            record_reservation_event(allocation, ReservationEvent.EventType.RESERVED, user)
         created.append(allocation)
     return created
 
@@ -622,17 +618,6 @@ def deallocate_pending(order, allocation_ids):
         raise ValidationError({'allocations': 'One or more tentative allocations are unavailable.'})
     for allocation in allocations:
         allocation.delete()
-
-
-def _event(allocation, event_type, user, reason=''):
-    """Append one reservation fact at the service action's current time."""
-    return ReservationEvent.objects.create(
-        allocation=allocation,
-        event_type=event_type,
-        occurred_at=timezone.now(),
-        reason=reason.strip(),
-        created_by=user,
-    )
 
 
 def _validate_pending_identity(allocation, plants, units):
@@ -743,45 +728,12 @@ def confirm_order(order, user):
                 updated=timezone.now(),
             )
             allocation.status = SalesOrderAllocation.Status.RESERVED
-            _event(allocation, ReservationEvent.EventType.RESERVED, user)
+            record_reservation_event(allocation, ReservationEvent.EventType.RESERVED, user)
     except IntegrityError as exc:
         raise ValidationError({'allocations': 'One or more targets were reserved concurrently.'}) from exc
     SalesOrder.objects.filter(pk=order.pk).update(status=SalesOrder.Status.CONFIRMED, updated=timezone.now())
     order.refresh_from_db()
     return order
-
-
-@transaction.atomic
-def close_reservations(order, user, allocation_ids, action, reason=''):
-    """Release or explicitly expire selected unfulfilled reservations."""
-    statuses = {
-        'release': (SalesOrderAllocation.Status.RELEASED, ReservationEvent.EventType.RELEASED),
-        'expire': (SalesOrderAllocation.Status.EXPIRED, ReservationEvent.EventType.EXPIRED),
-        'cancel': (SalesOrderAllocation.Status.RELEASED, ReservationEvent.EventType.CANCELLED),
-    }
-    if action not in statuses:
-        raise ValueError('Unknown reservation closing action.')
-    order = SalesOrder.objects.select_for_update().get(pk=order.pk)
-    allocations = list(
-        SalesOrderAllocation.objects.select_for_update()
-        .filter(line__order=order, status=SalesOrderAllocation.Status.RESERVED, pk__in=allocation_ids)
-        .order_by('pk')
-    )
-    if len(allocations) != len(set(allocation_ids)):
-        raise ValidationError({'allocations': 'One or more active reservations are unavailable.'})
-    if action == 'expire':
-        not_due = [
-            allocation.pk for allocation in allocations
-            if allocation.expires_at is None or allocation.expires_at > timezone.now()
-        ]
-        if not_due:
-            raise ValidationError({'allocations': f'Reservations are not expired: {not_due}.'})
-    next_status, event_type = statuses[action]
-    for allocation in allocations:
-        SalesOrderAllocation.objects.filter(pk=allocation.pk).update(status=next_status, updated=timezone.now())
-        allocation.status = next_status
-        _event(allocation, event_type, user, reason)
-    return allocations
 
 
 @transaction.atomic

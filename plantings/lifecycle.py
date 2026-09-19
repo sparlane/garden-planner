@@ -3,16 +3,22 @@
 Current state is replayed from `PlantLifecycleEvent` rows every time it is
 asked for, so the APIs and the batch reports share one derivation and no stored
 status can drift away from the recorded facts.
+
+A fact that takes a held plant off offer ends or refuses the hold in the same
+transaction, through `sales.reservations` (task 125).
 """
 
 # pylint: disable=duplicate-code
 
 from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.db.models import Case, Exists, F, OuterRef, Subquery, Value, When
 from django.utils import timezone
+
+from sales.reservations import lock_plant_holders, plant_holds, release_plant_holds
 
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
 
@@ -192,6 +198,37 @@ PRESENT_STATES = frozenset({
         if event_type not in CLOSES_LOCATION
     ),
 })
+
+
+def _ends_an_offer(event_type):
+    """Return whether this fact may be recorded against a plant on offer."""
+    return bool(ALLOWED_FROM.get(event_type, set()) & SELLABLE_STATES)
+
+
+#: Facts that end a held plant's availability by saying something has already
+#: happened to it. The hold ends with them: refusing one would ask an operator
+#: to deny a dead plant to keep a promise nobody can keep (task 125). Derived as
+#: the location-closing facts a plant on offer admits, less `sold`, which ends
+#: its hold by fulfilling it.
+RELEASES_HOLD = frozenset(
+    event_type
+    for event_type in CLOSES_LOCATION
+    if event_type != EventType.SOLD and _ends_an_offer(event_type)
+)
+
+#: Facts that would take a held plant off offer while leaving it on the bench.
+#: These are decisions not yet acted on, so they are refused until somebody
+#: releases the hold, rather than breaking a promise as a side effect. Derived
+#: the same way, so a new fact out of `available` is classified by what it does.
+REFUSED_UNDER_HOLD = frozenset(
+    event_type
+    for event_type, state in STATE_AFTER.items()
+    if all((
+        state not in SELLABLE_STATES,
+        event_type not in CLOSES_LOCATION,
+        _ends_an_offer(event_type),
+    ))
+)
 
 #: Facts an operator may record directly against a plant. `released_available`
 #: is absent on purpose: releasing is the health workflow's decision, and
@@ -630,6 +667,18 @@ def _require_chronology(events, occurred_at):
         })
 
 
+def _require_unheld(plant, action, field):
+    """Refuse to take a plant off offer while an order still holds it."""
+    hold = plant_holds([plant.pk]).first()
+    if hold is not None:
+        raise ValidationError({
+            field: (
+                f'This plant is reserved on {hold.line.order.order_number}. '
+                f'Release that hold before {action}.'
+            ),
+        })
+
+
 def validate_outcome(plant, event_type, occurred_at, reason=''):
     """Check one plant admits a fact before anything is written.
 
@@ -641,6 +690,12 @@ def validate_outcome(plant, event_type, occurred_at, reason=''):
     events = _plant_events(plant)
     _require_chronology(events, occurred_at)
     _require_transition(derive_state(events).state, event_type)
+    if event_type in REFUSED_UNDER_HOLD:
+        _require_unheld(
+            plant,
+            f'recording it as {EventType(event_type).label.lower()}',
+            'event_type',
+        )
 
 
 def _close_active_location(plant, when):
@@ -666,6 +721,11 @@ def _close_active_location(plant, when):
     return location
 
 
+def _actor(user):
+    """Return the user to record as the author, or None for nobody signed in."""
+    return user if user is not None and user.is_authenticated else None
+
+
 def _create_event(plant, user, request, reversal_of=None):
     """Append one immutable fact, denormalising the batch that raised it."""
     return PlantLifecycleEvent.objects.create(
@@ -677,20 +737,42 @@ def _create_event(plant, user, request, reversal_of=None):
         reason=request.reason,
         reference=request.reference,
         reversal_of=reversal_of,
-        created_by=user if user is not None and user.is_authenticated else None,
+        created_by=_actor(user),
     )
 
 
+def _release_reason(plant, event):
+    """Say which fact ended a hold, so the reservation history explains itself.
+
+    A hold that vanished without a stated cause reads as a bug by the time
+    anybody looks, and the lifecycle event is the one record of what happened.
+    """
+    day = event.occurred_at.astimezone(ZoneInfo(plant.workspace.timezone)).date()
+    reason = (
+        f'Released automatically: plant {plant.pk} was recorded as '
+        f'{LifecycleState(STATE_AFTER[event.event_type]).label.lower()} on {day.isoformat()} '
+        f'(lifecycle event {event.pk}).'
+    )
+    if event.reason.strip():
+        reason += f' Reason given: {event.reason.strip()}'
+    return reason
+
+
 def _apply_outcome(plant, user, request):
-    """Close a location where required and append the outcome fact."""
+    """Close a location where required, append the fact, and end a broken hold."""
     if request.event_type in CLOSES_LOCATION:
         _close_active_location(plant, request.occurred_at)
-    return _create_event(plant, user, request)
+    event = _create_event(plant, user, request)
+    if request.event_type in RELEASES_HOLD:
+        release_plant_holds(plant, _actor(user), _release_reason(plant, event))
+    return event
 
 
 @transaction.atomic
 def record_lifecycle_event(plant, user, request):
     """Record one validated fact about a plant and close its location if final."""
+    if request.event_type in RELEASES_HOLD:
+        lock_plant_holders([plant.pk])
     plant = _lock_plant(plant)
     request = request.at(timezone.now())
     validate_outcome(plant, request.event_type, request.occurred_at, request.reason)
@@ -784,7 +866,13 @@ def reverse_lifecycle_event(event, user, reason, occurred_at=None, restore_locat
     if hasattr(event, 'reversal'):
         raise ValidationError({'event': 'That event has already been corrected.'})
     occurred_at = occurred_at or timezone.now()
-    _require_chronology(_plant_events(plant), occurred_at)
+    events = _plant_events(plant)
+    _require_chronology(events, occurred_at)
+    # Striking out the `ready` under a hold takes the plant off offer as surely
+    # as holding it back does, so it is refused the same way.
+    remaining = [row for row in events if row.pk != event.pk]
+    if derive_state(remaining).state not in SELLABLE_STATES:
+        _require_unheld(plant, 'correcting this event', 'event')
     if restore_location:
         _reopen_closed_location(plant, event)
     return _create_event(
@@ -805,6 +893,8 @@ def record_bulk_outcome(plant_ids, user, request):
     wanted = sorted(set(plant_ids))
     if not wanted:
         raise ValidationError({'plants': 'Select at least one plant.'})
+    if request.event_type in RELEASES_HOLD:
+        lock_plant_holders(wanted)
     plants = list(
         SpecificPlant.objects
         .select_for_update()

@@ -11,8 +11,15 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from locations.models import Location
-from plantings.lifecycle import LifecycleState, plant_lifecycle_summary
+from plantings.lifecycle import (
+    EventType,
+    LifecycleState,
+    OutcomeRequest,
+    plant_lifecycle_summary,
+    record_lifecycle_event,
+)
 from plantings.models import CohortOperation, PlantCohort
+from sales.models import ReservationEvent, SalesOrderAllocation
 from seeds.models import SeedPacket
 from seeds.services import (
     ensure_packet_inventory_identity,
@@ -25,6 +32,7 @@ from tests.factories import (
     make_seed_tray,
     make_specific_plant,
     make_supplier,
+    reserve_plants,
 )
 from workspaces.models import Workspace, get_current_workspace
 
@@ -575,7 +583,7 @@ class StocktakeStatusMachineTests(APITestCase):
         self.assertEqual(physical_balance(self.lot, self.location), Decimal('95'))
 
 
-class StocktakeDomainReconciliationTests(APITestCase):
+class StocktakeDomainReconciliationTests(APITestCase):  # pylint: disable=too-many-public-methods
     """Every counted domain posts its own correction and compensates it.
 
     Only the lot domain had a test. The other posters each reach into a
@@ -765,6 +773,26 @@ class StocktakeDomainReconciliationTests(APITestCase):
         current = plant.locations.filter(ended__isnull=True).first()
         self.assertIsNotNone(current)
         self.assertEqual(current.location_id, self.bench.pk)
+
+    def test_a_held_plant_nobody_could_find_releases_its_hold(self):
+        """Task 125: the count's loss ends the promise, and a reversal does not revive it."""
+        plant = self.bench_plant()
+        record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.READY))
+        _order, (allocation,) = reserve_plants(self.workspace, self.user, [plant])
+        stocktake_id, _target_id = self.open_over('plant')
+
+        self.resolve_and_post(stocktake_id, 'lost', 'Not on the bench')
+
+        allocation.refresh_from_db()
+        self.assertEqual(allocation.status, SalesOrderAllocation.Status.RELEASED)
+        self.assertIn(
+            f'plant {plant.pk} was recorded as lost',
+            allocation.events.get(event_type=ReservationEvent.EventType.RELEASED).reason,
+        )
+        self.reverse(stocktake_id)
+        self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.AVAILABLE)
+        allocation.refresh_from_db()
+        self.assertEqual(allocation.status, SalesOrderAllocation.Status.RELEASED)
 
     def test_a_plant_found_elsewhere_is_moved_and_moved_back(self):
         """A misplaced plant's history gains two moves, not an edited one."""

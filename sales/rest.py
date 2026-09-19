@@ -52,12 +52,12 @@ from .models import (
     SalesReturn,
     SalesReturnLine,
 )
+from .reservations import close_reservations
 from .services import (
     CohortRequest,
     LotRequest,
     allocate_targets,
     cancel_order,
-    close_reservations,
     confirm_order,
     create_order,
     deallocate_pending,

@@ -17,7 +17,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import SalesOrder, SalesOrderAllocation
-from .services import close_reservations
+from .reservations import close_reservations
 
 
 #: Recorded against every automatic expiry, so the history distinguishes a

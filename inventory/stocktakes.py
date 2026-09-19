@@ -29,6 +29,7 @@ from plantings.cohorts import change_cohort, correct_cohort_loss
 from plantings.movement import move_specific_plant
 from seeds.models import SeedPacket, QuantityCertainty
 from seeds.services import packet_inventory_snapshot, reconcile_packet_quantity, reverse_packet_reconciliation
+from sales.reservations import lock_plant_holders
 from seedtrays.models import SeedTray
 
 from .ledger import (
@@ -850,6 +851,12 @@ def post_reviewed_stocktake(stocktake, user):
             raise ValidationError({
                 'conflict': f'Target {target.pk} changed after review; review it again.',
             })
+    # A plant the count could not find ends any sales hold on it, and sales
+    # takes an order before its plants, so the holders are locked first.
+    lock_plant_holders([
+        target.target_object_id for target in targets
+        if target.target_type == StocktakeTarget.TargetType.PLANT
+    ])
     for target in targets:
         action, payload = _posting_action(target)
         if action == 'no_change':
