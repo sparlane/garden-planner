@@ -16,7 +16,7 @@ from django.utils import timezone
 from billing.models import SupplyCorrection, SupplyDocument
 from costing.models import CostAllocation
 from inventory.models import InputTaxAdjustment, InventoryItem, StockLot, StockMovement, StockReceiptLine
-from plantings.lifecycle import LifecycleState, derive_state
+from plantings.lifecycle import PRESENT_STATES, derive_state
 from plantings.models import CohortEvent, PlantCohort, PlantLifecycleEvent, SpecificPlant
 from purchasing.models import BusinessExpense, SupplierInvoice, SupplierPayment
 from sales.models import Payment, Refund
@@ -151,13 +151,9 @@ def _capture_plants(income_year, user, end):
         else:
             values[row['specific_plant_id']] += row['amount']
     rows = []
-    held_states = {
-        LifecycleState.GROWING, LifecycleState.AVAILABLE,
-        LifecycleState.RETAINED, LifecycleState.QUARANTINED,
-    }
     for plant in plants:
         summary = derive_state(events[plant.pk])
-        if summary.state not in held_states:
+        if summary.state not in PRESENT_STATES:
             continue
         value = money(values[plant.pk])
         rows.append(StockValuationLine.objects.create(

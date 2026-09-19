@@ -22,7 +22,7 @@ from .lifecycle import (
     STATE_AFTER,
     EventType,
     OutcomeRequest,
-    is_final,
+    is_present,
     plant_lifecycle_summary,
     record_germination_event,
     record_lifecycle_event,
@@ -134,8 +134,10 @@ def _plant_conflicts(plant, request):
             BulkPlantOperation.Action.STAGE,
             BulkPlantOperation.Action.GRADE,
             BulkPlantOperation.Action.REPOT,
-        } and is_final(plant_lifecycle_summary(plant).state):
-            raise ValidationError({'plants': 'Finished plants cannot receive nursery observations.'})
+        } and not is_present(plant_lifecycle_summary(plant).state):
+            # A retained plant is resolved but still on the bench, so it can
+            # still be staged, graded and potted on.
+            raise ValidationError({'plants': 'Plants no longer held cannot receive nursery observations.'})
     except ValidationError as exc:
         return _errors(exc)
     return []

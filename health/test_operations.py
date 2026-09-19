@@ -26,7 +26,9 @@ from plantings.lifecycle import (
     LifecycleState,
     OutcomeRequest,
     plant_lifecycle_summary,
+    record_germination_event,
     record_lifecycle_event,
+    withdraw_germination,
 )
 from plantings.models import CohortOperation, PlantCohort, SpecificPlantLocation
 from plantings.register import RegisterFilters, register_queryset
@@ -563,3 +565,122 @@ class QuarantineCaseLifecycleTests(HealthOperationTestCase):
                         reason='Closed after escalation.',
                     )
                     self.assertFalse(case_is_active(case))
+
+
+class RetainedStockQuarantineTests(HealthOperationTestCase):
+    """Task 126: retained stock is resolved but still here, so it is quarantinable.
+
+    Retaining a plant says no outcome is owed for it, not that it left the
+    bench. The health workflow asks the physical question, so a retained plant
+    is in an observation's scope and in the case opened over it, while a plant
+    that really left is still refused.
+    """
+
+    #: The facts that take a plant out of the nursery, each as recorded.
+    DEPARTURES = (
+        ('sold', (EventType.READY, EventType.SOLD)),
+        ('failed', (EventType.FAILED,)),
+        ('culled', (EventType.CULLED,)),
+        ('lost', (EventType.LOST,)),
+        ('donated', (EventType.DONATED,)),
+        ('harvested', (EventType.HARVEST_FINISHED,)),
+        ('discarded', (EventType.READY, EventType.SOLD, EventType.RETURNED_DISCARDED)),
+    )
+
+    def record(self, plant, *event_types):
+        for event_type in event_types:
+            record_lifecycle_event(
+                plant, None, OutcomeRequest(event_type, reason='Recorded on the bench.'),
+            )
+
+    def retained_plant(self, **overrides):
+        plant = make_specific_plant(workspace=self.workspace, **overrides)
+        self.record(plant, EventType.RETAINED)
+        return plant
+
+    def test_a_retained_plant_is_quarantined_with_its_case(self):
+        """Verification 1: the case opens with the retained plant as a member."""
+        plant = self.retained_plant()
+        observation = self.observe('plant', plant)
+        self.assertEqual(
+            list(observation.affected_stock.values_list('plant_id', flat=True)),
+            [plant.pk],
+        )
+        case = self.quarantine(observation)
+        self.assertEqual(
+            list(case.members.values_list('plant_id', flat=True)), [plant.pk],
+        )
+        self.assertTrue(is_quarantined(plant))
+        self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.RETAINED)
+
+    def test_a_batch_scope_takes_retained_stock_and_leaves_departed_stock(self):
+        """Retained plants are no longer dropped from a wider scope unseen."""
+        growing = make_specific_plant(workspace=self.workspace)
+        retained = self.retained_plant(cell_planting=growing.cell_planting)
+        culled = make_specific_plant(
+            workspace=self.workspace, cell_planting=growing.cell_planting,
+        )
+        self.record(culled, EventType.CULLED)
+        withdrawn = make_specific_plant(
+            workspace=self.workspace, cell_planting=growing.cell_planting,
+        )
+        record_germination_event(withdrawn, None)
+        withdraw_germination(withdrawn, None, 'Entered twice.')
+
+        preview = preview_observation(
+            self.workspace, [{'type': 'batch', 'id': growing.batch_id}],
+        )
+        self.assertEqual(preview['plants'], sorted([growing.pk, retained.pk]))
+
+    def test_releasing_a_retained_plant_records_no_lifecycle_fact(self):
+        """Verification 2: quarantine was an overlay; the plant stays retained."""
+        plant = self.retained_plant()
+        action = act_on_quarantine(
+            self.workspace, None, self.quarantine(self.observe('plant', plant)),
+            action_name=QuarantineAction.Action.RELEASE,
+            idempotency_key=uuid4(), reason='Nothing found on reassessment.',
+        )
+        self.assertFalse(action.results.exists())
+        self.assertEqual(
+            list(plant.lifecycle_events.values_list('event_type', flat=True)),
+            [EventType.RETAINED],
+        )
+        self.assertFalse(is_quarantined(plant))
+
+    def test_culling_a_retained_plant_resolves_it_and_closes_its_location(self):
+        """Verification 3: the cull is a fact, linked to the action that took it."""
+        plant = self.retained_plant()
+        make_specific_plant_location(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=make_location(workspace=self.workspace),
+        )
+        action = act_on_quarantine(
+            self.workspace, None, self.quarantine(self.observe('plant', plant)),
+            action_name=QuarantineAction.Action.CULL,
+            idempotency_key=uuid4(), reason='Disease confirmed on the mother stock.',
+        )
+        self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.CULLED)
+        self.assertFalse(
+            SpecificPlantLocation.objects
+            .filter(specific_plant=plant, ended__isnull=True)
+            .exists()
+        )
+        result = action.results.get()
+        self.assertEqual(result.plant, plant)
+        self.assertEqual(result.lifecycle_event.event_type, EventType.CULLED)
+
+    def test_a_plant_gone_since_the_observation_is_still_refused(self):
+        """Verification 4: the refusal names the plant as gone, not finished."""
+        for label, event_types in self.DEPARTURES:
+            with self.subTest(state=label):
+                plant = make_specific_plant(workspace=self.workspace)
+                observation = self.observe('plant', plant)
+                self.record(plant, *event_types)
+                self.assertEqual(plant_lifecycle_summary(plant).state, label)
+                with self.assertRaises(ValidationError) as caught:
+                    self.quarantine(observation)
+                message = caught.exception.message_dict['plants'][0]
+                self.assertIn('no longer holds', message)
+                self.assertIn(str(plant.pk), message)

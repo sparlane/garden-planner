@@ -127,8 +127,12 @@ ALLOWED_FROM = {
     EventType.RETENTION_ENDED: {LifecycleState.RETAINED},
 }
 
-#: States that resolve a plant. Retained is final for availability without
-#: ending biological growth, so failure or harvest may still follow it.
+#: States that resolve a plant: no outcome is owed for it any more. This is the
+#: question the register's `unresolved` count, the batch reports and the loss
+#: reconciliation ask. It is not whether the plant is still here — that is
+#: `PRESENT_STATES`. Retained is final for availability without ending
+#: biological growth, so failure or harvest may still follow it, and a retained
+#: plant is still standing on a bench.
 #:
 #: `withdrawn` resolves a plant the other way: not by saying what became of it,
 #: but by saying there was never one to become anything. It is final because
@@ -167,6 +171,27 @@ CLOSES_LOCATION = {
     EventType.SOLD,
     EventType.RETURNED_DISCARDED,
 }
+
+#: States in which the nursery still physically holds a plant: the question a
+#: health case, an input application or a nursery observation asks, where
+#: `FINAL_STATES` asks whether an outcome is still owed. The two differ at
+#: `retained`, which resolves a plant while leaving it on the bench.
+#:
+#: Derived rather than listed, on the precedent of `OFFERING_EVENTS`: a plant
+#: with no history is growing, and every other state it can stand in is one some
+#: fact leaves behind without closing its location. That puts a returned
+#: quarantined plant here, because it is back on a bench, and leaves out a
+#: discarded return, which was destroyed, and `withdrawn`, which was never
+#: there. A state added to `STATE_AFTER` is classified by the fact that
+#: produces it, so it cannot be forgotten here.
+PRESENT_STATES = frozenset({
+    LifecycleState.GROWING,
+    *(
+        state
+        for event_type, state in STATE_AFTER.items()
+        if event_type not in CLOSES_LOCATION
+    ),
+})
 
 #: Facts an operator may record directly against a plant. `released_available`
 #: is absent on purpose: releasing is the health workflow's decision, and
@@ -231,6 +256,11 @@ def is_final(state):
     return state in FINAL_STATES
 
 
+def is_present(state):
+    """Return whether a plant in this derived state is still physically held."""
+    return state in PRESENT_STATES
+
+
 def states_without_exits(state_after=None, allowed_from=None, final_states=None):
     """Return the reachable non-final states that no fact may be recorded from.
 
@@ -252,6 +282,38 @@ def states_without_exits(state_after=None, allowed_from=None, final_states=None)
         state for state in reachable
         if state not in final_states and state not in with_exits
     }
+
+
+def absent_states_with_exits(
+        state_after=None, allowed_from=None, present_states=None, closes_location=None,
+):
+    """Return the states a fact may follow that are wrongly treated as gone.
+
+    The reverse of `states_without_exits`. A state some fact can still be
+    recorded from describes a plant somebody can still act on, so it must be
+    counted as physically present — otherwise the health workflow refuses to
+    quarantine it, which is what `retained` was while `FINAL_STATES` answered
+    both questions. The one legitimate exception is a state every fact reaches
+    by closing the plant's location: `sold` admits the return facts, but those
+    bring a plant back from a customer rather than act on one still here.
+
+    The vocabularies default to this module's, and are arguments so a proposed
+    one can be checked before it ships.
+    """
+    state_after = STATE_AFTER if state_after is None else state_after
+    allowed_from = ALLOWED_FROM if allowed_from is None else allowed_from
+    present_states = PRESENT_STATES if present_states is None else present_states
+    closes_location = CLOSES_LOCATION if closes_location is None else closes_location
+    with_exits = {state for sources in allowed_from.values() for state in sources}
+    departed = {
+        state for state in with_exits
+        if all(
+            event_type in closes_location
+            for event_type, after in state_after.items()
+            if after == state
+        )
+    }
+    return with_exits - set(present_states) - departed
 
 
 def _surviving_state_events(events):

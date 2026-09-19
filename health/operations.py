@@ -21,9 +21,9 @@ from plantings.movement import move_specific_plant
 from plantings.cohorts import change_cohort
 from plantings.lifecycle import (
     EventType,
-    FINAL_STATES,
     LifecycleState,
     OutcomeRequest,
+    PRESENT_STATES,
     plant_lifecycle_summary,
     record_lifecycle_event,
 )
@@ -81,14 +81,21 @@ def _member_rows(case, lock=False):
 
 
 def _validate_members(case, plants, cohorts, quarantine=False):
-    """Require live plants and unchanged whole-cohort membership."""
+    """Require plants still on hand and unchanged whole-cohort membership.
+
+    The test is physical presence, not whether an outcome is still owed: a
+    retained plant is resolved but still on the bench beside everything else,
+    and able to catch the same thing.
+    """
     if quarantine:
-        finished = [
+        gone = [
             plant.pk for plant in plants
-            if plant_lifecycle_summary(plant).state in FINAL_STATES
+            if plant_lifecycle_summary(plant).state not in PRESENT_STATES
         ]
-        if finished:
-            raise ValidationError({'plants': f'Finished plants cannot be quarantined: {finished}.'})
+        if gone:
+            raise ValidationError({
+                'plants': f'Plants the nursery no longer holds cannot be quarantined: {gone}.',
+            })
     recorded = {
         row.cohort_id: row.quantity
         for row in case.members.filter(cohort__isnull=False)
