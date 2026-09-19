@@ -7,11 +7,15 @@ from datetime import date
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
+from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
+from tests.factories import make_specific_plant
 from workspaces.models import get_current_workspace
 
 from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, TaxAsset, TaxRetentionRecord
+from .services import capture_inventory
 
 
 class BookkeepingTests(APITestCase):
@@ -128,3 +132,39 @@ class BookkeepingTests(APITestCase):
             'year_end': '2027-06-30', 'basis': 'cash',
         }, format='json')
         self.assertEqual(response.status_code, 400)
+
+    def test_closing_stock_counts_the_plants_still_held(self):
+        """Task 126: retained and returned-quarantined stock is valued; gone stock is not.
+
+        The valuation's held set is now derived from `PRESENT_STATES`; this pins
+        that doing so changed nothing.
+        """
+        journeys = {
+            'growing': (),
+            'available': (EventType.READY,),
+            'retained': (EventType.RETAINED,),
+            'quarantined': (EventType.READY, EventType.SOLD, EventType.RETURNED_QUARANTINED),
+            'sold': (EventType.READY, EventType.SOLD),
+            'culled': (EventType.CULLED,),
+            'discarded': (EventType.READY, EventType.SOLD, EventType.RETURNED_DISCARDED),
+        }
+        plants = {}
+        for state, event_types in journeys.items():
+            plants[state] = make_specific_plant(workspace=self.workspace)
+            for event_type in event_types:
+                record_lifecycle_event(
+                    plants[state], None, OutcomeRequest(event_type, reason='Recorded.'),
+                )
+        year = IncomeTaxYear.objects.create(
+            workspace=self.workspace, basis='accrual',
+            year_end=date(timezone.localdate().year + 1, 3, 31),
+        )
+        capture_inventory(year, self.user)
+        captured = set(
+            year.stock_lines.filter(source_type='specific_plant')
+            .values_list('source_id', flat=True)
+        )
+        self.assertEqual(captured, {
+            str(plants[state].pk)
+            for state in ('growing', 'available', 'retained', 'quarantined')
+        })

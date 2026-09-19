@@ -341,6 +341,24 @@ class PlantTargetTests(ApplicationServiceTestCase):
         with self.assertRaises(ValidationError) as caught:
             post_application(application, None)
         self.assertIn('targets', caught.exception.message_dict)
+        self.assertIn('no longer held', caught.exception.message_dict['targets'][0])
+
+    def test_a_retained_plant_can_still_receive_an_input(self):
+        """Task 126: mother stock is resolved but still on the bench to label."""
+        plants = self.batch_plants(2)
+        record_bulk_outcome(
+            [plants[0].pk],
+            None,
+            OutcomeRequest(
+                EventType.RETAINED,
+                occurred_at=timezone.now(),
+                reason='Kept as mother stock',
+            ),
+        )
+        application = self.draft([self.label_line(plants)])
+        _application, movements = post_application(application, None)
+
+        self.assertEqual(movements[0].quantity, Decimal('2.000000000'))
 
 
 class SurfaceAreaTargetTests(ApplicationServiceTestCase):

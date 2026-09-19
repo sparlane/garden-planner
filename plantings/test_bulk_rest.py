@@ -436,6 +436,22 @@ class BulkPlantOperationRESTTests(RESTContractTestCase):  # pylint: disable=too-
         self.assertEqual(len(observation_ids), 1)
         self.assertTrue(all(current_growth(plant)['stage'] == stage for plant in self.plants))
 
+    def test_a_retained_plant_can_be_staged_but_a_failed_one_cannot(self):
+        """Task 126: retained stock is still on the bench; failed stock is gone."""
+        record_lifecycle_event(self.plants[0], self.user, OutcomeRequest(EventType.RETAINED))
+        record_lifecycle_event(self.plants[1], self.user, OutcomeRequest(EventType.FAILED))
+        stage = GrowthStage.objects.get(workspace=self.workspace, code='rooted')
+        response = self.client.post(
+            '/plantings/bulk-operations/preview/',
+            self.payload(BulkPlantOperation.Action.STAGE, action_payload={'stage': stage.pk}),
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row['plant']: row for row in response.data['plants']}
+        self.assertTrue(rows[self.plants[0].pk]['eligible'])
+        self.assertFalse(rows[self.plants[1].pk]['eligible'])
+        self.assertIn('no longer held', str(rows[self.plants[1].pk]['conflicts']))
+
     def repot_payload(self, count=3):
         """Choose an already filled lot of anonymous pots."""
         location = make_location()

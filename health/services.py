@@ -10,7 +10,7 @@ from django.db import transaction
 from django.db.models import Q
 
 from locations.models import Location
-from plantings.lifecycle import FINAL_STATES, with_lifecycle_state
+from plantings.lifecycle import PRESENT_STATES, with_lifecycle_state
 from plantings.models import PlantCohort, ProductionBatch, SpecificPlant
 from seedtrays.models import SeedTray, SeedTrayGeneration
 
@@ -56,9 +56,13 @@ def _scope_target(workspace, target_type, target_id):
 
 
 def _live_plants(workspace):
+    """Return the plants an observation can affect: those still on hand.
+
+    Retained stock is resolved but not gone, so it is in scope with the rest.
+    """
     return with_lifecycle_state(
         SpecificPlant.objects.filter(workspace=workspace),
-    ).exclude(lifecycle_state__in=sorted(FINAL_STATES))
+    ).filter(lifecycle_state__in=sorted(PRESENT_STATES))
 
 
 def _members_for_scope(workspace, target_type, target):

@@ -34,7 +34,7 @@ from inventory.ledger import (
 )
 from inventory.models import InventoryItem, StockMovement
 from plantings.batches import batch_specific_plants, lock_batch_with_plants
-from plantings.lifecycle import is_final, lifecycle_summaries
+from plantings.lifecycle import is_present, lifecycle_summaries
 from plantings.models import ProductionBatch, SpecificPlant, SeedTrayPlanting
 from seedtrays.generations import require_open_generation
 from seedtrays.models import SeedTrayCell, SeedTrayGeneration
@@ -284,17 +284,21 @@ def affected_batches(application):
 
 
 def _validate_plants(application, plant_ids):
-    """Require living plants that came from the document's own batch."""
+    """Require plants still on hand that came from the document's own batch.
+
+    Retained stock is resolved but still on the bench, and still fed, sprayed
+    and potted on, so the test is physical presence rather than finality.
+    """
     if not plant_ids:
         return
     summaries = lifecycle_summaries(plant_ids)
-    finished = sorted(
+    gone = sorted(
         plant_id for plant_id, summary in summaries.items()
-        if is_final(summary.state)
+        if not is_present(summary.state)
     )
-    if finished:
+    if gone:
         raise ValidationError({
-            'targets': f'These plants had already finished: {finished}.',
+            'targets': f'These plants are no longer held: {gone}.',
         })
     if application.batch_id is None:
         return

@@ -29,7 +29,9 @@ from .lifecycle import (
     FINAL_STATES,
     LifecycleState,
     OutcomeRequest,
+    PRESENT_STATES,
     STATE_AFTER,
+    absent_states_with_exits,
     availability_intervals,
     lifecycle_summaries,
     plant_lifecycle_summary,
@@ -549,6 +551,37 @@ class LifecycleReachabilityTests(SimpleTestCase):
                 final_states=FINAL_STATES,
             ),
             {LifecycleState.QUARANTINED},
+        )
+
+    def test_every_state_with_an_exit_is_present_unless_it_departed(self):
+        """A plant somebody can still act on is never treated as gone."""
+        self.assertEqual(absent_states_with_exits(), set())
+
+    def test_a_state_with_exits_left_out_of_present_is_reported(self):
+        """Listing the set by hand and forgetting retained is caught."""
+        self.assertEqual(
+            absent_states_with_exits(
+                present_states=PRESENT_STATES - {LifecycleState.RETAINED},
+            ),
+            {LifecycleState.RETAINED},
+        )
+
+    def test_present_differs_from_unresolved_only_at_retained(self):
+        """Resolved-but-here is retained; everything else resolved is gone.
+
+        Pinned by value because the year-end valuation counted exactly these
+        four as held stock before it was derived from this set.
+        """
+        self.assertEqual(PRESENT_STATES, {
+            LifecycleState.GROWING,
+            LifecycleState.AVAILABLE,
+            LifecycleState.RETAINED,
+            LifecycleState.QUARANTINED,
+        })
+        self.assertEqual(PRESENT_STATES & FINAL_STATES, {LifecycleState.RETAINED})
+        self.assertEqual(
+            set(LifecycleState) - PRESENT_STATES,
+            FINAL_STATES - {LifecycleState.RETAINED},
         )
 
 
