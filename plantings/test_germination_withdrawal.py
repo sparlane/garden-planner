@@ -34,7 +34,7 @@ from tests.factories import (
 )
 from workspaces.models import Workspace
 
-from .cohorts import observe_cohort, promote_cohort
+from .cohorts import change_cohort, observe_cohort, promote_cohort
 from .growth import record_observation
 from .movement import move_specific_plant
 from .germination import (
@@ -106,6 +106,32 @@ class WithdrawalTestCase(APITestCase):
     def withdraw(self, plant, reason='Entered twice from the tray screen.'):
         """Withdraw one germination with the ordinary defaults."""
         return withdraw_germination(plant, self.user, reason)
+
+    def promote(self, stage=None, ready=False):
+        """Observe a block of four, optionally staged or offered, and promote one."""
+        cohort, _operation = observe_cohort(
+            self.workspace, self.user,
+            batch=self.sowing.batch, source_sowing=self.sowing,
+            quantity=4, idempotency_key=uuid4(),
+        )
+        if stage is not None:
+            record_observation(
+                self.workspace, self.user, cohort_id=cohort.pk, stage=stage,
+            )
+        if ready:
+            change_cohort(
+                self.workspace, self.user, cohort_id=cohort.pk,
+                expected_revision=cohort.revision,
+                action=CohortOperation.Action.READY, idempotency_key=uuid4(),
+            )
+        cohort.refresh_from_db()
+        plants, _operation = promote_cohort(
+            self.workspace, self.user,
+            cohort_id=cohort.pk, expected_revision=cohort.revision,
+            quantity=1, idempotency_key=uuid4(),
+            reason='This one needs its own sale label.',
+        )
+        return cohort, plants[0]
 
 
 class WithdrawingOneGerminationTests(WithdrawalTestCase):
@@ -329,32 +355,12 @@ class WithdrawingAPromotedPlantTests(WithdrawalTestCase):
     fact the cohort's history still asserts and leave that unit nowhere.
     """
 
-    def promote(self, stage=None):
-        """Observe a block of four, optionally staged, and promote one of it."""
-        cohort, _operation = observe_cohort(
-            self.workspace, self.user,
-            batch=self.sowing.batch, source_sowing=self.sowing,
-            quantity=4, idempotency_key=uuid4(),
-        )
-        if stage is not None:
-            record_observation(
-                self.workspace, self.user, cohort_id=cohort.pk, stage=stage,
-            )
-            cohort.refresh_from_db()
-        plants, _operation = promote_cohort(
-            self.workspace, self.user,
-            cohort_id=cohort.pk, expected_revision=cohort.revision,
-            quantity=1, idempotency_key=uuid4(),
-            reason='This one needs its own sale label.',
-        )
-        return cohort, plants[0]
-
     def test_a_plant_promoted_from_a_bare_count_is_refused_by_its_cohort(self):
         """Nothing else would stop it: the promotion recorded no observation."""
         cohort, plant = self.promote()
 
         with self.assertRaisesMessage(
-            ValidationError, f'promoted from cohort {cohort.pk}',
+            ValidationError, f'promoted from cohort {cohort.pk}.',
         ):
             self.withdraw(plant)
 
@@ -373,7 +379,19 @@ class WithdrawingAPromotedPlantTests(WithdrawalTestCase):
         self.assertTrue(plant.nursery_observation_targets.exists())
 
         with self.assertRaisesMessage(
-            ValidationError, f'promoted from cohort {cohort.pk}',
+            ValidationError, f'promoted from cohort {cohort.pk}.',
+        ):
+            self.withdraw(plant)
+
+    def test_the_refusal_is_the_cohorts_when_the_promotion_recorded_ready(self):
+        """An offered cohort's plants carry `ready`, which would block as work done."""
+        cohort, plant = self.promote(ready=True)
+        self.assertTrue(
+            plant.lifecycle_events.filter(event_type=EventType.READY).exists()
+        )
+
+        with self.assertRaisesMessage(
+            ValidationError, f'promoted from cohort {cohort.pk}.',
         ):
             self.withdraw(plant)
 
@@ -382,7 +400,9 @@ class WithdrawingAPromotedPlantTests(WithdrawalTestCase):
         seedlings = self.germinate(self.allocations[0], 2)
         cohort, plant = self.promote()
 
-        with self.assertRaises(ValidationError):
+        with self.assertRaisesMessage(
+            ValidationError, f'promoted from cohort {cohort.pk}.',
+        ):
             withdraw_germinations(
                 [seedling.pk for seedling in seedlings] + [plant.pk],
                 self.user, 'The whole fill went in twice.',
@@ -399,7 +419,7 @@ class WithdrawingAPromotedPlantTests(WithdrawalTestCase):
         )
 
     def test_the_route_names_the_cohort_in_the_plant_field(self):
-        """The operator is pointed at the cohort rather than a generic refusal."""
+        """The operator is told which cohort, and warned off the recount."""
         cohort, plant = self.promote()
 
         response = self.client.post(
@@ -409,12 +429,58 @@ class WithdrawingAPromotedPlantTests(WithdrawalTestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn(f'cohort {cohort.pk}', str(response.data['plant']))
+        self.assertIn(f'cohort {cohort.pk}.', str(response.data['plant']))
+        self.assertIn('Do not recount the cohort', str(response.data['plant']))
         self.assertFalse(
             PlantLifecycleEvent.objects.filter(
                 plant=plant, event_type=EventType.CORRECTED,
             ).exists()
         )
+
+
+class ErasingARecordedPlantTests(WithdrawalTestCase):
+    """Deleting a plant is not a quieter way to withdraw it.
+
+    Lifecycle events and locations cascade, so in a batch with no costs there
+    is no protected row to stop the delete, and the germination and the plant
+    would vanish together.
+    """
+
+    def delete(self, plant):
+        """Ask the plant route to erase one plant."""
+        return self.client.delete(f'/plantings/specificplants/{plant.pk}/')
+
+    def test_a_germinated_seedling_cannot_be_erased(self):
+        """The row survives so the correction can be stated against it."""
+        plant = self.germinate(self.allocations[0])[0]
+
+        response = self.delete(plant)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Withdraw', str(response.data['detail']))
+        self.assertTrue(
+            PlantLifecycleEvent.objects.filter(plant_id=plant.pk).exists()
+        )
+
+    def test_a_promoted_plant_cannot_be_erased(self):
+        """The cohort gave the unit up, so erasing the plant loses it."""
+        cohort, plant = self.promote()
+
+        response = self.delete(plant)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn(f'cohort {cohort.pk},', str(response.data['detail']))
+        self.assertTrue(SpecificPlant.objects.filter(pk=plant.pk).exists())
+        self.assertEqual(PlantCohort.objects.get(pk=cohort.pk).quantity, 3)
+
+    def test_a_plant_nothing_was_recorded_about_can_still_be_erased(self):
+        """A row created in error with no history has nothing to deny."""
+        plant = make_specific_plant(cell_planting=self.allocations[0])
+
+        response = self.delete(plant)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(SpecificPlant.objects.filter(pk=plant.pk).exists())
 
 
 class WithdrawalSelectionTests(WithdrawalTestCase):

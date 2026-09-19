@@ -950,7 +950,30 @@ class SpecificPlantViewSet(PlantTimelineViewSetMixin, PlantOutcomeViewSetMixin, 
     serializer_class = SpecificPlantSerializer
 
     def perform_destroy(self, instance):
-        """Explain why a plant retained by cultivation history cannot be erased."""
+        """Explain why a plant retained by cultivation history cannot be erased.
+
+        Protected rows are not the only history: lifecycle events and locations
+        cascade, so a plant in a batch with no costs would otherwise vanish with
+        its germination, and a promoted or individualized plant would take a
+        unit its cohort or crop no longer counts with it. Only a plant nothing
+        has been recorded about may be erased; a mistaken germination is
+        withdrawn instead, which keeps the row and states the correction.
+        """
+        origin = (
+            f'cohort {instance.promoted_from_cohort_id}' if instance.promoted_from_cohort_id
+            else f'garden planting {instance.garden_planting_id}' if instance.garden_planting_id
+            else None
+        )
+        if origin is not None:
+            raise serializers.ValidationError({'detail': (
+                f'This plant was created from {origin}, whose history still '
+                'accounts for it, so it cannot be deleted.'
+            )})
+        if instance.lifecycle_events.exists():
+            raise serializers.ValidationError({'detail': (
+                'This plant has recorded history and cannot be deleted. Withdraw '
+                'a germination that was recorded by mistake instead.'
+            )})
         try:
             with transaction.atomic():
                 instance.delete()
