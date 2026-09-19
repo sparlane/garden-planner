@@ -1,5 +1,5 @@
 import React from 'react'
-import { Badge, Form, Table } from 'react-bootstrap'
+import { Badge, Button, Form, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
 
 import { formatDate, formatDateTime, formatHoldRemaining, formatMoney } from '../utils'
@@ -44,7 +44,13 @@ function LocationCell({ row }: { row: NurseryRegisterRow }) {
   const detail = row.location_type === 'seed_tray_cell' ? row.location_label : row.location_type === 'container_unit' ? PLACEMENT_LABELS.container_unit : null
   return (
     <>
-      {heading}
+      {row.location_type === 'container_unit' && row.container_unit !== null ? (
+        <NavLink className="fw-bold text-nowrap" to={`/inventory/serialized-units/${row.container_unit}`}>
+          {heading}
+        </NavLink>
+      ) : (
+        heading
+      )}
       {detail !== null && <div className="text-muted small">{detail}</div>}
       {row.located_since !== null && <div className="text-muted small">since {formatDate(row.located_since)}</div>}
     </>
@@ -73,9 +79,10 @@ interface RegisterTableProps {
   rows: Array<NurseryRegisterRow>
   selection: RegisterSelection
   setSelection: (selection: RegisterSelection) => void
+  onVarietySelect?: (variety: number) => void
 }
 
-function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
+function RegisterTable({ rows, selection, setSelection, onVarietySelect }: RegisterTableProps) {
   if (rows.length === 0) {
     return <p className="text-muted">No plants match these filters.</p>
   }
@@ -84,16 +91,16 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
       <thead>
         <tr>
           <th />
-          <th>Plant</th>
           <th>Crop</th>
+          <th>Pot number / placement</th>
+          <th>Standing in</th>
+          <th>Plant</th>
           <th>Batch</th>
           <th>State</th>
           <th>Stage / grade</th>
           <th>Container</th>
           <th>Age</th>
           <th>Expected ready</th>
-          <th>Where</th>
-          <th>Standing in</th>
           <th>Cost</th>
         </tr>
       </thead>
@@ -109,11 +116,23 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
               />
             </td>
             <td>
-              <NavLink to={`/plantings/plants/${row.pk}`}>#{row.pk}</NavLink>
+              {onVarietySelect === undefined ? (
+                row.variety_name
+              ) : (
+                <Button variant="link" className="p-0 text-start" onClick={() => onVarietySelect(row.variety)} aria-label={`Filter to variety ${row.variety_name}`}>
+                  {row.variety_name}
+                </Button>
+              )}
+              <div className="text-muted small">{row.plant_name}</div>
             </td>
             <td>
-              {row.variety_name}
-              <div className="text-muted small">{row.plant_name}</div>
+              <LocationCell row={row} />
+            </td>
+            <td>
+              <StandingAtCell row={row} />
+            </td>
+            <td>
+              <NavLink to={`/plantings/plants/${row.pk}`}>#{row.pk}</NavLink>
             </td>
             <td>
               <NavLink to={`/plantings/batches/${row.batch}`}>{row.batch_code}</NavLink>
@@ -167,12 +186,6 @@ function RegisterTable({ rows, selection, setSelection }: RegisterTableProps) {
             </td>
             <td>
               <ReadyCell row={row} />
-            </td>
-            <td>
-              <LocationCell row={row} />
-            </td>
-            <td>
-              <StandingAtCell row={row} />
             </td>
             <td>{formatMoney(row.cost, row.currency_code, 'Not costed')}</td>
           </tr>

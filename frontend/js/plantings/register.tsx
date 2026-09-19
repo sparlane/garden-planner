@@ -204,6 +204,20 @@ function NurseryRegisterView() {
 
       <Row className="g-2 mb-3">
         <Col md={3}>
+          <Form.Group controlId="register-variety">
+            <Form.Label>Variety</Form.Label>
+            <Form.Select value={variety} onChange={(event) => narrow(setVariety)(event.target.value === '' ? '' : Number(event.target.value))}>
+              <option value="">All varieties</option>
+              {varieties.map((entry) => (
+                <option key={entry.pk} value={entry.pk}>
+                  {entry.name}
+                </option>
+              ))}
+            </Form.Select>
+            <Form.Text muted>Choose a variety to find its pot numbers, or click a crop in the table.</Form.Text>
+          </Form.Group>
+        </Col>
+        <Col md={3}>
           <Form.Group controlId="register-search">
             <Form.Label>Search</Form.Label>
             <Form.Control type="search" placeholder="Plant number, batch code, or crop" value={search} onChange={(event) => narrow(setSearch)(event.target.value)} />
@@ -248,19 +262,6 @@ function NurseryRegisterView() {
               {generations.map((entry) => (
                 <option key={entry.pk} value={entry.pk}>
                   {entry.code}
-                </option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-        </Col>
-        <Col md={3}>
-          <Form.Group controlId="register-variety">
-            <Form.Label>Variety</Form.Label>
-            <Form.Select value={variety} onChange={(event) => narrow(setVariety)(event.target.value === '' ? '' : Number(event.target.value))}>
-              <option value="">All varieties</option>
-              {varieties.map((entry) => (
-                <option key={entry.pk} value={entry.pk}>
-                  {entry.name}
                 </option>
               ))}
             </Form.Select>
@@ -418,7 +419,7 @@ function NurseryRegisterView() {
         <div>Loading plants…</div>
       ) : (
         <>
-          <RegisterTable rows={register?.results ?? []} selection={selection} setSelection={setSelection} />
+          <RegisterTable rows={register?.results ?? []} selection={selection} setSelection={setSelection} onVarietySelect={narrow(setVariety)} />
           <div className="d-flex align-items-center gap-3">
             <ButtonGroup>
               <Button variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
