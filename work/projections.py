@@ -16,6 +16,7 @@ from health.models import HealthFollowUp, HealthObservation, HealthTreatment
 from locations.models import location_full_name
 from plantings.assumption_variance import assumption_variance_rows
 from plantings.growth import current_growth
+from plantings.lifecycle import PRESENT_STATES, with_lifecycle_state
 from plantings.models import (
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -407,8 +408,22 @@ def _plant_location(plant):
 
 
 def _growth_candidates(rule):
-    plants = SpecificPlant.objects.filter(
-        workspace=rule.workspace, batch__status__in=OPEN_BATCHES,
+    """Yield the plants and cohorts the nursery still holds in open batches.
+
+    Both halves ask whether anything is still here, of two representations. A
+    cohort is a count, so a depleted one has `quantity` 0. A plant is an
+    identity whose outcome is a lifecycle fact, so it is kept while its derived
+    state is in `PRESENT_STATES`. Nothing else retires a resolved plant: its
+    last stage observation outlives it, and the outcome closing its location
+    reads as no location, which a rule without a location filter accepts. A
+    retained plant is resolved but still on a bench, so it keeps its reviews.
+    """
+    plants = with_lifecycle_state(
+        SpecificPlant.objects.filter(
+            workspace=rule.workspace, batch__status__in=OPEN_BATCHES,
+        ),
+    ).filter(
+        lifecycle_state__in=sorted(PRESENT_STATES),
     ).select_related('batch__variety__plant').prefetch_related(
         'locations__location', 'locations__seed_tray_cell__tray__inventory_unit__current_location',
         'nursery_observation_targets__observation__stage',
