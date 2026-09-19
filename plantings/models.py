@@ -1391,6 +1391,10 @@ class CohortOperation(WorkspaceOwnedModel):
         # the quantity would drop with nothing in the history saying why.
         SOLD = 'sold', 'Sold'
         RETURN = 'return', 'Returned from an order'
+        # Says a recorded loss never happened, as a plant's `corrected` event
+        # does for its lifecycle. The units go back and the loss drops out of
+        # every total, cost included; the original stays readable beside it.
+        CORRECTED = 'corrected', 'Loss corrected'
 
     class LossCause(models.TextChoices):
         """Why a `LOSS` removed the quantity, in the plant events' vocabulary.
@@ -1422,6 +1426,14 @@ class CohortOperation(WorkspaceOwnedModel):
         editable=False,
         related_name='+',
     )
+    reversal_of = models.OneToOneField(
+        'self',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        editable=False,
+        related_name='reversal',
+    )
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -1430,6 +1442,14 @@ class CohortOperation(WorkspaceOwnedModel):
             models.UniqueConstraint(
                 fields=['workspace', 'idempotency_key'],
                 name='cohort_operation_workspace_idempotent',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    models.Q(action='corrected', reversal_of__isnull=False),
+                    ~models.Q(action='corrected') & models.Q(reversal_of__isnull=True),
+                    _connector=models.Q.OR,
+                ),
+                name='cohort_operation_reversal_type',
             ),
             models.CheckConstraint(
                 condition=(
@@ -1446,6 +1466,8 @@ class CohortOperation(WorkspaceOwnedModel):
         column, and a loss without one is the free-text-only history this field
         exists to end. `UNSPECIFIED` is what the backfill wrote for losses taken
         before the cause was recorded, so it stays storable and unrecordable.
+        A correction names the loss it withdraws, and nothing else: its cause
+        is the loss's own, read through `reversal_of` rather than copied.
         """
         super().clean()
         errors = {}
@@ -1459,6 +1481,11 @@ class CohortOperation(WorkspaceOwnedModel):
                 )
         elif self.loss_cause:
             errors['loss_cause'] = 'Only a loss carries a cause.'
+        if self.reversal_of_id is not None:
+            if self.reversal_of.workspace_id != self.workspace_id:
+                errors['reversal_of'] = 'The corrected loss belongs to another workspace.'
+            elif self.reversal_of.action != self.Action.LOSS:
+                errors['reversal_of'] = 'Only a loss can be corrected.'
         if errors:
             raise ValidationError(errors)
 

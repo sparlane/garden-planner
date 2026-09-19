@@ -441,6 +441,7 @@ def _batch_actuals(batch):
     cohort_losses = CohortEvent.objects.filter(
         cohort__batch=batch,
         operation__action=CohortOperation.Action.LOSS,
+        operation__reversal__isnull=True,
         quantity_delta__lt=0,
     ).aggregate(total=Sum('quantity_delta'))['total'] or 0
     plant_losses = PlantLifecycleEvent.objects.filter(

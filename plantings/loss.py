@@ -23,11 +23,18 @@ Where a plant event has no cohort cause:
   `retention_ended` record condition, not a departure from stock. The cohort
   side says the same things through `observe`, `ready`, `retain`, `move` and the
   growth observations.
-- `returned_available`, `returned_quarantined`, `returned_discarded`,
-  `released_available` and `corrected` all act on a plant somebody was sold or
-  on one plant's history. Anonymous stock is not sold as a nameable plant, so
-  there is nothing to return or release one unit of; `health` and the
-  append-only operation history carry the cohort equivalents.
+- `returned_available`, `returned_quarantined`, `returned_discarded` and
+  `released_available` all act on a plant somebody was sold. Anonymous stock is
+  not sold as a nameable plant, so there is nothing to return or release one
+  unit of; `health` and the append-only operation history carry the cohort
+  equivalents.
+
+Where the two sides withdraw a fact:
+
+- `corrected` / `corrected` — the loss never happened. A plant's correction
+  reverses one lifecycle event and a cohort's reverses one `LOSS` operation, and
+  on both sides a corrected loss drops out of every total below, as of the
+  period it was recorded in, and out of `costing`'s production loss.
 
 Where a cohort cause has no plant event:
 
@@ -107,6 +114,7 @@ def cohort_loss_counts(cohort_events):
     counts = Counter()
     rows = cohort_events.filter(
         operation__action=CohortOperation.Action.LOSS,
+        operation__reversal__isnull=True,
         quantity_delta__lt=0,
     ).values('operation__loss_cause').annotate(total=Sum('quantity_delta'))
     for row in rows:

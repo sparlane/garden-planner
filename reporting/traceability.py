@@ -228,7 +228,9 @@ def lot_trace(workspace, lot_id, filters):  # pylint: disable=too-many-locals
             summaries[layer.specific_plant_id].state
             if layer.specific_plant_id else None
         ),
-        'production_loss': layer.target_type == CostAllocation.TargetType.PRODUCTION_LOSS,
+        'production_loss': layer.target_type in (
+            CostAllocation.TargetType.PRODUCTION_LOSS, CostAllocation.TargetType.COHORT_LOSS,
+        ),
         'quantity': decimal_string(layer.base_quantity, 9),
         'base_unit': layer.base_unit,
         'cost_amount': decimal_string(layer.amount, 4),

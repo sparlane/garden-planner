@@ -283,6 +283,57 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
 
 
 @transaction.atomic
+def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
+                        occurred_at=None, reason=''):
+    """Withdraw a recorded loss and put its units back where they were lost.
+
+    This says the loss never happened, as `reverse_lifecycle_event` does for a
+    plant, so it corrects the whole loss or nothing: a part of it that really
+    did die is a new loss of its own. The units return to the block they left,
+    in the state that block was in before the loss if it has since been
+    emptied, and the reallocation that follows takes their cost back out of
+    production loss, because `costing.sources` reads only losses nobody has
+    corrected.
+
+    No revision is checked, for the reason `sell_cohort` gives: the operator
+    names the fact to withdraw, not a count they read, and the row lock is what
+    keeps the block consistent while its units come back.
+    """
+    _require_reason(reason)
+    payload = {'loss': operation_id}
+    existing = _existing(workspace, idempotency_key, CohortOperation.Action.CORRECTED, payload)
+    if existing:
+        return existing.events.get().cohort, existing
+    loss = CohortOperation.objects.filter(
+        workspace=workspace, pk=operation_id, action=CohortOperation.Action.LOSS,
+    ).first()
+    if loss is None:
+        raise ValidationError({'operation': 'Select a recorded cohort loss.'})
+    lost = loss.events.get()
+    cohort = _locked(lost.cohort_id, workspace)
+    if CohortOperation.objects.filter(reversal_of=loss).exists():
+        raise ValidationError({'operation': 'That loss has already been corrected.'})
+    before = _snapshot(cohort)
+    cohort.quantity -= lost.quantity_delta
+    if before['state'] == PlantCohort.LifecycleState.DEPLETED:
+        cohort.lifecycle_state = lost.state_before
+    _save(cohort)
+    operation = CohortOperation.objects.create(
+        workspace=workspace,
+        created_by=_actor(user),
+        action=CohortOperation.Action.CORRECTED,
+        idempotency_key=idempotency_key,
+        occurred_at=occurred_at or timezone.now(),
+        reason=reason,
+        payload=payload,
+        reversal_of=loss,
+    )
+    _event(operation, cohort, before)
+    _reallocate(cohort.batch, user, reason)
+    return cohort, operation
+
+
+@transaction.atomic
 def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
                  idempotency_key, occurred_at=None, reason='', location=None,
                  container_count=None):

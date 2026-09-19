@@ -14,10 +14,12 @@ from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
 from costing.models import CostAllocation
+from inventory.ledger import distribute_exactly
 from plantings.lifecycle import lifecycle_summaries
 from plantings.loss import CAUSE_OF_EVENT, LOSS_CAUSES, LOSS_EVENTS, empty_totals, loss_by_cause
 from plantings.models import (
     CohortEvent,
+    CohortOperation,
     PlantLifecycleEvent,
     ProductionBatch,
     SpecificPlantLocation,
@@ -505,6 +507,63 @@ def _return_rows(workspace, filters, start, end):
     return rows
 
 
+def _cohort_losses(layers):
+    """Return the surviving recorded losses of every cohort a loss layer names.
+
+    A cohort's loss layer carries every unit lost out of the block, whenever
+    and however it went, so the report divides it back into the recorded
+    losses to date and explain each part. A corrected loss never happened and
+    has no part.
+    """
+    cohort_ids = layers.filter(
+        target_type=CostAllocation.TargetType.COHORT_LOSS,
+    ).values_list('plant_cohort_id', flat=True)
+    losses = defaultdict(list)
+    events = CohortEvent.objects.filter(
+        cohort_id__in=cohort_ids,
+        operation__action=CohortOperation.Action.LOSS,
+        operation__reversal__isnull=True,
+    ).select_related('operation').order_by('pk')
+    for event in events:
+        losses[event.cohort_id].append(event)
+    return losses
+
+
+def _cohort_loss_rows(layer, losses, filters, start, end):
+    """Divide one cohort's loss layer into a row per recorded loss in the period.
+
+    Every unit of a block carries the same cost, so each loss takes the part of
+    the layer its units earn, split exactly so the parts add back up to the
+    layer. Each part is dated and caused by its own operation, which is what
+    the identified half gets from a plant's lifecycle.
+    """
+    if filters.get('garden_square') or not losses:
+        return []
+    weights = [-event.quantity_delta for event in losses]
+    amounts = distribute_exactly(layer.amount, weights)
+    rows = []
+    for event, amount in zip(losses, amounts):
+        occurred_at = event.operation.occurred_at
+        if not start <= occurred_at < end:
+            continue
+        if filters.get('location') and str(event.location_before_id) != str(filters['location']):
+            continue
+        row = _base_financial_row(
+            'production_loss', occurred_at, layer.currency_code, layer.pk,
+        )
+        row.update({
+            'variety_id': layer.batch.variety_id,
+            'batch_id': layer.batch_id,
+            'cohort_id': layer.plant_cohort_id,
+            'loss_cause': event.operation.loss_cause,
+            'production_loss': decimal_string(amount or ZERO, 4),
+            'provisional': layer.batch.output_finalized_at is None,
+            'unvalued': amount is None,
+        })
+        rows.append(row)
+    return rows
+
+
 def _loss_rows(workspace, filters, start, end):
     if any(filters.get(key) for key in ('customer', 'order', 'fulfillment')):
         return []
@@ -519,8 +578,14 @@ def _loss_rows(workspace, filters, start, end):
         target_type=CostAllocation.TargetType.SPECIFIC_PLANT,
     ).values_list('specific_plant_id', flat=True).distinct())
     summaries = lifecycle_summaries(plant_ids)
+    cohort_losses = _cohort_losses(layers)
     rows = []
     for layer in layers.order_by('pk'):
+        if layer.target_type == CostAllocation.TargetType.COHORT_LOSS:
+            rows.extend(_cohort_loss_rows(
+                layer, cohort_losses[layer.plant_cohort_id], filters, start, end,
+            ))
+            continue
         occurred_at = None
         cause = None
         if layer.target_type == CostAllocation.TargetType.PRODUCTION_LOSS:
@@ -577,11 +642,12 @@ def _placed_plant_events(events, filters):
 def _lost_units(workspace, filters, start, end):
     """Count the stock lost in the period by cause, anonymous and identified.
 
-    The money beside it only ever covers identified plants: a cohort's cost
-    redistributes across the units the batch has left rather than becoming its
-    own layer, so `production_loss` would report a batch whose whole loss was
-    anonymous as costing nothing. The unit totals are what say how much was
-    lost and why, in the vocabulary `plantings.loss` holds for both.
+    The money beside it covers both halves too: a lost cohort unit takes its
+    share of the batch's cost into its block's `cohort_loss` layer, which
+    `_loss_rows` dates and causes by the loss it came from, as a plant's layer
+    is by its lifecycle. The two therefore count the same recorded losses, one
+    in units and one in money, in the vocabulary `plantings.loss` holds for
+    both.
     """
     if any(filters.get(key) for key in ('customer', 'order', 'fulfillment')):
         return empty_totals()
@@ -708,9 +774,9 @@ def profitability_report(workspace, filters):
             'loss_equation': (
                 'lost units = failed + lost + culled + donated + unspecified, '
                 'counting anonymous cohort units and identified plants in the '
-                'same vocabulary; production loss values the identified half, '
-                'because a cohort loss redistributes its cost over the units '
-                'the batch has left instead of booking its own layer'
+                'same vocabulary; production loss values both halves, each '
+                'lost unit at its share of its batch\'s cost, dated and caused '
+                'by the loss that recorded it'
             ),
         },
         data_quality=quality,

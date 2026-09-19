@@ -178,12 +178,13 @@ def _capture_plants(income_year, user, end):
 def _capture_cohorts(income_year, user, end):
     """Freeze current cohort quantity, marking it provisional if observed later.
 
-    The `plant_cohort` column carries two halves of a block's cost: the stock
-    still standing there (`PLANT_COHORT`) and what already left with a customer
-    (`COHORT_SALE`), told apart only by the target type. `cohort.quantity`
-    counts the first half, so the value has to be drawn from the same half;
-    the sold half is cost of sale, and counting it here as well would raise
-    profit by the amount it was meant to lower it.
+    The `plant_cohort` column carries three parts of a block's cost: the stock
+    still standing there (`PLANT_COHORT`), what already left with a customer
+    (`COHORT_SALE`) and what died (`COHORT_LOSS`), told apart only by the
+    target type. `cohort.quantity` counts the first part, so the value has to
+    be drawn from the same part; the others are cost of sale and production
+    loss, and counting them here as well would raise profit by the amount they
+    were meant to lower it.
 
     Both halves are read as they stand at capture, not at the balance instant,
     so a block that was sold, returned, lost, promoted, split or recounted at
