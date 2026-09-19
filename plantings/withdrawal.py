@@ -31,10 +31,17 @@ from .models import SpecificPlant
 #: Every other relation blocks, and the blocking set is derived from the model
 #: rather than listed, so a relation added later denies the withdrawal until
 #: somebody decides it belongs here. That is the safe default: admitting a new
-#: way of using a plant would silently let a withdrawal strand it. That sees
-#: reverse relations only, so forward keys are weighed by hand — did the
-#: germination create the plant? `cell_planting` yes; `batch` says nothing; a
-#: cohort promotion is refused; a direct-sown individual is not yet (task 151).
+#: way of using a plant would silently let a withdrawal strand it.
+#:
+#: `_meta.related_objects` holds reverse relations only, so the derivation
+#: cannot see a forward key on `SpecificPlant`. Each of those is weighed by hand
+#: in `_require_withdrawable`, against one question: is the germination the fact
+#: that created the plant? For `cell_planting` it is; that is the seedling this
+#: correction exists for. `batch` is carried by every plant, so it says nothing
+#: about origin. `promoted_from_cohort` says the plant came up as part of a
+#: cohort, so it is refused. `garden_planting` on a plant individualized from a
+#: direct-sown crop has the same shape and is not yet refused (task 151). A
+#: forward key added later has to be weighed here too.
 WITHDRAWAL_KEEPS = frozenset({
     'lifecycle_events',
     'locations',
@@ -55,15 +62,22 @@ def withdrawal_blocking_relations(keeps=None):
 
 def _require_withdrawable(plant):
     """Return the germination this plant may withdraw, or explain why it may not."""
-    # A promotion's germination is the cohort's count carried onto an identity.
-    # Its forward key is invisible below, and asking it first keeps the answer
-    # independent of whatever else the promotion recorded.
+    # A promotion's germination is the cohort's count carried onto an identity,
+    # and the promotion took the unit out of the cohort. Withdrawing it would
+    # leave that unit recorded nowhere, and no relation checked below can see
+    # it, because the origin is a forward key. It is asked first so the answer
+    # does not depend on whatever else the promotion happened to record.
     if plant.promoted_from_cohort_id is not None:
-        raise ValidationError({'plant': (
-            f'This plant was promoted from cohort {plant.promoted_from_cohort_id}, so '
-            'it never came up as a seedling and there is no germination to withdraw. '
-            'A promotion entered wrongly is corrected on the cohort.'
-        )})
+        raise ValidationError({
+            'plant': (
+                'This plant was promoted from cohort '
+                f'{plant.promoted_from_cohort_id}. It came up as part of that '
+                'cohort, so it has no germination of its own to withdraw. A '
+                'promotion cannot be reversed yet. Do not recount the cohort to '
+                'put the unit back, because the plant would still be counted '
+                'beside it.'
+            ),
+        })
     events = _plant_events(plant)
     germination = next(
         (event for event in events if event.event_type == EventType.GERMINATED),
