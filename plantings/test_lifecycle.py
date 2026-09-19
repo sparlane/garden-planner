@@ -662,8 +662,31 @@ class LifecycleCorrectionTests(TestCase):
         self.assertEqual(summary.state, LifecycleState.GROWING)
         self.assertIsNone(summary.final_outcome)
 
+    def test_restoring_the_location_reopens_the_one_the_failure_closed(self):
+        """An operator's correction leaves the plant standing where it was."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        reverse_lifecycle_event(failure, self.user, 'Wrong plant.', restore_location=True)
+        self.location.refresh_from_db()
+        self.assertIsNone(self.location.ended)
+
+    def test_restoring_leaves_a_later_placement_alone(self):
+        """Once the plant has been put somewhere since, that is where it is."""
+        failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
+        self.location.refresh_from_db()
+        replacement = SpecificPlantLocation.objects.create(
+            specific_plant=self.plant,
+            location_type=SpecificPlantLocation.GARDEN_SQUARE,
+            garden_square=make_garden_square(),
+            started=self.location.ended,
+        )
+        reverse_lifecycle_event(failure, self.user, 'Wrong plant.', restore_location=True)
+        self.location.refresh_from_db()
+        replacement.refresh_from_db()
+        self.assertIsNotNone(self.location.ended)
+        self.assertIsNone(replacement.ended)
+
     def test_a_replacement_location_can_follow_a_reversed_failure(self):
-        """The closed location stays closed; a new interval is appended."""
+        """Without restoring, the location stays closed; a new interval is appended."""
         failure = record_lifecycle_event(self.plant, self.user, OutcomeRequest(EventType.FAILED))
         reverse_lifecycle_event(failure, self.user, 'Wrong plant.')
         self.location.refresh_from_db()

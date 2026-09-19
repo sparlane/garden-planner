@@ -663,13 +663,41 @@ def record_transplant_event(plant, user, occurred_at):
     )
 
 
+def _reopen_closed_location(plant, event):
+    """Reopen the placement a mistaken outcome closed, if nothing has followed it.
+
+    The outcome ended the plant's latest placement at the moment it happened.
+    If that placement is still the latest and still ends then, the plant never
+    left it, so the departure is withdrawn with the fact that caused it. A
+    placement in a pot fill stays closed: its departure has already fixed the
+    fill's shares and posted the media cost, which a reopening cannot undo.
+    """
+    if event.event_type not in CLOSES_LOCATION:
+        return None
+    latest = (
+        SpecificPlantLocation.objects
+        .select_for_update()
+        .filter(specific_plant=plant)
+        .order_by('-started', '-pk')
+        .first()
+    )
+    if latest is None or latest.ended != event.occurred_at or latest.container_fill_id:
+        return None
+    latest.ended = None
+    latest.save(update_fields=['ended'])
+    return latest
+
+
 @transaction.atomic
-def reverse_lifecycle_event(event, user, reason, occurred_at=None):
+def reverse_lifecycle_event(event, user, reason, occurred_at=None, restore_location=False):
     """Correct a mistaken fact by appending its reversal.
 
     The original stays visible; the plant's state is re-derived from the facts
-    that survive. A closed location is not reopened, because where a plant has
-    been remains true — record the replacement location instead.
+    that survive. A closed location is not reopened by default, because the
+    callers that undo a sale, a count or a tray clean put the plant back where
+    it belongs themselves. An operator correcting a single mistaken outcome
+    passes `restore_location`, so the plant is standing where it was and can be
+    moved or repotted from there.
 
     This says the fact was never true. Where it was true and the situation
     then changed, record that instead: `BACKWARD_EVENTS` names the facts for
@@ -692,6 +720,8 @@ def reverse_lifecycle_event(event, user, reason, occurred_at=None):
         raise ValidationError({'event': 'That event has already been corrected.'})
     occurred_at = occurred_at or timezone.now()
     _require_chronology(_plant_events(plant), occurred_at)
+    if restore_location:
+        _reopen_closed_location(plant, event)
     return _create_event(
         plant,
         user,
