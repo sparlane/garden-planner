@@ -11,8 +11,13 @@ whose finalization exists to guarantee there is none.
 from decimal import Decimal
 from types import SimpleNamespace
 
+from uuid import uuid4
+
 from django.test import SimpleTestCase
 
+from health.availability import is_quarantined
+from plantings.cohorts import observe_cohort
+from plantings.models import PlantCohort
 from tests.factories import quarantine_stock
 
 from .allocation import Share
@@ -23,7 +28,7 @@ from .services import (
     batch_cost_breakdown,
     cohort_cost_breakdown,
 )
-from .test_services import CohortStockTestCase
+from .test_services import CohortStockTestCase, CostingServiceTestCase
 
 
 Target = CostAllocation.TargetType
@@ -48,6 +53,24 @@ class FrozenBucketInvariantTests(SimpleTestCase):
             row = SimpleNamespace(target_type=share.target_type, specific_plant_id=None, plant_cohort_id=None)
             with self.subTest(target=share.target_type):
                 self.assertNotEqual(_bucket_of(row, {}, {}), 'unresolved')
+
+
+class GrowingBlockBucketTests(CostingServiceTestCase):
+    """A block still in plugs is stock on hand as much as one on offer."""
+
+    def test_a_growing_block_is_plant_inventory(self):
+        """Four growing units worth 1.0800 report 1.0800 as inventory."""
+        sowing = self.sow([(self.cells[0], 4)])
+        self.apply_media([self.cells[0]], '0.04')
+        cohort, _observed = observe_cohort(
+            self.workspace, self.user,
+            batch=self.batch, source_sowing=sowing, quantity=4, idempotency_key=uuid4(),
+        )
+
+        self.assertEqual(cohort.lifecycle_state, PlantCohort.LifecycleState.GROWING)
+        totals = batch_cost_breakdown(self.batch)['totals']
+        self.assertEqual(totals['plant_inventory'], '1.0800')
+        self.assertEqual(totals['unresolved'], '0.0000')
 
 
 class CohortBucketTests(CohortStockTestCase):
@@ -79,7 +102,25 @@ class CohortBucketTests(CohortStockTestCase):
         """Verification 3: quarantine is an overlay, as it is for a plant."""
         quarantine_stock(self.workspace, self.user, [{'type': 'cohort', 'id': self.cohort.pk}])
 
+        self.cohort.refresh_from_db()
+        self.assertTrue(is_quarantined(self.cohort))
+        self.assertEqual(self.cohort.lifecycle_state, PlantCohort.LifecycleState.AVAILABLE)
         self.assert_held_as_inventory()
+
+    def test_a_depleted_block_still_holding_value_shows_it_as_unresolved(self):
+        """Decision 4: a layer that outlived its block's units is a visible fault.
+
+        The block is emptied behind the costing's back, so its layer is left
+        standing exactly as an upstream fault would leave it.
+        """
+        PlantCohort.objects.filter(pk=self.cohort.pk).update(
+            quantity=0, lifecycle_state=PlantCohort.LifecycleState.DEPLETED,
+        )
+
+        self.assertEqual(self.totals_by_target()[Target.PLANT_COHORT], Decimal('1.0800'))
+        totals = batch_cost_breakdown(self.batch)['totals']
+        self.assertEqual(totals['unresolved'], '1.0800')
+        self.assertEqual(totals['plant_inventory'], '0.0000')
 
     def test_a_finalized_block_reports_nothing_unresolved(self):
         """Verification 4: the reported 0.2700 / 0.8100 split is all inventory."""
