@@ -292,6 +292,14 @@ def _frozen_plan(intended, stored):
     A layer whose source has vanished from the intended set had its input
     reversed, so its cost has to come back out even though the batch is frozen —
     stock that returned to the shelf cannot still be sitting in a seedling.
+
+    Cohort layers are the exception to never re-dividing: a sale, loss,
+    promotion or return changes how many anonymous units share the cohort's
+    cost, so the superseded layer is reversed and its replacement is posted in
+    the same run. The posting list is read off the reversal decision rather
+    than repeating the match test, because the two have to agree about which
+    stored rows are going away — a layer reversed without its replacement takes
+    its cost off the batch, and a finalized total is the one that must not move.
     """
     live_sources = {
         (spec['source_type'], spec['source'].pk)
@@ -308,7 +316,12 @@ def _frozen_plan(intended, stored):
         return (row.source_type, row.source_id) not in live_sources
 
     reverse = [row for row in stored.values() if retired(row)]
-    return reverse, [spec for key, spec in intended.items() if key not in stored]
+    reversed_keys = {_stored_key(row) for row in reverse}
+    post = [
+        spec for key, spec in intended.items()
+        if key not in stored or key in reversed_keys
+    ]
+    return reverse, post
 
 
 def _plan(batch):
