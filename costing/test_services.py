@@ -44,6 +44,7 @@ from plantings.lifecycle import (
 )
 from plantings.models import (
     CohortOperation,
+    PlantCohort,
     SeedTrayCellPlanting,
     SeedTrayPlanting,
     SpecificPlant,
@@ -72,6 +73,7 @@ from workspaces.models import Workspace
 from .models import CostAllocation, CostAllocationRun
 from .sources import batch_sources
 from .services import (
+    DISPOSITION_OF_COHORT_STATE,
     DISPOSITION_OF_STATE,
     VALUE_BUCKETS,
     batch_cost_breakdown,
@@ -105,6 +107,16 @@ class DispositionCoverageTests(SimpleTestCase):
         """A bucket no report sums would silently drop the value put in it."""
         self.assertEqual(
             set(DISPOSITION_OF_STATE.values()) - set(VALUE_BUCKETS), set(),
+        )
+
+    def test_every_cohort_state_has_a_value_bucket(self):
+        """A block's state is bucketed by the same rule, and fails the same way."""
+        self.assertEqual(
+            sorted(DISPOSITION_OF_COHORT_STATE),
+            sorted(PlantCohort.LifecycleState.values),
+        )
+        self.assertEqual(
+            set(DISPOSITION_OF_COHORT_STATE.values()) - set(VALUE_BUCKETS), set(),
         )
 
 
