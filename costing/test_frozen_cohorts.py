@@ -12,8 +12,7 @@ from uuid import uuid4
 
 from plantings.cohorts import change_cohort, promote_cohort
 from plantings.models import CohortOperation
-from sales.commerce import post_return, reverse_fulfillment
-from sales.models import SalesReturnLine
+from sales.commerce import reverse_fulfillment
 
 from .models import CostAllocation, CostAllocationRun
 from . import services
@@ -158,16 +157,7 @@ class FrozenCohortCostTests(CohortStockTestCase):
         """A returned unit comes back into stock with its cost, not without it."""
         fulfillment = self.sell()
 
-        post_return(
-            fulfillment.order, self.user,
-            operation_key=uuid4(),
-            items=[{
-                'fulfillment_line': fulfillment.lines.get(),
-                'outcome': SalesReturnLine.Outcome.AVAILABLE,
-                'destination': self.location,
-            }],
-            reason='Customer changed the order.',
-        )
+        self.return_sale(fulfillment)
 
         self.assertEqual(batch_cost_breakdown(self.batch)['totals']['cogs'], '0.0000')
         self.assert_total_held()
