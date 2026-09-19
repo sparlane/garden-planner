@@ -881,7 +881,7 @@ def _reverse_cohort(link, result, stocktake, user, reason):
     if result.action == CohortOperation.Action.LOSS:
         _cohort, inverse = correct_cohort_loss(
             stocktake.workspace, user, operation_id=result.pk,
-            idempotency_key=idempotency_key, reason=reason,
+            idempotency_key=idempotency_key, reason=reason, stocktake_reversal=True,
         )
         return inverse
     cohort = result.events.order_by('pk').first().cohort
