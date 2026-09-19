@@ -50,8 +50,8 @@ from plantings.models import (
     SpecificPlantLocation,
 )
 from plantings.sowing import post_sowing_consumption
-from sales.commerce import post_fulfillment, reverse_fulfillment
-from sales.models import SalesOrderLine
+from sales.commerce import post_fulfillment, post_return, reverse_fulfillment
+from sales.models import SalesOrderLine, SalesReturnLine
 from sales.services import CohortRequest, allocate_targets, confirm_order, create_order
 from seeds.models import SeedPacket
 from tests.factories import (
@@ -425,6 +425,19 @@ class CohortStockTestCase(CostingServiceTestCase):
             order, self.user,
             operation_key=uuid4(),
             allocation_ids=[line.allocations.get().pk],
+        )
+
+    def return_sale(self, fulfillment):
+        """Take the dispatched count back into stock, fit to sell again."""
+        return post_return(
+            fulfillment.order, self.user,
+            operation_key=uuid4(),
+            items=[{
+                'fulfillment_line': fulfillment.lines.get(),
+                'outcome': SalesReturnLine.Outcome.AVAILABLE,
+                'destination': self.location,
+            }],
+            reason='Customer changed the order.',
         )
 
 

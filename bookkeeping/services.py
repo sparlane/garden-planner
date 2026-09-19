@@ -176,7 +176,15 @@ def _capture_plants(income_year, user, end):
 
 
 def _capture_cohorts(income_year, user, end):
-    """Freeze current cohort quantity, marking it provisional if observed later."""
+    """Freeze current cohort quantity, marking it provisional if observed later.
+
+    The `plant_cohort` column carries two halves of a block's cost: the stock
+    still standing there (`PLANT_COHORT`) and what already left with a customer
+    (`COHORT_SALE`), told apart only by the target type. `cohort.quantity`
+    counts the first half, so the value has to be drawn from the same half;
+    the sold half is cost of sale, and counting it here as well would raise
+    profit by the amount it was meant to lower it.
+    """
     cohorts = PlantCohort.objects.filter(
         workspace=income_year.workspace, quantity__gt=0,
         created__lt=end,
@@ -184,7 +192,8 @@ def _capture_cohorts(income_year, user, end):
     rows = []
     for cohort in cohorts:
         allocations = CostAllocation.objects.filter(
-            plant_cohort=cohort, reversal_of=None, reversal__isnull=True,
+            plant_cohort=cohort, target_type=CostAllocation.TargetType.PLANT_COHORT,
+            reversal_of=None, reversal__isnull=True,
         )
         known = list(allocations.exclude(amount=None).values_list('amount', flat=True))
         value = money(sum(known, ZERO))
