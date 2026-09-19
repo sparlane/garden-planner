@@ -40,10 +40,10 @@ from .lifecycle import (
     record_lifecycle_event,
     record_transplant_event,
     reverse_lifecycle_event,
-    withdraw_germination,
     states_without_exits,
     with_lifecycle_state,
 )
+from .withdrawal import withdraw_germination
 from .models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
 
 

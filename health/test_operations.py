@@ -28,8 +28,8 @@ from plantings.lifecycle import (
     plant_lifecycle_summary,
     record_germination_event,
     record_lifecycle_event,
-    withdraw_germination,
 )
+from plantings.withdrawal import withdraw_germination
 from plantings.models import CohortOperation, PlantCohort, SpecificPlantLocation
 from plantings.register import RegisterFilters, register_queryset
 from tests.factories import (
