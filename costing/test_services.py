@@ -39,6 +39,8 @@ from plantings.lifecycle import (
     OutcomeRequest,
     record_germination_event,
     record_lifecycle_event,
+)
+from plantings.withdrawal import (
     withdraw_germination,
     withdraw_germinations,
 )

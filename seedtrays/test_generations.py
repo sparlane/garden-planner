@@ -23,6 +23,8 @@ from plantings.lifecycle import (
     LifecycleState,
     plant_lifecycle_summary,
     record_germination_event,
+)
+from plantings.withdrawal import (
     withdraw_germination,
     withdraw_germinations,
 )

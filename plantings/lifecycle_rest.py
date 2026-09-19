@@ -24,8 +24,8 @@ from .lifecycle import (
     record_bulk_outcome,
     record_lifecycle_event,
     reverse_lifecycle_event,
-    withdraw_germinations,
 )
+from .withdrawal import withdraw_germinations
 from .models import PlantLifecycleEvent, SpecificPlant
 
 

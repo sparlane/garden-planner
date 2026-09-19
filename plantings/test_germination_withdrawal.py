@@ -47,12 +47,14 @@ from .lifecycle import (
     EventType,
     LifecycleState,
     OutcomeRequest,
-    WITHDRAWAL_KEEPS,
     derive_state,
     record_germination_event,
     record_lifecycle_event,
     reverse_lifecycle_event,
     with_lifecycle_state,
+)
+from .withdrawal import (
+    WITHDRAWAL_KEEPS,
     withdraw_germination,
     withdraw_germinations,
     withdrawal_blocking_relations,
