@@ -44,10 +44,10 @@ from .models import (
     SalesOrderLine,
     SalesReturnLine,
 )
+from .reservations import close_reservations
 from .services import (
     LotRequest,
     allocate_targets,
-    close_reservations,
     confirm_order,
     create_order,
     preview_targets,

@@ -18,6 +18,7 @@ from labels.models import LabelCode, LabelIdentity
 from locations.models import Location
 from plantings.growth import current_growth
 from plantings.lifecycle import (
+    RELEASES_HOLD,
     EventType,
     OutcomeRequest,
     plant_lifecycle_summary,
@@ -786,6 +787,13 @@ def _post_unit(stocktake, target, user, reason, action, payload):
     return _correct_unit(stocktake, target, user, reason, action, payload, 'unit')
 
 
+def _plant_outcome(action, payload):
+    """Return the lifecycle fact a resolved plant variance records, if any."""
+    if action == 'move':
+        return None
+    return EventType.LOST if action == 'lost' else payload.get('event_type')
+
+
 def _post_plant(stocktake, target, user, reason, action, payload):
     plant = SpecificPlant.objects.get(pk=target.target_object_id, workspace=stocktake.workspace)
     before_location = _plant_location(plant)
@@ -805,7 +813,7 @@ def _post_plant(stocktake, target, user, reason, action, payload):
             user,
         )
     else:
-        event_type = EventType.LOST if action == 'lost' else payload.get('event_type')
+        event_type = _plant_outcome(action, payload)
         allowed = {EventType.LOST, EventType.FAILED, EventType.CULLED, EventType.READY, EventType.RETAINED}
         if event_type not in allowed:
             raise ValidationError({'action': 'Select a valid plant state correction.'})
@@ -855,7 +863,10 @@ def post_reviewed_stocktake(stocktake, user):
     # takes an order before its plants, so the holders are locked first.
     lock_plant_holders([
         target.target_object_id for target in targets
-        if target.target_type == StocktakeTarget.TargetType.PLANT
+        if all((
+            target.target_type == StocktakeTarget.TargetType.PLANT,
+            _plant_outcome(*_posting_action(target)) in RELEASES_HOLD,
+        ))
     ])
     for target in targets:
         action, payload = _posting_action(target)
