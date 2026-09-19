@@ -326,6 +326,7 @@ def _loss_events(batches):
     for cohort_id, occurred_at, delta in CohortEvent.objects.filter(
             cohort__batch__in=batches,
             operation__action=CohortOperation.Action.LOSS,
+            operation__reversal__isnull=True,
             quantity_delta__lt=0,
     ).values_list('cohort_id', 'operation__occurred_at', 'quantity_delta'):
         events.append((('cohort', cohort_id), occurred_at, abs(delta)))

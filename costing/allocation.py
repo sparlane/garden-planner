@@ -261,11 +261,14 @@ def resolve_cells_to_plants(shares, plants_by_cell):
 
 #: The layer each kind of nursery output earns. A sold quantity keeps its
 #: place among the outputs so its cost stays with the stock that left, exactly
-#: as a sold plant keeps its identity and its own layer.
+#: as a sold plant keeps its identity and its own layer. A lost quantity keeps
+#: its place for the same reason, and its layer is production loss, exactly as
+#: a culled plant's is.
 OUTPUT_TARGET_TYPES = {
     'plant': CostAllocation.TargetType.SPECIFIC_PLANT,
     'cohort': CostAllocation.TargetType.PLANT_COHORT,
     'cohort_sale': CostAllocation.TargetType.COHORT_SALE,
+    'cohort_loss': CostAllocation.TargetType.COHORT_LOSS,
 }
 
 
@@ -273,9 +276,10 @@ def resolve_unidentified_to_cohorts(shares, outputs):
     """Move unresolved nursery cost to cohort stock and promoted plant IDs.
 
     `outputs` contains one unit weight for every currently anonymous plant,
-    every unit sold out of a cohort, and every concrete plant promoted from the
-    batch's cohorts. Recalculation then transfers value instead of layering a
-    second cost on promotion or on a sale.
+    every unit sold or lost out of a cohort, and every concrete plant promoted
+    from the batch's cohorts. Recalculation then transfers value instead of
+    layering a second cost on promotion or on a sale, and a loss neither
+    shrinks the divisor nor hands its units' cost to the survivors.
     """
     if not outputs:
         return shares

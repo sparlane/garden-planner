@@ -69,15 +69,17 @@ SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'g
 SOURCE_COLUMNS = {name: name for name in SOURCE_FIELDS}
 
 #: The column each individual target type names. Most types are their own
-#: column, the same naming trick `SOURCE_FIELDS` uses. `cohort_sale` is the
-#: exception: it names the cohort a quantity was sold out of, so it shares the
-#: `plant_cohort` column with the stock still standing there and is told apart
-#: by the type. Kept in step with `CostAllocation.TargetType` by a test.
+#: column, the same naming trick `SOURCE_FIELDS` uses. `cohort_sale` and
+#: `cohort_loss` are the exceptions: they name the cohort a quantity was sold or
+#: lost out of, so they share the `plant_cohort` column with the stock still
+#: standing there and are told apart by the type. Kept in step with
+#: `CostAllocation.TargetType` by a test.
 TARGET_COLUMNS = {
     'seed_tray_cell': 'seed_tray_cell',
     'specific_plant': 'specific_plant',
     'plant_cohort': 'plant_cohort',
     'cohort_sale': 'plant_cohort',
+    'cohort_loss': 'plant_cohort',
 }
 
 #: Every column a target type can populate, once each and in a stable order.
@@ -206,8 +208,8 @@ class CostAllocation(WorkspaceOwnedModel):
         """What the cost was allocated to.
 
         The first three are also column names, for the reason `SourceType`
-        explains; `TARGET_COLUMNS` maps the fourth onto the column it shares.
-        The last three name no individual thing.
+        explains; `TARGET_COLUMNS` maps the fourth and fifth onto the column
+        they share. The last three name no individual thing.
         """
 
         SEED_TRAY_CELL = 'seed_tray_cell', 'Tray cell'
@@ -218,6 +220,11 @@ class CostAllocation(WorkspaceOwnedModel):
         # sold quantity has no identity to keep, so without this its cost
         # would silently re-divide over the units that never moved.
         COHORT_SALE = 'cohort_sale', 'Cohort sale'
+        # Cost that died with anonymous stock. It is production loss, but it
+        # names the block it was lost out of, as a culled plant's layer names
+        # the plant: the pool `PRODUCTION_LOSS` cannot, and a loss that is
+        # later corrected has to be found again to give its cost back.
+        COHORT_LOSS = 'cohort_loss', 'Cohort loss'
         BATCH_POOL = 'batch_pool', 'Unresolved batch pool'
         PRODUCTION_LOSS = 'production_loss', 'Production loss'
         UNATTRIBUTED = 'unattributed', 'Not attributable to a plant'

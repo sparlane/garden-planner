@@ -5,13 +5,10 @@ dispatched and reversed, a recorded loss, a promotion and a customer return,
 each out of a block of four units whose batch was finalized first.
 """
 
-import unittest
 from decimal import Decimal
 from unittest import mock
 from uuid import uuid4
 
-from plantings.cohorts import change_cohort, promote_cohort
-from plantings.models import CohortOperation
 from sales.commerce import reverse_fulfillment
 
 from .models import CostAllocation, CostAllocationRun
@@ -19,8 +16,6 @@ from . import services
 from .services import batch_cost_breakdown, plant_cost_breakdown, recalculate_batch_costs
 from .test_services import CohortStockTestCase
 
-
-LossCause = CohortOperation.LossCause
 
 fixed_frozen_plan = services._frozen_plan  # pylint: disable=protected-access
 
@@ -94,63 +89,39 @@ class FrozenCohortCostTests(CohortStockTestCase):
         self.assertNotIn(CostAllocation.TargetType.COHORT_SALE, totals)
         self.assert_total_held()
 
-    def lose_one(self):
-        """Record one unit of the block as having failed."""
-        self.cohort.refresh_from_db()
-        change_cohort(
-            self.workspace, self.user,
-            cohort_id=self.cohort.pk,
-            expected_revision=self.cohort.revision,
-            action=CohortOperation.Action.LOSS,
-            quantity=1,
-            loss_cause=LossCause.FAILED,
-            reason='Damped off.',
-            idempotency_key=uuid4(),
-        )
-
-    def promote_one(self):
-        """Give one unit of the block its own plant identity."""
-        self.cohort.refresh_from_db()
-        plants, _promoted = promote_cohort(
-            self.workspace, self.user,
-            cohort_id=self.cohort.pk,
-            expected_revision=self.cohort.revision,
-            quantity=1,
-            idempotency_key=uuid4(),
-            reason='Assign one sale plant.',
-        )
-        return plants
-
     def test_a_loss_keeps_the_final_total(self):
-        """Where a lost unit's cost belongs is task 136's; that it stays is this one's."""
-        self.lose_one()
+        """The lost quarter goes to production loss; the rest stays on the bench."""
+        self.lose()
 
+        self.assertEqual(batch_cost_breakdown(self.batch)['totals']['production_loss'], '0.2700')
+        self.assertEqual(self.totals_by_target()[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
         self.assert_total_held()
 
-    @unittest.expectedFailure
     def test_a_loss_after_a_promotion_keeps_the_final_total(self):
         """A loss must not shrink the divisor a frozen plant share was cut from.
 
-        Known failure, owned by task 136. The promoted plant's 0.27 is frozen,
-        but the loss re-divides the block's layer over three units instead of
-        four, so the cohort drops from 0.81 to 0.72 and the final total from
-        1.0800 to 0.9900. Re-dividing the plant share would break the freeze,
-        so the fix is booking the loss without shrinking the divisor; when task
-        136 lands this passes and the decorator comes off.
+        The promoted plant's 0.27 is frozen. Before task 136 the loss
+        re-divided the block's layer over three units instead of four, so the
+        cohort dropped from 0.81 to 0.72 and the final total from 1.0800 to
+        0.9900. The lost unit now keeps its place and takes its 0.27 to loss.
         """
-        self.promote_one()
-        self.lose_one()
+        plant = self.promote_one()
+        self.lose()
 
+        totals = self.totals_by_target()
+        self.assertEqual(totals[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.5400'))
+        self.assertEqual(totals[CostAllocation.TargetType.COHORT_LOSS], Decimal('0.2700'))
+        self.assertEqual(plant_cost_breakdown(plant)['final_value'], '0.2700')
         self.assert_total_held()
 
     def test_a_promotion_transfers_rather_than_duplicates(self):
         """The named plant takes its quarter out of the block, not on top of it."""
-        plants = self.promote_one()
+        plant = self.promote_one()
 
         totals = self.totals_by_target()
         self.assertEqual(totals[CostAllocation.TargetType.PLANT_COHORT], Decimal('0.8100'))
         self.assertEqual(totals[CostAllocation.TargetType.SPECIFIC_PLANT], Decimal('0.2700'))
-        self.assertEqual(plant_cost_breakdown(plants[0])['final_value'], '0.2700')
+        self.assertEqual(plant_cost_breakdown(plant)['final_value'], '0.2700')
         self.assert_total_held()
 
     def test_a_customer_return_keeps_the_final_total(self):

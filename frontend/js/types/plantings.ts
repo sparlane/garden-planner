@@ -1001,6 +1001,8 @@ type CohortLossCause = 'failed' | 'lost' | 'culled' | 'donated' | 'unspecified'
 
 interface CohortEvent {
   pk: number
+  // The operation that recorded this entry; a loss is corrected by naming it.
+  operation: number
   action: string
   occurred_at: string
   reason: string

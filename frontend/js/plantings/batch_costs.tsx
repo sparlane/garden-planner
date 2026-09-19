@@ -30,6 +30,9 @@ const TARGET_LABELS: Record<CostTargetType, string> = {
   // went rather than for the block it came out of, because the block is still
   // there holding what did not sell.
   cohort_sale: 'Sold from cohort',
+  // Cost that died with anonymous stock: production loss, named for the block
+  // it was lost out of so a corrected loss can give it back.
+  cohort_loss: 'Lost from cohort',
   batch_pool: 'Unclaimed',
   production_loss: 'Loss',
   unattributed: 'Unattributed'

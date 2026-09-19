@@ -27,6 +27,8 @@ from inventory.ledger import MONEY_QUANTUM, QUANTITY_QUANTUM, distribute_exactly
 from inventory.models import InventoryItem
 from plantings.germination import ungerminated_by_cell
 from plantings.models import (
+    CohortEvent,
+    CohortOperation,
     GardenPlanting,
     GardenRowDirectSowPlanting,
     GardenSquareDirectSowPlanting,
@@ -170,6 +172,28 @@ def sold_cohort_quantities(batch):
     )
 
 
+def lost_cohort_quantities(batch):
+    """Return how many units of each of a batch's cohorts were recorded lost.
+
+    Read from the cohort history, which is the one place a loss is recorded.
+    A loss somebody corrected never happened, so it stops counting here and its
+    units are back in the block, exactly as a returned sale stops counting in
+    `sold_cohort_quantities`.
+    """
+
+    lost = (
+        CohortEvent.objects
+        .filter(
+            cohort__batch=batch,
+            operation__action=CohortOperation.Action.LOSS,
+            operation__reversal__isnull=True,
+        )
+        .values_list('cohort_id')
+        .annotate(total=Sum('quantity_delta'))
+    )
+    return {cohort_id: -total for cohort_id, total in lost if total}
+
+
 def cohort_outputs(batch):
     """Return anonymous quantities and promoted identities that share their cost.
 
@@ -179,16 +203,24 @@ def cohort_outputs(batch):
     what the remaining stock is worth. They are listed as their own kind so
     that `costing.services` can report them as cost of sale rather than as
     stock still standing on a bench.
+
+    A quantity that died is still an output for the same reason, listed as its
+    own kind so its cost becomes production loss. Dropping it would re-divide
+    what the dead plants cost over the survivors and over units already
+    dispatched, which reads as a price rise rather than as a loss.
     """
 
     outputs = []
     sold = sold_cohort_quantities(batch)
+    lost = lost_cohort_quantities(batch)
     cohorts = PlantCohort.objects.filter(batch=batch).prefetch_related('promoted_plants')
     for cohort in cohorts:
         if cohort.quantity:
             outputs.append(('cohort', cohort.pk, cohort.quantity))
         if sold.get(cohort.pk):
             outputs.append(('cohort_sale', cohort.pk, sold[cohort.pk]))
+        if lost.get(cohort.pk):
+            outputs.append(('cohort_loss', cohort.pk, lost[cohort.pk]))
         outputs.extend(
             ('plant', plant_id, 1)
             for plant_id in cohort.promoted_plants.values_list('pk', flat=True)

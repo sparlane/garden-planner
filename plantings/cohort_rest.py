@@ -28,6 +28,7 @@ from health.availability import with_quarantine
 from . import cohort_availability
 from .cohorts import (
     change_cohort,
+    correct_cohort_loss,
     merge_cohorts,
     observe_cohort,
     promote_cohort,
@@ -65,7 +66,7 @@ class CohortEventSerializer(serializers.ModelSerializer):
     class Meta:
         model = CohortEvent
         fields = [
-            'pk', 'action', 'occurred_at', 'reason', 'loss_cause',
+            'pk', 'operation', 'action', 'occurred_at', 'reason', 'loss_cause',
             'quantity_before', 'quantity_delta', 'quantity_after',
             'state_before', 'state_after', 'location_before', 'location_after',
             'source_cohorts', 'created',
@@ -282,6 +283,15 @@ class CohortActionSerializer(
     workspace_field_lookups = {'location': 'workspace'}
 
 
+class CorrectLossSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """Name the recorded loss that never happened, and say why."""
+
+    operation = serializers.IntegerField(min_value=1)
+    idempotency_key = serializers.UUIDField()
+    occurred_at = serializers.DateTimeField(required=False)
+    reason = serializers.CharField(allow_blank=False)
+
+
 class MergeCohortSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """Validate a compatible many-to-one merge request."""
 
@@ -379,6 +389,7 @@ class PlantCohortViewSet(
             queryset = queryset.filter(
                 events__operation__action=CohortOperation.Action.LOSS,
                 events__operation__loss_cause=params['loss_cause'],
+                events__operation__reversal__isnull=True,
             ).distinct()
         if params.get('search'):
             search = params['search'].strip()
@@ -493,6 +504,24 @@ class PlantCohortViewSet(
     def loss(self, request, pk=None):
         """Remove an explained lost quantity from the cohort."""
         return self._change(request, self.get_object(), CohortOperation.Action.LOSS)
+
+    @action(detail=True, methods=['post'], url_path='correct-loss')
+    def correct_loss(self, request, pk=None):
+        """Withdraw one of this cohort's recorded losses and restore its units."""
+        serializer = CorrectLossSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        cohort = self.get_object()
+        if not CohortEvent.objects.filter(cohort=cohort, operation_id=values['operation']).exists():
+            raise serializers.ValidationError({'operation': 'That loss was not recorded against this cohort.'})
+        try:
+            changed, _operation_row = correct_cohort_loss(
+                self.get_current_workspace(), request.user,
+                operation_id=values.pop('operation'), **values,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(_errors(exc)) from exc
+        return Response(CohortDetailSerializer(changed).data)
 
     @action(detail=True, methods=['post'])
     def move(self, request, pk=None):

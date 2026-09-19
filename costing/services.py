@@ -35,7 +35,7 @@ from django.db import transaction
 from django.db.models import Q
 
 from applications.models import FACTOR_DECIMAL_PLACES
-from inventory.ledger import quantize_money, quantize_quantity
+from inventory.ledger import QUANTITY_QUANTUM, distribute_exactly, quantize_money, quantize_quantity
 from plantings.batches import lock_batch_with_plants
 from plantings.lifecycle import LifecycleState, lifecycle_summaries
 from plantings.models import ProductionBatch, SpecificPlant, SpecificPlantLocation
@@ -55,11 +55,17 @@ TargetType = CostAllocation.TargetType
 #: these into production loss.
 UNRESOLVED_TARGETS = (TargetType.SEED_TRAY_CELL, TargetType.BATCH_POOL)
 
-#: The targets whose share of a batch is a count of anonymous units rather than
-#: a fixed identity. Their division changes whenever the cohort's quantity or
-#: what has been sold out of it changes, which is why a frozen batch still has
-#: to re-divide them where a plant's frozen share is never touched again.
+#: The targets holding what one anonymous block is worth: the units still
+#: standing there and the units already sold out of it. A block's unit value is
+#: read from these two together, over the units they count.
 COHORT_TARGETS = (TargetType.PLANT_COHORT, TargetType.COHORT_SALE)
+
+#: The targets whose share of a batch is a count of anonymous units rather than
+#: a fixed identity: the block's own halves and the units lost out of it. Their
+#: division changes whenever a block is sold, lost, promoted, returned or
+#: recounted, which is why a frozen batch still has to re-divide them where a
+#: plant's frozen share is never touched again.
+REDIVIDED_TARGETS = COHORT_TARGETS + (TargetType.COHORT_LOSS,)
 
 #: Where a plant's production value goes once its lifecycle resolves. Derived
 #: from the recorded facts every time it is asked for rather than stored, for
@@ -203,6 +209,9 @@ def intended_layers(batch):
                 'unit_cost': source.unit_cost,
                 'amount': part.amount,
                 'currency_code': source.currency_code,
+                # Not stored: what a frozen batch re-divides its cohort layers
+                # by, once the frozen plant shares are taken off the source.
+                'weight': part.share.weight,
             }
             layers[_layer_key(spec)] = spec
     return layers
@@ -282,6 +291,80 @@ def _spec_of(row):
     }
 
 
+def _left_over(source_layers, fixed_layers):
+    """Return the amount and quantity of one source its fixed layers leave.
+
+    None when that cannot be known — an unpriced source, or frozen shares that
+    already hold more than the source now does — and the caller then leaves
+    the full split alone rather than inventing a remainder.
+    """
+    if any(spec['amount'] is None for spec in source_layers + fixed_layers):
+        return None
+    amount = sum((spec['amount'] for spec in source_layers), Decimal('0'))
+    amount -= sum((spec['amount'] for spec in fixed_layers), Decimal('0'))
+    quantity = sum((spec['base_quantity'] for spec in source_layers), Decimal('0'))
+    quantity -= sum((spec['base_quantity'] for spec in fixed_layers), Decimal('0'))
+    if amount < 0 or quantity < 0:
+        return None
+    return amount, quantity
+
+
+def _redivide_around_frozen(intended, stored):
+    """Fit a frozen batch's cohort layers to what its frozen shares left over.
+
+    `intended_layers` splits every source afresh over all of today's outputs,
+    but a frozen batch keeps the plant shares it already posted. Posting the
+    cohort side of today's split beside yesterday's plant shares only adds
+    back up to the source when the two splits agree to the cent, and they do
+    not always: `distribute_exactly` hands leftover cents out by position, so a
+    split among more outputs can give the cent a promoted plant was given at
+    promotion to another output as well. Rounding cents are not the only gap —
+    a recount that changes the number of units moves every unit's share, and
+    the frozen ones cannot follow.
+
+    So each source's cohort side is divided out of the remainder instead: the
+    source, less every layer of it that stays or is newly posted outside the
+    cohort side. The frozen shares keep exactly what they hold, and the cohort
+    side always completes the source.
+    """
+    by_source = {}
+    for key, spec in intended.items():
+        by_source.setdefault((spec['source_type'], spec['source'].pk), []).append(key)
+    kept = {}
+    for row in stored.values():
+        if row.target_type in REDIVIDED_TARGETS or row.target_type in UNRESOLVED_TARGETS:
+            continue
+        kept.setdefault((row.source_type, row.source_id), []).append({
+            'amount': row.amount, 'base_quantity': row.base_quantity,
+        })
+    fitted = dict(intended)
+    for source_key, keys in by_source.items():
+        posted = [
+            intended[key] for key in keys
+            if intended[key]['target_type'] not in REDIVIDED_TARGETS and key not in stored
+        ]
+        fitted.update(_fit_source(intended, keys, posted + kept.get(source_key, [])))
+    return fitted
+
+
+def _fit_source(intended, keys, fixed_layers):
+    """Divide what one source's fixed layers leave over its cohort side."""
+    redivided = [key for key in keys if intended[key]['target_type'] in REDIVIDED_TARGETS]
+    left = _left_over([intended[key] for key in keys], fixed_layers)
+    if not redivided or left is None:
+        return {}
+    weights = [intended[key]['weight'] for key in redivided]
+    parts = zip(
+        redivided,
+        distribute_exactly(left[0], weights),
+        distribute_exactly(left[1], weights, QUANTITY_QUANTUM),
+    )
+    return {
+        key: {**intended[key], 'amount': amount, 'base_quantity': quantity}
+        for key, amount, quantity in parts
+    }
+
+
 def _frozen_plan(intended, stored):
     """Return the only two changes a finalized batch still admits.
 
@@ -296,11 +379,14 @@ def _frozen_plan(intended, stored):
     Cohort layers are the exception to never re-dividing: a sale, loss,
     promotion or return changes how many anonymous units share the cohort's
     cost, so the superseded layer is reversed and its replacement is posted in
-    the same run. The posting list is read off the reversal decision rather
-    than repeating the match test, because the two have to agree about which
-    stored rows are going away — a layer reversed without its replacement takes
-    its cost off the batch, and a finalized total is the one that must not move.
+    the same run. They divide what the frozen shares left of each source, not
+    the whole of it; `_redivide_around_frozen` says why. The posting list is
+    read off the reversal decision rather than repeating the match test,
+    because the two have to agree about which stored rows are going away — a
+    layer reversed without its replacement takes its cost off the batch, and a
+    finalized total is the one that must not move.
     """
+    intended = _redivide_around_frozen(intended, stored)
     live_sources = {
         (spec['source_type'], spec['source'].pk)
         for spec in intended.values()
@@ -310,7 +396,7 @@ def _frozen_plan(intended, stored):
         """Return whether a frozen batch still has to cancel this layer."""
         if row.target_type in UNRESOLVED_TARGETS:
             return True
-        if row.target_type in COHORT_TARGETS:
+        if row.target_type in REDIVIDED_TARGETS:
             key = _stored_key(row)
             return key not in intended or not _matches(row, intended[key])
         return (row.source_type, row.source_id) not in live_sources
@@ -471,7 +557,7 @@ def _bucket_of(row, dispositions):
         return dispositions.get(row.specific_plant_id, (None, 'plant_inventory'))[1]
     if row.target_type == TargetType.COHORT_SALE:
         return 'cogs'
-    if row.target_type == TargetType.PRODUCTION_LOSS:
+    if row.target_type in (TargetType.PRODUCTION_LOSS, TargetType.COHORT_LOSS):
         return 'production_loss'
     if row.target_type == TargetType.UNATTRIBUTED:
         return 'unattributed'

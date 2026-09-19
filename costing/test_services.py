@@ -31,7 +31,7 @@ from inventory.ledger import quantize_money
 from inventory.models import InventoryItem, QuantityCertainty
 from inventory.units import UnitCode
 from plantings.batches import finalize_batch_output
-from plantings.cohorts import change_cohort, observe_cohort, promote_cohort
+from plantings.cohorts import change_cohort, correct_cohort_loss, observe_cohort, promote_cohort
 from plantings.germination import close_germination, reopen_germination
 from plantings.lifecycle import (
     EventType,
@@ -439,6 +439,45 @@ class CohortStockTestCase(CostingServiceTestCase):
             }],
             reason='Customer changed the order.',
         )
+
+    def lose(self, quantity=1, cause=LossCause.FAILED, occurred_at=None):
+        """Record `quantity` units of the block as lost, and return the loss."""
+        self.cohort.refresh_from_db()
+        self.cohort, operation = change_cohort(
+            self.workspace, self.user,
+            cohort_id=self.cohort.pk,
+            expected_revision=self.cohort.revision,
+            action=CohortOperation.Action.LOSS,
+            quantity=quantity,
+            loss_cause=cause,
+            occurred_at=occurred_at,
+            reason='Damped off.',
+            idempotency_key=uuid4(),
+        )
+        return operation
+
+    def correct(self, loss):
+        """Withdraw one recorded loss, putting its units back in the block."""
+        self.cohort, operation = correct_cohort_loss(
+            self.workspace, self.user,
+            operation_id=loss.pk,
+            idempotency_key=uuid4(),
+            reason='Found them behind the bench.',
+        )
+        return operation
+
+    def promote_one(self):
+        """Give one unit of the block its own plant identity, and return it."""
+        self.cohort.refresh_from_db()
+        plants, _promoted = promote_cohort(
+            self.workspace, self.user,
+            cohort_id=self.cohort.pk,
+            expected_revision=self.cohort.revision,
+            quantity=1,
+            idempotency_key=uuid4(),
+            reason='Assign one sale plant.',
+        )
+        return plants[0]
 
 
 class CohortSaleCostTests(CohortStockTestCase):
