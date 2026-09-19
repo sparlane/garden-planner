@@ -56,6 +56,16 @@ def _existing(workspace, idempotency_key, action, payload, loss_cause=None):
     return operation
 
 
+def _recorded_as_shortfall(workspace, idempotency_key):
+    """Return whether this key already recorded a recount that came up short."""
+    return CohortOperation.objects.filter(
+        workspace=workspace,
+        idempotency_key=idempotency_key,
+        action=CohortOperation.Action.LOSS,
+        payload__has_key='shortfall',
+    ).exists()
+
+
 def _operation(workspace, user, action, idempotency_key, occurred_at, reason, payload, loss_cause=''):
     return CohortOperation.objects.create(
         workspace=workspace,
@@ -224,8 +234,23 @@ def observe_cohort(workspace, user, *, batch, quantity, idempotency_key,
 def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
                   idempotency_key, occurred_at=None, reason='', quantity=None,
                   location=None, loss_cause=None, payload_extra=None,
-                  allow_quarantined=False):
-    """Apply an adjustment, loss, lifecycle change, or whole-cohort move."""
+                  allow_quarantined=False, shortfall_is_loss=True):
+    """Apply an adjustment, loss, lifecycle change, or whole-cohort move.
+
+    A count adjustment that comes up short is recorded as the loss it found,
+    under `lost`, the cause for stock not found when counted: the units are
+    gone and nobody has said how, so their cost is production loss rather than
+    a price rise on everything the block has left or already sold (task 149).
+    Recording it as a loss is also what lets a miscount be withdrawn with
+    `correct_cohort_loss`. The operation keeps the counted quantity the request
+    named, and the shortfall beside it.
+
+    `shortfall_is_loss` is dropped only where a recount is itself being undone:
+    taking back the units an earlier count found is not losing them.
+    """
+    if action == CohortOperation.Action.ADJUST and shortfall_is_loss and _recorded_as_shortfall(
+            workspace, idempotency_key):
+        action, loss_cause = CohortOperation.Action.LOSS, CohortOperation.LossCause.LOST
     payload = {
         'cohort': cohort_id,
         'expected_revision': expected_revision,
@@ -244,6 +269,9 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
         _require_reason(reason)
         if quantity is None or quantity < 0:
             raise ValidationError({'quantity': 'Counted quantity must be zero or greater.'})
+        if quantity < cohort.quantity and shortfall_is_loss:
+            action, loss_cause = CohortOperation.Action.LOSS, CohortOperation.LossCause.LOST
+            payload['shortfall'] = cohort.quantity - quantity
         cohort.quantity = quantity
     elif action == CohortOperation.Action.LOSS:
         _require_reason(reason)

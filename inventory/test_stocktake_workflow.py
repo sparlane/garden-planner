@@ -11,7 +11,7 @@ from rest_framework.test import APITestCase
 
 from locations.models import Location
 from plantings.lifecycle import LifecycleState, plant_lifecycle_summary
-from plantings.models import PlantCohort
+from plantings.models import CohortOperation, PlantCohort
 from seeds.models import SeedPacket
 from seeds.services import (
     ensure_packet_inventory_identity,
@@ -658,23 +658,49 @@ class StocktakeDomainReconciliationTests(APITestCase):
         self.assertEqual(response.data['status'], Stocktake.Status.REVERSED)
         return response.data
 
-    def test_a_short_cohort_count_is_posted_and_compensated(self):
-        """The cohort is written down to what was counted, then restored."""
+    def bench_cohort(self):
+        """Stand a block of ten anonymous plants on bench one."""
         plant = make_specific_plant(workspace=self.workspace)
-        cohort = PlantCohort.objects.create(
+        return PlantCohort.objects.create(
             workspace=self.workspace, batch=plant.batch,
             quantity=10, location=self.bench,
         )
+
+    def test_a_short_cohort_count_is_posted_and_compensated(self):
+        """The shortfall is a `lost` loss, and the reversal corrects it."""
+        cohort = self.bench_cohort()
         stocktake_id, target_id = self.open_over('cohort')
         self.count(stocktake_id, target_id, counted_quantity='8')
         self.resolve_and_post(stocktake_id, 'adjust', 'Two plants missing')
         cohort.refresh_from_db()
         self.assertEqual(cohort.quantity, 8)
+        loss = CohortOperation.objects.get(events__cohort=cohort)
+        self.assertEqual(
+            (loss.action, loss.loss_cause, loss.payload['shortfall']),
+            (CohortOperation.Action.LOSS, CohortOperation.LossCause.LOST, 2),
+        )
 
         self.reverse(stocktake_id)
 
         cohort.refresh_from_db()
         self.assertEqual(cohort.quantity, 10)
+        self.assertTrue(CohortOperation.objects.filter(
+            reversal_of=loss, action=CohortOperation.Action.CORRECTED,
+        ).exists())
+
+    def test_a_high_cohort_count_is_posted_and_withdrawn(self):
+        """Found units are a bare adjustment, and so is taking them back."""
+        cohort = self.bench_cohort()
+        stocktake_id, target_id = self.open_over('cohort')
+        self.count(stocktake_id, target_id, counted_quantity='12')
+        self.resolve_and_post(stocktake_id, 'adjust', 'Two more behind the bench')
+
+        self.reverse(stocktake_id)
+
+        cohort.refresh_from_db()
+        self.assertEqual(cohort.quantity, 10)
+        actions = CohortOperation.objects.filter(events__cohort=cohort).values_list('action', flat=True)
+        self.assertEqual(list(actions.order_by('pk')), [CohortOperation.Action.ADJUST] * 2)
 
     def test_a_cohort_found_on_another_bench_is_moved_and_moved_back(self):
         """A misplaced cohort is relocated by the count, not rewritten."""

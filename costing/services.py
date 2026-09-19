@@ -43,6 +43,7 @@ from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, Specif
 from .allocation import combine, loss_shares, value_shares
 from .pending import plant_pending_cost, plant_sale_totals
 from .models import CostAllocation, CostAllocationRun, FillDepartureRecalculation
+from .cohort_weights import cohort_weights
 from .sources import batch_sources, sold_cohort_quantities
 
 
@@ -830,6 +831,10 @@ def cohort_cost_breakdown(cohort):
 
     The per-unit figure is what a dispatch out of the cohort is charged at:
     the cohort holds a count, so there is nothing more exact to value it with.
+    Where a recount found units that carried no cost, the two halves no longer
+    hold the same per unit, so the block's layers are read per unit of weight
+    and the figure is what one unit standing there now carries;
+    `costing.cohort_weights` says why.
     """
     rows = list(
         CostAllocation.objects
@@ -850,7 +855,11 @@ def cohort_cost_breakdown(cohort):
     )
     known = [row.amount for row in rows if row.amount is not None]
     value = quantize_money(sum(known, Decimal('0')))
-    units = cohort.quantity + sold_cohort_quantities(cohort.batch).get(cohort.pk, 0)
+    sold = sold_cohort_quantities(cohort.batch).get(cohort.pk, 0)
+    units = cohort.quantity + sold
+    weights = cohort_weights(cohort.batch)
+    weight = weights.weigh('cohort', cohort.pk, cohort.quantity) + weights.weigh('cohort_sale', cohort.pk, sold)
+    per_unit = weights.weigh('cohort', cohort.pk, 1) if cohort.quantity else weights.weigh('cohort_sale', cohort.pk, 1)
     frozen = is_frozen(cohort.batch)
     return {
         'cohort': cohort.pk,
@@ -861,6 +870,6 @@ def cohort_cost_breakdown(cohort):
         'units': units,
         'provisional_value': None if frozen else f'{value:f}',
         'final_value': f'{value:f}' if frozen else None,
-        'unit_value': None if not units else f'{value / Decimal(units):f}',
+        'unit_value': None if not units else f'{value * per_unit / Decimal(weight):f}',
         'layers': [_layer_row(row) for row in rows],
     }

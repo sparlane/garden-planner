@@ -24,8 +24,8 @@ from plantings.lifecycle import (
     record_lifecycle_event,
     reverse_lifecycle_event,
 )
-from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
-from plantings.cohorts import change_cohort
+from plantings.models import CohortOperation, PlantCohort, SpecificPlant, SpecificPlantLocation
+from plantings.cohorts import change_cohort, correct_cohort_loss
 from plantings.movement import move_specific_plant
 from seeds.models import SeedPacket, QuantityCertainty
 from seeds.services import packet_inventory_snapshot, reconcile_packet_quantity, reverse_packet_reconciliation
@@ -869,6 +869,39 @@ def post_reviewed_stocktake(stocktake, user):
     return stocktake
 
 
+def _reverse_cohort(link, result, stocktake, user, reason):
+    """Undo one cohort correction the count posted, and return the inverse.
+
+    A count that came up short was posted as a `lost` loss, so undoing it is
+    the loss correction, which gives the units' cost back as well as the
+    units. A count that found units is taken back by a bare adjustment, which
+    withdraws them without cost, just as they arrived.
+    """
+    idempotency_key = uuid5(NAMESPACE_URL, f'stocktake:{stocktake.pk}:reverse:{link.pk}')
+    if result.action == CohortOperation.Action.LOSS:
+        _cohort, inverse = correct_cohort_loss(
+            stocktake.workspace, user, operation_id=result.pk,
+            idempotency_key=idempotency_key, reason=reason,
+        )
+        return inverse
+    cohort = result.events.order_by('pk').first().cohort
+    action = 'adjust'
+    values = {'quantity': int(link.before['quantity']), 'shortfall_is_loss': False}
+    if link.before.get('location') != link.after.get('location'):
+        action = 'move'
+        values = {
+            'location': Location.objects.get(
+                pk=link.before['location'], workspace=stocktake.workspace,
+            ),
+        }
+    _cohort, inverse = change_cohort(
+        stocktake.workspace, user, cohort_id=cohort.pk,
+        expected_revision=cohort.revision, action=action,
+        idempotency_key=idempotency_key, reason=reason, **values,
+    )
+    return inverse
+
+
 def _reverse_link(link, stocktake, user, reason):
     model = apps.get_model(link.result_app, link.result_model)
     result = model.objects.get(pk=link.result_object_id)
@@ -877,22 +910,7 @@ def _reverse_link(link, stocktake, user, reason):
     elif link.domain == 'seed_packet':
         inverse = reverse_packet_reconciliation(result, user, reason)
     elif link.domain == 'cohort':
-        cohort = result.events.order_by('pk').first().cohort
-        action = 'adjust'
-        values = {'quantity': int(link.before['quantity'])}
-        if link.before.get('location') != link.after.get('location'):
-            action = 'move'
-            values = {
-                'location': Location.objects.get(
-                    pk=link.before['location'], workspace=stocktake.workspace,
-                ),
-            }
-        cohort, inverse = change_cohort(
-            stocktake.workspace, user, cohort_id=cohort.pk,
-            expected_revision=cohort.revision, action=action,
-            idempotency_key=uuid5(NAMESPACE_URL, f'stocktake:{stocktake.pk}:reverse:{link.pk}'),
-            reason=reason, **values,
-        )
+        inverse = _reverse_cohort(link, result, stocktake, user, reason)
     elif link.domain == 'plant':
         if link.result_model == 'plantlifecycleevent':
             inverse = reverse_lifecycle_event(result, user, reason)
