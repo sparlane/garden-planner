@@ -89,10 +89,12 @@ class BatchCostBreakdownTests(CostingServiceTestCase):
             [
                 'batch',
                 'code',
+                'currencies',
                 'currency_code',
                 'final_total',
                 'last_run',
                 'layers',
+                'mixed_currency',
                 'output_finalized_at',
                 'plants',
                 'provisional',
@@ -103,8 +105,12 @@ class BatchCostBreakdownTests(CostingServiceTestCase):
             ],
         )
         self.assertEqual(
+            sorted(data['currencies'][0]),
+            ['amount', 'currency_code', 'totals'],
+        )
+        self.assertEqual(
             sorted(data['plants'][0]),
-            ['cost', 'disposition', 'plant', 'state'],
+            ['cost', 'currency_code', 'disposition', 'plant', 'state'],
         )
         self.assertEqual(
             sorted(data['layers'][0]),
@@ -176,10 +182,12 @@ class PlantCostBreakdownTests(CostingServiceTestCase):
             sorted(response.data),
             [
                 'batch',
+                'currencies',
                 'currency_code',
                 'disposition',
                 'final_value',
                 'layers',
+                'mixed_currency',
                 'pending',
                 'plant',
                 'pot_requires_plants',
@@ -191,6 +199,10 @@ class PlantCostBreakdownTests(CostingServiceTestCase):
                 'unknown_cost',
                 'with_pot_available',
             ],
+        )
+        self.assertEqual(
+            sorted(response.data['currencies'][0]),
+            ['amount', 'currency_code'],
         )
 
     def test_a_plant_layer_carries_its_basis(self):
