@@ -417,6 +417,10 @@ def _growth_candidates(rule):
     last stage observation outlives it, and the outcome closing its location
     reads as no location, which a rule without a location filter accepts. A
     retained plant is resolved but still on a bench, so it keeps its reviews.
+    A quarantined plant keeps them too: it came back from a customer and is
+    standing here, and its ready date is exactly what somebody has to revisit.
+    Whether such a plant should be on offer at all is task 130's question, not
+    this one's.
     """
     plants = with_lifecycle_state(
         SpecificPlant.objects.filter(
