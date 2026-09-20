@@ -76,26 +76,48 @@ interface CostAllocationRun {
 
 interface CostPlantValue {
   plant: number
-  cost: string
+  // Null when this plant's own inputs were bought in more than one currency,
+  // exactly as the batch's totals are, and then there is no code either.
+  cost: string | null
+  currency_code: string | null
   state: PlantLifecycleState | null
   disposition: CostBucket | null
+}
+
+// One currency's own figures. Amounts are never added across two of them: a
+// cost layer carries the currency of the lot it drew from and no exchange rate
+// exists in this application to combine them, so the sides are listed instead.
+interface CostCurrencyAmount {
+  currency_code: string
+  amount: string
+}
+
+interface BatchCostCurrencyTotal extends CostCurrencyAmount {
+  totals: Record<CostBucket, string>
 }
 
 // Exactly one of `provisional_total` and `final_total` carries a number. A batch
 // is wholly one or the other, so there is never anything in both to add
 // together — which is the point, because a provisional figure and a final one
 // mean different things and must not be summed.
+//
+// Two currencies are kept apart the same way. When `mixed_currency` is true
+// there is no single figure to show: `currency_code`, both totals and every
+// bucket are null, and `currencies` carries one complete set of figures per
+// currency for the screen to list side by side.
 interface BatchCostBreakdown {
   batch: number
   code: string
   status: ProductionBatchStatus
-  currency_code: string
+  currency_code: string | null
+  mixed_currency: boolean
+  currencies: Array<BatchCostCurrencyTotal>
   provisional: boolean
   output_finalized_at: string | null
   unknown_cost: boolean
   provisional_total: string | null
   final_total: string | null
-  totals: Record<CostBucket, string>
+  totals: Record<CostBucket, string | null>
   layers: Array<CostLayer>
   plants: Array<CostPlantValue>
   last_run: CostRunSummary | null
@@ -118,7 +140,12 @@ interface PlantCostBreakdown {
   sale_with_pot: string | null
   plant: number
   batch: number
-  currency_code: string
+  // Null when this plant was raised on inputs bought in more than one
+  // currency; `currencies` then holds what it cost in each, and both committed
+  // values and both sale projections are null.
+  currency_code: string | null
+  mixed_currency: boolean
+  currencies: Array<CostCurrencyAmount>
   provisional: boolean
   unknown_cost: boolean
   state: PlantLifecycleState | null
@@ -135,9 +162,11 @@ interface RecalculateCostsResponse {
 
 export type {
   BatchCostBreakdown,
+  BatchCostCurrencyTotal,
   CostAllocationRun,
   CostBasis,
   CostBucket,
+  CostCurrencyAmount,
   CostLayer,
   CostPlantValue,
   CostRunSummary,
