@@ -193,6 +193,7 @@ class PlantCostBreakdownTests(CostingServiceTestCase):
                 'pot_requires_plants',
                 'provisional',
                 'provisional_value',
+                'sale_blocked',
                 'sale_with_pot',
                 'sale_without_pot',
                 'state',

@@ -146,6 +146,10 @@ interface PlantCostBreakdown {
   currency_code: string | null
   mixed_currency: boolean
   currencies: Array<CostCurrencyAmount>
+  // Why the two sale projections are null, when they are: a missing rate
+  // between two currencies, a committed cost in a currency the pending pot and
+  // media shares are not in, or an ordinary unpriced input.
+  sale_blocked: 'mixed_currency' | 'foreign_currency' | 'unknown_cost' | null
   provisional: boolean
   unknown_cost: boolean
   state: PlantLifecycleState | null

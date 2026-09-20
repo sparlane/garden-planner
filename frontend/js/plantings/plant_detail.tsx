@@ -60,6 +60,20 @@ function committed(breakdown: PlantCostBreakdown, value: string | null, provisio
   return `${formatMoneyTotals(breakdown.currencies)} (not combined)`
 }
 
+// A blank sale figure has three different reasons and an operator cannot act
+// on the wrong one: a missing exchange rate is not a missing price, and a cost
+// committed in another currency is known but not addable to the pot and media
+// shares, which are projected in the workspace's own.
+const SALE_BLOCKED_LABELS = {
+  mixed_currency: 'Two currencies, not combined',
+  foreign_currency: 'Committed in another currency',
+  unknown_cost: 'Unknown'
+}
+
+function saleFallback(breakdown: PlantCostBreakdown, fallback: string): string {
+  return breakdown.sale_blocked ? SALE_BLOCKED_LABELS[breakdown.sale_blocked] : fallback
+}
+
 function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
   return (
     <>
@@ -121,9 +135,11 @@ function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
       </Table>
       <dl className="row mb-0">
         <dt className="col-sm-5">Sold without its pot</dt>
-        <dd className="col-sm-7">{formatMoney(breakdown.sale_without_pot, breakdown.currency_code ?? '', 'Unknown')}</dd>
+        <dd className="col-sm-7">{formatMoney(breakdown.sale_without_pot, breakdown.currency_code ?? '', saleFallback(breakdown, 'Unknown'))}</dd>
         <dt className="col-sm-5">Sold in its pot</dt>
-        <dd className="col-sm-7">{formatMoney(breakdown.sale_with_pot, breakdown.currency_code ?? '', breakdown.with_pot_available ? 'Unknown' : 'Unavailable')}</dd>
+        <dd className="col-sm-7">
+          {formatMoney(breakdown.sale_with_pot, breakdown.currency_code ?? '', breakdown.with_pot_available ? saleFallback(breakdown, 'Unknown') : 'Unavailable')}
+        </dd>
       </dl>
       {breakdown.pot_requires_plants.length > 1 && (
         <p className="small">
