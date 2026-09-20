@@ -10,7 +10,7 @@ import { queryKeys } from '../query'
 import { PlantCostBreakdown } from '../types/costing'
 import { SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
-import { formatDate, formatDateTime, formatMoney } from '../utils'
+import { formatDate, formatDateTime, formatMoney, formatMoneyTotals } from '../utils'
 import { costSourceLabel, PENDING_COST_LABELS } from './cost_sources'
 import { placementLabel } from './placements'
 import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
@@ -51,17 +51,31 @@ function LocationHistory({ locations }: { locations: Array<SpecificPlantLocation
 }
 
 // A provisional figure and a final one mean different things, so exactly one of
-// them carries a number and they are never added together.
+// them carries a number and they are never added together. Inputs bought in two
+// currencies are kept apart the same way: there is no rate to combine them
+// with, so what the plant cost in each stands where the single figure would.
+function committed(breakdown: PlantCostBreakdown, value: string | null, provisional: boolean, fallback: string): string {
+  if (!breakdown.mixed_currency) return formatMoney(value, breakdown.currency_code ?? '', fallback)
+  if (breakdown.provisional !== provisional) return fallback
+  return `${formatMoneyTotals(breakdown.currencies)} (not combined)`
+}
+
 function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
   return (
     <>
       <dl className="row mb-2">
         <dt className="col-sm-5">Committed (provisional)</dt>
-        <dd className="col-sm-7">{formatMoney(breakdown.provisional_value, breakdown.currency_code, 'Final')}</dd>
+        <dd className="col-sm-7">{committed(breakdown, breakdown.provisional_value, true, 'Final')}</dd>
         <dt className="col-sm-5">Committed (final)</dt>
-        <dd className="col-sm-7">{formatMoney(breakdown.final_value, breakdown.currency_code, 'Still provisional')}</dd>
+        <dd className="col-sm-7">{committed(breakdown, breakdown.final_value, false, 'Still provisional')}</dd>
       </dl>
       {breakdown.unknown_cost && <p className="text-muted small">Some inputs reaching this plant have no recorded unit cost, so this figure is incomplete.</p>}
+      {breakdown.mixed_currency && (
+        <p className="text-muted small">
+          This plant drew on lots bought in {breakdown.currencies.map((row) => row.currency_code).join(' and ')}. No exchange rate exists, so currencies are not consolidated and
+          there is no combined figure to sell against.
+        </p>
+      )}
       {breakdown.layers.length === 0 ? (
         <p className="text-muted mb-0">No cost has been posted to this plant yet.</p>
       ) : (
@@ -107,9 +121,9 @@ function PlantCost({ breakdown }: { breakdown: PlantCostBreakdown }) {
       </Table>
       <dl className="row mb-0">
         <dt className="col-sm-5">Sold without its pot</dt>
-        <dd className="col-sm-7">{formatMoney(breakdown.sale_without_pot, breakdown.currency_code, 'Unknown')}</dd>
+        <dd className="col-sm-7">{formatMoney(breakdown.sale_without_pot, breakdown.currency_code ?? '', 'Unknown')}</dd>
         <dt className="col-sm-5">Sold in its pot</dt>
-        <dd className="col-sm-7">{formatMoney(breakdown.sale_with_pot, breakdown.currency_code, breakdown.with_pot_available ? 'Unknown' : 'Unavailable')}</dd>
+        <dd className="col-sm-7">{formatMoney(breakdown.sale_with_pot, breakdown.currency_code ?? '', breakdown.with_pot_available ? 'Unknown' : 'Unavailable')}</dd>
       </dl>
       {breakdown.pot_requires_plants.length > 1 && (
         <p className="small">

@@ -5,7 +5,7 @@ import { Alert, Badge, Button, Card, Form, Table } from 'react-bootstrap'
 import { getBatchCostBreakdown, recalculateBatchCosts } from '../api/costing'
 import { queryKeys } from '../query'
 import { BatchCostBreakdown, CostBasis, CostBucket, CostLayer, CostTargetType } from '../types/costing'
-import { formatDateTime, formatMeasure, formatMoney } from '../utils'
+import { formatDateTime, formatMeasure, formatMoney, formatMoneyTotals } from '../utils'
 import { costSourceLabel } from './cost_sources'
 import { STATE_LABELS } from './lifecycle'
 
@@ -58,17 +58,33 @@ function targetLabel(layer: CostLayer): string {
 // Exactly one of the two totals carries a number, because a batch is wholly
 // provisional or wholly final. They are rendered as separate labelled rows and
 // never added, since a provisional figure and a final one mean different things.
+//
+// A batch fed from two currencies carries neither: there is no rate to combine
+// them with, so the per-currency figures stand where the single one would have
+// been, and the row that does not apply stays a dash exactly as it does for a
+// single-currency batch.
+function total(breakdown: BatchCostBreakdown, value: string | null, provisional: boolean): string {
+  if (!breakdown.mixed_currency) return formatMoney(value, breakdown.currency_code ?? '', '—')
+  if (breakdown.provisional !== provisional) return '—'
+  return `${formatMoneyTotals(breakdown.currencies)} (not combined)`
+}
+
+function bucketTotal(breakdown: BatchCostBreakdown, bucket: CostBucket): string {
+  if (!breakdown.mixed_currency) return formatMoney(breakdown.totals[bucket], breakdown.currency_code ?? '')
+  return formatMoneyTotals(breakdown.currencies.map((row) => ({ currency_code: row.currency_code, amount: row.totals[bucket] })))
+}
+
 function TotalRow({ breakdown }: { breakdown: BatchCostBreakdown }) {
   return (
     <dl className="row mb-2">
       <dt className="col-sm-5">Provisional total</dt>
-      <dd className="col-sm-7">{formatMoney(breakdown.provisional_total, breakdown.currency_code, '—')}</dd>
+      <dd className="col-sm-7">{total(breakdown, breakdown.provisional_total, true)}</dd>
       <dt className="col-sm-5">Final total</dt>
-      <dd className="col-sm-7">{formatMoney(breakdown.final_total, breakdown.currency_code, '—')}</dd>
+      <dd className="col-sm-7">{total(breakdown, breakdown.final_total, false)}</dd>
       {BUCKET_ORDER.map((bucket) => (
         <React.Fragment key={bucket}>
           <dt className="col-sm-5 fw-normal text-muted">{BUCKET_LABELS[bucket]}</dt>
-          <dd className="col-sm-7">{formatMoney(breakdown.totals[bucket], breakdown.currency_code)}</dd>
+          <dd className="col-sm-7">{bucketTotal(breakdown, bucket)}</dd>
         </React.Fragment>
       ))}
     </dl>
@@ -93,7 +109,7 @@ function PlantValueTable({ breakdown }: { breakdown: BatchCostBreakdown }) {
         {breakdown.plants.map((row) => (
           <tr key={row.plant}>
             <td>#{row.plant}</td>
-            <td>{formatMoney(row.cost, breakdown.currency_code, 'Unknown')}</td>
+            <td>{formatMoney(row.cost, row.currency_code ?? '', 'Two currencies, not combined')}</td>
             <td>{row.state ? STATE_LABELS[row.state] : '—'}</td>
             <td>{row.disposition ? BUCKET_LABELS[row.disposition] : '—'}</td>
           </tr>
@@ -197,6 +213,12 @@ function BatchCosts({ batchPk }: { batchPk: number }) {
             )}
             {breakdown.unknown_cost && (
               <Alert variant="warning">Some of this batch drew on a lot with no recorded unit cost, so these totals understate the real figure rather than guessing at it.</Alert>
+            )}
+            {breakdown.mixed_currency && (
+              <Alert variant="warning">
+                This batch drew on lots bought in {breakdown.currencies.map((row) => row.currency_code).join(' and ')}. No exchange rate exists, so currencies are not consolidated:
+                each is totalled on its own and there is no combined figure.
+              </Alert>
             )}
             <TotalRow breakdown={breakdown} />
             {breakdown.last_run && (

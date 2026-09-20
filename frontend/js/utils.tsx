@@ -367,6 +367,17 @@ function sumMoney(values: Array<string | null | undefined>): string {
   return `${negative ? '-' : ''}${digits.slice(0, -4)}.${digits.slice(-4)}`
 }
 
+// Amounts in two currencies are listed side by side and never added: a cost
+// carries the currency it was recorded in, and no exchange rate exists in this
+// application to combine two of them, so a sum would be a figure nobody could
+// reproduce. Renders "1.08 USD + 0.08 EUR" from the `currencies` list a payload
+// sends in place of the single total it cannot state, and gives the fallback
+// when there is nothing in the list at all.
+function formatMoneyTotals(rows: Array<{ currency_code: string; amount: string | null }>, fallback = ''): string {
+  if (rows.length === 0) return fallback
+  return rows.map((row) => formatMoney(row.amount, row.currency_code, fallback)).join(' + ')
+}
+
 // DRF reports a rejected write as {field: [message]}, and a write over many
 // records answers with one message per record under the field that named them.
 // This keeps them all, dropping anything not shaped that way — a network
@@ -421,5 +432,6 @@ export {
   formatQuantity,
   formatMeasure,
   formatMoney,
+  formatMoneyTotals,
   sumMoney
 }
