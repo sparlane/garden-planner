@@ -131,6 +131,34 @@ def capture_inventory(income_year, user):
     return created
 
 
+#: What a line says when its stock was raised on inputs bought in more than one
+#: currency. No exchange rate exists to combine them — `costing.currency` says
+#: why one may not be invented here — so the line states no cost and is
+#: provisional, rather than filing the sum of two currencies as a figure.
+MIXED_CURRENCY_ASSUMPTION = (
+    'Inputs were bought in {currencies} and no exchange rate exists to '
+    'combine them, so no cost is stated.'
+)
+
+
+def _mixed_currency(held, assumptions):
+    """Say whether this stock's cost is stateable, and note it where it is not."""
+    if len(held) < 2:
+        return False, assumptions
+    return True, f'{assumptions} {MIXED_CURRENCY_ASSUMPTION.format(currencies=", ".join(sorted(held)))}'
+
+
+def _line_currency(income_year, held):
+    """Label a line with the currency its cost was actually recorded in.
+
+    The workspace's own currency stands where there is no cost to contradict
+    it, or where two of them leave nothing stated. A cost recorded wholly in
+    one foreign currency is labelled with that one: relabelling it as the
+    workspace's would file a euro figure as a dollar figure.
+    """
+    return next(iter(held)) if len(held) == 1 else income_year.workspace.currency_code
+
+
 def _capture_plants(income_year, user, end):
     """Freeze individual plants physically present at the balance instant."""
     plants = list(SpecificPlant.objects.filter(
@@ -141,31 +169,35 @@ def _capture_plants(income_year, user, end):
             workspace=income_year.workspace, plant__in=plants,
             occurred_at__lt=end).order_by('occurred_at', 'pk'):
         events[event.plant_id].append(event)
-    values = defaultdict(Decimal)
+    values = defaultdict(lambda: defaultdict(Decimal))
     unknown = set()
     for row in CostAllocation.objects.filter(
             specific_plant__in=plants, reversal_of=None,
-            reversal__isnull=True).values('specific_plant_id', 'amount'):
+            reversal__isnull=True).values('specific_plant_id', 'amount', 'currency_code'):
         if row['amount'] is None:
             unknown.add(row['specific_plant_id'])
         else:
-            values[row['specific_plant_id']] += row['amount']
+            values[row['specific_plant_id']][row['currency_code']] += row['amount']
     rows = []
     for plant in plants:
         summary = derive_state(events[plant.pk])
         if summary.state not in PRESENT_STATES:
             continue
-        value = money(values[plant.pk])
+        held = values[plant.pk]
+        mixed, assumptions = _mixed_currency(
+            held, f'Lifecycle replay through year end: {summary.state}.',
+        )
+        value = None if mixed else money(sum(held.values(), ZERO))
         rows.append(StockValuationLine.objects.create(
             income_year=income_year,
             category=(StockValuationLine.Category.SALEABLE_PLANTS if summary.sellable else StockValuationLine.Category.WORK_IN_PROGRESS),
             description=f'{plant.batch.variety} — plant {plant.pk}',
             source_type='specific_plant', source_id=str(plant.pk),
             quantity=1, unit_code='unit', original_cost=value,
-            method=StockValuationLine.Method.COST, value=value,
-            currency_code=income_year.workspace.currency_code,
-            assumptions=f'Lifecycle replay through year end: {summary.state}.',
-            derived=True, provisional=plant.pk in unknown,
+            method=StockValuationLine.Method.COST, value=value or ZERO,
+            currency_code=_line_currency(income_year, held),
+            assumptions=assumptions,
+            derived=True, provisional=plant.pk in unknown or mixed,
             created_by=user,
         ))
     return rows
@@ -201,19 +233,28 @@ def _capture_cohorts(income_year, user, end):
             plant_cohort=cohort, target_type=CostAllocation.TargetType.PLANT_COHORT,
             reversal_of=None, reversal__isnull=True,
         )
-        known = list(allocations.exclude(amount=None).values_list('amount', flat=True))
-        value = money(sum(known, ZERO))
+        held = defaultdict(Decimal)
+        unpriced = 0
+        for amount, code in allocations.values_list('amount', 'currency_code'):
+            if amount is None:
+                unpriced += 1
+            else:
+                held[code] += amount
+        mixed, assumptions = _mixed_currency(
+            held, 'Cohort quantity frozen from the latest observation available at capture time.',
+        )
+        value = None if mixed else money(sum(held.values(), ZERO))
         rows.append(StockValuationLine.objects.create(
             income_year=income_year,
             category=(StockValuationLine.Category.SALEABLE_PLANTS if cohort.lifecycle_state == PlantCohort.LifecycleState.AVAILABLE else StockValuationLine.Category.WORK_IN_PROGRESS),
             description=f'{cohort.batch.variety} — cohort {cohort.pk}',
             source_type='plant_cohort', source_id=str(cohort.pk),
             quantity=cohort.quantity, unit_code='unit', original_cost=value,
-            method=StockValuationLine.Method.COST, value=value,
-            currency_code=income_year.workspace.currency_code,
-            assumptions='Cohort quantity frozen from the latest observation available at capture time.',
+            method=StockValuationLine.Method.COST, value=value or ZERO,
+            currency_code=_line_currency(income_year, held),
+            assumptions=assumptions,
             derived=True,
-            provisional=cohort.observed_at >= end or cohort.pk in changed_later or len(known) != allocations.count(),
+            provisional=cohort.observed_at >= end or cohort.pk in changed_later or bool(unpriced) or mixed,
             created_by=user,
         ))
     return rows
