@@ -12,6 +12,7 @@ is a cost nobody could reproduce.
 from datetime import date
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
@@ -20,7 +21,7 @@ from tests.factories import apply_costed_input, make_specific_plant
 from workspaces.models import get_current_workspace
 
 from .models import IncomeTaxYear
-from .services import capture_inventory
+from .services import build_report, capture_inventory, finalize_income_year
 
 
 def next_income_year(workspace):
@@ -87,6 +88,45 @@ class SingleCurrencyPlantStockTests(APITestCase):
         self.assertEqual(f'{line.value:.4f}', '1.1600')
         self.assertEqual(line.currency_code, self.workspace.currency_code)
         self.assertFalse(line.provisional)
+
+
+class ForeignCurrencyStockTests(APITestCase):
+    """Stock costed wholly abroad is labelled with the currency it cost.
+
+    Filing a euro figure under the workspace's code was the relabelling this
+    task exists to stop. Labelling it honestly is what
+    `build_report`'s existing `unsupported_currency` finding is for, and that
+    finding blocks finalization — so a year holding such stock now waits for
+    task 121's conversion instead of filing a figure in the wrong unit.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = get_current_workspace()
+        self.user = get_user_model().objects.create_user(username='stock-foreign')
+        self.plant = make_specific_plant(workspace=self.workspace)
+        apply_costed_input(self.workspace, self.user, self.plant, '1.0800', currency_code='EUR')
+        self.income_year = next_income_year(self.workspace)
+
+    def test_the_line_states_its_value_under_its_own_currency(self):
+        """A stateable cost, stated, rather than refused or relabelled."""
+        capture_inventory(self.income_year, self.user)
+
+        line = self.income_year.stock_lines.get(
+            source_type='specific_plant', source_id=str(self.plant.pk),
+        )
+        self.assertEqual(f'{line.value:.4f}', '1.0800')
+        self.assertEqual(line.currency_code, 'EUR')
+        self.assertFalse(line.provisional)
+
+    def test_the_year_cannot_be_finalized_until_a_rate_converts_it(self):
+        """The honest label is what makes the existing finding fire."""
+        capture_inventory(self.income_year, self.user)
+
+        codes = {row['code'] for row in build_report(self.income_year)['data_quality']}
+        self.assertIn('unsupported_currency', codes)
+        with self.assertRaisesMessage(ValidationError, 'Task 121 must convert'):
+            finalize_income_year(self.income_year, self.user, confirm_zero_opening=True)
 
 
 class MixedCurrencyCohortStockTests(MixedCurrencyTestCase):
