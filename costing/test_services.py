@@ -213,8 +213,13 @@ class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-
         post_sowing_consumption(sowing, self.user)
         return sowing
 
-    def apply_media(self, cells, quantity):
-        """Post one cell-volume media application over the given cells."""
+    def apply_media(self, cells, quantity, lot=None):
+        """Post one cell-volume media application over the given cells.
+
+        `lot` names which delivery of media it came out of, defaulting to the
+        one the fixture stocks. A second lot is how a batch comes to hold two
+        currencies: the lot carries the currency the supplier invoiced in.
+        """
         application = create_application_draft(
             self.workspace,
             self.user,
@@ -225,7 +230,7 @@ class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-
                 lines=(
                     LineRequest(
                         item=self.media,
-                        lot=self.media_lot,
+                        lot=lot or self.media_lot,
                         applied_quantity=Decimal(quantity),
                         unit_code=UnitCode.LITRE,
                         targets=tuple(

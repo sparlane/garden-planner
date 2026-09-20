@@ -41,6 +41,7 @@ from plantings.lifecycle import LifecycleState, lifecycle_summaries
 from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .allocation import combine, loss_shares, value_shares
+from .currency import currency_amounts, held_by_currency, stated_currency
 from .pending import plant_pending_cost, plant_sale_totals
 from .models import CostAllocation, CostAllocationRun, FillDepartureRecalculation
 from .cohort_weights import cohort_weights
@@ -715,14 +716,23 @@ def _loaded_allocations(batch):
 
 
 def _totals(rows, dispositions, cohorts):
-    """Total each value bucket, reporting unknown cost rather than zero."""
-    totals = {bucket: Decimal('0') for bucket in VALUE_BUCKETS}
+    """Total each value bucket per currency, reporting unknown cost not zero.
+
+    Each currency gets its own complete set of buckets rather than the buckets
+    holding a sum of two of them; `costing.currency` says why nothing here may
+    add them together, and a converted total would later be summed from these.
+    """
+    totals = {}
     unknown = False
     for row in rows:
         if row.amount is None:
             unknown = True
             continue
-        totals[_bucket_of(row, dispositions, cohorts)] += row.amount
+        buckets = totals.setdefault(
+            row.currency_code,
+            {bucket: Decimal('0') for bucket in VALUE_BUCKETS},
+        )
+        buckets[_bucket_of(row, dispositions, cohorts)] += row.amount
     return totals, unknown
 
 
@@ -734,41 +744,67 @@ def batch_cost_breakdown(batch):
     so exactly one of `provisional_total` and `final_total` carries a number and
     the other is null. A caller cannot combine them by accident because there is
     never anything in both.
+
+    Two currencies are kept apart the same way. `currencies` carries one set of
+    buckets per currency the batch actually drew on, and where there is more
+    than one there is no single figure to state: `currency_code`, the two
+    totals and every bucket go null with `mixed_currency` saying why, exactly
+    as `unknown_cost` says why an amount is missing. A batch bought in one
+    currency — every batch in most workspaces — reads as it always has.
     """
     rows = _loaded_allocations(batch)
     dispositions = plant_dispositions(batch)
-    totals, unknown = _totals(rows, dispositions, cohort_dispositions(batch))
+    by_currency, unknown = _totals(rows, dispositions, cohort_dispositions(batch))
     frozen = is_frozen(batch)
-    allocated = sum(totals.values(), Decimal('0'))
+    codes = sorted(by_currency)
+    currency = stated_currency(codes, batch.workspace.currency_code)
+    totals = None if currency is None else by_currency.get(
+        currency, {bucket: Decimal('0') for bucket in VALUE_BUCKETS},
+    )
+    allocated = None if totals is None else quantize_money(sum(totals.values(), Decimal('0')))
     plants = {}
     for row in rows:
         if row.target_type != TargetType.SPECIFIC_PLANT or row.amount is None:
             continue
-        plants[row.specific_plant_id] = plants.get(row.specific_plant_id, Decimal('0')) + row.amount
+        held = plants.setdefault(row.specific_plant_id, {})
+        held[row.currency_code] = held.get(row.currency_code, Decimal('0')) + row.amount
     last_run = CostAllocationRun.objects.filter(batch=batch).order_by('created', 'pk').last()
     return {
         'batch': batch.pk,
         'code': batch.code,
         'status': batch.status,
-        'currency_code': batch.workspace.currency_code,
+        'currency_code': currency,
+        'mixed_currency': len(codes) > 1,
         'provisional': not frozen,
         'output_finalized_at': batch.output_finalized_at,
         'unknown_cost': unknown,
-        'provisional_total': None if frozen else f'{quantize_money(allocated):f}',
-        'final_total': f'{quantize_money(allocated):f}' if frozen else None,
+        'provisional_total': None if frozen or allocated is None else f'{allocated:f}',
+        'final_total': f'{allocated:f}' if frozen and allocated is not None else None,
         'totals': {
-            bucket: f'{quantize_money(value):f}'
-            for bucket, value in totals.items()
+            bucket: None if totals is None else f'{quantize_money(totals[bucket]):f}'
+            for bucket in VALUE_BUCKETS
         },
+        'currencies': [
+            {
+                'currency_code': code,
+                'amount': f'{quantize_money(sum(by_currency[code].values(), Decimal("0"))):f}',
+                'totals': {
+                    bucket: f'{quantize_money(value):f}'
+                    for bucket, value in by_currency[code].items()
+                },
+            }
+            for code in codes
+        ],
         'layers': [_layer_row(row) for row in rows],
         'plants': [
             {
                 'plant': plant_id,
-                'cost': f'{quantize_money(cost):f}',
+                'cost': None if len(held) > 1 else f'{quantize_money(next(iter(held.values()))):f}',
+                'currency_code': None if len(held) > 1 else next(iter(held)),
                 'state': dispositions.get(plant_id, (None, None))[0],
                 'disposition': dispositions.get(plant_id, (None, None))[1],
             }
-            for plant_id, cost in sorted(plants.items())
+            for plant_id, held in sorted(plants.items())
         ],
         'last_run': None if last_run is None else {
             'run': last_run.pk,
@@ -782,7 +818,16 @@ def batch_cost_breakdown(batch):
 
 
 def plant_cost_breakdown(plant):
-    """Report what one seedling cost, from which inputs, and where it went."""
+    """Report what one seedling cost, from which inputs, and where it went.
+
+    A plant raised on inputs bought in two currencies has no single committed
+    value, so `provisional_value`, `final_value` and both sale projections go
+    null with `mixed_currency` saying why, and `currencies` lists what it cost
+    in each. The projections go null for a plant whose committed cost is in one
+    foreign currency too: the pending media and pot shares are projected in the
+    workspace's own currency, and adding the two would total the same two
+    currencies one step further along.
+    """
     batch = ProductionBatch.objects.get(
         pk=plant.batch_id,
     )
@@ -798,23 +843,28 @@ def plant_cost_breakdown(plant):
         )
         .order_by('pk')
     )
-    known = [row.amount for row in rows if row.amount is not None]
-    value = sum(known, Decimal('0'))
+    held, unknown = held_by_currency(rows)
+    codes = sorted(held)
+    currency = stated_currency(codes, batch.workspace.currency_code)
+    value = None if currency is None else held.get(currency, Decimal('0'))
     state, disposition = plant_dispositions(batch).get(plant.pk, (None, None))
     frozen = is_frozen(batch)
     pending = plant_pending_cost(plant)
+    projectable = value is not None and currency == batch.workspace.currency_code
     return {
         **pending,
-        **plant_sale_totals(value, len(known) != len(rows), pending),
+        **plant_sale_totals(value or Decimal('0'), unknown or not projectable, pending),
         'plant': plant.pk,
         'batch': batch.pk,
-        'currency_code': batch.workspace.currency_code,
+        'currency_code': currency,
+        'mixed_currency': len(codes) > 1,
+        'currencies': currency_amounts(held),
         'provisional': not frozen,
-        'unknown_cost': len(known) != len(rows),
+        'unknown_cost': unknown,
         'state': state,
         'disposition': disposition,
-        'provisional_value': None if frozen else f'{quantize_money(value):f}',
-        'final_value': f'{quantize_money(value):f}' if frozen else None,
+        'provisional_value': None if frozen or value is None else f'{quantize_money(value):f}',
+        'final_value': f'{quantize_money(value):f}' if frozen and value is not None else None,
         'layers': [_layer_row(row) for row in rows],
     }
 
@@ -835,6 +885,11 @@ def cohort_cost_breakdown(cohort):
     hold the same per unit, so the block's layers are read per unit of weight
     and the figure is what one unit standing there now carries;
     `costing.cohort_weights` says why.
+
+    A block fed from two currencies has no unit value at all. Dividing a total
+    that added them would hand every draw on the block a per-unit figure that
+    is not money in any currency, so `unit_value` and the block's value go null
+    with `mixed_currency` saying why, and `currencies` lists each side.
     """
     rows = list(
         CostAllocation.objects
@@ -853,8 +908,10 @@ def cohort_cost_breakdown(cohort):
         )
         .order_by('pk')
     )
-    known = [row.amount for row in rows if row.amount is not None]
-    value = quantize_money(sum(known, Decimal('0')))
+    held, unknown = held_by_currency(rows)
+    codes = sorted(held)
+    currency = stated_currency(codes, cohort.workspace.currency_code)
+    value = None if currency is None else quantize_money(held.get(currency, Decimal('0')))
     sold = sold_cohort_quantities(cohort.batch).get(cohort.pk, 0)
     units = cohort.quantity + sold
     weights = cohort_weights(cohort.batch)
@@ -864,12 +921,14 @@ def cohort_cost_breakdown(cohort):
     return {
         'cohort': cohort.pk,
         'batch': cohort.batch_id,
-        'currency_code': cohort.workspace.currency_code,
+        'currency_code': currency,
+        'mixed_currency': len(codes) > 1,
+        'currencies': currency_amounts(held),
         'provisional': not frozen,
-        'unknown_cost': len(known) != len(rows),
+        'unknown_cost': unknown,
         'units': units,
-        'provisional_value': None if frozen else f'{value:f}',
-        'final_value': f'{value:f}' if frozen else None,
-        'unit_value': None if not units else f'{value * per_unit / Decimal(weight):f}',
+        'provisional_value': None if frozen or value is None else f'{value:f}',
+        'final_value': f'{value:f}' if frozen and value is not None else None,
+        'unit_value': None if not units or value is None else f'{value * per_unit / Decimal(weight):f}',
         'layers': [_layer_row(row) for row in rows],
     }
