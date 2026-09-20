@@ -19,7 +19,7 @@ from plantings.models import (
     SpecificPlant,
 )
 
-from .common import Report, decimal_string
+from .common import NOT_CONSOLIDATED, Report, decimal_string
 
 
 def _sown_quantity(batch):
@@ -213,9 +213,16 @@ def production_batches(workspace, filters):
         })
     mixed = sum(row['mixed_currency'] for row in rows)
     if mixed:
+        # Counted in currencies, as `profitability_report` counts them, so the
+        # same code means the same thing in both; how many batches are affected
+        # is `mixed_currency_batches` in the totals beside it.
+        currencies = {
+            entry['currency_code'] for row in rows if row['mixed_currency']
+            for entry in row['currencies']
+        }
         quality.append({
-            'code': 'mixed_currency', 'count': mixed,
-            'message': 'No exchange rate exists, so currencies are not consolidated.',
+            'code': 'mixed_currency', 'count': len(currencies),
+            'message': NOT_CONSOLIDATED,
             'drill_down': '/reports/production-batches/?mixed_currency=true',
         })
     return Report(

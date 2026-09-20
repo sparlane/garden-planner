@@ -66,7 +66,9 @@ class ProductionReportTests(MixedCurrencyReportTestCase):  # pylint: disable=too
         """Verification 6: a reader is told why the total is missing."""
         body = self.body()
         finding = self.findings(body)['mixed_currency']
-        self.assertEqual(finding['count'], 1)
+        # Currencies, as the profitability report counts them; batches are the
+        # totals figure beside it.
+        self.assertEqual(finding['count'], 2)
         self.assertEqual(finding['message'], NOT_CONSOLIDATED)
         self.assertEqual(body['totals']['mixed_currency_batches'], 1)
 
@@ -81,6 +83,7 @@ class PlantTraceTests(MixedCurrencyReportTestCase):  # pylint: disable=too-many-
     def test_the_trace_states_no_value_and_lists_both_currencies(self):
         """Each layer keeps its own currency; the total is not one of them."""
         totals = self.body()['totals']
+        self.assertTrue(totals['mixed_currency'])
         self.assertIsNone(totals['provisional_value'])
         self.assertIsNone(totals['final_value'])
         self.assertIsNone(totals['currency_code'])

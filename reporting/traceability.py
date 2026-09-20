@@ -14,7 +14,7 @@ from plantings.models import SpecificPlant
 from plantings.timeline import timeline_rows
 from sales.models import FulfillmentLine
 
-from .common import Report, decimal_string
+from .common import NOT_CONSOLIDATED, Report, decimal_string
 
 
 def _source_lot(layer):
@@ -81,7 +81,7 @@ def _plant_quality(plant, layers, cost):
         quality.append({
             'code': 'mixed_currency',
             'count': len(cost['currencies']),
-            'message': 'No exchange rate exists, so currencies are not consolidated.',
+            'message': NOT_CONSOLIDATED,
             'drill_down': f'/reports/traceability/plants/{plant.pk}/',
         })
     return quality
@@ -179,6 +179,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
             'final_value': cost['final_value'],
             'currency_code': cost['currency_code'],
             'currencies': cost['currencies'],
+            'mixed_currency': cost['mixed_currency'],
         },
         reconciliation={
             'cost_layers': len(layers),
