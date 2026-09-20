@@ -103,6 +103,9 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
     sown = _sown_quantity(batch)
     losses = batch_loss_by_cause(batch)
     cost = batch_cost_breakdown(batch)
+    # A batch fed from two currencies states no total and no unit cost: the
+    # figures it does have are per currency, in `currencies`, because nothing
+    # here may add two of them together. `costing.currency` says why.
     total = cost['final_total'] or cost['provisional_total']
     unit_cost = None
     if total is not None and original_output:
@@ -136,6 +139,8 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
         'final_total': cost['final_total'],
         'unit_cost': decimal_string(unit_cost, 4),
         'currency_code': cost['currency_code'],
+        'currencies': cost['currencies'],
+        'mixed_currency': cost['mixed_currency'],
         'provisional': cost['provisional'],
         'unvalued': cost['unknown_cost'],
         'input_layers': cost['layers'],
@@ -206,6 +211,13 @@ def production_batches(workspace, filters):
             'message': 'One or more exact input lots have unknown cost.',
             'drill_down': '/reports/production-batches/?unvalued=true',
         })
+    mixed = sum(row['mixed_currency'] for row in rows)
+    if mixed:
+        quality.append({
+            'code': 'mixed_currency', 'count': mixed,
+            'message': 'No exchange rate exists, so currencies are not consolidated.',
+            'drill_down': '/reports/production-batches/?mixed_currency=true',
+        })
     return Report(
         name='production-batches', filters=filters, rows=rows,
         columns=tuple(rows[0]) if rows else (
@@ -219,8 +231,8 @@ def production_batches(workspace, filters):
             'germination_closed_sowings', 'production_loss',
             'plant_inventory_value', 'cogs_value', 'unresolved_value',
             'unattributed_value', 'provisional_total', 'final_total', 'unit_cost',
-            'currency_code', 'provisional', 'unvalued', 'input_layers',
-            'reconciliation',
+            'currency_code', 'currencies', 'mixed_currency', 'provisional',
+            'unvalued', 'input_layers', 'reconciliation',
         ),
         totals={
             'batches': len(rows),
@@ -236,6 +248,7 @@ def production_batches(workspace, filters):
             'germination_open_sowings': open_germination,
             'provisional_batches': provisional,
             'unvalued_batches': unvalued,
+            'mixed_currency_batches': mixed,
         },
         reconciliation={
             'cost_equation': (
