@@ -9,6 +9,16 @@ from uuid import uuid4
 
 from django.utils import timezone
 
+from applications.models import InputApplicationTarget
+from applications.services import (
+    ApplicationRequest,
+    LineRequest,
+    TargetRequest,
+    create_application_draft,
+    post_application,
+)
+from costing.models import CostAllocationRun
+from costing.services import reallocate_batch
 from health.services import preview_observation, record_observation
 from health.operations import quarantine_observation
 from health.models import (
@@ -808,3 +818,41 @@ def reserve_plants(workspace, user, plants, expires_at=None):
     for allocation in allocations:
         allocation.refresh_from_db()
     return SalesOrder.objects.get(pk=order.pk), allocations
+
+
+def apply_costed_input(workspace, user, plant, amount, currency_code=None):
+    """Post one priced input onto a plant and bring its batch's costing up.
+
+    One unit of a lot bought at `amount`, so the cost layer left on the plant
+    is exactly that figure. `currency_code` is what the supplier invoiced in:
+    the lot carries it and the layer snapshots it, which is how a batch comes
+    to hold two currencies at once with no rate between them (task 142).
+    Shared so the costing, sales, bookkeeping, and reporting suites can each
+    reach that state without carrying their own copy of it.
+    """
+    location = make_location(workspace=workspace)
+    item = make_inventory_item(
+        workspace=workspace,
+        base_unit=UnitCode.EACH,
+        category=InventoryItem.Category.LABEL,
+        default_usage_basis=InventoryItem.UsageBasis.PER_UNIT,
+        default_usage_rate=Decimal('1'),
+        usage_rate_unit=UnitCode.EACH,
+    )
+    values = {} if currency_code is None else {'currency_code': currency_code}
+    lot = make_stock_lot(
+        item=item, location=location, quantity='100',
+        base_unit_cost=Decimal(amount), acquisition_total=Decimal(amount) * 100,
+        **values,
+    )
+    application = create_application_draft(workspace, user, ApplicationRequest(
+        applied_at=timezone.now(),
+        source_location=location,
+        batch=plant.batch,
+        lines=(LineRequest(
+            item=item, lot=lot, applied_quantity=Decimal('1'), unit_code=UnitCode.EACH,
+            targets=(TargetRequest(InputApplicationTarget.TargetType.SPECIFIC_PLANT, plant),),
+        ),),
+    ))
+    post_application(application, user)
+    return reallocate_batch(plant.batch, user, CostAllocationRun.Trigger.MANUAL_RECALCULATE)
