@@ -736,8 +736,12 @@ interface NurseryRegisterRow {
   container_size: string | null
   container_count: number | null
   expected_ready: string | null
+  // Null together when this plant's layers were recorded in more than one
+  // currency: there is no rate to combine them, so the register states no
+  // figure rather than one in neither currency.
   cost: string | null
-  currency_code: string
+  currency_code: string | null
+  mixed_currency: boolean
 }
 
 type NurseryRegisterOrdering =
@@ -1035,8 +1039,11 @@ interface PlantCohort {
   revision: number
   notes: string
   label_code: string
+  // Null together for a block whose standing layers span two currencies, as on
+  // the batch and plant breakdowns; `mixed_currency` says which absence it is.
   cost: string | null
-  currency_code: string
+  currency_code: string | null
+  mixed_currency: boolean
   stage: number | null
   stage_name: string | null
   grade: number | null
