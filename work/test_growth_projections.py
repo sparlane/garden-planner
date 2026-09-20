@@ -8,9 +8,11 @@ landed in a group of its own: a second, permanently overdue task per batch.
 """
 
 from datetime import date, datetime, timezone as datetime_timezone
+from uuid import uuid4
 
 from django.test import TestCase
 
+from plantings.cohorts import observe_cohort
 from plantings.growth import record_observation
 from plantings.lifecycle import (
     EventType,
@@ -18,6 +20,7 @@ from plantings.lifecycle import (
     record_germination_event,
     record_lifecycle_event,
 )
+from plantings.models import PlantCohort
 from plantings.withdrawal import withdraw_germination
 from tests.factories import (
     make_growth_stage,
@@ -56,7 +59,10 @@ class GrowthProjectionTestCase(TestCase):
         self.workspace.mode = self.workspace.Mode.NURSERY
         self.workspace.timezone = 'Pacific/Auckland'
         self.workspace.save()
-        self.bench = make_location(workspace=self.workspace)
+        self.greenhouse = make_location(workspace=self.workspace, name='Greenhouse')
+        self.bench = make_location(
+            workspace=self.workspace, name='Bench 2', parent=self.greenhouse,
+        )
         self.fill = make_seed_tray_cell_planting(quantity=20)
         self.stage = make_growth_stage(workspace=self.workspace, target_days=14)
 
@@ -80,6 +86,10 @@ class GrowthProjectionTestCase(TestCase):
             task for task in projected_tasks(self.workspace)
             if task.rule.code == code
         ]
+
+    def location_labels(self, task):
+        """Return the labels of the location links one task carries."""
+        return [link.label for link in task.targets if link.url == '/locations']
 
     def targeted_plants(self, task):
         """Return the plant ids one task names."""
@@ -136,6 +146,14 @@ class ResolvedPlantGrowthProjectionTests(GrowthProjectionTestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(self.targeted_plants(tasks[0]), {growing.pk, retained.pk})
 
+    def test_the_bench_is_named_with_the_greenhouse_it_stands_in(self):
+        """A bare "Bench 2" is ambiguous across three greenhouses (task 154)."""
+        self.observe([self.plant()])
+
+        tasks = self.tasks('stage-review')
+
+        self.assertEqual(self.location_labels(tasks[0]), ['Greenhouse / Bench 2'])
+
     def test_a_calendar_round_skips_plants_that_are_gone(self):
         """Calendar care reads the same candidates and keeps the same answer."""
         WorkTaskRule.objects.filter(workspace=self.workspace).delete()
@@ -153,6 +171,44 @@ class ResolvedPlantGrowthProjectionTests(GrowthProjectionTestCase):
         self.assertEqual(
             {link.target.pk for link in tasks[0].targets}, {growing.pk},
         )
+
+
+class CohortGrowthProjectionTests(GrowthProjectionTestCase):
+    """The counted half of the same query, which asks the same question."""
+
+    def block(self, quantity=6):
+        """Return one observed block of seedlings standing on the bench."""
+        cohort, _operation = observe_cohort(
+            self.workspace, None, batch=self.fill.seed_tray_planting.batch,
+            quantity=quantity, idempotency_key=uuid4(), location=self.bench,
+        )
+        record_observation(
+            self.workspace, None, cohort_id=cohort.pk, stage=self.stage,
+            expected_ready=date(2026, 3, 20), occurred_at=OBSERVED_AT,
+        )
+        return cohort
+
+    def test_a_standing_block_is_reviewed_on_its_named_bench(self):
+        """A cohort carries its location directly, and it is named the same way."""
+        cohort = self.block()
+
+        tasks = self.tasks('stage-review')
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(self.location_labels(tasks[0]), ['Greenhouse / Bench 2'])
+        self.assertIn(
+            f'/plantings/cohorts/{cohort.pk}',
+            [link.url for link in tasks[0].targets],
+        )
+
+    def test_a_depleted_block_asks_for_nothing(self):
+        """Quantity 0 is the count's answer to the question a state answers."""
+        cohort = self.block()
+        # Nothing is left of the block; how it emptied is `plantings.loss`'s
+        # business, and the projection only reads what still stands.
+        PlantCohort.objects.filter(pk=cohort.pk).update(quantity=0)
+
+        self.assertEqual(self.tasks('stage-review'), [])
 
 
 class AcknowledgedReviewTests(GrowthProjectionTestCase):

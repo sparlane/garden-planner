@@ -56,8 +56,12 @@ exception.
 
 - Both sites call `location_full_name(location)`.
 - `MilestoneLocationLabelTests` in `work/test_projections.py` projects an approved plan
-  milestone on `Greenhouse / Bench 2` and asserts that label. Task 124's tests cover
-  the growth-review site, where every plant stands on a bench.
+  milestone on `Greenhouse / Bench 2` and asserts that label.
+- The growth-review site is covered in `work/test_growth_projections.py`, whose bench
+  stands under a greenhouse for the purpose:
+  `test_the_bench_is_named_with_the_greenhouse_it_stands_in` for a plant, and
+  `CohortGrowthProjectionTests.test_a_standing_block_is_reviewed_on_its_named_bench`
+  for a cohort, which carries a location directly and is the other line that raised.
 
 Each label costs one query for the location's ancestry, as `plantings/timeline.py`
 notes. A projection names one location per group, not per row, so no names map is
@@ -69,3 +73,9 @@ function and can batch it if it is worth batching.
 1. Put a plant on a named bench under a greenhouse, observe a stage with a target age,
    and read the queue: the task's location link reads `Greenhouse / Bench 2`.
 2. Run `./manage.py test` and `./check-code.sh`.
+
+## Estimated effort
+
+Half an hour, done. The time was in noticing it: the exception is raised inside
+`projected_tasks`, so it reads as the whole queue being broken rather than as one
+label.
