@@ -61,6 +61,32 @@ def _lot_reference(lot):
     }
 
 
+def _plant_quality(plant, layers, cost):
+    """Name what keeps this plant's value from being a stated figure.
+
+    An unknown input cost and two currencies are separate findings: one is a
+    price nobody recorded, the other is money that cannot be added up without
+    a rate. The wording matches `reporting.commerce.profitability_report`,
+    which has declined to consolidate currencies all along.
+    """
+    quality = []
+    if cost['unknown_cost']:
+        quality.append({
+            'code': 'unvalued_input',
+            'count': sum(layer.amount is None for layer in layers),
+            'message': 'At least one exact input cost is unknown.',
+            'drill_down': f'/reports/traceability/plants/{plant.pk}/',
+        })
+    if cost['mixed_currency']:
+        quality.append({
+            'code': 'mixed_currency',
+            'count': len(cost['currencies']),
+            'message': 'No exchange rate exists, so currencies are not consolidated.',
+            'drill_down': f'/reports/traceability/plants/{plant.pk}/',
+        })
+    return quality
+
+
 def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-locals
     """Trace one identified plant from inputs through its commercial history."""
     plant = SpecificPlant.objects.filter(
@@ -152,17 +178,13 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
             'provisional_value': cost['provisional_value'],
             'final_value': cost['final_value'],
             'currency_code': cost['currency_code'],
+            'currencies': cost['currencies'],
         },
         reconciliation={
             'cost_layers': len(layers),
             'cost_breakdown_url': f'/costing/plants/{plant.pk}/',
         },
-        data_quality=([{
-            'code': 'unvalued_input',
-            'count': sum(layer.amount is None for layer in layers),
-            'message': 'At least one exact input cost is unknown.',
-            'drill_down': f'/reports/traceability/plants/{plant.pk}/',
-        }] if cost['unknown_cost'] else []),
+        data_quality=_plant_quality(plant, layers, cost),
     )
 
 
