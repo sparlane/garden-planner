@@ -18,7 +18,12 @@ from uuid import uuid4
 from applications.services import reverse_application
 from plantings.cohorts import observe_cohort
 from sales.services import cohort_draw_cost
-from tests.factories import make_production_batch, make_stock_lot
+from tests.factories import (
+    apply_costed_input,
+    make_production_batch,
+    make_specific_plant,
+    make_stock_lot,
+)
 
 from .services import (
     VALUE_BUCKETS,
@@ -119,6 +124,11 @@ class MixedCurrencyTestCase(CostingServiceTestCase):
         self.reallocate()
         return plant
 
+    def reverse_foreign(self, reason='Bought in the wrong currency.'):
+        """Take the euro application back off the batch and recost it."""
+        reverse_application(self.foreign, self.user, reason)
+        self.reallocate()
+
     def observed_cohort(self, quantity=4):
         """Count anonymous units out of the mixed cell instead of naming one."""
         cohort, _observed = observe_cohort(
@@ -200,8 +210,7 @@ class MixedCurrencyBatchTests(MixedCurrencyTestCase):
 
     def test_reversing_the_foreign_application_restores_one_currency(self):
         """Verification 5: with the euro layer gone, the total is stateable."""
-        reverse_application(self.foreign, self.user, 'Bought in the wrong currency.')
-        self.reallocate()
+        self.reverse_foreign()
 
         breakdown = batch_cost_breakdown(self.batch)
         self.assertFalse(breakdown['mixed_currency'])
@@ -234,3 +243,52 @@ class MixedCurrencyCohortTests(MixedCurrencyTestCase):
     def test_a_draw_on_the_block_costs_an_unknown_amount(self):
         """What a dispatch out of it is charged: unknown, not a share of 1.16."""
         self.assertEqual(cohort_draw_cost(self.cohort, 1), (None, True, True))
+
+
+class ForeignCurrencyProjectionTests(CostingServiceTestCase):
+    """A plant costed wholly abroad: a stateable value, an unstateable sale.
+
+    Its committed cost is one currency and can be published. What cannot is
+    the sale projection, because the pending media and pot shares beside it are
+    projected in the workspace's own currency and nothing may add the two.
+    `sale_blocked` is what tells that apart from an unpriced input, which a
+    bare null could not.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.plant = make_specific_plant(workspace=self.workspace)
+        apply_costed_input(self.workspace, self.user, self.plant, '1.0800', currency_code='EUR')
+
+    def test_the_committed_value_is_stated_in_the_currency_it_was_bought_in(self):
+        """One currency is one currency, whichever one it is."""
+        breakdown = plant_cost_breakdown(self.plant)
+        self.assertFalse(breakdown['mixed_currency'])
+        self.assertEqual(breakdown['currency_code'], 'EUR')
+        self.assertEqual(breakdown['provisional_value'], '1.0800')
+        self.assertEqual(breakdown['currencies'], [
+            {'currency_code': 'EUR', 'amount': '1.0800'},
+        ])
+
+    def test_the_sale_projection_says_which_absence_it_is(self):
+        """Not a missing price: a committed cost the pending shares are not in."""
+        breakdown = plant_cost_breakdown(self.plant)
+        self.assertIsNone(breakdown['sale_without_pot'])
+        self.assertIsNone(breakdown['sale_with_pot'])
+        self.assertEqual(breakdown['sale_blocked'], 'foreign_currency')
+        self.assertFalse(breakdown['unknown_cost'])
+
+    def test_a_home_currency_plant_still_projects_a_sale(self):
+        """The guard is the currency, not the presence of a committed cost."""
+        plant = make_specific_plant(workspace=self.workspace)
+        apply_costed_input(self.workspace, self.user, plant, '1.0800')
+
+        breakdown = plant_cost_breakdown(plant)
+        self.assertEqual(breakdown['sale_without_pot'], '1.0800')
+        self.assertIsNone(breakdown['sale_blocked'])
+
+    def test_a_mixed_plant_names_the_rate_as_what_is_missing(self):
+        """The third reading of the same blank, told apart from the other two."""
+        apply_costed_input(self.workspace, self.user, self.plant, '0.0800')
+
+        self.assertEqual(plant_cost_breakdown(self.plant)['sale_blocked'], 'mixed_currency')

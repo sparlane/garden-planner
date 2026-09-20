@@ -817,6 +817,25 @@ def batch_cost_breakdown(batch):
     }
 
 
+def _sale_blocked(codes, currency, unknown, workspace_currency):
+    """Name what stops this plant's committed cost reaching a sale figure.
+
+    Three different absences read as the same blank on a screen, so each says
+    which it is. A missing rate is not a missing price: `mixed_currency` is
+    cost recorded in two currencies with nothing to combine them, and
+    `foreign_currency` is a stateable cost in one currency that still cannot be
+    added to the pending pot and media shares, because those are projected in
+    the workspace's own. `unknown_cost` is the ordinary unpriced input. None of
+    them is a smaller true cost, which is why the projection goes null rather
+    than dropping the part it cannot state.
+    """
+    if len(codes) > 1:
+        return 'mixed_currency'
+    if codes and currency != workspace_currency:
+        return 'foreign_currency'
+    return 'unknown_cost' if unknown else None
+
+
 def plant_cost_breakdown(plant):
     """Report what one seedling cost, from which inputs, and where it went.
 
@@ -826,7 +845,8 @@ def plant_cost_breakdown(plant):
     in each. The projections go null for a plant whose committed cost is in one
     foreign currency too: the pending media and pot shares are projected in the
     workspace's own currency, and adding the two would total the same two
-    currencies one step further along.
+    currencies one step further along. `sale_blocked` names which of the three
+    it is, so a screen never has to render one blank for all of them.
     """
     batch = ProductionBatch.objects.get(
         pk=plant.batch_id,
@@ -850,14 +870,15 @@ def plant_cost_breakdown(plant):
     state, disposition = plant_dispositions(batch).get(plant.pk, (None, None))
     frozen = is_frozen(batch)
     pending = plant_pending_cost(plant)
-    projectable = value is not None and currency == batch.workspace.currency_code
+    blocked = _sale_blocked(codes, currency, unknown, batch.workspace.currency_code)
     return {
         **pending,
-        **plant_sale_totals(value or Decimal('0'), unknown or not projectable, pending),
+        **plant_sale_totals(value or Decimal('0'), blocked is not None, pending),
         'plant': plant.pk,
         'batch': batch.pk,
         'currency_code': currency,
         'mixed_currency': len(codes) > 1,
+        'sale_blocked': blocked,
         'currencies': currency_amounts(held),
         'provisional': not frozen,
         'unknown_cost': unknown,
