@@ -766,7 +766,10 @@ def _allocated_cost(allocation):
     if allocation.plant_id:
         breakdown = plant_cost_breakdown(allocation.plant)
         value = breakdown['provisional_value'] or breakdown['final_value']
-        return value, breakdown['unknown_cost'], breakdown['provisional']
+        # No value at all is a cost that cannot be stated rather than a zero: a
+        # plant raised in two currencies has no single figure, and treating it
+        # as nothing would report a complete margin over an incomplete cost.
+        return value, breakdown['unknown_cost'] or value is None, breakdown['provisional']
     if allocation.stock_lot_id:
         unit_cost = allocation.stock_lot.base_unit_cost
         if unit_cost is None:
@@ -785,7 +788,9 @@ def cohort_draw_cost(cohort, quantity):
     worth its share and nothing more exact exists to charge it with. A block
     whose inputs have no recorded price yields an unknown cost rather than a
     zero, exactly as an unpriced lot does — a part-priced one included, because
-    a share of an incomplete total is not what the plants cost.
+    a share of an incomplete total is not what the plants cost. A block bought
+    in two currencies has no unit value either, so it arrives here as None for
+    the same reason and is charged out the same way.
     """
     breakdown = cohort_cost_breakdown(cohort)
     unit_value = breakdown['unit_value']

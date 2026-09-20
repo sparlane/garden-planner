@@ -242,6 +242,14 @@ def _position_amounts(line, positions):
 
 
 def _plant_cost(plant):
+    """Return what this plant has cost, or None when that cannot be stated.
+
+    A plant raised on inputs bought in two currencies has no committed value to
+    read: no exchange rate exists to make one, and `costing.currency` says why
+    inventing one here is not an option. The dispatch records an unknown cost
+    of sale instead, for the reason task 138 gives for an unpriced input — a
+    number with a conversion missing is not a smaller true cost.
+    """
     breakdown = plant_cost_breakdown(plant)
     value = breakdown['provisional_value'] or breakdown['final_value']
     return (
@@ -517,9 +525,15 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
         if carried:
             # The pot's own cost is the small half of what went out the door.
             # Leaving the plants out would understate cost of sale on exactly
-            # the specimens this line exists to sell.
-            known = [amount for amount, _ in rider_costs if amount is not None]
-            cogs_amount = (cogs_amount or Decimal('0')) + sum(known, Decimal('0'))
+            # the specimens this line exists to sell. So would counting a
+            # passenger whose own cost cannot be stated as nothing, which is
+            # why one such plant leaves the whole line unknown rather than
+            # quietly dropping out of it.
+            parts = [amount for amount, _ in rider_costs]
+            cogs_amount = (
+                None if any(part is None for part in parts)
+                else (cogs_amount or Decimal('0')) + sum(parts, Decimal('0'))
+            )
             provisional = provisional or any(flag for _, flag in rider_costs)
         line = FulfillmentLine.objects.create(
             fulfillment=fulfillment, allocation=allocation,
