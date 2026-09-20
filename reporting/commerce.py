@@ -33,7 +33,7 @@ from sales.models import (
     SalesReturnLine,
 )
 
-from .common import Report, decimal_string
+from .common import NOT_CONSOLIDATED, Report, decimal_string
 from .inventory import inventory_balances
 from .production import production_batches
 
@@ -750,7 +750,7 @@ def profitability_report(workspace, filters):
     if len(currencies) > 1:
         quality.append({
             'code': 'mixed_currency', 'count': len(currencies),
-            'message': 'No exchange rate exists, so currencies are not consolidated.',
+            'message': NOT_CONSOLIDATED,
             'drill_down': '/reports/profitability/',
         })
     return Report(

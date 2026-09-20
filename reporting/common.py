@@ -13,6 +13,12 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 
+#: What every report says when it is asked to publish one figure over money
+#: recorded in more than one currency. No exchange rate exists in this
+#: application — task 121 owns that — so the report declines rather than
+#: consolidating, and it says so in the same words wherever it happens.
+NOT_CONSOLIDATED = 'No exchange rate exists, so currencies are not consolidated.'
+
 REPORT_VERSION = 'nursery-reports.v1'
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
