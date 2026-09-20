@@ -204,8 +204,11 @@ class CohortGrowthProjectionTests(GrowthProjectionTestCase):
     def test_a_depleted_block_asks_for_nothing(self):
         """Quantity 0 is the count's answer to the question a state answers."""
         cohort = self.block()
-        # Nothing is left of the block; how it emptied is `plantings.loss`'s
-        # business, and the projection only reads what still stands.
+        # Emptied the short way: the real paths in `plantings.loss` and
+        # `plantings.cohorts` would also move the block's lifecycle state, and
+        # a standing `growing` block of nothing is a combination the domain
+        # never produces. The quantity is the whole of what the projection
+        # reads, so it is the whole of what this has to set.
         PlantCohort.objects.filter(pk=cohort.pk).update(quantity=0)
 
         self.assertEqual(self.tasks('stage-review'), [])
