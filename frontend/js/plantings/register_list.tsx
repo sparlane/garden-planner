@@ -187,7 +187,7 @@ function RegisterTable({ rows, selection, setSelection, onVarietySelect }: Regis
             <td>
               <ReadyCell row={row} />
             </td>
-            <td>{formatMoney(row.cost, row.currency_code, 'Not costed')}</td>
+            <td>{row.mixed_currency ? 'Two currencies, not combined' : formatMoney(row.cost, row.currency_code ?? '', 'Not costed')}</td>
           </tr>
         ))}
       </tbody>

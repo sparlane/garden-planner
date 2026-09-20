@@ -17,6 +17,7 @@ import {
   postCohortAction
 } from '../api/plantings'
 import { queryClient, queryKeys } from '../query'
+import { formatMoney } from '../utils'
 import { CohortAction, CohortFilters, CohortLifecycleState, CohortLossCause, PlantCohort } from '../types/plantings'
 import { COHORT_STATE_LABELS as STATE_LABELS } from './cohort_terms'
 import { LOSS_CAUSE_LABELS, RECORDABLE_LOSS_CAUSES, lossCauseLabel } from './loss_causes'
@@ -498,6 +499,15 @@ function CohortActionPanel({ cohort }: { cohort: PlantCohort }) {
   )
 }
 
+// A block fed from two currencies has no production cost to show: no exchange
+// rate exists to combine them, so the card says that rather than a figure in
+// neither currency, and an unpriced input still reads as unknown.
+function cohortCost(cohort: PlantCohort): string {
+  if (cohort.mixed_currency) return 'Two currencies, not combined'
+  if (cohort.cost === null) return 'Unknown'
+  return formatMoney(cohort.cost, cohort.currency_code ?? '')
+}
+
 function CohortDetailView({ cohortPk }: { cohortPk: number }) {
   const { data: cohort, isPending } = useQuery({
     queryKey: queryKeys.plantings.cohort(cohortPk),
@@ -548,7 +558,7 @@ function CohortDetailView({ cohortPk }: { cohortPk: number }) {
         <Col md={3}>
           <Card body>
             <div className="text-muted">Production cost</div>
-            <div>{cohort.cost === null ? 'Unknown' : `${cohort.currency_code} ${cohort.cost}`}</div>
+            <div>{cohortCost(cohort)}</div>
           </Card>
         </Col>
       </Row>

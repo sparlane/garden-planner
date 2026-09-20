@@ -155,13 +155,56 @@ def _current_location(field):
     )
 
 
-def _plant_cost():
-    """Sum what one plant's surviving cost layers came to.
+def _plant_layers():
+    """The surviving cost layers of one plant, grouped for a subquery.
 
     A subquery rather than an aggregate over the join, so that adding it cannot
     multiply the other annotations. The row selection matches the one
     `costing.services.plant_cost_breakdown` reports from: a reversal and the
     layer it reverses both drop out.
+    """
+    return (
+        CostAllocation.objects
+        .filter(
+            specific_plant=OuterRef('pk'),
+            reversal_of__isnull=True,
+            reversal__isnull=True,
+        )
+        .values('specific_plant')
+    )
+
+
+def _plant_cost():
+    """Sum what one plant's surviving cost layers came to.
+
+    Summed across currencies deliberately: this is the ordering key, and a row
+    the register declines to price still has to sort somewhere. What is
+    published is `_plant_cost_currencies` away from one, which is what
+    `costing.currency` requires of every reader of these layers.
+    """
+    return Subquery(
+        _plant_layers().annotate(total=Sum('amount')).values('total')[:1],
+        output_field=DecimalField(max_digits=18, decimal_places=4),
+    )
+
+
+def _plant_cost_currencies():
+    """Count the currencies one plant's layers were recorded in.
+
+    More than one and there is no total to publish: no exchange rate exists to
+    combine them, and `costing.currency` says why none may be invented here.
+    """
+    return Subquery(
+        _plant_layers().annotate(codes=Count('currency_code', distinct=True)).values('codes')[:1],
+        output_field=IntegerField(),
+    )
+
+
+def _plant_cost_currency():
+    """Name the currency one plant's layers were recorded in.
+
+    The first code in order, which is the only code whenever
+    `_plant_cost_currencies` is one. The serializer reads it only then.
     """
     return Subquery(
         CostAllocation.objects
@@ -170,10 +213,9 @@ def _plant_cost():
             reversal_of__isnull=True,
             reversal__isnull=True,
         )
-        .values('specific_plant')
-        .annotate(total=Sum('amount'))
-        .values('total')[:1],
-        output_field=DecimalField(max_digits=18, decimal_places=4),
+        .order_by('currency_code')
+        .values('currency_code')[:1],
+        output_field=TextField(),
     )
 
 
@@ -282,6 +324,8 @@ def register_projection(workspace):
         current_container_unit_label=_current_location('container_unit__asset_code'),
         located_since=_current_location('started'),
         cost=_plant_cost(),
+        cost_currencies=_plant_cost_currencies(),
+        cost_currency=_plant_cost_currency(),
         label_code=Subquery(active_label),
         direct_location=_current_location('location'),
         direct_location_name=_current_location('location__name'),

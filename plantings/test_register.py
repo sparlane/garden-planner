@@ -177,6 +177,7 @@ class RegisterContractTests(RegisterTestCase):
             'location',
             'location_label',
             'location_type',
+            'mixed_currency',
             'pk',
             'plant_name',
             'quarantined',

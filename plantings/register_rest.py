@@ -59,6 +59,15 @@ class NurseryRegisterPagination(PageNumberPagination):
         return response
 
 
+def _mixed_currency(plant):
+    """Say whether this row's layers were recorded in more than one currency.
+
+    Annotated by `register._plant_cost_currencies`, and absent on a plant that
+    did not come through the register queryset, which is not a mixture.
+    """
+    return (getattr(plant, 'cost_currencies', None) or 0) > 1
+
+
 class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """One register row: a projection, not the plant's editable record.
 
@@ -140,8 +149,9 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
     container_fill = serializers.IntegerField(source='current_container_fill', read_only=True, allow_null=True)
     expected_ready = serializers.DateField(source='current_expected_ready', read_only=True, allow_null=True)
     stage_overdue = serializers.SerializerMethodField()
-    cost = serializers.DecimalField(max_digits=18, decimal_places=4, read_only=True, allow_null=True)
+    cost = serializers.SerializerMethodField()
     currency_code = serializers.SerializerMethodField()
+    mixed_currency = serializers.SerializerMethodField()
 
     def get_age_days(self, plant):
         """Report how long this plant has been growing, in whole days."""
@@ -151,9 +161,32 @@ class NurseryRegisterSerializer(serializers.Serializer):  # pylint: disable=abst
         """Compare the current stage's configured due time with now."""
         return plant.stage_due_at is not None and plant.stage_due_at < timezone.now()
 
-    def get_currency_code(self, plant):  # pylint: disable=unused-argument
-        """Name the currency the cost is expressed in, so it cannot separate."""
-        return self.context['workspace'].currency_code
+    def get_cost(self, plant):
+        """What this plant has cost, or nothing when that cannot be stated.
+
+        A plant raised on inputs bought in two currencies has no single figure
+        and no rate to make one; `costing.currency` says why none may be
+        invented here, and `costing.services.plant_cost_breakdown` refuses the
+        same way on the screen this row links to.
+        """
+        if plant.cost is None or _mixed_currency(plant):
+            return None
+        return f'{plant.cost:.4f}'
+
+    def get_currency_code(self, plant):
+        """Name the currency the cost is expressed in, so it cannot separate.
+
+        The currency the layers were actually recorded in, which is the
+        workspace's for a plant that has drawn on nothing and nothing at all
+        where two of them leave no figure to label.
+        """
+        if _mixed_currency(plant):
+            return None
+        return plant.cost_currency or self.context['workspace'].currency_code
+
+    def get_mixed_currency(self, plant):
+        """Say why there is no cost, so the screen need not guess."""
+        return _mixed_currency(plant)
 
     def get_allocation_orders(self, plant):
         """List every open quote or order currently naming this plant."""

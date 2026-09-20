@@ -22,7 +22,9 @@ from workspaces.scoping import (
     CurrentWorkspaceViewSetMixin,
     RequireWorkspaceModeMixin,
 )
+from costing.currency import held_by_currency
 from costing.models import CostAllocation
+from inventory.ledger import quantize_money
 from health.availability import with_quarantine
 
 from . import cohort_availability
@@ -83,7 +85,8 @@ class PlantCohortSerializer(serializers.ModelSerializer):
     location_name = serializers.CharField(source='location.name', read_only=True, allow_null=True)
     label_code = serializers.SerializerMethodField()
     cost = serializers.SerializerMethodField()
-    currency_code = serializers.CharField(source='workspace.currency_code', read_only=True)
+    currency_code = serializers.SerializerMethodField()
+    mixed_currency = serializers.SerializerMethodField()
     stage = serializers.SerializerMethodField()
     stage_name = serializers.SerializerMethodField()
     grade = serializers.SerializerMethodField()
@@ -104,7 +107,7 @@ class PlantCohortSerializer(serializers.ModelSerializer):
             'pk', 'batch', 'batch_code', 'variety', 'variety_name', 'plant_name',
             'source_sowing', 'quantity', 'lifecycle_state', 'location',
             'location_name', 'observed_at', 'revision', 'notes', 'label_code',
-            'cost', 'currency_code',
+            'cost', 'currency_code', 'mixed_currency',
             'stage', 'stage_name', 'grade', 'grade_name', 'container',
             'container_name', 'container_size', 'container_count', 'expected_ready',
             'quarantined', 'reserved_quantity', 'available_quantity',
@@ -150,21 +153,48 @@ class PlantCohortSerializer(serializers.ModelSerializer):
 
         return ensure_identity(cohort).codes.get(status='active').code
 
-    def get_cost(self, cohort):
-        """Sum what the stock still standing here cost, unknown preserved.
+    def __init__(self, *args, **kwargs):
+        """Read each block's layers once, however many fields report on them."""
+        super().__init__(*args, **kwargs)
+        self._standing = {}
+
+    def _standing_cost(self, cohort):
+        """Return what the stock still standing here cost, per currency.
 
         Layers for quantities already sold out of the block share this column
         and are left out: they are cost of sale, and adding them would say the
-        plants on the bench are worth what the ones that left cost too.
+        plants on the bench are worth what the ones that left cost too. An
+        unpriced layer leaves the whole figure unknown, and two currencies
+        leave it unstateable — `costing.currency` says why nothing here may
+        add them together, and `costing.services.cohort_cost_breakdown`
+        refuses the same way.
         """
-        rows = cohort.cost_allocations.filter(
-            target_type=CostAllocation.TargetType.PLANT_COHORT,
-            reversal_of__isnull=True,
-            reversal__isnull=True,
-        )
-        if rows.filter(amount__isnull=True).exists():
+        if cohort.pk not in self._standing:
+            held, unknown = held_by_currency(cohort.cost_allocations.filter(
+                target_type=CostAllocation.TargetType.PLANT_COHORT,
+                reversal_of__isnull=True,
+                reversal__isnull=True,
+            ))
+            self._standing[cohort.pk] = {} if unknown else held
+        return self._standing[cohort.pk]
+
+    def get_cost(self, cohort):
+        """What the block has cost, or nothing when that cannot be stated."""
+        held = self._standing_cost(cohort)
+        if len(held) != 1:
             return None
-        return rows.aggregate(total=Sum('amount'))['total']
+        return f'{quantize_money(next(iter(held.values()))):f}'
+
+    def get_currency_code(self, cohort):
+        """Name the currency that cost is money in, never the workspace's own."""
+        held = self._standing_cost(cohort)
+        if len(held) > 1:
+            return None
+        return next(iter(held), cohort.workspace.currency_code)
+
+    def get_mixed_currency(self, cohort):
+        """Say why there is no cost, so the screen need not guess."""
+        return len(self._standing_cost(cohort)) > 1
 
     def get_stage(self, cohort):
         if hasattr(cohort, 'current_stage'):
