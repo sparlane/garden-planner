@@ -16,6 +16,7 @@ from health.models import HealthObservation, HealthObservationType
 from inventory.models import StockLot
 from locations.models import Location
 from plantings.register import parse_register_filters, register_queryset
+from workspaces.currency import CurrencyInputSerializerMixin
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -228,7 +229,10 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
         return attrs
 
 
-class SalesOrderSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SalesOrderSerializer(
+    CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Order header, snapshotted totals, exact allocations, and margin."""
 
     status = serializers.ChoiceField(choices=SalesOrder.Status.choices, required=False)

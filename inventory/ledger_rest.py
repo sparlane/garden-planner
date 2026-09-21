@@ -21,6 +21,7 @@ from common.rest_query import (
 )
 from locations.models import Location
 from supplies.defaults import ensure_default_supplier
+from workspaces.currency import CurrencyInputSerializerMixin
 from workspaces.models import get_current_workspace
 from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
@@ -212,6 +213,7 @@ class StockReceiptLineSerializer(
 
 
 class StockReceiptSerializer(
+    CurrencyInputSerializerMixin,
     CurrentWorkspaceSerializerMixin,
     serializers.ModelSerializer,
 ):

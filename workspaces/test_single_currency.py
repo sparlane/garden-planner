@@ -1,0 +1,364 @@
+"""Multiple currencies are something a workspace turns on (task 159).
+
+A workspace that trades in one currency is not asked which one every time it
+receives a delivery. The switch governs input: while it is off the six
+documents an operator names a currency on take the workspace's own and refuse
+any other by name, and everything already recorded in another currency keeps
+it -- which is what the last class here checks, against the batch task 142
+built.
+"""
+
+# pylint: disable=duplicate-code
+
+from costing.services import batch_cost_breakdown, plant_cost_breakdown
+from costing.test_currencies import MixedCurrencyTestCase
+from inventory.models import StockReceipt
+from inventory.units import UnitCode
+from purchasing.models import BusinessExpense, PurchaseOrder, SupplierInvoice
+from sales.models import SalesOrder
+from tests.api import RESTContractTestCase
+from tests.factories import (
+    make_expense_category,
+    make_inventory_item,
+    make_location,
+    make_nursery_workspace,
+    make_supplier,
+)
+
+from .currency import currency_input_refusal
+from .models import Workspace, get_current_workspace
+
+#: What a workspace recording only New Zealand dollars says about a euro.
+REFUSAL = (
+    'This workspace records every amount in NZD, so EUR cannot be entered. '
+    'Turn on multiple currencies in workspace settings to record another.'
+)
+
+
+class MultiCurrencyDefaultTests(RESTContractTestCase):
+    """Verification 1: nobody is asked for a currency until they ask to be."""
+
+    url = '/settings/workspace/'
+
+    def test_a_workspace_enters_one_currency_until_it_is_told_otherwise(self):
+        """The field defaults off, and the migration backfilled nothing."""
+        self.assertFalse(get_current_workspace().multi_currency_enabled)
+        self.assertFalse(Workspace(name='Second bench').multi_currency_enabled)
+
+    def test_the_profile_publishes_the_switch_and_takes_it_back(self):
+        """The screen beside the currency code is where it is turned on."""
+        self.assertFalse(self.client.get(self.url).data['multi_currency_enabled'])
+
+        response = self.client.patch(
+            self.url, {'multi_currency_enabled': True}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(get_current_workspace().multi_currency_enabled)
+
+    def test_the_rule_itself_asks_the_workspace_and_nothing_else(self):
+        """Case is not part of the comparison; the switch and the code are."""
+        workspace = get_current_workspace()
+        workspace.currency_code = 'NZD'
+        self.assertIsNone(currency_input_refusal(workspace, 'nzd'))
+        self.assertIsNone(currency_input_refusal(workspace, None))
+        self.assertEqual(currency_input_refusal(workspace, 'eur'), REFUSAL)
+        workspace.multi_currency_enabled = True
+        self.assertIsNone(currency_input_refusal(workspace, 'EUR'))
+
+
+class CurrencyInputTestCase(RESTContractTestCase):
+    """One NZD nursery and the six documents a currency is entered on."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace = make_nursery_workspace()
+        self.supplier = make_supplier(workspace=self.workspace)
+        self.location = make_location()
+        self.item = make_inventory_item(base_unit=UnitCode.LITRE)
+        self.category = make_expense_category()
+
+    def receipt_payload(self, **overrides):
+        """Receive two litres of media from the supplier."""
+        return {
+            'supplier': self.supplier.pk,
+            'received_date': '2026-08-01',
+            'supplier_reference': 'DEL-159',
+            'lines': [{
+                'item': self.item.pk,
+                'quantity': '2.000000000',
+                'unit_code': UnitCode.LITRE,
+                'line_cost_ex_tax': '10.0000',
+                'supplier_cost_incl_tax': '11.5000',
+                'tax_treatment': 'standard',
+                'tax_rate': '15.0000',
+                'input_tax_source': 'supplier',
+                'input_tax_amount': '1.5000',
+                'claim_input_tax': False,
+                'claimable_percentage': '0.0000',
+                'destination': self.location.pk,
+            }],
+            **overrides,
+        }
+
+    def order_payload(self, **overrides):
+        """Order the same media rather than receiving it."""
+        return {
+            'order_number': f"PO-{overrides.pop('number', '159')}",
+            'supplier': self.supplier.pk,
+            'ordered_on': '2026-08-15',
+            'lines': [{
+                'item': self.item.pk,
+                'description': 'Growing media',
+                'quantity': '100.000000000',
+                'unit_code': UnitCode.LITRE,
+                'unit_price_ex_tax': '0.1000',
+                'tax_rate': '15.0000',
+                'freight_ex_tax': '2.0000',
+            }],
+            **overrides,
+        }
+
+    def invoice_payload(self, **overrides):
+        """Take the supplier's bill for it."""
+        return {
+            'supplier': self.supplier.pk,
+            'external_reference': f"INV-{overrides.pop('number', '159')}",
+            'invoice_date': '2026-08-21',
+            'due_date': '2026-09-20',
+            'lines': [{
+                'description': 'Growing media',
+                'is_freight': False,
+                'subtotal_ex_tax': '10.0000',
+                'tax_rate': '15.0000',
+                'tax_total': '1.5000',
+                'total_incl_tax': '11.5000',
+            }],
+            **overrides,
+        }
+
+    def payment_payload(self, **overrides):
+        """Pay the supplier."""
+        return {
+            'supplier': self.supplier.pk,
+            'paid_on': '2026-08-25',
+            'amount': '11.5000',
+            'method': 'bank_transfer',
+            'external_reference': f"PAY-{overrides.pop('number', '159')}",
+            **overrides,
+        }
+
+    def expense_payload(self, **overrides):
+        """Record a cost that brings no stock in."""
+        return {
+            'category': self.category.pk,
+            'payee': 'Saturday market',
+            'incurred_on': '2026-08-22',
+            'subtotal_ex_tax': '20.0000',
+            'tax_total': '3.0000',
+            'total_incl_tax': '23.0000',
+            **overrides,
+        }
+
+    def sales_order_payload(self, **overrides):
+        """Open a counter order to sell from."""
+        return {'status': SalesOrder.Status.DRAFT, 'notes': 'Counter order', **overrides}
+
+    def entry_points(self, **overrides):
+        """Return one create request per document a currency is entered on."""
+        return (
+            ('receipt', '/inventory/receipts/', self.receipt_payload(**overrides)),
+            ('purchase order', '/purchasing/orders/', self.order_payload(**overrides)),
+            ('supplier invoice', '/purchasing/invoices/', self.invoice_payload(**overrides)),
+            ('supplier payment', '/purchasing/payments/', self.payment_payload(**overrides)),
+            ('business expense', '/purchasing/expenses/', self.expense_payload(**overrides)),
+            ('sales order', '/sales/orders/', self.sales_order_payload(**overrides)),
+        )
+
+    def assert_nothing_was_written(self):
+        """A refused currency leaves no document of any kind behind."""
+        for model in (
+            StockReceipt, PurchaseOrder, SupplierInvoice, BusinessExpense, SalesOrder,
+        ):
+            self.assertEqual(model.objects.count(), 0, model.__name__)
+
+
+class SingleCurrencyInputTests(CurrencyInputTestCase):
+    """Verifications 2 and 3: the workspace's own currency, and no other."""
+
+    def test_the_workspaces_own_currency_is_accepted_where_it_is_named(self):
+        """A client that fills the field in correctly has done nothing wrong."""
+        for name, url, payload in self.entry_points(currency_code='NZD'):
+            with self.subTest(document=name):
+                response = self.client.post(url, payload, format='json')
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(response.data['currency_code'], 'NZD')
+
+    def test_a_document_that_names_no_currency_is_filed_in_the_workspaces(self):
+        """Receiving and sales already defaulted, and the default is the one."""
+        receipt = self.client.post(
+            '/inventory/receipts/', self.receipt_payload(), format='json',
+        )
+        self.assertEqual(receipt.status_code, 201, receipt.data)
+        self.assertEqual(receipt.data['currency_code'], 'NZD')
+
+        order = self.client.post(
+            '/sales/orders/', self.sales_order_payload(), format='json',
+        )
+        self.assertEqual(order.status_code, 201, order.data)
+        self.assertEqual(order.data['currency_code'], 'NZD')
+
+    def test_another_currency_is_refused_by_name_and_nothing_is_written(self):
+        """Not ignored, and not overwritten: said out loud and turned away."""
+        for name, url, payload in self.entry_points(currency_code='EUR'):
+            with self.subTest(document=name):
+                response = self.client.post(url, payload, format='json')
+                self.assertEqual(response.status_code, 400, response.data)
+                self.assertEqual(
+                    [str(message) for message in response.data['currency_code']],
+                    [REFUSAL],
+                )
+        self.assert_nothing_was_written()
+
+    def test_converting_a_requisition_refuses_the_same_currency(self):
+        """The one currency entered through an action, not a document."""
+        requisition = self.client.post('/purchasing/requisitions/', {
+            'item': self.item.pk,
+            'required_on': '2026-09-10',
+            'quantity': '100.000000000',
+            'unit_code': UnitCode.LITRE,
+            'preferred_supplier': self.supplier.pk,
+            'estimated_total_incl_tax': '11.5000',
+            'notes': 'The benches are out of media.',
+        }, format='json')
+        self.assertEqual(requisition.status_code, 201, requisition.data)
+        reviewed = self.client.post(
+            f"/purchasing/requisitions/{requisition.data['pk']}/review/", {},
+            format='json',
+        )
+        self.assertEqual(reviewed.status_code, 200, reviewed.data)
+
+        response = self.client.post(
+            f"/purchasing/requisitions/{requisition.data['pk']}/order/", {
+                'order_number': 'PO-REQ-159',
+                'supplier': self.supplier.pk,
+                'ordered_on': '2026-08-15',
+                'currency_code': 'EUR',
+                'unit_price_ex_tax': '0.1000',
+                'tax_rate': '15.0000',
+            }, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [str(message) for message in response.data['currency_code']], [REFUSAL],
+        )
+
+
+class MultiCurrencyInputTests(CurrencyInputTestCase):
+    """Verification 4: with the switch on, every one of them is unchanged."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.multi_currency_enabled = True
+        self.workspace.save()
+
+    def test_every_document_takes_the_currency_it_is_given(self):
+        """This is what the application did before the switch existed."""
+        for name, url, payload in self.entry_points(currency_code='EUR'):
+            with self.subTest(document=name):
+                response = self.client.post(url, payload, format='json')
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(response.data['currency_code'], 'EUR')
+
+
+class ForeignRecordsSurviveTheSwitchTests(CurrencyInputTestCase):
+    """A document received abroad keeps its currency and still shows it."""
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.multi_currency_enabled = True
+        self.workspace.save()
+        created = self.client.post(
+            '/inventory/receipts/', self.receipt_payload(currency_code='EUR'),
+            format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        self.receipt = created.data
+        self.workspace.multi_currency_enabled = False
+        self.workspace.save()
+
+    def test_the_draft_still_says_what_it_was_entered_in(self):
+        """Turning the switch off hides the question, not the answer."""
+        response = self.client.get(f"/inventory/receipts/{self.receipt['pk']}/")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['currency_code'], 'EUR')
+
+    def test_an_unrelated_edit_leaves_the_currency_where_it_is(self):
+        """What the receiving form sends: everything except the currency."""
+        response = self.client.patch(
+            f"/inventory/receipts/{self.receipt['pk']}/",
+            {'notes': 'Checked against the packing list.'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['currency_code'], 'EUR')
+        self.assertEqual(
+            StockReceipt.objects.get(pk=self.receipt['pk']).currency_code, 'EUR',
+        )
+
+    def test_sending_the_stored_currency_back_is_entering_it_again(self):
+        """The refusal cannot tell an echo from an entry, and says so plainly."""
+        response = self.client.patch(
+            f"/inventory/receipts/{self.receipt['pk']}/",
+            {'currency_code': 'EUR'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [str(message) for message in response.data['currency_code']], [REFUSAL],
+        )
+
+
+class MixedCostsStillRefuseWithTheSwitchOffTests(MixedCurrencyTestCase):
+    """Verification 5: task 142 does not depend on the switch being on.
+
+    The batch is the one 142 measured -- a USD seed lot, a USD media
+    application and a EUR one -- in a workspace that has never turned multiple
+    currencies on, which is now every workspace by default. The stock is
+    there, so the refusal has to be too.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.plant = self.germinated_plant()
+
+    def test_the_workspace_holding_the_mixture_has_the_switch_off(self):
+        """The fixture is the state the migration leaves every workspace in."""
+        self.assertFalse(self.workspace.multi_currency_enabled)
+
+    def test_the_batch_still_states_both_totals_and_no_combined_figure(self):
+        """1.08 USD and 0.08 EUR, and still never 1.1600."""
+        breakdown = batch_cost_breakdown(self.batch)
+        self.assertTrue(breakdown['mixed_currency'])
+        self.assertIsNone(breakdown['provisional_total'])
+        self.assertEqual(
+            [(row['currency_code'], row['amount']) for row in breakdown['currencies']],
+            [('EUR', '0.0800'), ('USD', '1.0800')],
+        )
+        self.assertNotIn('1.1600', repr(breakdown))
+
+    def test_the_foreign_lot_still_carries_the_currency_it_was_bought_in(self):
+        """Nothing relabelled the euro media as dollars when the switch went off."""
+        self.assertEqual(self.euro_media.currency_code, 'EUR')
+        self.assertEqual(
+            sorted((row.currency_code, f'{row.amount:.4f}') for row in self.effective()),
+            [('EUR', '0.0800'), ('USD', '0.0800'), ('USD', '1.0000')],
+        )
+
+    def test_the_plant_raised_on_it_still_states_no_value(self):
+        """The refusal reaches the plant, which is where a sale reads it."""
+        breakdown = plant_cost_breakdown(self.plant)
+        self.assertTrue(breakdown['mixed_currency'])
+        self.assertIsNone(breakdown['currency_code'])
+        self.assertIsNone(breakdown['provisional_value'])
