@@ -20,6 +20,11 @@ interface Workspace {
   mode: WorkspaceMode
   garden_experience: GardenExperience
   currency_code: string
+  // Whether a record may be entered in a currency other than currency_code.
+  // Off hides every currency input; a record already in another currency
+  // keeps it and is still displayed in it. Use multiCurrency() from
+  // workspace_mode rather than reading this field in a screen.
+  multi_currency_enabled: boolean
   default_tax_rate: string
   sales_prices_include_tax: boolean
   timezone: string
@@ -43,6 +48,7 @@ type WorkspaceUpdate = Pick<
   | 'mode'
   | 'garden_experience'
   | 'currency_code'
+  | 'multi_currency_enabled'
   | 'default_tax_rate'
   | 'sales_prices_include_tax'
   | 'timezone'
