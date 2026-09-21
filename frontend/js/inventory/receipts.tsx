@@ -10,10 +10,11 @@ import { getSuppliers } from '../api/supplies'
 import { activeChoices } from '../catalog'
 import { queryKeys } from '../query'
 import { StockReceiptStatus } from '../types/inventory'
+import { Workspace } from '../types/workspace'
 import { ReceiptEditor } from './receipt_editor'
 import { ReceiptTable } from './receipt_list'
 
-function InventoryReceiptsView() {
+function InventoryReceiptsView({ workspace }: { workspace: Workspace }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [status, setStatus] = React.useState<StockReceiptStatus>('draft')
   const [editing, setEditing] = React.useState<number | 'new' | null>(() => (searchParams.get('new') === '1' ? 'new' : null))
@@ -65,6 +66,7 @@ function InventoryReceiptsView() {
       {editing !== null && (
         <ReceiptEditor
           key={editing}
+          workspace={workspace}
           receipt={editingReceipt}
           items={items}
           locations={locations}

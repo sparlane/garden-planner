@@ -41,6 +41,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     mode: workspace.mode,
     garden_experience: workspace.garden_experience,
     currency_code: workspace.currency_code,
+    multi_currency_enabled: workspace.multi_currency_enabled,
     default_tax_rate: workspace.default_tax_rate,
     sales_prices_include_tax: workspace.sales_prices_include_tax,
     timezone: workspace.timezone,
@@ -71,6 +72,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       mode: workspace.mode,
       garden_experience: workspace.garden_experience,
       currency_code: workspace.currency_code,
+      multi_currency_enabled: workspace.multi_currency_enabled,
       default_tax_rate: workspace.default_tax_rate,
       sales_prices_include_tax: workspace.sales_prices_include_tax,
       timezone: workspace.timezone,
@@ -172,6 +174,17 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
             aria-describedby="workspace-currency-help"
           />
           <Form.Text id="workspace-currency-help">Three-letter ISO 4217 code, such as USD or NZD.</Form.Text>
+        </Form.Group>
+        <Form.Group className="mb-3" controlId="workspace-multi-currency">
+          <Form.Check
+            label="Records may be entered in other currencies"
+            checked={form.multi_currency_enabled}
+            onChange={(event) => updateField('multi_currency_enabled', event.target.checked)}
+          />
+          <Form.Text>
+            Off asks for no currency at all: receiving, purchases and sales are filed in the code above. Turning it off leaves records already in another currency alone &mdash;
+            they keep it, still show it, and still refuse to be totalled with anything else.
+          </Form.Text>
         </Form.Group>
         <Form.Group className="mb-3" controlId="workspace-tax-rate">
           <Form.Label>Default tax rate (%)</Form.Label>

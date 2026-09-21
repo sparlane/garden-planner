@@ -244,7 +244,7 @@ function FrontEndPage() {
         <Route path="/plantings/yield" element={<YieldReportView />} />
         <Route path="/locations" element={<LocationsCatalog />} />
         <Route path="/inventory" element={<InventoryCatalog />} />
-        <Route path="/inventory/receipts" element={<InventoryReceiptsView />} />
+        <Route path="/inventory/receipts" element={<InventoryReceiptsView workspace={workspace} />} />
         <Route path="/inventory/stocktakes" element={<StocktakeListView />} />
         <Route path="/inventory/stocktakes/:stocktakeId" element={<StocktakeDetailView />} />
         <Route path="/inventory/serialized-units" element={<NumberedUnitLookup />} />

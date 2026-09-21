@@ -18,6 +18,8 @@ import {
 } from '../types/inventory'
 import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
+import { Workspace } from '../types/workspace'
+import { multiCurrency } from '../workspace_mode'
 import { queryKeys } from '../query'
 import { documentErrors, invalidateReceipts, lineFieldErrors, localErrorMessage } from './receipt_list'
 
@@ -387,6 +389,7 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
 }
 
 interface ReceiptEditorProps {
+  workspace: Workspace
   receipt?: StockReceipt
   items: Array<InventoryItem>
   locations: Array<Location>
@@ -399,7 +402,7 @@ interface ReceiptEditorProps {
 // The parent mounts this with a key derived from which draft is open, so
 // switching drafts re-initialises every field instead of syncing props in an
 // effect.
-function ReceiptEditor({ receipt, items, locations, suppliers, units, seedTrayItemIds, onClosed }: ReceiptEditorProps) {
+function ReceiptEditor({ workspace, receipt, items, locations, suppliers, units, seedTrayItemIds, onClosed }: ReceiptEditorProps) {
   const queryClient = useQueryClient()
   const nextKey = React.useRef(0)
 
@@ -473,7 +476,10 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, seedTrayIt
         notes,
         // Blank means "whatever the workspace says", which the server fills in
         // and returns, so these inputs populate themselves after the first save.
-        ...(currencyCode.trim() === '' ? {} : { currency_code: currencyCode }),
+        // A workspace that enters one currency sends none at all, even where a
+        // draft already carries a foreign one: the server keeps what is stored,
+        // and sending it back would be entering it again, which it refuses.
+        ...(!multiCurrency(workspace) || currencyCode.trim() === '' ? {} : { currency_code: currencyCode }),
         lines: lines.map(linePayload)
       }
       return receiptPk === null ? createStockReceipt(payload) : updateStockReceipt(receiptPk, payload)
@@ -528,12 +534,27 @@ function ReceiptEditor({ receipt, items, locations, suppliers, units, seedTrayIt
               <Form.Control value={supplierReference} placeholder="Invoice or docket number" onChange={(event) => setSupplierReference(event.target.value)} />
             </Form.Group>
           </Col>
-          <Col md={2}>
-            <Form.Group className="mb-3" controlId="receipt-currency">
-              <Form.Label>Currency</Form.Label>
-              <Form.Control value={currencyCode} placeholder="Workspace default" onChange={(event) => setCurrencyCode(event.target.value)} />
-            </Form.Group>
-          </Col>
+          {multiCurrency(workspace) ? (
+            <Col md={2}>
+              <Form.Group className="mb-3" controlId="receipt-currency">
+                <Form.Label>Currency</Form.Label>
+                <Form.Control value={currencyCode} placeholder="Workspace default" onChange={(event) => setCurrencyCode(event.target.value)} />
+              </Form.Group>
+            </Col>
+          ) : (
+            // Nothing to ask while the workspace enters one currency, but a
+            // draft received before the switch was turned off still says what
+            // it is in, because the amounts below are in that currency.
+            currencyCode.trim() !== '' &&
+            currencyCode !== workspace.currency_code && (
+              <Col md={2}>
+                <Form.Group className="mb-3">
+                  <Form.Label>Currency</Form.Label>
+                  <div className="form-control-plaintext">{currencyCode}</div>
+                </Form.Group>
+              </Col>
+            )
+          )}
           <Col md={2}>
             <Form.Group className="mb-3" controlId="receipt-invoice-date">
               <Form.Label>Invoice date</Form.Label>
