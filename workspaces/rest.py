@@ -19,6 +19,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
             'mode',
             'garden_experience',
             'currency_code',
+            'multi_currency_enabled',
             'default_tax_rate',
             'sales_prices_include_tax',
             'timezone',

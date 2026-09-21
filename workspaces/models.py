@@ -119,6 +119,16 @@ class Workspace(models.Model):
             ),
         ],
     )
+    multi_currency_enabled = models.BooleanField(
+        default=False,
+        help_text=(
+            'Whether a new record may be entered in a currency other than the '
+            'workspace currency. While off, no currency is asked for and every '
+            'new record is filed in the workspace currency. It governs input '
+            'only: a record already in another currency keeps it, is still '
+            'displayed in it, and is still refused a combined total.'
+        ),
+    )
     default_tax_rate = models.DecimalField(
         max_digits=7,
         decimal_places=4,

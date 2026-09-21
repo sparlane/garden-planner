@@ -12,6 +12,7 @@ from rest_framework.views import APIView
 from common.catalog import CatalogViewSetMixin
 from inventory.models import StockReceiptLine
 from supplies.models import Supplier
+from workspaces.currency import CurrencyInputSerializerMixin
 from workspaces.models import get_current_workspace
 from workspaces.scoping import (
     CurrentWorkspaceCatalogSerializer,
@@ -99,7 +100,7 @@ class PurchaseRequisitionSerializer(CurrentWorkspaceSerializerMixin, serializers
         ]
 
 
-class RequisitionOrderSerializer(ActionSerializer):
+class RequisitionOrderSerializer(CurrencyInputSerializerMixin, ActionSerializer):
     """Commercial terms used to convert one reviewed need into an order."""
 
     order_number = serializers.CharField()
@@ -166,7 +167,10 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
         ]
 
 
-class PurchaseOrderWriteSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class PurchaseOrderWriteSerializer(
+    CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Nested draft purchase-order input."""
 
     lines = PurchaseOrderLineSerializer(many=True, allow_empty=False)
@@ -314,7 +318,10 @@ class SupplierInvoiceSerializer(serializers.ModelSerializer):
         return invoice_state(invoice)
 
 
-class SupplierInvoiceWriteSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SupplierInvoiceWriteSerializer(
+    CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Nested draft supplier-invoice input."""
 
     lines = SupplierInvoiceLineSerializer(many=True, allow_empty=False)
@@ -383,7 +390,10 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class SupplierPaymentWriteSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SupplierPaymentWriteSerializer(
+    CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """One payment with zero or more explicit invoice allocations."""
 
     allocations = SupplierPaymentAllocationSerializer(many=True, required=False)
@@ -418,7 +428,10 @@ class ReasonSerializer(ActionSerializer):
     reason = serializers.CharField()
 
 
-class BusinessExpenseSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class BusinessExpenseSerializer(
+    CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """A non-stock business cost with optional operational allocation."""
 
     workspace_field_lookups = {
