@@ -23,6 +23,7 @@ from workspaces.scoping import (
     CurrentWorkspaceViewSetMixin,
     RequireWorkspaceModeMixin,
 )
+from workspaces.tax import TaxRateInputSerializerMixin
 
 from .commerce import (
     order_commerce_summary,
@@ -186,7 +187,10 @@ class ShortfallSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SalesOrderLineSerializer(
+    TaxRateInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Editable commercial terms and read-only concrete allocations."""
 
     quantity = CommerceQuantityField()
@@ -209,6 +213,10 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
             'gross_ex_tax', 'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
             'total_incl_tax', 'created', 'updated',
         ]
+        # The column carries no model default, so the field would otherwise be
+        # built required and a line that leaves the rate to the workspace would
+        # be refused before `validate` was reached.
+        extra_kwargs = {'tax_rate': {'required': False}}
 
     workspace_field_lookups = {
         'order': 'workspace',
@@ -221,12 +229,11 @@ class SalesOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.Mode
         order = self.instance.order if self.instance else attrs['order']
         if order.status not in {SalesOrder.Status.QUOTE, SalesOrder.Status.DRAFT}:
             raise ValidationError({'order': 'Confirmed commercial terms are immutable.'})
-        if self.instance is None and 'tax_rate' not in attrs:
-            attrs['tax_rate'] = attrs['order'].workspace.default_tax_rate
         # A blank treatment is filled by the model from the rate: above zero is
         # a standard-rated supply by definition, and zero stays unclassified
-        # rather than being guessed at.
-        return attrs
+        # rather than being guessed at. So a blank treatment takes the fill and
+        # a stated one that is not standard keeps its zero.
+        return self.fill_tax_rate(attrs)
 
 
 class SalesOrderSerializer(

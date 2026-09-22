@@ -19,6 +19,7 @@ from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
 )
+from workspaces.tax import TaxRateInputSerializerMixin
 
 from .models import (
     BusinessExpense,
@@ -100,7 +101,9 @@ class PurchaseRequisitionSerializer(CurrentWorkspaceSerializerMixin, serializers
         ]
 
 
-class RequisitionOrderSerializer(CurrencyInputSerializerMixin, ActionSerializer):
+class RequisitionOrderSerializer(
+    TaxRateInputSerializerMixin, CurrencyInputSerializerMixin, ActionSerializer,
+):
     """Commercial terms used to convert one reviewed need into an order."""
 
     order_number = serializers.CharField()
@@ -109,7 +112,9 @@ class RequisitionOrderSerializer(CurrencyInputSerializerMixin, ActionSerializer)
     expected_on = serializers.DateField(required=False, allow_null=True)
     currency_code = serializers.CharField(max_length=3)
     unit_price_ex_tax = serializers.DecimalField(max_digits=18, decimal_places=4)
-    tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4)
+    # Optional so that the workspace's rate can fill it. An order line has no
+    # tax treatment of its own, so there is nothing to classify it away from it.
+    tax_rate = serializers.DecimalField(max_digits=7, decimal_places=4, required=False)
     freight_ex_tax = serializers.DecimalField(max_digits=18, decimal_places=4, required=False, default=0)
     notes = serializers.CharField(required=False, allow_blank=True)
 
@@ -119,8 +124,15 @@ class RequisitionOrderSerializer(CurrencyInputSerializerMixin, ActionSerializer)
         return supplier
 
 
-class PurchaseOrderLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
-    """Entered order terms plus derived delivery state."""
+class PurchaseOrderLineSerializer(
+    TaxRateInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
+    """Entered order terms plus derived delivery state.
+
+    The line has no tax treatment column, so every line is standard-rated by
+    construction and an omitted rate is always the workspace's.
+    """
 
     state = serializers.SerializerMethodField()
     workspace_field_lookups = {
@@ -254,8 +266,13 @@ class ExpenseCategorySerializer(CurrentWorkspaceCatalogSerializer):
         fields = ['pk', 'name', 'active', 'notes', 'merged_into']
 
 
-class SupplierInvoiceLineSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class SupplierInvoiceLineSerializer(
+    TaxRateInputSerializerMixin, CurrentWorkspaceSerializerMixin,
+    serializers.ModelSerializer,
+):
     """Invoice money reconciled to stock, freight, or an expense category."""
+
+    unstated_tax_treatment = 'unknown'
 
     workspace_field_lookups = {
         'purchase_order_line': 'order__workspace',
