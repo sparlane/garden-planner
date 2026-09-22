@@ -24,4 +24,21 @@ function multiCurrency(workspace: Workspace): boolean {
   return workspace.multi_currency_enabled
 }
 
-export { isAdvanced, multiCurrency }
+/**
+ * The rate to open a line's tax box on, given the treatment it carries.
+ *
+ * Mirrors `workspaces.tax.unentered_tax_rate`, which the server applies to a
+ * request that names no rate. Only a standard-rated supply carries one: a
+ * zero-rated export, an exempt supply, something outside the tax and a line
+ * nobody has classified yet are all `'0'`, and the database refuses the other
+ * pairing. Pass no treatment where the line has no treatment to carry.
+ *
+ * It is a starting value and never a constraint — the box stays open, because
+ * an import and an overseas invoice are ordinary.
+ */
+function defaultTaxRate(workspace: Workspace, treatment?: string): string {
+  if (treatment !== undefined && treatment !== '' && treatment !== 'standard') return '0'
+  return workspace.default_tax_rate
+}
+
+export { defaultTaxRate, isAdvanced, multiCurrency }

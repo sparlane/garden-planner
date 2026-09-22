@@ -12,7 +12,7 @@ import { Seed, SeedCreate, SeedPacket, SeedPacketProvenance, SeedPacketReceiptCr
 import { Plant, PlantVariety } from './types/plants'
 import { SelectOption } from './types/others'
 import { Workspace } from './types/workspace'
-import { isAdvanced } from './workspace_mode'
+import { defaultTaxRate, isAdvanced } from './workspace_mode'
 import { getPlants, getPlantVarieties } from './api/plants'
 import {
   addSeed,
@@ -784,7 +784,9 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
   const [sourceDocumentNumber, setSourceDocumentNumber] = React.useState(draft?.source_document_number ?? '')
   const [evidenceReference, setEvidenceReference] = React.useState(draft?.evidence_reference ?? '')
   const [evidenceUrl, setEvidenceUrl] = React.useState(draft?.evidence_url ?? '')
-  const [taxRate, setTaxRate] = React.useState(draft?.tax_rate ?? '')
+  // The box is only shown for a standard-rated packet, so it opens on what
+  // the workspace charges and the operator changes it only for an import.
+  const [taxRate, setTaxRate] = React.useState(draft?.tax_rate ?? defaultTaxRate(workspace, 'standard'))
   const [taxTreatment, setTaxTreatment] = React.useState<PurchaseTaxTreatment>(draft?.tax_treatment ?? 'unknown')
   const [inputTaxSource, setInputTaxSource] = React.useState<InputTaxSource>(draft?.input_tax_source ?? 'none')
   const [inputTaxAmount, setInputTaxAmount] = React.useState(draft?.input_tax_amount ?? '0')

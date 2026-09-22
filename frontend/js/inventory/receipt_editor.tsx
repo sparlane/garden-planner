@@ -19,7 +19,7 @@ import {
 import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
 import { Workspace } from '../types/workspace'
-import { multiCurrency } from '../workspace_mode'
+import { defaultTaxRate, multiCurrency } from '../workspace_mode'
 import { queryKeys } from '../query'
 import { documentErrors, invalidateReceipts, lineFieldErrors, localErrorMessage } from './receipt_list'
 
@@ -136,6 +136,7 @@ function receivableItems(items: Array<InventoryItem>, seedTrayItemIds: Set<numbe
 interface LineRowProps {
   line: ReceiptLineDraft
   index: number
+  workspace: Workspace
   items: Array<InventoryItem>
   locations: Array<Location>
   units: Array<InventoryUnit>
@@ -145,7 +146,7 @@ interface LineRowProps {
   onRemove: (key: string) => void
 }
 
-function LineRow({ line, index, items, locations, units, errors, removable, onChange, onRemove }: LineRowProps) {
+function LineRow({ line, index, workspace, items, locations, units, errors, removable, onChange, onRemove }: LineRowProps) {
   const chosenItem = items.find((item) => item.pk === line.item)
   const serializedTray = chosenItem?.tracking_mode === 'serialized'
   const { data: conversions = [] } = useQuery({
@@ -160,6 +161,15 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
   const standardUnits = family === undefined ? [] : units.filter((unit) => unit.reference_unit === family)
   const packageUnits = conversions.filter((conversion) => conversion.active)
   const unknown = line.quantityCertainty === 'unknown'
+
+  // A line switched to standard-rated opens on what the workspace charges
+  // rather than on the zero a new line carries, which is the one pairing the
+  // model refuses outright. A rate already typed on this line survives the
+  // switch, because it was typed on purpose.
+  function chooseTreatment(taxTreatment: PurchaseTaxTreatment) {
+    const typed = taxTreatment === 'standard' && Number(line.taxRate) > 0
+    onChange(line.key, { taxTreatment, taxRate: typed ? line.taxRate : defaultTaxRate(workspace, taxTreatment) })
+  }
 
   return (
     <tr>
@@ -274,12 +284,7 @@ function LineRow({ line, index, items, locations, units, errors, removable, onCh
           isInvalid={errors.supplier_cost_incl_tax !== undefined}
           onChange={(event) => onChange(line.key, { supplierCostInclTax: event.target.value })}
         />
-        <Form.Select
-          size="sm"
-          className="mt-1"
-          value={line.taxTreatment}
-          onChange={(event) => onChange(line.key, { taxTreatment: event.target.value as PurchaseTaxTreatment, taxRate: event.target.value === 'standard' ? line.taxRate : '0' })}
-        >
+        <Form.Select size="sm" className="mt-1" value={line.taxTreatment} onChange={(event) => chooseTreatment(event.target.value as PurchaseTaxTreatment)}>
           <option value="unknown">Tax treatment unknown</option>
           <option value="standard">Standard-rated</option>
           <option value="zero_rated">Zero-rated</option>
@@ -624,6 +629,7 @@ function ReceiptEditor({ workspace, receipt, items, locations, suppliers, units,
                 key={line.key}
                 line={line}
                 index={index}
+                workspace={workspace}
                 items={selectableItems}
                 locations={selectableLocations}
                 units={units}
