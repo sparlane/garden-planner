@@ -20,6 +20,7 @@ from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
 )
+from workspaces.tax import TaxRateInputSerializerMixin
 
 from supplies.defaults import ensure_default_supplier
 from supplies.models import Supplier
@@ -211,10 +212,13 @@ class SeedPacketSerializer(serializers.ModelSerializer):
 
 
 class PacketReceiptDraftSerializer(
+    TaxRateInputSerializerMixin,
     CurrentWorkspaceSerializerMixin,
     serializers.Serializer,
 ):
     """Validate and render one seed-focused one-line receipt draft."""
+
+    unstated_tax_treatment = StockReceiptLine.TaxTreatment.UNKNOWN
 
     pk = serializers.IntegerField(read_only=True)
     seeds = serializers.PrimaryKeyRelatedField(queryset=Seeds.objects.all())
@@ -314,7 +318,9 @@ class PacketReceiptDraftSerializer(
                 raise ValidationError({
                     'seeds': 'Create a new draft to change the seed catalog.',
                 })
-        return attrs
+        # The draft writes a receipt line, so a packet bought at the ordinary
+        # rate takes the workspace's the same way a delivery of media does.
+        return self.fill_tax_rate(attrs)
 
     def create(self, validated_data):
         request = self.context['request']

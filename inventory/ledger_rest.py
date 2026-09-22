@@ -27,6 +27,7 @@ from workspaces.scoping import (
     CurrentWorkspaceSerializerMixin,
     CurrentWorkspaceViewSetMixin,
 )
+from workspaces.tax import TaxRateInputSerializerMixin
 
 from .serialized_rest import InventoryUnitSerializer
 from .ledger import (
@@ -94,10 +95,13 @@ def _run_domain_action(function, *args):
 
 
 class StockReceiptLineSerializer(
+    TaxRateInputSerializerMixin,
     CurrentWorkspaceSerializerMixin,
     serializers.ModelSerializer,
 ):
     """Serialize one normalized line nested inside a stock receipt."""
+
+    unstated_tax_treatment = StockReceiptLine.TaxTreatment.UNKNOWN
 
     base_quantity = serializers.DecimalField(
         max_digits=24,
@@ -209,7 +213,10 @@ class StockReceiptLineSerializer(
             certainty,
             attrs['base_quantity'],
         )
-        return attrs
+        # Last, because a line refused above never reaches a rate. `unknown` is
+        # the stored default and is a statement that nobody has classified the
+        # supply, so only a line said to be standard-rated takes the fill.
+        return self.fill_tax_rate(attrs)
 
 
 class StockReceiptSerializer(
