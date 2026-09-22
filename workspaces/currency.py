@@ -24,8 +24,8 @@ def currency_input_refusal(workspace, value):
     None where there is nothing to say: any currency while the switch is on,
     and the workspace's own while it is off. Case is not part of the
     comparison, because a code an operator typed in lower case is the same
-    code; what shape a code may take is the model field's own validator to
-    state, and it has already run by the time this is asked.
+    code -- but it is not the same *string*, which is why the mixin below
+    stores what it accepted rather than what it was handed.
     """
     if workspace.multi_currency_enabled or value is None:
         return None
@@ -48,6 +48,16 @@ class CurrencyInputSerializerMixin:  # pylint: disable=too-few-public-methods
     one -- an omitted currency is filled in from the workspace where the
     serializer already did so, which is what "the workspace's own currency is
     used" means.
+
+    What it accepts, it stores in upper case. Only four of the columns it
+    reaches state the shape of a code themselves -- ``StockReceipt``,
+    ``PurchaseOrder``, ``SupplierInvoice`` and ``SalesOrder`` carry the ISO
+    4217 validator, and it does run before this method. The rest are a bare
+    three-character column, so ``nzd`` would be stored exactly as typed and
+    then fail to equal ``NZD`` in every reader that asks: ``build_report``
+    (``bookkeeping.services``), the grouping task 142 refuses a mixture on,
+    ``post_receipt`` (``inventory.ledger``) and ``sales.fill_containers`` all
+    compare the three letters and nothing else.
     """
 
     def validate_currency_code(self, value):
@@ -55,4 +65,4 @@ class CurrencyInputSerializerMixin:  # pylint: disable=too-few-public-methods
         refusal = currency_input_refusal(get_current_workspace(), value)
         if refusal:
             raise serializers.ValidationError(refusal)
-        return value
+        return value if value is None else value.strip().upper()

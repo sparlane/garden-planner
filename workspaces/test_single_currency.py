@@ -14,7 +14,12 @@ from costing.services import batch_cost_breakdown, plant_cost_breakdown
 from costing.test_currencies import MixedCurrencyTestCase
 from inventory.models import StockReceipt
 from inventory.units import UnitCode
-from purchasing.models import BusinessExpense, PurchaseOrder, SupplierInvoice
+from purchasing.models import (
+    BusinessExpense,
+    PurchaseOrder,
+    SupplierInvoice,
+    SupplierPayment,
+)
 from sales.models import SalesOrder
 from tests.api import RESTContractTestCase
 from tests.factories import (
@@ -178,7 +183,8 @@ class CurrencyInputTestCase(RESTContractTestCase):
     def assert_nothing_was_written(self):
         """A refused currency leaves no document of any kind behind."""
         for model in (
-            StockReceipt, PurchaseOrder, SupplierInvoice, BusinessExpense, SalesOrder,
+            StockReceipt, PurchaseOrder, SupplierInvoice, SupplierPayment,
+            BusinessExpense, SalesOrder,
         ):
             self.assertEqual(model.objects.count(), 0, model.__name__)
 
@@ -207,6 +213,35 @@ class SingleCurrencyInputTests(CurrencyInputTestCase):
         )
         self.assertEqual(order.status_code, 201, order.data)
         self.assertEqual(order.data['currency_code'], 'NZD')
+
+    def test_a_currency_typed_in_lower_case_is_stored_in_upper(self):
+        """What is stored, not only what is accepted.
+
+        Four of the columns state the shape of a code themselves and turn
+        `nzd` away before the rule is reached. The rest are a bare
+        three-character column, and a row reading `nzd` would look foreign to
+        every reader that compares the code -- a two-currency mixture invented
+        out of a shift key. So what is accepted is normalized, not echoed.
+        """
+        payment = self.client.post(
+            '/purchasing/payments/', self.payment_payload(currency_code='nzd'),
+            format='json',
+        )
+        self.assertEqual(payment.status_code, 201, payment.data)
+        self.assertEqual(payment.data['currency_code'], 'NZD')
+        self.assertEqual(
+            SupplierPayment.objects.get(pk=payment.data['pk']).currency_code, 'NZD',
+        )
+
+        expense = self.client.post(
+            '/purchasing/expenses/', self.expense_payload(currency_code='nzd'),
+            format='json',
+        )
+        self.assertEqual(expense.status_code, 201, expense.data)
+        self.assertEqual(expense.data['currency_code'], 'NZD')
+        self.assertEqual(
+            BusinessExpense.objects.get(pk=expense.data['pk']).currency_code, 'NZD',
+        )
 
     def test_another_currency_is_refused_by_name_and_nothing_is_written(self):
         """Not ignored, and not overwritten: said out loud and turned away."""
