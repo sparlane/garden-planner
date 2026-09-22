@@ -33,6 +33,7 @@ import { InventoryItem, PurchaseTaxTreatment, StockReceipt, StockReceiptLine } f
 import { ExpenseCategory, PurchaseOrder, PurchaseOrderLine, SupplierInvoice } from './types/purchasing'
 import { Workspace } from './types/workspace'
 import { errorsByField, formatMoney, sumMoney } from './utils'
+import { defaultTaxRate } from './workspace_mode'
 
 type PurchasingTab = 'dashboard' | 'requisitions' | 'orders' | 'invoices' | 'expenses'
 type AmountBasis = 'incl' | 'excl'
@@ -486,7 +487,15 @@ function Invoices({
             <Button
               variant="outline-secondary"
               onClick={() =>
-                addLine({ kind: 'freight', receiptLine: null, expenseCategory: '', description: 'Freight', subtotal: '0', taxRate: workspace.default_tax_rate, tax: '0' })
+                addLine({
+                  kind: 'freight',
+                  receiptLine: null,
+                  expenseCategory: '',
+                  description: 'Freight',
+                  subtotal: '0',
+                  taxRate: defaultTaxRate(workspace, 'standard'),
+                  tax: '0'
+                })
               }
             >
               Add freight
@@ -496,7 +505,9 @@ function Invoices({
             <Button
               variant="outline-secondary"
               disabled={categories.length === 0}
-              onClick={() => addLine({ kind: 'expense', receiptLine: null, expenseCategory: '', description: '', subtotal: '0', taxRate: workspace.default_tax_rate, tax: '0' })}
+              onClick={() =>
+                addLine({ kind: 'expense', receiptLine: null, expenseCategory: '', description: '', subtotal: '0', taxRate: defaultTaxRate(workspace, 'standard'), tax: '0' })
+              }
             >
               Add other charge
             </Button>
@@ -752,7 +763,7 @@ function Orders({
   const [expected, setExpected] = React.useState('')
   const [quantity, setQuantity] = React.useState('1')
   const [unitPrice, setUnitPrice] = React.useState('0')
-  const [taxRate, setTaxRate] = React.useState(workspace.default_tax_rate)
+  const [taxRate, setTaxRate] = React.useState(defaultTaxRate(workspace, 'standard'))
   const [freight, setFreight] = React.useState('0')
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })

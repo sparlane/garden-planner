@@ -56,6 +56,7 @@ import {
 import { InventoryItem } from './types/inventory'
 import { Workspace } from './types/workspace'
 import { formatDate, formatDateTime, formatHoldRemaining, formatMoney, formatQuantity, localDatetimeInputValue } from './utils'
+import { defaultTaxRate } from './workspace_mode'
 
 // 'Not yet classified' is shown as its own state rather than folded into
 // zero-rated: a GST return reports zero-rated supplies in their own box, and
@@ -257,7 +258,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
   const [quantity, setQuantity] = React.useState('1')
   const unit = lineType === 'lot_quantity' ? (items.data?.find((item) => item.pk === target)?.base_unit ?? 'each') : 'each'
   const [unitPrice, setUnitPrice] = React.useState('')
-  const [taxRate, setTaxRate] = React.useState(workspace.default_tax_rate)
+  const [taxRate, setTaxRate] = React.useState(defaultTaxRate(workspace, 'standard'))
   // Only asked for when the rate is zero. A rate above zero is a standard-rated
   // supply by definition and the server derives it; a rate of zero is three
   // different kinds of supply that a GST return reports in different boxes.
