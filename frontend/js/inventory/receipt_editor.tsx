@@ -430,6 +430,7 @@ function ReceiptEditor({ workspace, receipt, items, locations, suppliers, units,
   const [evidenceReference, setEvidenceReference] = React.useState(receipt?.evidence_reference ?? '')
   const [evidenceUrl, setEvidenceUrl] = React.useState(receipt?.evidence_url ?? '')
   const [currencyCode, setCurrencyCode] = React.useState(receipt?.currency_code ?? '')
+  const [freightAmount, setFreightAmount] = React.useState(receipt?.freight_acquisition_amount ?? '0')
   const [notes, setNotes] = React.useState(receipt?.notes ?? '')
   const [lines, setLines] = React.useState<Array<ReceiptLineDraft>>(() =>
     receipt && receipt.lines.length > 0 ? receipt.lines.map((line) => hydrateLine(line, `saved-${line.pk}`)) : [blankLine(freshKey())]
@@ -482,6 +483,7 @@ function ReceiptEditor({ workspace, receipt, items, locations, suppliers, units,
         source_document_number: sourceDocumentNumber,
         evidence_reference: evidenceReference,
         evidence_url: evidenceUrl,
+        freight_acquisition_amount: freightAmount,
         notes,
         // Blank means "whatever the workspace says", which the server fills in
         // and returns, so these inputs populate themselves after the first save.
@@ -517,6 +519,23 @@ function ReceiptEditor({ workspace, receipt, items, locations, suppliers, units,
     <Card className="mb-4">
       <Card.Body>
         <Card.Title>{receiptPk === null ? 'Receive inventory' : `Edit draft receipt #${receiptPk}`}</Card.Title>
+        <Form.Group className="mb-3" controlId="receipt-freight">
+          <Form.Label>Inbound freight acquisition cost</Form.Label>
+          <Form.Control
+            type="number"
+            min="0"
+            step="0.0001"
+            value={freightAmount}
+            onChange={(event) => {
+              setFreightAmount(event.target.value)
+              setSaved(false)
+            }}
+          />
+          <Form.Text>
+            Enter freight once in the receipt currency, excluding recoverable tax and freight already included in goods prices. On posting, it is shared by goods acquisition value
+            and included in lot and plant costs. Record the freight invoice separately for payment and tax reporting.
+          </Form.Text>
+        </Form.Group>
         <Row className="g-2">
           <Col md={2}>
             <Form.Group className="mb-3" controlId="receipt-supplier">

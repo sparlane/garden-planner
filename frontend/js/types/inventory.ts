@@ -205,6 +205,7 @@ interface StockReceiptLine {
   recoverable_input_tax: string
   non_recoverable_tax: string
   acquisition_amount: string
+  allocated_freight: string
   legacy_tax_classification: boolean
   destination: number
   lot: number | null
@@ -234,6 +235,7 @@ interface StockReceiptLineWrite {
 }
 
 interface StockReceipt {
+  freight_acquisition_amount: string
   pk: number
   supplier: number
   status: StockReceiptStatus
@@ -265,6 +267,7 @@ interface StockReceipt {
 }
 
 interface StockReceiptWrite {
+  freight_acquisition_amount?: string
   supplier: number
   received_date: string
   supplier_reference?: string

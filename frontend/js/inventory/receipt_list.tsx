@@ -4,7 +4,7 @@ import { Alert, Badge, Button, Form, Table } from 'react-bootstrap'
 
 import { createInputTaxAdjustment, deleteStockReceipt, getInputTaxAdjustments, postStockReceipt, reverseStockReceipt } from '../api/inventory'
 import { ReceiptSettlement } from './settlement'
-import { formatMeasure } from '../utils'
+import { formatMeasure, formatMoney } from '../utils'
 import { InventoryItem, StockReceipt, StockReceiptLine } from '../types/inventory'
 import { Location } from '../types/locations'
 import { Supplier } from '../types/suppliers'
@@ -219,6 +219,7 @@ function ReceiptLinesTable({ receipt, items, locations }: ReceiptLinesTableProps
   }
   return (
     <>
+      <div className="small mb-2">Inbound freight: {formatMoney(receipt.freight_acquisition_amount, receipt.currency_code)}. Shared by goods acquisition value when posted.</div>
       {receipt.tax_warnings.map((warning) => (
         <Alert key={`${warning.code}-${warning.line_id ?? 'receipt'}`} variant="warning" className="py-1 mb-1 small">
           {warning.message}
@@ -249,7 +250,8 @@ function ReceiptLinesTable({ receipt, items, locations }: ReceiptLinesTableProps
                 <div className="small">
                   Input tax {line.input_tax_amount}; recoverable {line.recoverable_input_tax}; non-recoverable {line.non_recoverable_tax}
                 </div>
-                <div className="small">Inventory acquisition {line.acquisition_amount}</div>
+                <div className="small">Goods acquisition {formatMoney(line.acquisition_amount, receipt.currency_code)}</div>
+                <div className="small">Allocated freight {formatMoney(line.allocated_freight, receipt.currency_code)}</div>
               </td>
               <td className="small">{line.lot !== null ? `#${line.lot}` : '—'}</td>
             </tr>

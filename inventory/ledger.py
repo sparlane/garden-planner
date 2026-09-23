@@ -31,6 +31,7 @@ from .models import (
     StockLot,
     StockMovement,
     StockReceipt,
+    StockReceiptLine,
     Stocktake,
 )
 from .units import convert_standard_quantity
@@ -623,11 +624,27 @@ def post_opening_balance(workspace, user, request):
 
 
 def _receipt_acquisition_cost(line):
-    """Return the explicit frozen acquisition amount on a receipt line."""
-    return line.acquisition_amount.quantize(
+    """Return goods plus their frozen share of inbound freight."""
+    return (line.acquisition_amount + line.allocated_freight).quantize(
         MONEY_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
+
+
+def _allocate_receipt_freight(receipt, lines):
+    """Freeze an exact, value-weighted freight share before creating lots."""
+    weights = [line.acquisition_amount for line in lines]
+    if len(lines) == 1:
+        weights = [Decimal('1')]
+    if receipt.freight_acquisition_amount and not any(weights):
+        raise ValidationError({
+            'freight_acquisition_amount': 'Freight cannot be split by value when every goods line is free. Use separate single-line receipts with explicit freight shares.',
+        })
+    parts = (distribute_exactly(receipt.freight_acquisition_amount, weights)
+             if receipt.freight_acquisition_amount else [Decimal('0')] * len(lines))
+    for line, freight in zip(lines, parts):
+        line.allocated_freight = freight
+        StockReceiptLine.objects.filter(pk=line.pk).update(allocated_freight=freight)
 
 
 def _serialized_unit_costs(total, quantity):
@@ -807,6 +824,7 @@ def post_receipt(receipt, user):  # pylint: disable=too-many-branches
                     'lines': 'The unknown tray location is reserved for migration.',
                 })
 
+    _allocate_receipt_freight(receipt, lines)
     posted_at = timezone.now()
     lots = []
     for line in lines:

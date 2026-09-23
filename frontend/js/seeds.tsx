@@ -774,6 +774,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
   const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>(draft?.quantity_certainty ?? 'unknown')
   const [quantity, setQuantity] = React.useState(draft?.quantity ? formatQuantity(draft.quantity) : '')
   const [price, setPrice] = React.useState(draft?.supplier_cost_incl_tax ?? draft?.line_price ?? (priceRequired ? '' : '0'))
+  const [freight, setFreight] = React.useState(draft?.freight_acquisition_amount ?? '0')
   const [receivedDate, setReceivedDate] = React.useState(draft?.received_date ?? new Date().toISOString().slice(0, 10))
   const [sowBy, setSowBy] = React.useState(draft?.sow_by ?? '')
   const [supplierLot, setSupplierLot] = React.useState(draft?.supplier_lot_reference ?? '')
@@ -845,6 +846,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
     data.evidence_reference = evidenceReference
     data.evidence_url = evidenceUrl
     data.supplier_cost_incl_tax = price
+    data.freight_acquisition_amount = freight
     data.tax_treatment = taxTreatment
     data.tax_rate = taxTreatment === 'standard' ? taxRate : '0'
     data.input_tax_source = inputTaxSource
@@ -924,6 +926,13 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
           <Form.Group className="col-md-2">
             <Form.Label>Supplier cost incl tax</Form.Label>
             <Form.Control required={priceRequired} type="number" min="0" step="0.0001" value={price} onChange={(event) => setPrice(event.target.value)} />
+            <Form.Label className="mt-2">Inbound freight acquisition cost</Form.Label>
+            <Form.Control aria-label="Inbound freight acquisition cost" type="number" step="0.0001" min="0" value={freight} onChange={(event) => setFreight(event.target.value)} />
+            {fieldError('freight_acquisition_amount')}
+            <Form.Text>
+              Enter only this packet&apos;s share, excluding recoverable tax and freight already included in its price. This adds to seed cost when posted. Record the freight
+              invoice separately for payment and tax reporting.
+            </Form.Text>
             {fieldError('line_price')}
           </Form.Group>
           <Form.Group className="col-md-2">

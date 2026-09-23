@@ -625,6 +625,12 @@ class SeedPacketProvenanceTests(APITestCase):
         self.assertEqual(len(rows), 1, listed.data)
         return rows[0]['provenance']
 
+    def test_packet_freight_reaches_the_seed_lot(self):
+        """Seed receiving carries this packet's freight into sowing unit costs."""
+        packet, receipt = self.receive(freight_acquisition_amount='1.1000')
+        self.assertEqual(packet['inventory']['acquisition_total'], '8.0000')
+        self.assertEqual(receipt.lines.get().allocated_freight, Decimal('1.1'))
+
     def test_a_packet_names_its_brand_its_vendor_and_its_receipt(self):
         """Tying a packet back to one purchase is the whole point of the chain."""
         packet, receipt = self.receive(supplier=self.shop.pk)

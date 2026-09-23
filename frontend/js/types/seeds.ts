@@ -83,6 +83,7 @@ interface SeedPacket {
 }
 
 interface SeedPacketReceiptCreate {
+  freight_acquisition_amount?: string
   seeds: number
   quantity_certainty: SeedQuantityCertainty
   quantity?: string | null

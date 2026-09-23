@@ -274,6 +274,9 @@ class PacketReceiptDraftSerializer(
     supplier_cost_incl_tax = serializers.DecimalField(
         max_digits=18, decimal_places=4, min_value=Decimal('0'), required=False,
     )
+    freight_acquisition_amount = serializers.DecimalField(
+        max_digits=18, decimal_places=4, min_value=Decimal('0'), required=False,
+    )
     tax_treatment = serializers.ChoiceField(
         choices=StockReceiptLine.TaxTreatment.choices, required=False,
     )
@@ -365,6 +368,7 @@ class PacketReceiptDraftSerializer(
             'evidence_url': draft.receipt.evidence_url,
             'tax_rate': f'{line.tax_rate:.4f}',
             'supplier_cost_incl_tax': f'{line.supplier_cost_incl_tax:.4f}',
+            'freight_acquisition_amount': f'{draft.receipt.freight_acquisition_amount:.4f}',
             'tax_treatment': line.tax_treatment,
             'input_tax_source': line.input_tax_source,
             'input_tax_amount': f'{line.input_tax_amount:.4f}',
