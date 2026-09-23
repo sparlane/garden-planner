@@ -225,7 +225,12 @@ class SalesOrderLineSerializer(
     }
 
     def validate(self, attrs):
-        """Fill a new line's tax rate from its immutable order context."""
+        """Refuse a line on confirmed terms, then fill an unentered tax rate.
+
+        The rate comes from the current workspace rather than from the order's
+        own, which `workspace_field_lookups` has already constrained to be the
+        same workspace.
+        """
         order = self.instance.order if self.instance else attrs['order']
         if order.status not in {SalesOrder.Status.QUOTE, SalesOrder.Status.DRAFT}:
             raise ValidationError({'order': 'Confirmed commercial terms are immutable.'})

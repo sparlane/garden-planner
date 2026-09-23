@@ -23,7 +23,7 @@ class Migration(migrations.Migration):
             name="multi_currency_enabled",
             field=models.BooleanField(
                 default=False,
-                help_text="Whether a new record may be entered in a currency other than the workspace currency. While off, no currency is asked for and every new record is filed in the workspace currency. It governs input only: a record already in another currency keeps it, is still displayed in it, and is still refused a combined total.",
+                help_text="Whether a new record may be entered in a currency other than the workspace currency.",
             ),
         ),
     ]

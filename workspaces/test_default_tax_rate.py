@@ -37,6 +37,19 @@ RATE = '15.0000'
 #: What it is changed to once every document has been stored.
 LATER_RATE = Decimal('25')
 
+#: An unrelated edit, for each document that takes a partial write. Nothing
+#: here names a rate or a treatment: the point is that the stored rate is not
+#: revisited by a write that was about something else.
+PARTIAL_EDIT = {
+    'stock receipt line': {'supplier_reference': 'DEL-160-CHECKED'},
+    'sales order line': {'unit_price': '12.0000'},
+    'seed packet receipt': {'supplier_lot_reference': 'LOT-160-B'},
+}
+
+#: The two documents whose update replaces their lines wholesale, and which a
+#: client edits by sending the whole body back through PUT.
+REPLACED_WHOLE = ('purchase order line', 'supplier invoice line')
+
 
 def read_rate(data, path):
     """Walk a created document's payload to the rate it stored."""
@@ -282,6 +295,30 @@ class OmittedRateTests(TaxRateInputTestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data['lines'][0]['tax_rate'], RATE)
 
+    def test_an_invoice_line_charging_no_tax_is_not_given_a_rate(self):
+        """A bill that charged nil tax is not handed a rate beside the nil.
+
+        An invoice line states its tax as an amount off the supplier's
+        document, and `SupplierInvoiceLine` checks only that the three amounts
+        reconcile -- it has no treatment-and-rate check of the kind a sales or
+        receipt line carries. So nothing downstream would refuse a filled rate
+        standing beside a zero `tax_total`, and it would reach the GST entry
+        and the GST detail export as a standard-rated line charging nothing.
+        """
+        created = self.create('/purchasing/invoices/', self.invoice_payload(
+            tax_total='0.0000', total_incl_tax='10.0000',
+        ))
+
+        self.assertEqual(created['lines'][0]['tax_rate'], '0.0000')
+        self.assertEqual(created['lines'][0]['tax_treatment'], 'standard')
+        self.assertEqual(SupplierInvoiceLine.objects.get().tax_rate, ZERO)
+
+    def test_an_invoice_line_that_charged_tax_still_takes_the_rate(self):
+        """The nil-tax rule is about the amount, not about invoices at large."""
+        created = self.create('/purchasing/invoices/', self.invoice_payload())
+
+        self.assertEqual(created['lines'][0]['tax_rate'], RATE)
+
     def test_a_workspace_charging_nothing_still_records_a_line(self):
         """A nursery that is not registered for GST enters no rate either."""
         self.workspace.default_tax_rate = Decimal('0')
@@ -400,13 +437,64 @@ class NonStandardTreatmentTests(TaxRateInputTestCase):
         self.assertEqual(created['tax_rate'], '0.0000')
 
 
+class UnstatedTreatmentTests(TaxRateInputTestCase):
+    """A request that names no treatment at all takes the model's own.
+
+    This is what `unstated_tax_treatment` is for. Every other test here states
+    a treatment, so without this class the attribute would be carried by three
+    serializers and exercised by none of them: a receipt line, an invoice line
+    and a seed packet all store `unknown` when nobody says otherwise, and
+    `unknown` is a positive statement that the supply has not been classified
+    rather than an invitation to charge the ordinary rate against it.
+    """
+
+    def test_a_receipt_line_naming_no_treatment_is_unknown_and_unrated(self):
+        """The line the receiving form posts before anybody classifies it."""
+        payload = self.receipt_payload(
+            supplier_cost_incl_tax='10.0000',
+            input_tax_source='none',
+            input_tax_amount='0.0000',
+        )
+        payload['lines'][0].pop('tax_treatment')
+
+        created = self.create('/inventory/receipts/', payload)
+
+        self.assertEqual(created['lines'][0]['tax_rate'], '0.0000')
+        self.assertEqual(created['lines'][0]['tax_treatment'], 'unknown')
+
+    def test_an_invoice_line_naming_no_treatment_is_unknown_and_unrated(self):
+        """Unrated even though the bill did charge tax, which is the point."""
+        payload = self.invoice_payload()
+        payload['lines'][0].pop('tax_treatment')
+
+        created = self.create('/purchasing/invoices/', payload)
+
+        self.assertEqual(created['lines'][0]['tax_rate'], '0.0000')
+        self.assertEqual(created['lines'][0]['tax_treatment'], 'unknown')
+        self.assertEqual(created['lines'][0]['tax_total'], '1.5000')
+
+    def test_a_packet_receipt_naming_no_treatment_is_unknown_and_unrated(self):
+        """The seed draft answers the same way the receipt line behind it does."""
+        payload = self.packet_payload(
+            supplier_cost_incl_tax='6.0000',
+            input_tax_source='none',
+            input_tax_amount='0.0000',
+        )
+        payload.pop('tax_treatment')
+
+        created = self.create('/seeds/packet-receipts/', payload)
+
+        self.assertEqual(created['tax_rate'], '0.0000')
+        self.assertEqual(created['tax_treatment'], 'unknown')
+
+
 class StoredDocumentsDoNotMoveTests(TaxRateInputTestCase):
     """Verification 4: the rate is filled in, not looked up afterwards."""
 
     def setUp(self):
         super().setUp()
         self.stored = [
-            (name, f"{url}{self.create(url, payload)['pk']}/", path)
+            (name, f"{url}{self.create(url, payload)['pk']}/", payload, path)
             for name, url, payload, path in self.entry_points()
         ]
         self.workspace.default_tax_rate = LATER_RATE
@@ -415,7 +503,7 @@ class StoredDocumentsDoNotMoveTests(TaxRateInputTestCase):
     def test_every_stored_line_still_reads_the_rate_it_was_filed_at(self):
         """Each document stores the rate it used, which is why there is no history."""
         self.assertEqual(get_current_workspace().default_tax_rate, LATER_RATE)
-        for name, url, path in self.stored:
+        for name, url, _payload, path in self.stored:
             with self.subTest(line=name):
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200, response.data)
@@ -430,6 +518,58 @@ class StoredDocumentsDoNotMoveTests(TaxRateInputTestCase):
             sorted(str(line.tax_rate) for line in StockReceiptLine.objects.all()),
             ['15.0000', '15.0000'],
         )
+
+    def assert_no_line_took_the_later_rate(self):
+        """The rate the workspace moved to appears on nothing already stored."""
+        later = f'{LATER_RATE:.4f}'
+        for model in (
+            SalesOrderLine, PurchaseOrderLine, SupplierInvoiceLine, StockReceiptLine,
+        ):
+            rates = [str(line.tax_rate) for line in model.objects.all()]
+            self.assertNotIn(later, rates, model.__name__)
+
+    def test_a_partial_edit_leaves_a_stored_rate_alone(self):
+        """A write about something else does not revisit the rate.
+
+        The rate is filled in when the line is created and never looked up
+        again, so editing a supplier reference, a price or a lot number after
+        the workspace has moved to 25% leaves the line at the 15% it was filed
+        at.
+        """
+        for name, url, _payload, path in self.stored:
+            if name not in PARTIAL_EDIT:
+                continue
+            with self.subTest(line=name):
+                response = self.client.patch(url, PARTIAL_EDIT[name], format='json')
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(read_rate(response.data, path), RATE)
+        self.assert_no_line_took_the_later_rate()
+
+    def test_re_sending_a_whole_document_does_not_re_rate_its_lines(self):
+        """The guard asks the root serializer, not the child reused per line.
+
+        A nested line is validated by a child serializer constructed once with
+        no instance of its own and reused for every line, so a child asking
+        `self.instance` would answer "this is a create" on every update. The
+        fill would then run again on a document a client merely re-sent, and
+        every line in it would be re-rated at whatever the workspace charges
+        today -- which is exactly what changing the default is not allowed to
+        do.
+
+        Both of these replace their lines wholesale, so a body that named no
+        rate the first time names none the second either, and the recreated
+        line falls back to its column's own default rather than keeping the
+        15% the deleted row carried. That is the pre-existing behaviour of an
+        omitted rate on an update; what matters here is that it is never 25%.
+        """
+        for name, url, payload, path in self.stored:
+            if name not in REPLACED_WHOLE:
+                continue
+            with self.subTest(line=name):
+                response = self.client.put(url, payload, format='json')
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(read_rate(response.data, path), '0.0000')
+        self.assert_no_line_took_the_later_rate()
 
     def test_the_next_line_takes_the_new_rate(self):
         """What a changed default does change is the line entered after it."""
