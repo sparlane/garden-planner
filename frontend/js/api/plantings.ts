@@ -94,6 +94,18 @@ function getProductionBatches(filters: ProductionBatchFilters = {}, signal?: Abo
   return fetchAsJson<Array<ProductionBatch>>(`/plantings/batches/${suffix}`, signal)
 }
 
+async function getAllProductionBatches(signal?: AbortSignal): Promise<Array<ProductionBatch>> {
+  const batches: Array<ProductionBatch> = []
+  let url: string | null = '/plantings/batches/'
+  while (url) {
+    const page: Array<ProductionBatch> | { results: Array<ProductionBatch>; next: string | null } = await fetchAsJson(url, signal, true)
+    if (Array.isArray(page)) return [...batches, ...page]
+    batches.push(...page.results)
+    url = page.next
+  }
+  return batches
+}
+
 function getProductionBatch(batchPk: number, signal?: AbortSignal): Promise<ProductionBatchDetail> {
   return fetchAsJson<ProductionBatchDetail>(`/plantings/batches/${batchPk}/`, signal)
 }
@@ -471,6 +483,7 @@ function mergeCohorts(data: CohortMerge): Promise<PlantCohort> {
 export {
   ProductionBatchFilters,
   getProductionBatches,
+  getAllProductionBatches,
   getProductionBatch,
   addProductionBatch,
   updateProductionBatch,

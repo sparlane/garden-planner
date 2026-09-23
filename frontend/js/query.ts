@@ -172,6 +172,7 @@ const queryKeys = {
   plantings: {
     all: ['plantings'] as const,
     batchesAll: ['plantings', 'batches'] as const,
+    batchChoices: ['plantings', 'batches', 'choices'] as const,
     batches: (status: string, variety: number | '', code: string, needsRepair: boolean) => ['plantings', 'batches', status, variety, code, needsRepair] as const,
     batch: (batchPk: number) => ['plantings', 'batches', 'detail', batchPk] as const,
     directGardenRows: ['plantings', 'directGardenRows'] as const,

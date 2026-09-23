@@ -45,10 +45,12 @@ const updateExpenseCategory = async (pk: number, changes: Partial<ExpenseCategor
   return response.json() as Promise<ExpenseCategory>
 }
 const createBusinessExpense = (data: object) => postJson<BusinessExpense>(`${ROOT}expenses/`, data)
+const cancelBusinessExpense = (pk: number) => postJson<BusinessExpense>(`${ROOT}expenses/${pk}/cancel/`, {})
 const confirmBusinessExpense = (pk: number) => postJson<BusinessExpense>(`${ROOT}expenses/${pk}/confirm/`, {})
 
 export {
   confirmBusinessExpense,
+  cancelBusinessExpense,
   confirmPurchaseOrder,
   confirmSupplierInvoice,
   correctSupplierInvoice,

@@ -671,6 +671,7 @@ def _source_reference(row):
         'generation_residual': residual.pk if residual is not None else None,
         'container_unit': row.container_unit_id,
         'container_dispatch': row.container_dispatch_id,
+        'business_expense': row.business_expense_id,
         'movement': row.movement_id,
         'lot': lot.pk if lot is not None else None,
         'item': lot.item_id if lot is not None else None,

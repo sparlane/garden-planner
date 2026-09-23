@@ -1,9 +1,11 @@
 import React from 'react'
+import Select from 'react-select'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Col, Form, Nav, Row, Table } from 'react-bootstrap'
 
 import {
   confirmBusinessExpense,
+  cancelBusinessExpense,
   confirmPurchaseOrder,
   confirmSupplierInvoice,
   correctSupplierInvoice,
@@ -25,6 +27,7 @@ import {
   updateExpenseCategory
 } from './api/purchasing'
 import { getInventoryItems, getStockReceipts } from './api/inventory'
+import { getAllProductionBatches } from './api/plantings'
 import { getSuppliers } from './api/supplies'
 import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, activeChoices, retiredRowClass } from './catalog'
 import { queryKeys, searchedKey } from './query'
@@ -32,7 +35,7 @@ import { CatalogRecordLabel } from './types/catalog'
 import { InventoryItem, PurchaseTaxTreatment, StockReceipt, StockReceiptLine } from './types/inventory'
 import { ExpenseCategory, PurchaseOrder, PurchaseOrderLine, SupplierInvoice } from './types/purchasing'
 import { Workspace } from './types/workspace'
-import { errorsByField, formatMoney, sumMoney } from './utils'
+import { errorsByField, formatMoney, selectOptionToPk, sumMoney } from './utils'
 import { defaultTaxRate } from './workspace_mode'
 
 type PurchasingTab = 'dashboard' | 'requisitions' | 'orders' | 'invoices' | 'expenses'
@@ -1050,6 +1053,9 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
   const queryClient = useQueryClient()
   const { data: categories = [] } = useQuery({ queryKey: queryKeys.purchasing.categories, queryFn: ({ signal }) => getExpenseCategories(signal) })
   const { data: expenses = [] } = useQuery({ queryKey: queryKeys.purchasing.expenses, queryFn: ({ signal }) => getBusinessExpenses(signal) })
+  const { data: batches = [] } = useQuery({ queryKey: queryKeys.plantings.batchChoices, queryFn: ({ signal }) => getAllProductionBatches(signal) })
+  const [productionBatch, setProductionBatch] = React.useState<number | ''>('')
+  const [includeCost, setIncludeCost] = React.useState(false)
   const [category, setCategory] = React.useState<number | ''>('')
   const [supplier, setSupplier] = React.useState<number | ''>('')
   const [payee, setPayee] = React.useState('')
@@ -1064,7 +1070,8 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
   const [apportionmentBasis, setApportionmentBasis] = React.useState('')
   const [allocationType, setAllocationType] = React.useState('')
   const [allocationReference, setAllocationReference] = React.useState('')
-  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })
+  const refresh = () =>
+    Promise.all([queryKeys.purchasing.all, queryKeys.costing.all, queryKeys.reports.all, queryKeys.plantings.all].map((queryKey) => queryClient.invalidateQueries({ queryKey })))
   const { subtotal, taxTotal, total, reconciles } = expenseAmounts(amountBasis, amount, tax)
   const claimedPercentage = claimInputTax ? claimablePercentage : '0'
   // Only a partial claim has to be explained, and the server draws that line at
@@ -1087,6 +1094,8 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
         claim_input_tax: claimInputTax,
         claimable_percentage: claimedPercentage,
         apportionment_basis: apportioned ? apportionmentBasis : '',
+        production_batch: includeCost ? productionBatch || null : null,
+        batch_cost_treatment: includeCost ? 'non_labor' : 'excluded',
         allocation_type: allocationType,
         allocation_reference: allocationReference,
         attachment_url: '',
@@ -1096,6 +1105,7 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
     },
     onSuccess: refresh
   })
+  const cancel = useMutation({ mutationFn: cancelBusinessExpense, onSuccess: refresh })
   const fieldErrors = errorsByField(create.error)
   function fieldError(field: string) {
     return fieldErrors[field] ? <Form.Control.Feedback type="invalid">{fieldErrors[field]}</Form.Control.Feedback> : null
@@ -1268,6 +1278,30 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
             </Col>
           )}
           <Col md={2}>
+            <Form.Check
+              id="expense-production-cost"
+              label="Include as a non-labor production cost"
+              checked={includeCost}
+              onChange={(event) => setIncludeCost(event.target.checked)}
+            />
+            <Form.Text>
+              Only non-labor costs belong here. The amount after recoverable tax is shared across batch outputs, including sold and lost plants, using the batch’s recorded
+              allocation weights. Exclude stock invoices and freight already included in inventory acquisition costs.
+            </Form.Text>
+            {includeCost && (
+              <>
+                <Form.Label htmlFor="expense-production-batch">Production batch</Form.Label>
+                <Select
+                  inputId="expense-production-batch"
+                  isClearable
+                  options={batches.map((batch) => ({ value: batch.pk, label: batch.code }))}
+                  value={batches.filter((batch) => batch.pk === productionBatch).map((batch) => ({ value: batch.pk, label: batch.code }))[0] ?? null}
+                  aria-invalid={'production_batch' in fieldErrors}
+                  onChange={(option) => setProductionBatch(selectOptionToPk(option) ?? '')}
+                />
+                {fieldErrors.production_batch && <div className="invalid-feedback d-block">{fieldErrors.production_batch}</div>}
+              </>
+            )}
             <Form.Label htmlFor="expense-allocation-type">Allocation type</Form.Label>
             <Form.Control id="expense-allocation-type" placeholder="Allocation type" value={allocationType} onChange={(event) => setAllocationType(event.target.value)} />
           </Col>
@@ -1295,6 +1329,7 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
           Record and confirm expense
         </Button>
         <ErrorMessage error={create.error} />
+        <ErrorMessage error={cancel.error} />
       </Card>
       <Table striped>
         <thead>
@@ -1319,9 +1354,22 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
               <td>{formatMoney(expense.total_incl_tax, expense.currency_code)}</td>
               <td>{expense.status === 'draft' ? 'Not yet frozen' : formatMoney(expense.recoverable_tax, expense.currency_code)}</td>
               <td>{expense.status === 'draft' ? 'Not yet frozen' : formatMoney(expense.deductible_amount, expense.currency_code)}</td>
-              <td>{expense.status}</td>
+              <td>
+                {expense.status}
+                {expense.status === 'confirmed' && (
+                  <Button size="sm" variant="outline-secondary" disabled={cancel.isPending} onClick={() => cancel.mutate(expense.pk)}>
+                    Cancel
+                  </Button>
+                )}
+              </td>
               <td>{expense.payment_state.replace('_', ' ')}</td>
-              <td>{expense.allocation_type ? `${expense.allocation_type}: ${expense.allocation_reference}` : 'Whole business'}</td>
+              <td>
+                {expense.batch_cost_treatment === 'non_labor'
+                  ? `Non-labor cost: batch ${batches.find((batch) => batch.pk === expense.production_batch)?.code ?? expense.production_batch}`
+                  : expense.allocation_type
+                    ? `${expense.allocation_type}: ${expense.allocation_reference}`
+                    : 'Whole business'}
+              </td>
             </tr>
           ))}
         </tbody>

@@ -62,7 +62,7 @@ from workspaces.models import WorkspaceOwnedModel
 #: the ``source_type`` value selecting it, which lets the identity constraint be
 #: generated rather than written out once per source. It is kept in step with
 #: `CostAllocation.SourceType` by a test.
-SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting', 'container_unit', 'container_dispatch')
+SOURCE_FIELDS = ('application_line', 'sowing_posting', 'generation_residual', 'garden_planting', 'container_unit', 'container_dispatch', 'business_expense')
 
 #: The same names as a type-to-column mapping, so the identity check can be one
 #: routine over both sides even though only the target side needs the indirection.
@@ -203,6 +203,7 @@ class CostAllocation(WorkspaceOwnedModel):
         # numbered pot into another.
         CONTAINER_UNIT = 'container_unit', 'Container sold with the plant'
         CONTAINER_DISPATCH = 'container_dispatch', 'Pot accompanying a sold plant'
+        BUSINESS_EXPENSE = 'business_expense', 'Non-labor production expense'
 
     class TargetType(models.TextChoices):
         """What the cost was allocated to.
@@ -248,6 +249,10 @@ class CostAllocation(WorkspaceOwnedModel):
         ProductionBatch,
         on_delete=models.PROTECT,
         related_name='cost_allocations',
+    )
+    business_expense = models.ForeignKey(
+        'purchasing.BusinessExpense', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='cost_allocations',
     )
     source_type = models.CharField(max_length=24, choices=SourceType.choices)
     application_line = models.ForeignKey(
@@ -494,6 +499,7 @@ class CostAllocation(WorkspaceOwnedModel):
         owners = {
             'run': self.run if self.run_id else None,
             'batch': self.batch if self.batch_id else None,
+            'business_expense': self.business_expense if self.business_expense_id else None,
             'movement': self.movement if self.movement_id else None,
             'garden_planting': self.garden_planting if self.garden_planting_id else None,
             'specific_plant': self.specific_plant if self.specific_plant_id else None,

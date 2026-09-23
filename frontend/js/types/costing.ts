@@ -2,7 +2,7 @@ import { PlantLifecycleState, ProductionBatchStatus } from './plantings'
 
 // Where a layer's cost came from. Each value is also the name of the column
 // holding it on the server, so a layer can be walked back to its document.
-type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual' | 'garden_planting' | 'container_unit' | 'container_dispatch'
+type CostSourceType = 'application_line' | 'sowing_posting' | 'generation_residual' | 'garden_planting' | 'container_unit' | 'container_dispatch' | 'business_expense'
 
 // What the cost was allocated to. `cohort_sale` and `cohort_loss` name the
 // block a quantity was sold or lost out of: anonymous stock keeps no identity
@@ -30,6 +30,7 @@ interface CostLayer {
   source: number
   application: number | null
   application_line: number | null
+  business_expense: number | null
   sowing_posting: number | null
   generation_residual: number | null
   // The numbered pot a sold specimen left inside. It is an asset while it

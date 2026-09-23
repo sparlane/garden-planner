@@ -479,10 +479,10 @@ def reverse_supplier_payment(payment, user, reason):
 @transaction.atomic
 def confirm_expense(expense, user):
     """Freeze a reviewed non-stock cost independently of inventory."""
-    del user
     expense = BusinessExpense.objects.select_for_update().get(pk=expense.pk)
     if expense.status != BusinessExpense.Status.DRAFT:
         raise ValidationError({'status': 'Only a draft expense can be confirmed.'})
+    expense.full_clean()
     recoverable, deductible = _deductible_tax_values(
         expense.total_incl_tax, expense.tax_total,
         expense.claim_input_tax, expense.claimable_percentage,
@@ -492,4 +492,30 @@ def confirm_expense(expense, user):
         recoverable_tax=recoverable, deductible_amount=deductible,
     )
     expense.refresh_from_db()
+    _allocate_expense(expense, user)
+    return expense
+
+
+def _allocate_expense(expense, user):
+    """Reconcile an explicit production expense using the immutable cost ledger."""
+    if expense.batch_cost_treatment == 'non_labor':
+        # Domain callback: importing here keeps purchasing usable during costing setup.
+        from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel,cyclic-import
+        reallocate_batch(
+            expense.production_batch, user, 'manual_recalculate',
+            reason=f'Non-labor expense {expense.pk}: {expense.status}',
+        )
+
+
+@transaction.atomic
+def cancel_expense(expense, user):
+    """Cancel an expense and reverse its cost layers without rewriting history."""
+    expense = BusinessExpense.objects.select_for_update().get(pk=expense.pk)
+    if expense.status != BusinessExpense.Status.CONFIRMED:
+        raise ValidationError({'status': 'Only a confirmed expense can be cancelled.'})
+    BusinessExpense.objects.filter(pk=expense.pk).update(
+        status=BusinessExpense.Status.CANCELLED, cancelled_at=timezone.now(),
+    )
+    expense.refresh_from_db()
+    _allocate_expense(expense, user)
     return expense

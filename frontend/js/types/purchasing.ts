@@ -107,6 +107,8 @@ interface ExpenseCategory {
 }
 
 interface BusinessExpense {
+  batch_cost_treatment: 'excluded' | 'non_labor'
+  production_batch: number | null
   pk: number
   category: number
   supplier: number | null
