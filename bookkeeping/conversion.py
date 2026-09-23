@@ -1,10 +1,13 @@
 """Which records carry a rate, and how one is recorded against them.
 
 `workspaces.conversion` says how a rate converts an amount. This says what a
-rate is recorded *against*: nine kinds of row across four apps, each named by a
-`source_type` that matches the one the GST entries and the income-year
+rate is recorded *against*: twelve kinds of row across four apps, each named by
+a `source_type` that matches the one the GST entries and the income-year
 schedules already use, so a conversion found here is the conversion of the row
-a report is looking at rather than of something with a similar name.
+a report is looking at rather than of something with a similar name. Between
+them they cover every row either return derives a figure from -- a report that
+found one it could not offer a rate for would be reporting a problem nobody
+could fix.
 
 Two rules are worth stating out loud.
 
@@ -56,6 +59,7 @@ class ConversionSource:  # pylint: disable=too-many-instance-attributes
     date_field: str
     amounts: Callable
     currency_path: str = 'currency_code'
+    workspace_lookup: str = 'workspace'
     settled: dict = field(default_factory=dict)
     unsettled_refusal: str = ''
     select_related: tuple = ()
@@ -73,7 +77,7 @@ class ConversionSource:  # pylint: disable=too-many-instance-attributes
     def rows(self, workspace, registry=global_apps):
         """Return this workspace's rows of this kind that may carry a rate."""
         queryset = self.model(registry).objects.filter(
-            workspace=workspace, **self.settled,
+            **{self.workspace_lookup: workspace}, **self.settled,
         )
         if self.select_related:
             queryset = queryset.select_related(*self.select_related)
@@ -92,7 +96,9 @@ class ConversionSource:  # pylint: disable=too-many-instance-attributes
 
     def date_of(self, row, workspace):
         """Return the row's own business date, in the workspace's timezone."""
-        value = getattr(row, self.date_field)
+        value = row
+        for step in self.date_field.split('.'):
+            value = getattr(value, step)
         if isinstance(value, datetime):
             return value.astimezone(ZoneInfo(workspace.timezone)).date()
         return value
@@ -113,6 +119,14 @@ def _expense_amounts(row):
         ('recoverable_tax', row.recoverable_tax),
         ('deductible_amount', row.deductible_amount),
     )
+
+
+def _valuation_amounts(row):
+    """A closing-stock line's value, and the cost it was measured against."""
+    amounts = [('value', row.value)]
+    if row.original_cost is not None:
+        amounts.append(('original_cost', row.original_cost))
+    return tuple(amounts)
 
 
 def _payment_amounts(row):
@@ -142,6 +156,16 @@ def _receipt_amounts(row):
 
 #: Every row a tax figure is derived from, in the order the change list names
 #: them: taxable supply information, GST, purchases, refunds, and adjustments.
+#:
+#: The closing-stock line is the one entry whose amounts can still move -- a
+#: valuation line is editable while its income year is a draft, and re-running
+#: the capture replaces the derived ones outright. It is here anyway, because
+#: the alternative is an income year holding one foreign valuation line that
+#: can never state a closing stock. A line replaced by a later capture is a new
+#: row needing a new rate, which is the right answer; and every reader converts
+#: the value the line carries now at the rate that was typed, so a line edited
+#: after conversion is reported correctly even though the record's stored
+#: snapshot is of the earlier figure.
 SOURCES = (
     ConversionSource(
         source_type='supply_document', label='Taxable supply information',
@@ -189,6 +213,33 @@ SOURCES = (
         source_type='supplier_payment', label='Supplier payment',
         app_label='purchasing', model_name='SupplierPayment',
         date_field='paid_on', amounts=_payment_amounts,
+    ),
+    ConversionSource(
+        source_type='bookkeeping_entry', label='Bookkeeping entry',
+        app_label='bookkeeping', model_name='BookkeepingEntry',
+        date_field='occurred_on',
+        amounts=lambda row: (
+            ('amount_ex_tax', row.amount_ex_tax),
+            ('tax_amount', row.tax_amount),
+            ('total_incl_tax', row.total_incl_tax),
+        ),
+    ),
+    ConversionSource(
+        source_type='tax_asset', label='Depreciable asset',
+        app_label='bookkeeping', model_name='TaxAsset',
+        date_field='acquired_on',
+        amounts=lambda row: (
+            ('cost_incl_tax', row.cost_incl_tax),
+            ('recoverable_tax', row.recoverable_tax),
+            ('tax_cost', row.tax_cost),
+        ),
+    ),
+    ConversionSource(
+        source_type='stock_valuation_line', label='Closing stock line',
+        app_label='bookkeeping', model_name='StockValuationLine',
+        date_field='income_year.year_end', amounts=_valuation_amounts,
+        workspace_lookup='income_year__workspace',
+        select_related=('income_year',),
     ),
     ConversionSource(
         source_type='business_expense', label='Business expense',
