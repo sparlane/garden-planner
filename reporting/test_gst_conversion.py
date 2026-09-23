@@ -10,6 +10,7 @@ consolidated figure and the report says which currency is waiting.
 # Test names state their behavior and are clearer than repeated method docstrings.
 # pylint: disable=missing-function-docstring,duplicate-code
 
+from bookkeeping.conversion import backfill_identity_conversions, live_conversion
 from bookkeeping.test_supply_conversion import SupplyConversionTestCase
 
 from .gst import gst_entry_report, gst_period_report
@@ -129,3 +130,54 @@ class ConvertedPeriodTests(GstConversionTestCase):
 
         self.assertEqual(rows[('NZD', True)]['taxable_supplies_incl_tax'], '38.4124')
         self.assertEqual(rows[('EUR', False)]['taxable_supplies_incl_tax'], '23.0000')
+
+
+class StaleIdentityConversionTests(GstConversionTestCase):
+    """A rate recorded for one pair is not a rate for another.
+
+    The backfill records an identity conversion for every row already in the
+    workspace's own currency, so a workspace that traded in euros and later
+    files in dollars holds a table of EUR-to-EUR rates of one against rows
+    that are now foreign. Reading one of those as the rate would restate
+    23.00 EUR as 23.00 NZD, call the return complete, and understate the GST
+    by 40%.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.record_in('EUR')
+        backfill_identity_conversions(self.workspace)
+        self.record_in('NZD')
+
+    def test_the_identity_rate_was_recorded_for_the_pair_it_was_recorded_for(self):
+        recorded = live_conversion(
+            self.workspace, 'supply_document', self.document.pk,
+        )
+        self.assertEqual(recorded.source_currency_code, 'EUR')
+        self.assertEqual(recorded.target_currency_code, 'EUR')
+        self.assertEqual(f'{recorded.rate:f}', '1.0000000000')
+
+    def test_the_period_states_no_consolidated_figure_off_a_stale_rate(self):
+        report = self.periods()
+
+        rows = self.rows_for(report)
+        self.assertNotIn(('NZD', True), rows)
+        self.assertEqual(rows[('EUR', False)]['taxable_supplies_incl_tax'], '23.0000')
+        self.assertIsNone(report.totals['converted'])
+
+    def test_the_row_is_reported_as_one_still_awaiting_a_rate(self):
+        report = self.periods()
+
+        finding = next(
+            row for row in report.data_quality
+            if row['code'] == 'unconverted_source'
+        )
+        self.assertEqual(finding['currencies'], ['EUR'])
+
+    def test_a_rate_for_the_pair_in_hand_supersedes_it_and_states_the_figure(self):
+        stale = live_conversion(self.workspace, 'supply_document', self.document.pk)
+
+        self.convert('supply_document', self.document.pk, supersedes=stale.pk)
+
+        rows = self.rows_for(self.periods())
+        self.assertEqual(rows[('NZD', True)]['taxable_supplies_incl_tax'], '38.4124')

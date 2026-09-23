@@ -99,11 +99,26 @@ class Converter:
         if currency_code == self.target:
             return quantize_money(amount)
         record = self._rates.get((source_type, str(source_id)))
-        if record is None:
+        if record is None or not self._converts(record, currency_code):
             self.unconverted.add((source_type, str(source_id), currency_code))
             return None
         self.methods.add(record.method)
         return convert_amount(amount, record.rate, record.quote_direction)
+
+    def _converts(self, record, currency_code):
+        """Whether this record is a rate between the two currencies in hand.
+
+        A conversion names the pair it was recorded for, and a pair can go out
+        of date underneath it: a workspace that recorded euros and later files
+        in dollars has a table full of identity conversions saying EUR to EUR
+        at one, against rows that are now foreign. Reading one of those as the
+        rate would restate 23.00 EUR as 23.00 NZD and call the return complete,
+        which is the one thing this module exists to stop. A record for the
+        wrong pair is treated as no record at all, so the figure is withheld
+        and the row is reported as awaiting a rate -- which it is.
+        """
+        pair = (record.source_currency_code, record.target_currency_code)
+        return pair == (currency_code, self.target)
 
     def total(self, items):
         """Add a series of amounts, or return None if any could not be converted.
