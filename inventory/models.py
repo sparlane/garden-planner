@@ -522,6 +522,11 @@ class StockReceipt(WorkspaceOwnedModel):
     #: the document is closed. `settle_receipt` is the only writer, and it goes
     #: through the queryset because `save` refuses every post-posting change.
     settled_on = models.DateField(null=True, blank=True, editable=False)
+    freight_acquisition_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'), validators=[MinValueValidator(Decimal('0'))],
+        help_text='Inbound freight in receipt currency, excluding recoverable tax and amounts already in the goods lines.',
+    )
     notes = models.TextField(blank=True, default='')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -698,6 +703,11 @@ class StockReceiptLine(models.Model):  # pylint: disable=too-many-instance-attri
         decimal_places=MONEY_DECIMAL_PLACES,
         default=Decimal('0'),
         editable=False,
+        validators=[MinValueValidator(Decimal('0'))],
+    )
+    allocated_freight = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        default=Decimal('0'), editable=False,
         validators=[MinValueValidator(Decimal('0'))],
     )
     legacy_tax_classification = models.BooleanField(default=False, editable=False)

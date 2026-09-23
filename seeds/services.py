@@ -160,6 +160,7 @@ def create_packet_receipt_draft(workspace, user, values):
         supplier_gst_status=supplier.gst_status,
         supplier_gst_number=supplier.gst_number,
         currency_code=workspace.currency_code,
+        freight_acquisition_amount=values.get('freight_acquisition_amount', Decimal('0')),
         notes=values.get('notes', ''),
         created_by=user,
     )
@@ -218,6 +219,7 @@ def update_packet_receipt_draft(draft, values):
         'source_document_number',
         'evidence_reference',
         'evidence_url',
+        'freight_acquisition_amount',
         'notes',
     ):
         if field in values:
