@@ -12,6 +12,7 @@ from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from workspaces.currency import CurrencyInputSerializerMixin
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
 from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, LegalHoldEvent, Liability, StockValuationLine, TaxAsset, TaxRetentionRecord
@@ -26,21 +27,21 @@ def _run(command, *args, **kwargs):
         raise serializers.ValidationError(detail) from exc
 
 
-class LiabilitySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class LiabilitySerializer(CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = Liability
         fields = '__all__'
         read_only_fields = ['workspace', 'created']
 
 
-class EntrySerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class EntrySerializer(CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = BookkeepingEntry
         fields = '__all__'
         read_only_fields = ['workspace', 'created_by', 'created', 'operation_key', 'reversal_of']
 
 
-class TaxAssetSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
+class TaxAssetSerializer(CurrencyInputSerializerMixin, CurrentWorkspaceSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = TaxAsset
         fields = '__all__'
@@ -54,7 +55,7 @@ class ScheduleSerializer(CurrentWorkspaceSerializerMixin, serializers.ModelSeria
         read_only_fields = ['workspace', 'created_by', 'created']
 
 
-class StockLineSerializer(serializers.ModelSerializer):
+class StockLineSerializer(CurrencyInputSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model = StockValuationLine
         fields = '__all__'
