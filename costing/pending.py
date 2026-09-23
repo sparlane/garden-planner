@@ -6,7 +6,7 @@ from applications.models import InputApplication, InputApplicationLine
 from inventory.ledger import distribute_exactly, quantize_money
 from plantings.models import SpecificPlantLocation
 
-from .sources import pot_media_line_parts
+from .sources import pot_media_line_parts, pot_media_participation
 
 
 def _entry(kind, amount, currency, reason, *, unknown=False, unallocatable=False):  # pylint: disable=too-many-arguments
@@ -20,12 +20,8 @@ def _entry(kind, amount, currency, reason, *, unknown=False, unallocatable=False
 def _media(placement, currency):
     fill = placement.container_fill
     participants = list(fill.plant_locations.order_by('pk'))
-    count = fill.plant_share_count
     # The first departure freezes today's complete participation, without a write here.
-    if count is None and not any(row.ended is not None for row in participants):
-        count = len(participants)
-    incomplete = (len(participants) > fill.container_count if fill.stock_lot_id
-                  else count is None or count != len(participants))
+    count, incomplete = pot_media_participation(fill, participants)
     index = next(index for index, row in enumerate(participants) if row.pk == placement.pk)
     amount = Decimal('0')
     unknown = False

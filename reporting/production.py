@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.db.models import Q
 
 from costing.services import batch_cost_breakdown
+from costing.sources import sold_cohort_quantities
 from plantings.germination import germination_summaries
 from plantings.lifecycle import lifecycle_summaries, observed_only
 from plantings.loss import LOSS_CAUSES, batch_loss_by_cause
@@ -110,6 +111,14 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
     unit_cost = None
     if total is not None and original_output:
         unit_cost = Decimal(total) / Decimal(original_output)
+    surviving_states = {'growing', 'available', 'quarantined', 'sold'}
+    surviving = sum(count for state, count in states.items() if state in surviving_states)
+    surviving += sum(cohort.quantity for cohort in cohorts if cohort.lifecycle_state in surviving_states)
+    surviving += sum(sold_cohort_quantities(batch).values())
+    projection = cost['projection']
+    survivor_cost = None
+    if surviving and projection['projected_total'] is not None:
+        survivor_cost = Decimal(projection['projected_total']) / Decimal(surviving)
     return {
         'batch_id': batch.pk,
         'batch_code': batch.code,
@@ -138,11 +147,18 @@ def _batch_row(batch):  # pylint: disable=too-many-locals
         'provisional_total': cost['provisional_total'],
         'final_total': cost['final_total'],
         'unit_cost': decimal_string(unit_cost, 4),
+        'surviving_output': surviving,
+        'cost_per_surviving_plant': decimal_string(survivor_cost, 4),
+        'survivor_cost_provisional': cost['provisional'] or any(
+            states[state] or cohort_states[state] for state in ('growing', 'quarantined')
+        ),
+        'survivor_cost_currency': projection['currency_code'],
+        'cost_projection': projection,
         'currency_code': cost['currency_code'],
         'currencies': cost['currencies'],
         'mixed_currency': cost['mixed_currency'],
         'provisional': cost['provisional'],
-        'unvalued': cost['unknown_cost'],
+        'unvalued': cost['unknown_cost'] or projection['unknown_cost'],
         'input_layers': cost['layers'],
         'reconciliation': cost['totals'],
     }
@@ -211,6 +227,13 @@ def production_batches(workspace, filters):
             'message': 'One or more exact input lots have unknown cost.',
             'drill_down': '/reports/production-batches/?unvalued=true',
         })
+    incomplete_media = sum(row['cost_projection']['not_yet_allocatable'] for row in rows)
+    if incomplete_media:
+        quality.append({
+            'code': 'incomplete_media_projection', 'count': incomplete_media,
+            'message': 'Held pot media has incomplete participation; projected production cost is unavailable.',
+            'drill_down': '/reports/production-batches/',
+        })
     mixed = sum(row['mixed_currency'] for row in rows)
     if mixed:
         # Counted in currencies, as `profitability_report` counts them, so the
@@ -238,6 +261,8 @@ def production_batches(workspace, filters):
             'germination_closed_sowings', 'production_loss',
             'plant_inventory_value', 'cogs_value', 'unresolved_value',
             'unattributed_value', 'provisional_total', 'final_total', 'unit_cost',
+            'surviving_output', 'cost_per_surviving_plant', 'survivor_cost_provisional',
+            'survivor_cost_currency', 'cost_projection',
             'currency_code', 'currencies', 'mixed_currency', 'provisional',
             'unvalued', 'input_layers', 'reconciliation',
         ),

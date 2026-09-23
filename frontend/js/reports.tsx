@@ -51,6 +51,13 @@ function ResultTable({ report }: { report: ReportEnvelope }) {
   const columns = Object.keys(rows[0]).filter((column) => !['input_layers', 'reconciliation', 'remaining_balances', 'commerce', 'fulfillments', 'stages'].includes(column))
   return (
     <div className="table-responsive">
+      {report.report === 'production-batches' && (
+        <p className="text-muted">
+          Cost per surviving plant spreads committed costs and held media, including production losses, across growing, available, quarantined and already sold plants. Retained
+          plants, donations, harvested crops and losses are excluded from the count. This pricing estimate is provisional while output or surviving stock is unresolved; no figure
+          is shown for zero survivors, unknown cost, incomplete media shares or mixed currencies. Physical pots still owned are excluded.
+        </p>
+      )}
       <Table striped hover size="sm">
         <thead>
           <tr>

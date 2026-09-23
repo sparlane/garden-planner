@@ -106,7 +106,24 @@ interface BatchCostCurrencyTotal extends CostCurrencyAmount {
 // there is no single figure to show: `currency_code`, both totals and every
 // bucket are null, and `currencies` carries one complete set of figures per
 // currency for the screen to list side by side.
+interface BatchCostProjection {
+  currencies: Array<{
+    currency_code: string
+    committed_subtotal: string
+    pending_media_subtotal: string
+    projected_total: string | null
+    unknown_cost: boolean
+    not_yet_allocatable: boolean
+  }>
+  projected_total: string | null
+  currency_code: string | null
+  mixed_currency: boolean
+  unknown_cost: boolean
+  not_yet_allocatable: boolean
+}
+
 interface BatchCostBreakdown {
+  projection: BatchCostProjection
   batch: number
   code: string
   status: ProductionBatchStatus

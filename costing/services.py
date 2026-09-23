@@ -41,6 +41,7 @@ from plantings.lifecycle import LifecycleState, lifecycle_summaries
 from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, SpecificPlantLocation
 
 from .allocation import combine, loss_shares, value_shares
+from .batch_projection import batch_cost_projection
 from .currency import currency_amounts, held_by_currency, stated_currency
 from .pending import plant_pending_cost, plant_sale_totals
 from .models import CostAllocation, CostAllocationRun, FillDepartureRecalculation
@@ -770,7 +771,7 @@ def batch_cost_breakdown(batch):
         held = plants.setdefault(row.specific_plant_id, {})
         held[row.currency_code] = held.get(row.currency_code, Decimal('0')) + row.amount
     last_run = CostAllocationRun.objects.filter(batch=batch).order_by('created', 'pk').last()
-    return {
+    breakdown = {
         'batch': batch.pk,
         'code': batch.code,
         'status': batch.status,
@@ -816,6 +817,7 @@ def batch_cost_breakdown(batch):
             'created': last_run.created,
         },
     }
+    return {**breakdown, 'projection': batch_cost_projection(batch, breakdown)}
 
 
 def _sale_blocked(codes, currency, unknown, workspace_currency):

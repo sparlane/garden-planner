@@ -77,9 +77,9 @@ function bucketTotal(breakdown: BatchCostBreakdown, bucket: CostBucket): string 
 function TotalRow({ breakdown }: { breakdown: BatchCostBreakdown }) {
   return (
     <dl className="row mb-2">
-      <dt className="col-sm-5">Provisional total</dt>
+      <dt className="col-sm-5">Provisional committed total</dt>
       <dd className="col-sm-7">{total(breakdown, breakdown.provisional_total, true)}</dd>
-      <dt className="col-sm-5">Final total</dt>
+      <dt className="col-sm-5">Final committed total</dt>
       <dd className="col-sm-7">{total(breakdown, breakdown.final_total, false)}</dd>
       {BUCKET_ORDER.map((bucket) => (
         <React.Fragment key={bucket}>
@@ -221,6 +221,34 @@ function BatchCosts({ batchPk }: { batchPk: number }) {
               </Alert>
             )}
             <TotalRow breakdown={breakdown} />
+            <h6>Committed costs plus held media</h6>
+            <p className="text-muted">
+              Held pot media posts when plants leave their fill. These projections include its current share. Physical pots still owned are excluded; they become a cost only when
+              sold.
+            </p>
+            {(breakdown.projection.unknown_cost || breakdown.projection.not_yet_allocatable) && (
+              <Alert variant="warning">A full projection is unavailable: an input cost is unknown or fill participation is incomplete. Subtotals show known amounts only.</Alert>
+            )}
+            <Table size="sm" responsive>
+              <thead>
+                <tr>
+                  <th>Currency</th>
+                  <th>Committed subtotal</th>
+                  <th>Held media subtotal</th>
+                  <th>Projected total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {breakdown.projection.currencies.map((row) => (
+                  <tr key={row.currency_code}>
+                    <td>{row.currency_code}</td>
+                    <td>{formatMoney(row.committed_subtotal, row.currency_code)}</td>
+                    <td>{formatMoney(row.pending_media_subtotal, row.currency_code)}</td>
+                    <td>{formatMoney(row.projected_total, row.currency_code, 'Unavailable')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
             {breakdown.last_run && (
               <div className="text-muted mb-3">
                 Last recalculated {formatDateTime(breakdown.last_run.created)} ({breakdown.last_run.trigger}): reversed {breakdown.last_run.reversed_count}, posted{' '}
