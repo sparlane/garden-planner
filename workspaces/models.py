@@ -8,6 +8,8 @@ from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator, RegexValidator
 from django.db import models
 
+from .conversion import POLICY_CHOICES, ConversionMethod
+
 
 #: Ledger quantity precision, restated here rather than imported. Inventory
 #: depends on this module for workspace ownership, so importing its constants
@@ -129,6 +131,18 @@ class Workspace(models.Model):
         help_text=(
             'Whether a new record may be entered in a currency other than the '
             'workspace currency.'
+        ),
+    )
+    conversion_policy = models.CharField(
+        max_length=16,
+        choices=POLICY_CHOICES,
+        default=ConversionMethod.SPOT,
+        # Kept short for the same reason the switch above is: a migration
+        # carries this string verbatim. What the policy governs is said in
+        # `workspaces/conversion.py`.
+        help_text=(
+            'Which rate every foreign amount in this workspace is converted '
+            'at.'
         ),
     )
     default_tax_rate = models.DecimalField(
