@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from applications.services import ApplicationRequest, LineRequest, TargetRequest, create_application_draft, post_application
 from costing.services import effective_allocations
+from inventory.models import StockLot
 from inventory.ledger import bulk_balance, unpromised_bulk, individualize_lot_units, IndividualizationRequest, reverse_movement
 from plantings.counted_fills import plant_counted_fill
 from plantings.fill_numbering import number_counted_pot
@@ -59,6 +60,15 @@ class FillCommerceTests(CommerceFixtureTestCase):
         self.assertEqual(unpromised_bulk(self.pots, self.store), 0)
         self.assertEqual(FulfillmentContainer.objects.get().unit_cost, 3)
         self.assertEqual(sum(row.amount for row in effective_allocations(self.plant.batch)), 7)
+
+    def test_foreign_pot_preserves_its_currency_and_leaves_sale_unvalued(self):
+        """A pot added after plant costing cannot bypass currency checks."""
+        StockLot.objects.filter(pk=self.pots.pk).update(currency_code='EUR')
+        sale = self.dispatch()
+        self.assertIsNone(sale.lines.get().cogs_amount)
+        container = sale.lines.get().container_dispatch
+        self.assertEqual(container.currency_code, 'EUR')
+        self.assertEqual(container.cogs_amount, 3)
 
     def test_bare_root_dispatch_keeps_the_empty_pot_and_charges_mix(self):
         """Not sending the container still consumes the plant's mix share."""

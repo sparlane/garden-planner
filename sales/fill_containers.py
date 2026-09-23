@@ -56,9 +56,6 @@ def selected_pots(order, allocations, selected):
                 raise ValidationError({'container_allocations': 'Select every plant in the shared pot with its pot, or dispatch bare-root.'})
             if SalesOrderAllocation.objects.filter(inventory_unit_id=row.container_unit_id, status__in=['reserved', 'fulfilled']).exists():
                 raise ValidationError({'container_allocations': 'This pot already has its own sales allocation.'})
-        currency = row.container_unit.currency_code if row.container_unit_id else row.container_fill.stock_lot.currency_code
-        if currency != order.currency_code:
-            raise ValidationError({'container_allocations': 'The pot and order must use the same currency.'})
         if row.container_fill.workspace_id != order.workspace_id:
             raise ValidationError({'container_allocations': 'The placement belongs to another workspace.'})
         result[allocation.plant_id] = row
@@ -112,14 +109,16 @@ def dispatch_selected_pots(order, user, fulfillment, placements):  # pylint: dis
     for group in groups.values():
         group.sort(key=lambda row: row.specific_plant_id)
         movement, cost = dispatch_pot(order, user, group[0], fulfillment)
+        currency_code = movement.unit.currency_code if movement.unit_id else movement.lot.currency_code
         quantities = distribute_exactly(Decimal('1.000000000'), [Decimal('1')] * len(group), quantum=Decimal('0.000000001'))
         amounts = [None] * len(group) if cost is None else distribute_exactly(quantize_money(cost), [Decimal('1')] * len(group))
         for row, quantity, amount in zip(group, quantities, amounts):
             line = lines[row.specific_plant_id]
             FulfillmentContainer.objects.create(fulfillment_line=line, placement=row,
                                                 stock_movement=movement, unit_cost=cost, base_quantity=quantity,
-                                                cogs_amount=amount, currency_code=line.currency_code)
-            cogs = None if amount is None or line.cogs_amount is None else line.cogs_amount + amount
+                                                cogs_amount=amount, currency_code=currency_code)
+            cogs = (None if amount is None or line.cogs_amount is None or currency_code != line.currency_code
+                    else line.cogs_amount + amount)
             FulfillmentLine.objects.filter(pk=line.pk).update(cogs_amount=cogs)
 
 
