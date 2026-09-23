@@ -25,6 +25,15 @@ function multiCurrency(workspace: Workspace): boolean {
 }
 
 /**
+ * Every treatment a line can be classified under, across the apps that have
+ * one. Sales calls its unclassified state `unclassified` and purchasing and
+ * inventory call theirs `unknown`; `''` is a line whose treatment is derived
+ * from the rate rather than entered. Spelled out here so a typo in a caller is
+ * a compile error rather than a silent `'0'`.
+ */
+type TaxTreatment = '' | 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope' | 'unclassified' | 'unknown'
+
+/**
  * The rate to open a line's tax box on, given the treatment it carries.
  *
  * Mirrors `workspaces.tax.unentered_tax_rate`, which the server applies to a
@@ -36,9 +45,10 @@ function multiCurrency(workspace: Workspace): boolean {
  * It is a starting value and never a constraint — the box stays open, because
  * an import and an overseas invoice are ordinary.
  */
-function defaultTaxRate(workspace: Workspace, treatment?: string): string {
+function defaultTaxRate(workspace: Workspace, treatment?: TaxTreatment): string {
   if (treatment !== undefined && treatment !== '' && treatment !== 'standard') return '0'
   return workspace.default_tax_rate
 }
 
 export { defaultTaxRate, isAdvanced, multiCurrency }
+export type { TaxTreatment }

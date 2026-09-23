@@ -164,11 +164,15 @@ function LineRow({ line, index, workspace, items, locations, units, errors, remo
 
   // A line switched to standard-rated opens on what the workspace charges
   // rather than on the zero a new line carries, which is the one pairing the
-  // model refuses outright. A rate already typed on this line survives the
-  // switch, because it was typed on purpose.
+  // model refuses outright. A rate standing in the box survives the switch, so
+  // an edited line keeps the rate it was received at. What it does not survive
+  // is a detour through another treatment: that zeroes the box, exactly as it
+  // has to, and switching back finds the workspace's rate rather than the 9%
+  // that was typed before. Re-typing it is the price of not leaving a rate
+  // standing behind a treatment that forbids one.
   function chooseTreatment(taxTreatment: PurchaseTaxTreatment) {
-    const typed = taxTreatment === 'standard' && Number(line.taxRate) > 0
-    onChange(line.key, { taxTreatment, taxRate: typed ? line.taxRate : defaultTaxRate(workspace, taxTreatment) })
+    const standing = taxTreatment === 'standard' && Number(line.taxRate) > 0
+    onChange(line.key, { taxTreatment, taxRate: standing ? line.taxRate : defaultTaxRate(workspace, taxTreatment) })
   }
 
   return (

@@ -2,6 +2,8 @@
 
 # pylint: disable=abstract-method,missing-function-docstring,too-many-ancestors,too-many-lines,unused-argument
 
+from decimal import Decimal
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from rest_framework import serializers, viewsets
@@ -290,6 +292,19 @@ class SupplierInvoiceLineSerializer(
             'deductible_amount',
         ]
         read_only_fields = ['pk', 'recoverable_tax', 'deductible_amount']
+
+    def tax_rate_is_fillable(self, attrs):
+        """Refuse to put a rate beside a bill that charged no tax.
+
+        An invoice line states its tax as an amount taken off the supplier's
+        document rather than deriving it from a rate, and the model checks only
+        that the three amounts reconcile -- there is no treatment-and-rate
+        check here as there is on a sales or receipt line. So a nil `tax_total`
+        beside a filled rate would not be refused anywhere: it would reach the
+        GST entry and the GST detail export as a standard-rated line charging
+        nothing, which is a claim the supplier never made.
+        """
+        return Decimal(attrs.get('tax_total') or 0) > 0
 
 
 class SupplierInvoiceCorrectionSerializer(serializers.ModelSerializer):
