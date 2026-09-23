@@ -1,7 +1,7 @@
 """Multiple currencies are something a workspace turns on (task 159).
 
 A workspace that trades in one currency is not asked which one every time it
-receives a delivery. The switch governs input: while it is off the six
+receives a delivery. The switch governs input: while it is off the ten
 documents an operator names a currency on take the workspace's own and refuse
 any other by name, and everything already recorded in another currency keeps
 it -- which is what the last class here checks, against the batch task 142
@@ -10,6 +10,15 @@ built.
 
 # pylint: disable=duplicate-code
 
+from datetime import date
+
+from bookkeeping.models import (
+    BookkeepingEntry,
+    IncomeTaxYear,
+    Liability,
+    StockValuationLine,
+    TaxAsset,
+)
 from costing.services import batch_cost_breakdown, plant_cost_breakdown
 from costing.test_currencies import MixedCurrencyTestCase
 from inventory.models import StockReceipt
@@ -73,7 +82,7 @@ class MultiCurrencyDefaultTests(RESTContractTestCase):
 
 
 class CurrencyInputTestCase(RESTContractTestCase):
-    """One NZD nursery and the six documents a currency is entered on."""
+    """One NZD nursery and the ten documents a currency is entered on."""
 
     def setUp(self):
         super().setUp()
@@ -82,6 +91,9 @@ class CurrencyInputTestCase(RESTContractTestCase):
         self.location = make_location()
         self.item = make_inventory_item(base_unit=UnitCode.LITRE)
         self.category = make_expense_category()
+        self.income_year = IncomeTaxYear.objects.create(
+            workspace=self.workspace, year_end=date(2027, 3, 31), basis='accrual',
+        )
 
     def receipt_payload(self, **overrides):
         """Receive two litres of media from the supplier."""
@@ -169,6 +181,63 @@ class CurrencyInputTestCase(RESTContractTestCase):
         """Open a counter order to sell from."""
         return {'status': SalesOrder.Status.DRAFT, 'notes': 'Counter order', **overrides}
 
+    def liability_payload(self, **overrides):
+        """Name the loan the tunnel house was built on."""
+        return {
+            'code': f"LOAN-{overrides.pop('number', '159')}",
+            'name': 'Tunnel house loan',
+            'counterparty': 'Rural Bank',
+            'opened_on': '2026-04-01',
+            **overrides,
+        }
+
+    def bookkeeping_entry_payload(self, **overrides):
+        """Record money that arrived through neither sales nor purchasing."""
+        return {
+            'kind': 'other_income',
+            'occurred_on': '2026-06-01',
+            'description': f"Propagation workshop {overrides.pop('number', '159')}",
+            'amount_ex_tax': '100.0000',
+            'tax_amount': '15.0000',
+            'total_incl_tax': '115.0000',
+            'tax_treatment': 'standard',
+            **overrides,
+        }
+
+    def tax_asset_payload(self, **overrides):
+        """Put the tiller in the register the return depreciates it from."""
+        return {
+            'code': f"TILLER-{overrides.pop('number', '159')}",
+            'name': 'Tiller',
+            'category': 'Machinery',
+            'acquired_on': '2026-04-01',
+            'cost_incl_tax': '1150.0000',
+            'recoverable_tax': '150.0000',
+            'tax_cost': '1000.0000',
+            **overrides,
+        }
+
+    def stock_line_payload(self, **overrides):
+        """Price closing stock by hand, which is where an operator types one.
+
+        The task filed this with the snapshots that copy a currency from the
+        record above them. It is not one: `add_stock_line` takes a whole
+        serializer from the request body, and the operator valuing stock
+        names the value, the method *and* the currency.
+        """
+        return {
+            'income_year': self.income_year.pk,
+            'category': 'other',
+            'description': 'Packed produce',
+            'source_type': 'manual',
+            'source_id': f"PACKED-{overrides.pop('number', '159')}",
+            'original_cost': '50.0000',
+            'method': 'cost',
+            'value': '50.0000',
+            'evidence_url': 'https://example.test/stocktake.pdf',
+            **overrides,
+        }
+
     def entry_points(self, **overrides):
         """Return one create request per document a currency is entered on."""
         return (
@@ -178,13 +247,22 @@ class CurrencyInputTestCase(RESTContractTestCase):
             ('supplier payment', '/purchasing/payments/', self.payment_payload(**overrides)),
             ('business expense', '/purchasing/expenses/', self.expense_payload(**overrides)),
             ('sales order', '/sales/orders/', self.sales_order_payload(**overrides)),
+            ('liability', '/bookkeeping/liabilities/', self.liability_payload(**overrides)),
+            ('bookkeeping entry', '/bookkeeping/entries/', self.bookkeeping_entry_payload(**overrides)),
+            ('tax asset', '/bookkeeping/assets/', self.tax_asset_payload(**overrides)),
+            (
+                'stock valuation line',
+                f'/bookkeeping/income-years/{self.income_year.pk}/stock-lines/',
+                self.stock_line_payload(**overrides),
+            ),
         )
 
     def assert_nothing_was_written(self):
         """A refused currency leaves no document of any kind behind."""
         for model in (
             StockReceipt, PurchaseOrder, SupplierInvoice, SupplierPayment,
-            BusinessExpense, SalesOrder,
+            BusinessExpense, SalesOrder, Liability, BookkeepingEntry, TaxAsset,
+            StockValuationLine,
         ):
             self.assertEqual(model.objects.count(), 0, model.__name__)
 
@@ -287,6 +365,48 @@ class SingleCurrencyInputTests(CurrencyInputTestCase):
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(
             [str(message) for message in response.data['currency_code']], [REFUSAL],
+        )
+
+
+class BookkeepingCurrencyInputTests(CurrencyInputTestCase):
+    """The tax working papers ask for a currency too.
+
+    The task filed all four of them with the snapshots, on the grounds that
+    the browser sends the workspace's code and there is no input to hide. The
+    valuation line is the counter-example, and the other three are
+    `fields = '__all__'` on a writable viewset, which is an input whatever the
+    browser happens to send.
+    """
+
+    def test_a_foreign_valuation_line_never_reaches_the_income_year(self):
+        """Where the refusal has to be, given what one euro line costs.
+
+        `ForeignCurrencyStockTests` (`bookkeeping.test_mixed_currency`) pins
+        the other end: a line in another currency raises
+        `unsupported_currency`, and that finding refuses to finalize the year
+        at all. A line nobody can enter is a year nobody has to unpick.
+        """
+        response = self.client.post(
+            f'/bookkeeping/income-years/{self.income_year.pk}/stock-lines/',
+            self.stock_line_payload(currency_code='EUR'), format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [str(message) for message in response.data['currency_code']], [REFUSAL],
+        )
+        self.assertEqual(self.income_year.stock_lines.count(), 0)
+
+    def test_a_currency_typed_in_lower_case_is_stored_in_upper_here_too(self):
+        """None of the four columns states the shape of a code itself."""
+        entry = self.client.post(
+            '/bookkeeping/entries/', self.bookkeeping_entry_payload(currency_code='nzd'),
+            format='json',
+        )
+
+        self.assertEqual(entry.status_code, 201, entry.data)
+        self.assertEqual(
+            BookkeepingEntry.objects.get(pk=entry.data['id']).currency_code, 'NZD',
         )
 
 
