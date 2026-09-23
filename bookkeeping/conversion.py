@@ -279,6 +279,12 @@ def record_conversion(workspace, source_type, source_id, request, user=None):
     # than as an answer naming the field it came from.
     if rate <= ZERO:
         raise ValidationError({'rate': 'A conversion rate must be above zero.'})
+    if currency == workspace.currency_code and rate != ONE:
+        raise ValidationError({'source_currency_code': (
+            f'This {source.label.lower()} is already in '
+            f'{workspace.currency_code}, so there is nothing to convert. Such '
+            f'a record carries the base-currency conversion, at a rate of one.'
+        )})
     earlier = live_conversion(workspace, source_type, source_id)
     supersedes = request.get('supersedes')
     if earlier is not None and supersedes is None:
