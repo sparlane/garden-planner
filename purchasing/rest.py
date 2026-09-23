@@ -44,6 +44,7 @@ from .services import (
     cancel_requisition,
     close_order,
     confirm_expense,
+    cancel_expense,
     confirm_invoice,
     confirm_order,
     create_invoice,
@@ -485,7 +486,7 @@ class BusinessExpenseSerializer(
             'apportionment_basis', 'recoverable_tax', 'deductible_amount',
             'supplier_invoice', 'paid_on', 'payment_state', 'garden_area', 'crop_plan', 'production_batch',
             'account_reference',
-            'allocation_type', 'allocation_reference', 'status',
+            'allocation_type', 'allocation_reference', 'batch_cost_treatment', 'status',
             'attachment_url', 'notes', 'created_by', 'confirmed_at',
             'cancelled_at', 'created', 'updated',
         ]
@@ -691,6 +692,11 @@ class BusinessExpenseViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         expense = _run(confirm_expense, self.get_object(), request.user)
+        return Response(self.get_serializer(expense).data)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        expense = _run(cancel_expense, self.get_object(), request.user)
         return Response(self.get_serializer(expense).data)
 
 

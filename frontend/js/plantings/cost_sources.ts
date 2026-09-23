@@ -10,7 +10,8 @@ const COST_SOURCE_LABELS: Record<CostSourceType, string> = {
   generation_residual: 'Discarded when the tray was cleaned',
   garden_planting: 'Bought as a plant',
   container_unit: 'Container sold with the plant',
-  container_dispatch: 'Pot dispatched with the plant'
+  container_dispatch: 'Pot dispatched with the plant',
+  business_expense: 'Non-labor production expense'
 }
 
 // A container names the pot rather than the lot, because that is the thing the
@@ -19,6 +20,7 @@ function costSourceLabel(layer: CostLayer): string {
   if (layer.source_type === 'container_unit' && layer.container_unit !== null) {
     return `${COST_SOURCE_LABELS.container_unit} #${layer.container_unit}`
   }
+  if (layer.source_type === 'business_expense') return `${COST_SOURCE_LABELS.business_expense} #${layer.source}`
   return COST_SOURCE_LABELS[layer.source_type]
 }
 

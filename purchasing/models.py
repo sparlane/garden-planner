@@ -731,6 +731,11 @@ class BusinessExpense(WorkspaceOwnedModel, ValidatedModel):
     garden_area = models.ForeignKey('garden.GardenArea', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     crop_plan = models.ForeignKey('plantings.NurseryProductionPlan', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
     production_batch = models.ForeignKey('plantings.ProductionBatch', on_delete=models.PROTECT, null=True, blank=True, related_name='business_expenses')
+    batch_cost_treatment = models.CharField(
+        max_length=16, default='excluded',
+        choices=[('excluded', 'Exclude from plant costs'), ('non_labor', 'Non-labor production cost')],
+        help_text='Explicitly include only non-labor costs; allocate the amount after recoverable tax across batch outputs.',
+    )
     allocation_type = models.CharField(max_length=32, blank=True, default='', help_text='Future allocation kind such as equipment, channel, market, or delivery.')
     allocation_reference = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT, editable=False)
@@ -764,6 +769,8 @@ class BusinessExpense(WorkspaceOwnedModel, ValidatedModel):
             errors['apportionment_basis'] = 'Explain every partial input-tax claim.'
         if self.supplier_invoice_id and self.paid_on:
             errors['paid_on'] = 'Payment is derived from the linked supplier invoice.'
+        if self.batch_cost_treatment == 'non_labor' and not self.production_batch_id:
+            errors['production_batch'] = 'Select the batch receiving this non-labor production cost.'
         if bool(self.allocation_type) != bool(self.allocation_reference):
             errors['allocation_reference'] = 'Provide both a future allocation type and reference.'
         if errors:

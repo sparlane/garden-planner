@@ -19,6 +19,7 @@ from typing import NamedTuple
 
 from django.db.models import Q, Sum
 
+from purchasing.models import BusinessExpense
 from sales.models import SalesOrderAllocation, FulfillmentRider, FulfillmentContainer, SalesReturnLine
 from applications.models import InputApplication, InputApplicationLine
 from applications.usage import AREA_TARGETS, VOLUME_TARGETS
@@ -811,6 +812,26 @@ def dispatched_pot_sources(batch):
     ) for row in rows.select_related('stock_movement', 'fulfillment_line__allocation')]
 
 
+def expense_sources(batch):
+    """Split opted-in expenses over observed outputs, preserving losses and sales."""
+    outputs = cohort_outputs(batch)
+    promoted = {target for kind, target, _weight in outputs if kind == 'plant'}
+    outputs.extend(
+        ('plant', plant_id, Decimal('1'))
+        for plant_id in observed_only(SpecificPlant.objects.filter(batch=batch))
+        .exclude(pk__in=promoted).order_by('pk').values_list('pk', flat=True)
+    )
+    shares = resolve_unidentified_to_cohorts(whole_source_share(), outputs)
+    return [SourceInput(
+        source_type=SourceType.BUSINESS_EXPENSE, source=expense, movement=None,
+        base_quantity=Decimal('1'), base_unit='each', unit_cost=expense.deductible_amount,
+        currency_code=expense.currency_code, shares=tuple(shares),
+    ) for expense in BusinessExpense.objects.filter(
+        production_batch=batch, status=BusinessExpense.Status.CONFIRMED,
+        batch_cost_treatment='non_labor',
+    ).order_by('pk')]
+
+
 def batch_sources(batch):
     """Return every posted input this batch drew on, resolved to its targets.
 
@@ -826,6 +847,7 @@ def batch_sources(batch):
     sources += residual_sources(batch, generation_ids)
     sources += container_sources(batch)
     sources += dispatched_pot_sources(batch)
+    sources += expense_sources(batch)
     observed = plants_by_cell(batch)
     outputs = cohort_outputs(batch)
     resolved = []
