@@ -396,15 +396,21 @@ function IncomeYearPanel({ workspace }: { workspace: Workspace }) {
               </div>
             </div>
             {year.live_report.data_quality.map((issue) => (
-              <Alert variant="warning" key={issue.code}>
+              <Alert variant={issue.blocking === false ? 'info' : 'warning'} key={issue.code}>
                 {issue.message}
               </Alert>
             ))}
+            {!year.live_report.conversion.complete && <Alert variant="info">{year.live_report.conversion.rounding}</Alert>}
             <Row>
               {Object.entries(year.live_report.totals).map(([label, amount]) => (
                 <Col sm={6} lg={4} key={label}>
                   <strong>{label.replaceAll('_', ' ')}</strong>
-                  <div>{formatMoney(amount, year.live_report.currency_code)}</div>
+                  <div>
+                    {/* A withheld figure is not a zero, and it is not a blank
+                        either: it is a total one of whose rows has no exchange
+                        rate recorded against it. */}
+                    {formatMoney(amount, year.live_report.currency_code, 'Not stated — an amount in it has no exchange rate')}
+                  </div>
                 </Col>
               ))}
             </Row>

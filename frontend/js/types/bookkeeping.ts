@@ -33,8 +33,20 @@ interface IncomeTaxReport {
   date_from: string
   date_to: string
   currency_code: string
-  totals: Record<string, string>
-  data_quality: Array<{ code: string; message: string; count?: number }>
+  // Null where a figure could not be stated: it would have added up an amount
+  // recorded in another currency that no exchange rate has been typed against.
+  // Null is never a zero, and a screen has to say which it is showing.
+  totals: Record<string, string | null>
+  // `blocking` is false for a finding that a year can still be finalized with,
+  // which an unconverted amount is.
+  data_quality: Array<{ code: string; message: string; count?: number; blocking?: boolean }>
+  conversion: {
+    policy: string
+    methods: Array<string>
+    // False where at least one amount in the year has no rate recorded.
+    complete: boolean
+    rounding: string
+  }
 }
 
 interface IncomeTaxYear {

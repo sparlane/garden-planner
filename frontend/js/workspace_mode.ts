@@ -1,4 +1,4 @@
-import { Workspace } from './types/workspace'
+import { ConversionPolicy, Workspace } from './types/workspace'
 
 /**
  * Whether stock, costing, and traceability detail should be shown.
@@ -22,6 +22,18 @@ function isAdvanced(workspace: Workspace): boolean {
  */
 function multiCurrency(workspace: Workspace): boolean {
   return workspace.multi_currency_enabled
+}
+
+/**
+ * How this workspace says a foreign amount is converted into its own currency.
+ *
+ * Mirrors `Workspace.conversion_policy`. It is what a recorded conversion must
+ * claim -- the server refuses a rate recorded by any other method -- and never
+ * a calculation: no rate is derived from it, and none is held anywhere. Every
+ * rate is typed against the transaction it converts.
+ */
+function conversionPolicy(workspace: Workspace): ConversionPolicy {
+  return workspace.conversion_policy
 }
 
 /**
@@ -50,5 +62,5 @@ function defaultTaxRate(workspace: Workspace, treatment?: TaxTreatment): string 
   return workspace.default_tax_rate
 }
 
-export { defaultTaxRate, isAdvanced, multiCurrency }
+export { conversionPolicy, defaultTaxRate, isAdvanced, multiCurrency }
 export type { TaxTreatment }
