@@ -13,10 +13,18 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
+from workspaces.conversion import (
+    RATE_DIGITS,
+    RATE_PLACES,
+    ConversionMethod,
+    QuoteDirection,
+    conversion_policy_refusal,
+)
 from workspaces.models import WorkspaceOwnedModel
 
 
 ZERO = Decimal('0')
+ONE = Decimal('1')
 MONEY_DIGITS = 18
 MONEY_PLACES = 4
 
@@ -392,3 +400,118 @@ class LegalHoldEvent(WorkspaceOwnedModel, AppendOnlyModel):
         super().clean()
         if self.retention_id and self.retention.workspace_id != self.workspace_id:
             raise ValidationError({'retention': 'The retained source belongs to another workspace.'})
+
+
+class CurrencyConversion(WorkspaceOwnedModel, AppendOnlyModel):
+    """What one transaction's amounts come to in the workspace's currency.
+
+    The rate is typed against the transaction it converts, and there is no rate
+    table anywhere to read one back out of. This record is therefore the
+    exchange-rate record itself: the source it was taken from, the rate, which
+    way round the rate is quoted, the date it was effective, the date the
+    conversion was made, and the method -- beside the amounts it was applied
+    to, so what was converted is readable years later without recomputing it.
+
+    It is a separate record because the transaction cannot hold it. A rate
+    often arrives after the transaction does, and `billing.SupplyDocument`,
+    `sales.Payment` and `sales.Refund` are immutable commerce records while
+    `BookkeepingEntry` above is append-only, so there is no column on the row
+    to write it into. It points at the row by `source_type` and `source_id`,
+    the way `TaxRetentionRecord` does, which is also what lets one record serve
+    nine kinds of row across four apps.
+
+    A wrong rate is corrected by recording the right one against the same
+    source, with `supersedes` naming the one it replaces. Nothing is mutated
+    and nothing is deleted; the superseded conversion stays readable, which is
+    most of why a conversion is a record rather than a column. The live
+    conversion for a source is the one nothing supersedes.
+
+    A row already in the workspace's own currency gets one of these too, at a
+    rate of one and the `base_currency` method. It is not a conversion in any
+    real sense, but recording it means every taxable transaction carries a
+    conversion, so a row without one is unambiguously a row whose rate has not
+    been typed yet rather than a row that never needed one.
+    """
+
+    source_type = models.CharField(max_length=64)
+    source_id = models.CharField(max_length=128)
+    source_currency_code = models.CharField(max_length=3)
+    target_currency_code = models.CharField(
+        max_length=3,
+        help_text='The workspace currency as it stood when the rate was typed.',
+    )
+    rate = models.DecimalField(max_digits=RATE_DIGITS, decimal_places=RATE_PLACES)
+    quote_direction = models.CharField(max_length=24, choices=QuoteDirection.choices)
+    method = models.CharField(max_length=16, choices=ConversionMethod.choices)
+    rate_source = models.CharField(
+        max_length=255,
+        help_text='Where the rate was taken from, in the words of whoever took it.',
+    )
+    effective_date = models.DateField(help_text='The date the rate applied on.')
+    converted_on = models.DateField(help_text='The date the conversion was made.')
+    amounts = models.JSONField(
+        default=list,
+        help_text=(
+            'One entry per converted amount: its name on the source row, what '
+            'the row carries, and what that comes to at this rate.'
+        ),
+    )
+    supersedes = models.OneToOneField(
+        'self', on_delete=models.PROTECT, null=True, blank=True,
+        related_name='superseded_by',
+    )
+    reason = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, editable=False, related_name='+')
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['source_type', 'source_id', 'pk']
+        indexes = [
+            models.Index(
+                fields=['workspace', 'source_type', 'source_id'],
+                name='bookkeeping_conversion_idx',
+            ),
+        ]
+
+    def clean(self):
+        """Refuse a rate that could not have converted this row."""
+        super().clean()
+        errors = {}
+        if self.rate is not None and self.rate <= ZERO:
+            errors['rate'] = 'A conversion rate must be above zero.'
+        errors.update(self._currency_errors())
+        if self.workspace_id and self.method:
+            refusal = conversion_policy_refusal(self.workspace, self.method)
+            if refusal:
+                errors['method'] = refusal
+        if self.supersedes_id:
+            errors.update(self._supersedes_errors())
+        if errors:
+            raise ValidationError(errors)
+
+    def _currency_errors(self):
+        """Check the pair against the method, which is what makes it identity."""
+        same = self.source_currency_code == self.target_currency_code
+        if self.method == ConversionMethod.BASE_CURRENCY:
+            if not same:
+                return {'method': 'A base-currency conversion cannot change the currency.'}
+            if self.rate is not None and self.rate != ONE:
+                return {'rate': 'A base-currency conversion is recorded at a rate of one.'}
+            return {}
+        if same:
+            return {'source_currency_code': (
+                'An amount already in the workspace currency is recorded as a '
+                'base-currency conversion rather than converted.'
+            )}
+        return {}
+
+    def _supersedes_errors(self):
+        """A correction replaces one conversion of the same row, and only one."""
+        earlier = CurrencyConversion.objects.filter(pk=self.supersedes_id).first()
+        if earlier is None:
+            return {}
+        if earlier.workspace_id != self.workspace_id:
+            return {'supersedes': 'The earlier conversion belongs to another workspace.'}
+        if (earlier.source_type, earlier.source_id) != (self.source_type, self.source_id):
+            return {'supersedes': 'The earlier conversion converted a different record.'}
+        return {}
