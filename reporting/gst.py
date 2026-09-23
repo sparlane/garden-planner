@@ -13,16 +13,22 @@ of supply. For one order paid in one period and delivered in the next, the two
 disagree — and they are supposed to. The `reconciliation` block says so in the
 payload rather than leaving somebody to discover it against a filed return.
 
-Nothing here is totalled across currencies. There is no exchange rate in this
-application (task 121 owns that), so a period trading in two currencies reports
-each separately and withholds the consolidated net figure, exactly as
-`profitability_report` withholds a margin it cannot state.
+A period's rows are one per currency traded in, and they stay that way: a row
+is the trading that happened, in the unit it happened in. Where a period
+touched a currency other than the workspace's, one further row is added --
+consolidated, in the workspace's own currency, built by converting every entry
+behind it at the rate recorded against the transaction it came from. That row
+is the return. It appears only when every entry in the period could be
+converted; where a rate has not been typed the period states no consolidated
+figure and says so as a data-quality finding, because a return total missing
+one of its supplies is not a smaller true total.
 """
 
 # pylint: disable=duplicate-code
 
 from calendar import monthrange
 from collections import defaultdict
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -48,6 +54,8 @@ from tax.services import closures_by_label
 from tax.transition import basis_transitions
 from tax.turnover import registration_warnings
 
+from bookkeeping.consolidation import ROUNDING_NOTE, Converter
+
 from .common import Report, decimal_string
 
 
@@ -63,14 +71,16 @@ PERIOD_COLUMNS = (
     'purchases_incl_tax', 'input_tax', 'credit_adjustments', 'total_input_tax',
     'non_recoverable_tax', 'input_tax_awaiting_payment',
     'net_gst', 'net_gst_direction', 'entry_count', 'currency_code',
-    'filed', 'filed_at', 'filed_total_drift',
+    'consolidated', 'filed', 'filed_at', 'filed_total_drift',
 )
 
 ENTRY_COLUMNS = (
     'period_label', 'kind', 'supply_date', 'basis', 'source_type', 'source_id',
     'document_id', 'line_id', 'tax_code', 'tax_rate',
     'taxable', 'tax', 'non_recoverable_tax', 'gross',
-    'currency_code', 'time_of_supply_source', 'input_tax_source',
+    'currency_code', 'converted_taxable', 'converted_tax',
+    'converted_gross', 'converted_currency_code',
+    'time_of_supply_source', 'input_tax_source',
     'adjustment_direction', 'proxy', 'exclusion',
 )
 
@@ -85,6 +95,12 @@ RECONCILIATION = {
     'entry_equation': (
         'every period total is the sum of its entries in this report, and '
         'every entry is derived from one immutable commerce record'
+    ),
+    'conversion_note': (
+        'A row marked consolidated restates the rows above it in the '
+        'workspace currency, at the rate recorded against each transaction. '
+        'A period holding an amount no rate has been recorded against gets no '
+        'consolidated row. ' + ROUNDING_NOTE
     ),
     'amount_equation': 'gross = taxable + claimable tax + non-claimable tax',
     'recognition_note': (
@@ -126,17 +142,21 @@ def gst_period_report(workspace, filters):
     entries = derive_entries(workspace, start, end)
     periods = enumerate_periods(workspace, start, end, history=registration_history(workspace))
     closures = closures_by_label(workspace)
+    converter = Converter(workspace)
     rows = []
     for period in periods:
-        rows.extend(_mark_filed(row, closures) for row in _period_rows(period, entries))
+        rows.extend(
+            _mark_filed(row, closures)
+            for row in _period_rows(period, entries, converter)
+        )
     return Report(
         name='gst-periods',
         filters=dict(filters),
         columns=PERIOD_COLUMNS,
         rows=rows,
-        totals=_period_totals(rows, basis_transitions(workspace)),
+        totals=_period_totals(rows, basis_transitions(workspace), converter),
         reconciliation=dict(RECONCILIATION),
-        data_quality=_data_quality(workspace, entries, rows, end),
+        data_quality=_data_quality(workspace, entries, rows, end) + converter.findings(),
     )
 
 
@@ -151,6 +171,14 @@ def _mark_filed(row, closures):
     closure = closures.get(row['period_label'])
     if closure is None:
         return {**row, 'filed': False, 'filed_at': None, 'filed_total_drift': None}
+    if row['consolidated']:
+        # A return was filed in the currency it was filed in. Comparing a
+        # restatement against it would report a drift that is the conversion,
+        # not a correction.
+        return {
+            **row, 'filed': True, 'filed_at': closure.created.isoformat(),
+            'filed_total_drift': None,
+        }
     filed = closure.filed_totals.get(row['currency_code'], {}).get('net_gst')
     drift = (
         None if filed is None
@@ -168,14 +196,16 @@ def gst_entry_report(workspace, filters):
     """Return every derived entry, which is what each period total is made of."""
     start, end = _date_bounds(workspace, filters)
     entries = _apply_entry_filters(derive_entries(workspace, start, end), filters)
+    converter = Converter(workspace)
+    rows = [_entry_row(entry, converter) for entry in entries]
     return Report(
         name='gst-entries',
         filters=dict(filters),
         columns=ENTRY_COLUMNS,
-        rows=[_entry_row(entry) for entry in entries],
+        rows=rows,
         totals=_entry_totals(entries),
         reconciliation=dict(RECONCILIATION),
-        data_quality=[],
+        data_quality=converter.findings(),
     )
 
 
@@ -199,12 +229,17 @@ def _apply_entry_filters(entries, filters):
     return selected
 
 
-def _period_rows(period, entries):
+def _period_rows(period, entries, converter):
     """Return one row per currency this period traded in, or one empty row.
 
     A period with no trading still gets a row. A return was due for it, and a
     report that simply omitted it would look the same as one where the period
     had been forgotten.
+
+    Where a period touched any currency but the workspace's, a consolidated row
+    follows the others: the same boxes, built from the same entries restated at
+    the rate recorded against each one. It is the row a return is filed from,
+    and it is absent rather than partial whenever a rate is missing.
     """
     matching = [
         entry for entry in entries
@@ -223,10 +258,51 @@ def _period_rows(period, entries):
         by_currency[entry.currency_code][1].append(entry)
     if not by_currency:
         return [_period_row(period, '', [], [])]
-    return [
+    rows = [
         _period_row(period, currency, included, held)
         for currency, (included, held) in sorted(by_currency.items())
     ]
+    if set(by_currency) - {converter.target}:
+        consolidated = _consolidated_row(period, matching, awaiting, converter)
+        if consolidated is not None:
+            rows.append(consolidated)
+    return rows
+
+
+def _consolidated_row(period, entries, awaiting, converter):
+    """Restate one period in the workspace's currency, or state nothing.
+
+    Every entry is converted at the rate recorded against its own transaction,
+    and the boxes are summed from the converted entries rather than from the
+    per-currency rows -- summing rows would mean converting a total, and a
+    total is not a transaction anything holds a rate for.
+    """
+    restated = [_restated(entry, converter) for entry in entries]
+    restated_awaiting = [_restated(entry, converter) for entry in awaiting]
+    if None in restated or None in restated_awaiting:
+        return None
+    row = _period_row(period, converter.target, restated, restated_awaiting)
+    return {**row, 'consolidated': True}
+
+
+def _restated(entry, converter):
+    """Return one entry with its three amounts in the workspace's currency.
+
+    None where the rate has not been typed. Each amount is converted on its
+    own, so `gross` recomputes from the converted parts rather than being
+    converted itself -- which is what keeps the amount equation true after
+    conversion as well as before it.
+    """
+    converted = {}
+    for field_name in ('taxable', 'tax', 'non_recoverable_tax'):
+        amount = converter.amount(
+            entry.source_type, entry.source_id, entry.currency_code,
+            getattr(entry, field_name),
+        )
+        if amount is None:
+            return None
+        converted[field_name] = amount
+    return replace(entry, currency_code=converter.target, **converted)
 
 
 def _period_row(period, currency_code, entries, awaiting):  # pylint: disable=too-many-locals
@@ -295,6 +371,7 @@ def _period_row(period, currency_code, entries, awaiting):  # pylint: disable=to
         'net_gst_direction': _direction(net),
         'entry_count': len(entries),
         'currency_code': currency_code,
+        'consolidated': False,
     }
 
 
@@ -311,8 +388,13 @@ def _gst_number(period):
     return registration.gst_number if registration else ''
 
 
-def _period_totals(rows, transitions=()):
-    """Sum the periods, per currency, withholding what cannot be consolidated."""
+def _period_totals(rows, transitions=(), converter=None):
+    """Sum the periods, per currency, and once more in the workspace's own.
+
+    The per-currency buckets are built from the rows that state what actually
+    happened; a consolidated row is a restatement of rows already counted, so
+    it is kept out of them and summed on its own instead.
+    """
     summed = defaultdict(lambda: defaultdict(Decimal))
     money_fields = [
         column for column in PERIOD_COLUMNS
@@ -325,8 +407,9 @@ def _period_totals(rows, transitions=()):
             'filed', 'filed_at', 'filed_total_drift',
         }
     ]
+    consolidated = defaultdict(Decimal)
     for row in rows:
-        bucket = summed[row['currency_code']]
+        bucket = consolidated if row['consolidated'] else summed[row['currency_code']]
         for field in money_fields:
             bucket[field] += Decimal(row[field])
         bucket['entry_count'] += row['entry_count']
@@ -344,10 +427,39 @@ def _period_totals(rows, transitions=()):
         'currencies': currencies,
         'by_currency': per_currency,
         'basis_transitions': [_transition_total(item) for item in transitions],
-        # None means withheld, and must mean only that: consolidating two
-        # currencies would need an exchange rate this application does not
-        # hold. A range that simply saw no trading is nil, not unknown.
+        # None means withheld, and must mean only that: the range traded in
+        # more than one currency and the consolidated figure below is where a
+        # single total for it lives. A range that simply saw no trading is nil,
+        # not unknown.
         'net_gst': _consolidated_net(currencies, per_currency),
+        'converted_currency_code': None if converter is None else converter.target,
+        # The same boxes over the whole range, in the workspace's own currency.
+        # None where any period could not be consolidated, because a range
+        # total built from some of its periods is a wrong number rather than a
+        # partial one.
+        'converted': _converted_total(
+            rows, money_fields, consolidated, converter,
+        ),
+    }
+
+
+def _converted_total(rows, money_fields, consolidated, converter):
+    """Sum the consolidated rows, or state nothing if a period lost one."""
+    if converter is None:
+        return None
+    wanted = {
+        row['period_label'] for row in rows
+        if row['currency_code'] not in ('', converter.target)
+    }
+    stated = {row['period_label'] for row in rows if row['consolidated']}
+    if wanted - stated:
+        return None
+    if not wanted:
+        return None
+    return {
+        **{field: decimal_string(consolidated[field], MONEY_PLACES) for field in money_fields},
+        'net_gst_direction': _direction(consolidated['net_gst']),
+        'entry_count': int(consolidated['entry_count']),
     }
 
 
@@ -380,8 +492,15 @@ def _consolidated_net(currencies, per_currency):
     return per_currency[currencies[0]]['net_gst']
 
 
-def _entry_row(entry):
-    """Render one derived entry as the drill-down row behind a period total."""
+def _entry_row(entry, converter):
+    """Render one derived entry as the drill-down row behind a period total.
+
+    The converted columns are the same entry in the workspace's currency, null
+    where no rate has been recorded against the transaction it came from. This
+    is the level the conversion actually happens at, so it is the level a
+    reader checking a consolidated total drills down to.
+    """
+    restated = _restated(entry, converter)
     return {
         'period_label': entry.period_label,
         'kind': entry.kind,
@@ -398,6 +517,10 @@ def _entry_row(entry):
         'non_recoverable_tax': decimal_string(entry.non_recoverable_tax, MONEY_PLACES),
         'gross': decimal_string(entry.gross, MONEY_PLACES),
         'currency_code': entry.currency_code,
+        'converted_taxable': None if restated is None else decimal_string(restated.taxable, MONEY_PLACES),
+        'converted_tax': None if restated is None else decimal_string(restated.tax, MONEY_PLACES),
+        'converted_gross': None if restated is None else decimal_string(restated.gross, MONEY_PLACES),
+        'converted_currency_code': converter.target,
         'time_of_supply_source': entry.time_of_supply_source,
         'input_tax_source': entry.input_tax_source,
         'adjustment_direction': entry.adjustment_direction,
@@ -516,7 +639,10 @@ def _data_quality(workspace, entries, rows, as_at):  # pylint: disable=too-many-
             'computed: no supplier payment date is recorded anywhere yet.',
         ))
 
-    currencies = {row['currency_code'] for row in rows if row['currency_code']}
+    currencies = {
+        row['currency_code'] for row in rows
+        if row['currency_code'] and not row['consolidated']
+    }
     if len(currencies) > 1:
         findings.append(_finding(
             'mixed_currency', len(currencies),

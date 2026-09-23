@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import Q
 from django.utils import timezone
 
 from billing.models import SupplyCorrection, SupplyDocument
@@ -21,6 +21,8 @@ from plantings.models import CohortEvent, CohortOperation, PlantCohort, PlantLif
 from purchasing.models import BusinessExpense, SupplierInvoice, SupplierPayment
 from sales.models import Payment, Refund
 
+from .consolidation import ROUNDING_NOTE, Converter
+from .conversion import backfill_identity_conversions
 from .models import (
     BookkeepingEntry,
     DepreciationSchedule,
@@ -534,6 +536,7 @@ def _expense_rows(income_year, start, end):
                 rows.append({
                     'kind': 'expense', 'date': invoice.invoice_date.isoformat(),
                     'source_type': 'supplier_invoice_line', 'source_id': line.pk,
+                    'rate_source_type': 'supplier_invoice', 'rate_source_id': invoice.pk,
                     'reference': invoice.external_reference,
                     'amount': str(line.deductible_amount), 'currency_code': invoice.currency_code,
                 })
@@ -559,18 +562,67 @@ def _expense_rows(income_year, start, end):
     return rows
 
 
-def _purchase_total(workspace, start, end):
+def _purchase_total(workspace, start, end, converter):
+    """Total what was landed, each line at the rate of the receipt it came in on.
+
+    A line is converted rather than the receipt's own stored equivalent,
+    because the line is what this figure is the sum of; both use the same rate,
+    which is what keeps them reconcilable to each other.
+    """
     lines = StockReceiptLine.objects.filter(
         receipt__workspace=workspace, receipt__status='posted',
         receipt__received_date__gte=start, receipt__received_date__lte=end,
+    ).select_related('receipt')
+    return converter.total(
+        ('stock_receipt', line.receipt_id, line.receipt.currency_code, line.acquisition_amount)
+        for line in lines if line.acquisition_amount is not None
     )
-    return sum((line.acquisition_amount for line in lines if line.acquisition_amount is not None), ZERO)
+
+
+def _stated(value):
+    """Render a total, or None where one of its rows could not be converted.
+
+    None here means exactly one thing: a figure that would have added up an
+    amount nobody has typed a rate against. Stating it short would be a wrong
+    number, and stating it across two currencies would be a different wrong
+    number, so it states nothing and the data-quality finding says why.
+    """
+    return None if value is None else str(money(value))
+
+
+def _opening_stock(prior):
+    """Read what last year filed as its closing stock, if it could state one."""
+    if prior is None:
+        return ZERO
+    value = prior.frozen_report.get('totals', {}).get('closing_stock')
+    return None if value is None else Decimal(value)
+
+
+def _stock_cost(opening, purchases, closing):
+    """Opening plus purchases less closing, or nothing if a part is missing."""
+    if None in (opening, purchases, closing):
+        return None
+    return opening + purchases - closing
+
+
+def _working_result(earned, spent):
+    """The year's result, which needs every one of its six parts.
+
+    `earned` is what came in -- sales and other income -- and `spent` is what
+    went against it: cost of sales, deductible expenses, depreciation, and the
+    GST adjustments, which are signed and so are added rather than subtracted.
+    """
+    if None in earned or None in spent:
+        return None
+    cost_of_sales, expenses, depreciation, adjustments = spent
+    return sum(earned) - cost_of_sales - expenses - depreciation + adjustments
 
 
 def build_report(income_year):
     """Build one source-linked schedule without mutating the income-year record."""
     start = year_start(income_year)
     end = income_year.year_end
+    converter = Converter(income_year.workspace)
     sales = _accrual_sales(income_year.workspace, start, end) if income_year.basis == IncomeTaxYear.Basis.ACCRUAL else _cash_sales(income_year.workspace, start, end)
     expenses = _expense_rows(income_year, start, end)
     entries = BookkeepingEntry.objects.filter(
@@ -589,59 +641,78 @@ def build_report(income_year):
         'reference': row.external_reference, 'amount': str(row.total_incl_tax),
         'currency_code': row.currency_code,
     } for row in entries.exclude(kind=BookkeepingEntry.Kind.OTHER_INCOME)]
-    closing = sum((line.value for line in income_year.stock_lines.all()), ZERO)
+    stock_lines = list(income_year.stock_lines.all())
+    closing = converter.total(
+        ('stock_valuation_line', line.pk, line.currency_code, line.value)
+        for line in stock_lines
+    )
     prior = IncomeTaxYear.objects.filter(
         workspace=income_year.workspace,
         year_end=start - timedelta(days=1),
         status=IncomeTaxYear.Status.FINALIZED,
     ).order_by('-revision').first()
-    opening = Decimal(prior.frozen_report.get('totals', {}).get('closing_stock', '0')) if prior else ZERO
-    purchases = money(_purchase_total(income_year.workspace, start, end))
+    opening = _opening_stock(prior)
+    purchases = _purchase_total(income_year.workspace, start, end, converter)
     schedules = list(DepreciationSchedule.objects.filter(
         workspace=income_year.workspace, income_year_end=end,
     ).select_related('asset'))
-    depreciation = sum((row.depreciation_claimed for row in schedules), ZERO)
     depreciation_rows = [{
         'kind': 'depreciation', 'date': end.isoformat(),
         'source_type': 'depreciation_schedule', 'source_id': row.pk,
+        'rate_source_type': 'tax_asset', 'rate_source_id': row.asset_id,
         'reference': row.asset.code, 'amount': str(row.depreciation_claimed),
         'currency_code': row.asset.currency_code, 'asset_id': row.asset_id,
     } for row in schedules]
-    gst_adjustments = InputTaxAdjustment.objects.filter(
-        workspace=income_year.workspace,
-        adjustment_date__gte=start, adjustment_date__lte=end,
-    ).aggregate(total=Sum('tax_adjustment'))['total'] or ZERO
-    sales_total = sum((Decimal(row['amount']) for row in sales), ZERO)
-    income_total = sum((Decimal(row['amount']) for row in other_income), ZERO)
-    expense_total = sum((Decimal(row['amount']) for row in expenses), ZERO)
-    cost_of_sales = opening + purchases - closing
-    currencies = sorted({
-        row['currency_code'] for row in sales + expenses + other_income + cash_reconciliation
-    } | {line.currency_code for line in income_year.stock_lines.all()})
-    quality = []
-    if len(currencies) > 1 or (currencies and currencies != [income_year.workspace.currency_code]):
-        quality.append({'code': 'unsupported_currency', 'message': 'Task 121 must convert every source to the workspace currency before finalization.'})
-    provisional = income_year.stock_lines.filter(provisional=True).count()
+    depreciation = converter.row_total(depreciation_rows)
+    gst_adjustments = converter.total(
+        ('input_tax_adjustment', row.pk, row.receipt_line.receipt.currency_code, row.tax_adjustment)
+        for row in InputTaxAdjustment.objects.filter(
+            workspace=income_year.workspace,
+            adjustment_date__gte=start, adjustment_date__lte=end,
+        ).select_related('receipt_line__receipt')
+    )
+    sales_total = converter.row_total(sales)
+    income_total = converter.row_total(other_income)
+    expense_total = converter.row_total(expenses)
+    converter.row_total(cash_reconciliation)
+    cost_of_sales = _stock_cost(opening, purchases, closing)
+    working_result = _working_result(
+        (sales_total, income_total),
+        (cost_of_sales, expense_total, depreciation, gst_adjustments),
+    )
+    quality = list(converter.findings())
+    provisional = sum(1 for line in stock_lines if line.provisional)
     if provisional:
-        quality.append({'code': 'provisional_stock', 'count': provisional, 'message': 'Resolve every provisional stock value.'})
+        quality.append({'code': 'provisional_stock', 'count': provisional, 'blocking': True, 'message': 'Resolve every provisional stock value.'})
     if prior is None and opening == ZERO:
-        quality.append({'code': 'opening_stock_unconfirmed', 'message': 'Confirm the opening stock value or prior finalized year before finalization.'})
+        quality.append({'code': 'opening_stock_unconfirmed', 'blocking': True, 'message': 'Confirm the opening stock value or prior finalized year before finalization.'})
     return {
         'report': 'income-tax-year', 'version': 'income-tax.v1',
         'income_year_id': income_year.pk, 'revision': income_year.revision,
         'basis': income_year.basis, 'date_from': start.isoformat(), 'date_to': end.isoformat(),
         'timezone': income_year.workspace.timezone, 'balance_date_assumption': '31 March',
         'currency_code': income_year.workspace.currency_code,
-        'totals': {
-            'sales_ex_tax': str(money(sales_total)), 'other_income': str(money(income_total)),
-            'opening_stock': str(money(opening)), 'stock_purchases': str(purchases),
-            'closing_stock': str(money(closing)), 'cost_of_sales': str(money(cost_of_sales)),
-            'deductible_expenses': str(money(expense_total)), 'depreciation': str(money(depreciation)),
-            'gst_adjustments': str(money(gst_adjustments)),
-            'working_result': str(money(sales_total + income_total - cost_of_sales - expense_total - depreciation + gst_adjustments)),
+        'conversion': {
+            'policy': income_year.workspace.conversion_policy,
+            'methods': sorted(converter.methods),
+            'complete': converter.complete,
+            'rounding': ROUNDING_NOTE,
         },
-        'rows': sales + other_income + expenses + depreciation_rows,
-        'cash_reconciliation': cash_reconciliation,
+        'totals': {
+            'sales_ex_tax': _stated(sales_total), 'other_income': _stated(income_total),
+            'opening_stock': _stated(opening), 'stock_purchases': _stated(purchases),
+            'closing_stock': _stated(closing), 'cost_of_sales': _stated(cost_of_sales),
+            'deductible_expenses': _stated(expense_total), 'depreciation': _stated(depreciation),
+            'gst_adjustments': _stated(gst_adjustments),
+            'working_result': _stated(working_result),
+        },
+        'rows': [
+            converter.converted_row(row)
+            for row in sales + other_income + expenses + depreciation_rows
+        ],
+        'cash_reconciliation': [
+            converter.converted_row(row) for row in cash_reconciliation
+        ],
         'stock_lines': [{
             'id': line.pk, 'category': line.category, 'description': line.description,
             'source_type': line.source_type, 'source_id': line.source_id,
@@ -649,7 +720,11 @@ def build_report(income_year):
             'unit_code': line.unit_code, 'method': line.method, 'value': str(line.value),
             'currency_code': line.currency_code, 'evidence_url': line.evidence_url,
             'assumptions': line.assumptions,
-        } for line in income_year.stock_lines.all()],
+            'converted_value': _stated(converter.amount(
+                'stock_valuation_line', line.pk, line.currency_code, line.value,
+            )),
+            'converted_currency_code': converter.target,
+        } for line in stock_lines],
         'data_quality': quality,
     }
 
@@ -660,14 +735,22 @@ def finalize_income_year(income_year, user, confirm_zero_opening=False):
     income_year = IncomeTaxYear.objects.select_for_update().get(pk=income_year.pk)
     if income_year.status != IncomeTaxYear.Status.DRAFT:
         raise ValidationError({'status': 'Only a draft income year can be finalized.'})
+    # Every row already in the workspace's own currency gets its identity rate
+    # record here, so the frozen year's export carries an exchange-rate record
+    # against every transaction in it rather than only the foreign ones.
+    backfill_identity_conversions(income_year.workspace)
     report = build_report(income_year)
     quality = report['data_quality']
     if confirm_zero_opening:
         quality = [row for row in quality if row['code'] != 'opening_stock_unconfirmed']
         report['data_quality'] = quality
         report['opening_stock_confirmed_zero'] = True
-    if quality:
-        raise ValidationError({'reconciliation': [row['message'] for row in quality]})
+    # An unconverted row is reported, not blocked: a year can be filed with one,
+    # showing as a finding. That is task 121's decision, and deliberately not
+    # how provisional stock behaves one line above.
+    blocking = [row for row in quality if row.get('blocking')]
+    if blocking:
+        raise ValidationError({'reconciliation': [row['message'] for row in blocking]})
     IncomeTaxYear.objects.filter(pk=income_year.pk).update(
         status=IncomeTaxYear.Status.FINALIZED,
         frozen_report=report,

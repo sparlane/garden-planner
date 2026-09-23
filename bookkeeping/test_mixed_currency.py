@@ -10,16 +10,18 @@ is a cost nobody could reproduce.
 # pylint: disable=duplicate-code
 
 from datetime import date
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from costing.test_currencies import MixedCurrencyTestCase
 from tests.factories import apply_costed_input, make_specific_plant
+from workspaces.conversion import QuoteDirection
 from workspaces.models import get_current_workspace
 
+from .conversion import record_conversion
 from .models import IncomeTaxYear
 from .services import build_report, capture_inventory, finalize_income_year
 
@@ -94,10 +96,11 @@ class ForeignCurrencyStockTests(APITestCase):
     """Stock costed wholly abroad is labelled with the currency it cost.
 
     Filing a euro figure under the workspace's code was the relabelling this
-    task exists to stop. Labelling it honestly is what
-    `build_report`'s existing `unsupported_currency` finding is for, and that
-    finding blocks finalization — so a year holding such stock now waits for
-    task 121's conversion instead of filing a figure in the wrong unit.
+    task exists to stop. Labelling it honestly is what makes a conversion
+    finding fire — and task 121 has since supplied the conversion the finding
+    was waiting for, so what this now pins is the pair of answers it settled:
+    an unconverted line withholds the figures it belongs to without blocking
+    the year, and a rate typed against it states them.
     """
 
     def setUp(self):
@@ -119,14 +122,67 @@ class ForeignCurrencyStockTests(APITestCase):
         self.assertEqual(line.currency_code, 'EUR')
         self.assertFalse(line.provisional)
 
-    def test_the_year_cannot_be_finalized_until_a_rate_converts_it(self):
-        """The honest label is what makes the existing finding fire."""
+    def test_an_unconverted_line_states_no_closing_stock_and_says_why(self):
+        """The honest label is what makes the conversion finding fire."""
         capture_inventory(self.income_year, self.user)
 
-        codes = {row['code'] for row in build_report(self.income_year)['data_quality']}
-        self.assertIn('unsupported_currency', codes)
-        with self.assertRaisesMessage(ValidationError, 'Task 121 must convert'):
-            finalize_income_year(self.income_year, self.user, confirm_zero_opening=True)
+        report = build_report(self.income_year)
+
+        codes = {row['code'] for row in report['data_quality']}
+        self.assertIn('unconverted_source', codes)
+        self.assertIsNone(report['totals']['closing_stock'])
+        self.assertIsNone(report['totals']['cost_of_sales'])
+        self.assertIsNone(report['totals']['working_result'])
+        self.assertFalse(report['conversion']['complete'])
+
+    def test_an_unconverted_line_does_not_stop_the_year_being_filed(self):
+        """Task 121's decision: an untyped rate flags, it does not block."""
+        capture_inventory(self.income_year, self.user)
+
+        finalized = finalize_income_year(
+            self.income_year, self.user, confirm_zero_opening=True,
+        )
+
+        self.assertEqual(finalized.status, IncomeTaxYear.Status.FINALIZED)
+        self.assertIsNone(finalized.frozen_report['totals']['closing_stock'])
+        self.assertIn(
+            'unconverted_source',
+            {row['code'] for row in finalized.frozen_report['data_quality']},
+        )
+
+    def test_a_rate_typed_against_the_line_states_the_closing_stock(self):
+        """Both euro lines converted: 178.5677 and 1.8037, so 180.3714 stands.
+
+        The capture puts the plant's own 1.0800 beside the 106.9200 still
+        standing in the euro media lot it drew from, and a year states its
+        closing stock once every line in it has a rate -- not before, which is
+        the test above.
+        """
+        capture_inventory(self.income_year, self.user)
+        plant_line = self.income_year.stock_lines.get(
+            source_type='specific_plant', source_id=str(self.plant.pk),
+        )
+        for line in self.income_year.stock_lines.filter(currency_code='EUR'):
+            record_conversion(
+                self.workspace, 'stock_valuation_line', line.pk,
+                {
+                    'rate': Decimal('1.6701057193'),
+                    'quote_direction': QuoteDirection.TARGET_PER_SOURCE,
+                    'rate_source': 'Reserve Bank of New Zealand',
+                },
+                self.user,
+            )
+
+        report = build_report(self.income_year)
+
+        self.assertEqual(report['totals']['closing_stock'], '180.3714')
+        self.assertTrue(report['conversion']['complete'])
+        stated = next(
+            row for row in report['stock_lines'] if row['id'] == plant_line.pk
+        )
+        self.assertEqual(stated['converted_value'], '1.8037')
+        self.assertEqual(stated['currency_code'], 'EUR')
+        self.assertEqual(stated['converted_currency_code'], 'USD')
 
 
 class MixedCurrencyCohortStockTests(MixedCurrencyTestCase):
