@@ -21,6 +21,57 @@ from .models import BookkeepingEntry, CurrencyConversion, DepreciationSchedule, 
 from .services import build_report, capture_inventory, finalize_income_year, reverse_entry, set_legal_hold
 
 
+#: One exchange-rate record per row, in the order a reviewer reads them: what
+#: was converted, at what, taken from where, and whether it still stands.
+RATE_COLUMNS = (
+    'source_type', 'source_id', 'source_currency_code', 'target_currency_code',
+    'rate', 'quote_direction', 'method', 'rate_source', 'effective_date',
+    'converted_on', 'supersedes', 'superseded', 'reason',
+)
+
+#: What a figure reads as when it could not be stated. Blank would be a zero to
+#: anything reading the file with a spreadsheet, and a withheld total is the
+#: opposite of a zero.
+NOT_STATED = 'not stated'
+
+
+def _stated_amount(value):
+    """Render one exported value, saying so where a figure was withheld."""
+    return NOT_STATED if value is None else value
+
+
+def _report_conversions(workspace, report):
+    """Return every rate ever recorded against a record this report used.
+
+    Superseded rates are included. A corrected conversion is two facts -- what
+    was filed and what replaced it -- and an export that showed only the second
+    would be missing the one a reviewer is asking about.
+    """
+    wanted = {
+        (row.get('rate_source_type', row['source_type']), str(row.get('rate_source_id', row['source_id'])))
+        for row in report['rows'] + report['cash_reconciliation']
+    }
+    wanted |= {('stock_valuation_line', str(line['id'])) for line in report['stock_lines']}
+    rows = CurrencyConversion.objects.filter(
+        workspace=workspace, source_type__in={pair[0] for pair in wanted},
+    ).select_related('supersedes')
+    return [row for row in rows if (row.source_type, row.source_id) in wanted]
+
+
+def _rate_row(conversion):
+    """Render one exchange-rate record as the audit row it is."""
+    return (
+        conversion.source_type, conversion.source_id,
+        conversion.source_currency_code, conversion.target_currency_code,
+        f'{conversion.rate:f}', conversion.quote_direction, conversion.method,
+        conversion.rate_source, conversion.effective_date.isoformat(),
+        conversion.converted_on.isoformat(),
+        conversion.supersedes_id or '',
+        'yes' if hasattr(conversion, 'superseded_by') else 'no',
+        conversion.reason,
+    )
+
+
 def _run(command, *args, **kwargs):
     try:
         return command(*args, **kwargs)
@@ -224,6 +275,15 @@ class IncomeYearViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def export(self, request, pk=None):
+        """Write the year as one file: totals, rows, and the rates behind them.
+
+        The exchange-rate records are their own section rather than columns on
+        the rows, because that is what they are -- one rate per transaction,
+        recorded once and applied to every amount on it -- and because the
+        superseded ones belong in the file too. A reviewer reading it years
+        later can reproduce any converted figure from the row and the rate
+        beside it without the application being available.
+        """
         year = self.get_object()
         report = year.frozen_report if year.status == IncomeTaxYear.Status.FINALIZED else build_report(year)
         stream = StringIO(newline='')
@@ -232,11 +292,25 @@ class IncomeYearViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
         writer.writerow(())
         writer.writerow(('summary', 'amount', 'currency_code'))
         for name, value in report['totals'].items():
-            writer.writerow((name, value, report['currency_code']))
+            writer.writerow((name, _stated_amount(value), report['currency_code']))
         writer.writerow(())
-        writer.writerow(('kind', 'date', 'source_type', 'source_id', 'reference', 'amount', 'currency_code'))
+        writer.writerow((
+            'kind', 'date', 'source_type', 'source_id', 'reference', 'amount',
+            'currency_code', 'converted_amount', 'converted_currency_code',
+        ))
         for row in report['rows']:
-            writer.writerow(tuple(row.get(key, '') for key in ('kind', 'date', 'source_type', 'source_id', 'reference', 'amount', 'currency_code')))
+            writer.writerow(tuple(
+                _stated_amount(row.get(key, ''))
+                for key in (
+                    'kind', 'date', 'source_type', 'source_id', 'reference',
+                    'amount', 'currency_code', 'converted_amount',
+                    'converted_currency_code',
+                )
+            ))
+        writer.writerow(())
+        writer.writerow(RATE_COLUMNS)
+        for conversion in _report_conversions(year.workspace, report):
+            writer.writerow(_rate_row(conversion))
         response = HttpResponse(stream.getvalue(), content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = f'attachment; filename="income-tax-{year.year_end}-r{year.revision}.csv"'
         return response

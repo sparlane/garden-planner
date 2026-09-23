@@ -6,7 +6,7 @@ import { restoreAttachmentArchive } from './api/attachments'
 import { updateWorkspace } from './api/workspace'
 import { GstRegistrationSettings } from './tax/registration.js'
 import { queryKeys } from './query'
-import { GardenExperience, Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
+import { ConversionPolicy, GardenExperience, Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
 import { AttachmentArchiveReport } from './types/attachments'
 
 // The guided setup owns garden_setup_state; this screen edits everything else,
@@ -42,6 +42,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     garden_experience: workspace.garden_experience,
     currency_code: workspace.currency_code,
     multi_currency_enabled: workspace.multi_currency_enabled,
+    conversion_policy: workspace.conversion_policy,
     default_tax_rate: workspace.default_tax_rate,
     sales_prices_include_tax: workspace.sales_prices_include_tax,
     timezone: workspace.timezone,
@@ -73,6 +74,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       garden_experience: workspace.garden_experience,
       currency_code: workspace.currency_code,
       multi_currency_enabled: workspace.multi_currency_enabled,
+      conversion_policy: workspace.conversion_policy,
       default_tax_rate: workspace.default_tax_rate,
       sales_prices_include_tax: workspace.sales_prices_include_tax,
       timezone: workspace.timezone,
@@ -184,6 +186,22 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
           <Form.Text>
             Off asks for no currency at all: receiving, purchases and sales are filed in the code above. Turning it off leaves records already in another currency alone &mdash;
             they keep it, still show it, and still refuse to be totalled with anything else.
+          </Form.Text>
+        </Form.Group>
+        <Form.Group className="mb-3" controlId="workspace-conversion-policy">
+          <Form.Label>Exchange rate used</Form.Label>
+          <Form.Select
+            value={form.conversion_policy}
+            onChange={(event) => updateField('conversion_policy', event.target.value as ConversionPolicy)}
+            aria-describedby="workspace-conversion-help"
+          >
+            <option value="spot">Spot rate on the transaction date</option>
+            <option value="period_end">Rate at the end of the period</option>
+            <option value="published">Configured published rate</option>
+          </Form.Select>
+          <Form.Text id="workspace-conversion-help">
+            Which rate a foreign amount is converted at. Rates are typed against the transaction they convert; this is what one may claim, so a return cannot take a spot rate on
+            one purchase and a period-end rate on the next.
           </Form.Text>
         </Form.Group>
         <Form.Group className="mb-3" controlId="workspace-tax-rate">
