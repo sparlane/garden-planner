@@ -12,10 +12,12 @@ from rest_framework import routers, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from workspaces.conversion import ConversionMethod, QuoteDirection
 from workspaces.currency import CurrencyInputSerializerMixin
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
-from .models import BookkeepingEntry, DepreciationSchedule, IncomeTaxYear, LegalHoldEvent, Liability, StockValuationLine, TaxAsset, TaxRetentionRecord
+from .conversion import SOURCES, record_conversion
+from .models import BookkeepingEntry, CurrencyConversion, DepreciationSchedule, IncomeTaxYear, LegalHoldEvent, Liability, StockValuationLine, TaxAsset, TaxRetentionRecord
 from .services import build_report, capture_inventory, finalize_income_year, reverse_entry, set_legal_hold
 
 
@@ -98,6 +100,41 @@ class RetentionSerializer(serializers.ModelSerializer):
             'retain_until', 'legal_hold', 'reason', 'created_by', 'created',
             'hold_events',
         ]
+
+
+class ConversionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CurrencyConversion
+        fields = '__all__'
+        read_only_fields = [
+            'id', 'workspace', 'source_currency_code', 'target_currency_code',
+            'amounts', 'converted_on', 'created_by', 'created',
+        ]
+
+
+class ConversionRequestSerializer(serializers.Serializer):  # pylint: disable=abstract-method
+    """What an operator types when converting one transaction.
+
+    Only the rate and the way it is quoted are required. The currencies, the
+    amounts and the transaction's own date are read off the record being
+    converted, so a request cannot claim to convert an amount that is not
+    there; and the method defaults to whatever the workspace converts by,
+    because naming a different one is the thing the policy exists to refuse.
+    """
+
+    source_type = serializers.ChoiceField(
+        choices=[(source.source_type, source.label) for source in SOURCES],
+    )
+    source_id = serializers.CharField(max_length=128)
+    rate = serializers.DecimalField(max_digits=18, decimal_places=10)
+    quote_direction = serializers.ChoiceField(choices=QuoteDirection.choices)
+    method = serializers.ChoiceField(
+        choices=ConversionMethod.choices, required=False,
+    )
+    rate_source = serializers.CharField(max_length=255)
+    effective_date = serializers.DateField(required=False)
+    supersedes = serializers.IntegerField(required=False)
+    reason = serializers.CharField(required=False, allow_blank=True, default='')
 
 
 class LiabilityViewSet(CurrentWorkspaceViewSetMixin, viewsets.ModelViewSet):
@@ -217,6 +254,46 @@ class RetentionViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewS
         return Response(self.get_serializer(self.get_object()).data)
 
 
+class CurrencyConversionViewSet(CurrentWorkspaceViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    """Type a rate against one transaction, and read back every rate typed.
+
+    The superseded conversions are listed beside the live ones on purpose: the
+    question a reviewer asks about a corrected rate is what it used to be.
+    `live=true` narrows the list to the rate each record is currently read at.
+    """
+
+    queryset = CurrencyConversion.objects.select_related('supersedes')
+    serializer_class = ConversionSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        source_type = self.request.query_params.get('source_type')
+        source_id = self.request.query_params.get('source_id')
+        if source_type:
+            queryset = queryset.filter(source_type=source_type)
+        if source_id:
+            queryset = queryset.filter(source_id=source_id)
+        if self.request.query_params.get('live') == 'true':
+            queryset = queryset.filter(superseded_by__isnull=True)
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        serializer = ConversionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = dict(serializer.validated_data)
+        conversion = _run(
+            record_conversion,
+            self.get_current_workspace(),
+            values.pop('source_type'),
+            values.pop('source_id'),
+            values,
+            request.user,
+        )
+        return Response(
+            self.get_serializer(conversion).data, status=status.HTTP_201_CREATED,
+        )
+
+
 router = routers.DefaultRouter()
 router.register('liabilities', LiabilityViewSet)
 router.register('entries', EntryViewSet)
@@ -224,3 +301,4 @@ router.register('assets', TaxAssetViewSet)
 router.register('depreciation-schedules', ScheduleViewSet)
 router.register('income-years', IncomeYearViewSet)
 router.register('retention', RetentionViewSet)
+router.register('currency-conversions', CurrencyConversionViewSet)
