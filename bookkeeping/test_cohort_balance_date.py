@@ -12,6 +12,7 @@ is one more than pylint allows.
 """
 
 from datetime import date, datetime, timezone as dt_timezone
+from decimal import Decimal
 from uuid import uuid4
 
 from applications.services import reverse_application
@@ -328,25 +329,73 @@ class CohortRecordedLateTests(CohortStockTestCase):
             ('3.000000000', '0.8100', provisional),
         )
 
+    def assert_the_batch_reconciles(self, lines):
+        """Assert the batch's captured blocks sum to the cohort cost it carries.
+
+        A layer's amount is a share of a whole batch, so the batch is the level
+        a reading has to be consistent at: read one block as it stands and its
+        sibling as at the balance date, and the same cost lands in both lines
+        with nothing else in the capture noticing.
+        """
+        blocks = set(PlantCohort.objects.filter(batch=self.batch).values_list('pk', flat=True))
+        captured = sum((line.value for pk, line in lines.items() if pk in blocks), Decimal('0'))
+        carried = sum((row.amount for row in CostAllocation.objects.filter(
+            batch=self.batch, target_type=CostAllocation.TargetType.PLANT_COHORT,
+            reversal_of=None, reversal__isnull=True,
+        )), Decimal('0'))
+        self.assertEqual(f'{captured:.4f}', f'{carried:.4f}')
+
     def test_a_dispatch_dated_before_the_balance_date_but_recorded_after_it(self):
         """The customer had the unit on 31 March, so three units carry 0.8100."""
         self.sell()
         self.date_back(CohortOperation.Action.SOLD)
 
-        self.assert_three_left(self.capture()[self.cohort.pk])
+        lines = self.capture()
+        self.assert_three_left(lines[self.cohort.pk])
+        self.assert_the_batch_reconciles(lines)
+
+    def test_a_block_observed_late_does_not_leave_its_siblings_holding_the_batch(self):
+        """A block typed in September takes a share of what its sibling held whole.
+
+        `observe_cohort` writes an event on the new block alone and then
+        reallocates the batch, so the sibling's count never moves. Named block
+        by block, the new block fell back to its current share while the
+        sibling stayed on a pre-year-end layer covering the whole batch, and
+        the capture read 1.0800 plus 0.4629 for a batch that cost 1.0800.
+        """
+        second, _operation = observe_cohort(
+            self.workspace, self.user, batch=self.batch, quantity=3,
+            idempotency_key=uuid4(),
+        )
+        CohortOperation.objects.filter(events__cohort=second).update(occurred_at=MARCH)
+
+        lines = self.capture()
+        self.assertEqual(
+            (f'{lines[self.cohort.pk].quantity:.9f}', f'{lines[self.cohort.pk].value:.4f}'),
+            ('4.000000000', '0.6171'),
+        )
+        self.assertEqual(
+            (f'{lines[second.pk].quantity:.9f}', f'{lines[second.pk].value:.4f}'),
+            ('3.000000000', '0.4629'),
+        )
+        self.assert_the_batch_reconciles(lines)
 
     def test_a_loss_dated_before_the_balance_date_but_recorded_after_it(self):
         """The unit was already dead on 31 March, and its cost went with it."""
         self.lose(occurred_at=MARCH)
 
-        self.assert_three_left(self.capture()[self.cohort.pk])
+        lines = self.capture()
+        self.assert_three_left(lines[self.cohort.pk])
+        self.assert_the_batch_reconciles(lines)
 
     def test_a_promotion_dated_before_the_balance_date_but_recorded_after_it(self):
         """The unit was a named plant on 31 March: 0.8100 plus 0.2700, not 1.3500."""
         plant = self.promote_one()
         self.date_back(CohortOperation.Action.PROMOTE)
 
-        self.assert_three_left(self.capture()[self.cohort.pk])
+        lines = self.capture()
+        self.assert_three_left(lines[self.cohort.pk])
+        self.assert_the_batch_reconciles(lines)
         named = StockValuationLine.objects.get(
             income_year=self.income_year, source_type='specific_plant', source_id=str(plant.pk),
         )

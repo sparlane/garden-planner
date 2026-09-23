@@ -297,15 +297,34 @@ def _recorded_late(workspace, end):
     neither: four units' cost carried by three, or, for a promotion, the same
     unit's cost on the block and on the plant at once.
 
+    The event's own `created` stands in for the layer's, and may because a
+    cohort command writes its event and reallocates its batch in one
+    transaction: the run that moved the cost is stamped with the moment the
+    fact was typed, which is the whole mechanism here.
+
     Nothing on a layer distinguishes that April run from one for something
     that really did happen in April, so such a block is read the way task 135
     read every block — as it stands now. That is exactly right when nothing
     else has touched the block since the balance date, and where something has
     the line is marked provisional, which is again what task 135 did.
+
+    **The unit is the batch, not the block.** A layer's amount is a share of a
+    whole batch, so two blocks of one batch read on two different days do not
+    add up to it. `observe_cohort` and `_open_returned` are where that bites:
+    each writes an event on the new block only and then reallocates the whole
+    batch, so a sibling's count never moves and the sibling would stay on the
+    as-at reading, holding a pre-`end` layer that covered the batch the new
+    block has since taken a share of — the same cost in two lines. Every other
+    operation writes an event on every block whose count moved, so those fall
+    back together anyway. Taking the batch keeps one reading per batch, which
+    is the only level at which the layers reconcile.
     """
-    return set(CohortEvent.objects.filter(
+    batches = CohortEvent.objects.filter(
         workspace=workspace, operation__occurred_at__lt=end, created__gte=end,
-    ).values_list('cohort_id', flat=True))
+    ).values_list('cohort__batch_id', flat=True)
+    return set(PlantCohort.objects.filter(
+        workspace=workspace, batch_id__in=set(batches),
+    ).values_list('pk', flat=True))
 
 
 def _group_layers(rows):
@@ -373,7 +392,9 @@ def _capture_cohorts(income_year, user, end):
     The two halves read two different dates — the fact's for the count, the
     run's for the cost — and `_recorded_late` names the blocks where those
     disagree. Those keep task 135's reading, as they stand now, because half a
-    reconstruction is worse than none.
+    reconstruction is worse than none. It names them a whole batch at a time,
+    for the reason it gives: a layer's amount is a share of a batch, so two
+    blocks of one batch read on two different days do not add back up to it.
     """
     workspace = income_year.workspace
     later = _cohorts_at(workspace, end)
