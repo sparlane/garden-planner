@@ -56,7 +56,7 @@ def dispatch_cohort_stock(order, user, allocation, cohort, *, fulfillment, fulfi
     dispatch is recorded, so reading it afterwards would price this sale
     against a division this sale had already changed.
     """
-    cogs_amount, _unknown, provisional = cohort_draw_cost(cohort, allocation.quantity)
+    cogs_amount, _unknown, provisional = cohort_draw_cost(cohort, allocation.quantity, order.currency_code)
     event = sell_cohort(
         order.workspace, user,
         cohort_id=cohort.pk,

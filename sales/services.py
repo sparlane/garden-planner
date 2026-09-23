@@ -18,7 +18,7 @@ from locations.models import Location
 from plantings.cohort_availability import COMMITTABLE_STATES, available_quantity
 from plantings.cohorts import lock_cohorts
 from plantings.lifecycle import SELLABLE_STATES, plant_lifecycle_summary
-from plantings.models import PlantCohort, SpecificPlant
+from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
 
 from .calculations import money
 from .quantities import positive_quantity, remaining_quantity, returned_quantity
@@ -756,7 +756,7 @@ def cancel_order(order, user, reason=''):
     return order
 
 
-def _allocated_cost(allocation):
+def _allocated_cost(allocation, currency_code):
     """Return one promise's cost, whether it is known, and whether it is final.
 
     A counted draw is valued from its own lot's unit cost, because that is the
@@ -769,19 +769,36 @@ def _allocated_cost(allocation):
         # No value at all is a cost that cannot be stated rather than a zero: a
         # plant raised in two currencies has no single figure, and treating it
         # as nothing would report a complete margin over an incomplete cost.
-        return value, breakdown['unknown_cost'] or value is None, breakdown['provisional']
+        unknown = breakdown['unknown_cost'] or value is None or breakdown['currency_code'] != currency_code
+        return value, unknown, breakdown['provisional']
     if allocation.stock_lot_id:
         unit_cost = allocation.stock_lot.base_unit_cost
-        if unit_cost is None:
+        if unit_cost is None or allocation.stock_lot.currency_code != currency_code:
             return None, True, False
         return money(Decimal(allocation.quantity) * unit_cost), False, False
     if allocation.plant_cohort_id:
-        return cohort_draw_cost(allocation.plant_cohort, allocation.quantity)
+        return cohort_draw_cost(allocation.plant_cohort, allocation.quantity, currency_code)
+    if allocation.status == SalesOrderAllocation.Status.FULFILLED:
+        dispatched = allocation.fulfillment_lines.filter(
+            fulfillment__reversal_of__isnull=True, fulfillment__reversal__isnull=True,
+        ).order_by('-pk').first()
+        if dispatched is not None:
+            return dispatched.cogs_amount, dispatched.cogs_amount is None, dispatched.cogs_provisional
     value = allocation.inventory_unit.acquisition_cost
-    return value, value is None, False
+    unknown = value is None or allocation.inventory_unit.currency_code != currency_code
+    provisional = False
+    for placement in SpecificPlantLocation.objects.filter(
+            container_unit=allocation.inventory_unit, ended__isnull=True).select_related('specific_plant__batch'):
+        breakdown = plant_cost_breakdown(placement.specific_plant)
+        rider_value = breakdown['provisional_value'] or breakdown['final_value']
+        unknown = unknown or breakdown['unknown_cost'] or rider_value is None or breakdown['currency_code'] != currency_code
+        provisional = provisional or breakdown['provisional']
+        if value is not None and rider_value is not None:
+            value += Decimal(rider_value)
+    return value, unknown, provisional
 
 
-def cohort_draw_cost(cohort, quantity):
+def cohort_draw_cost(cohort, quantity, currency_code=None):
     """Return what a counted draw on one cohort costs, and how sure that is.
 
     An anonymous block divides its cost evenly per unit, so a draw on it is
@@ -794,7 +811,8 @@ def cohort_draw_cost(cohort, quantity):
     """
     breakdown = cohort_cost_breakdown(cohort)
     unit_value = breakdown['unit_value']
-    if unit_value is None or breakdown['unknown_cost']:
+    wrong_currency = currency_code is not None and breakdown['currency_code'] != currency_code
+    if unit_value is None or breakdown['unknown_cost'] or wrong_currency:
         return None, True, breakdown['provisional']
     return money(Decimal(unit_value) * quantity), False, breakdown['provisional']
 
@@ -821,7 +839,7 @@ def order_margin(order):
     unknown = False
     provisional = False
     for allocation in allocations:
-        value, is_unknown, is_provisional = _allocated_cost(allocation)
+        value, is_unknown, is_provisional = _allocated_cost(allocation, order.currency_code)
         unknown = unknown or is_unknown
         provisional = provisional or is_provisional
         if value is not None:

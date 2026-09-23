@@ -241,7 +241,7 @@ def _position_amounts(line, positions):
     }
 
 
-def _plant_cost(plant):
+def _plant_cost(plant, currency_code=None):
     """Return what this plant has cost, or None when that cannot be stated.
 
     A plant raised on inputs bought in two currencies has no committed value to
@@ -250,8 +250,11 @@ def _plant_cost(plant):
     of sale instead, for the reason task 138 gives for an unpriced input — a
     number with a conversion missing is not a smaller true cost.
     """
+    currency_code = currency_code or plant.workspace.currency_code
     breakdown = plant_cost_breakdown(plant)
     value = breakdown['provisional_value'] or breakdown['final_value']
+    if breakdown['unknown_cost'] or breakdown['currency_code'] != currency_code:
+        value = None
     return (
         Decimal(value) if value is not None else None,
         bool(breakdown['provisional']),
@@ -374,7 +377,8 @@ def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfil
     )
     if lot.base_unit_cost is None:
         return movement, None, True
-    return movement, money(quantity * lot.base_unit_cost), False
+    return movement, (money(quantity * lot.base_unit_cost)
+                      if lot.currency_code == order.currency_code else None), False
 
 
 @transaction.atomic
@@ -497,7 +501,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             )
             if plant.pk in fill_plant_ids:
                 recost_container_plants([plant], user, 'Media taken on fulfillment departure.')
-            cogs_amount, provisional = _plant_cost(plant)
+            cogs_amount, provisional = _plant_cost(plant, order.currency_code)
 
         elif allocation.stock_lot_id:
             stock_movement, cogs_amount, provisional = _dispatch_counted_stock(
@@ -519,9 +523,10 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
                     reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
                 ),
             )
-            cogs_amount, provisional = unit.acquisition_cost, False
+            cogs_amount = unit.acquisition_cost if unit.currency_code == order.currency_code else None
+            provisional = False
         carried = riders.get(allocation.inventory_unit_id, [])
-        rider_costs = [_plant_cost(row.specific_plant) for row in carried]
+        rider_costs = [_plant_cost(row.specific_plant, order.currency_code) for row in carried]
         if carried:
             # The pot's own cost is the small half of what went out the door.
             # Leaving the plants out would understate cost of sale on exactly
@@ -531,8 +536,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             # quietly dropping out of it.
             parts = [amount for amount, _ in rider_costs]
             cogs_amount = (
-                None if any(part is None for part in parts)
-                else (cogs_amount or Decimal('0')) + sum(parts, Decimal('0'))
+                None if cogs_amount is None or any(part is None for part in parts)
+                else cogs_amount + sum(parts, Decimal('0'))
             )
             provisional = provisional or any(flag for _, flag in rider_costs)
         line = FulfillmentLine.objects.create(

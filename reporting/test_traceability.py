@@ -22,6 +22,8 @@ class TraceabilityReconciliationTests(CostingServiceTestCase):
     """One plant raised from a costed packet and a costed lot of media."""
 
     def setUp(self):
+        # Receive inputs in the sale currency before immutable lots are created.
+        Workspace.objects.filter(pk=1).update(currency_code='NZD')
         super().setUp()
         self.workspace.mode = Workspace.Mode.NURSERY
         self.workspace.currency_code = 'NZD'
