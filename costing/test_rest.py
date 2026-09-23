@@ -97,6 +97,7 @@ class BatchCostBreakdownTests(CostingServiceTestCase):
                 'mixed_currency',
                 'output_finalized_at',
                 'plants',
+                'projection',
                 'provisional',
                 'provisional_total',
                 'status',

@@ -619,6 +619,16 @@ def application_sources(batch, generation_ids, cell_weights):
     return sources
 
 
+def pot_media_participation(fill, participants):
+    """Use the same current or frozen participation for every media preview."""
+    count = fill.plant_share_count
+    if count is None and not any(row.ended is not None for row in participants):
+        count = len(participants)
+    incomplete = (len(participants) > fill.container_count if fill.stock_lot_id
+                  else count is None or count != len(participants))
+    return count, incomplete
+
+
 def pot_media_line_parts(line, fill, participants, share_count):
     """Reserve identical per-line slots for departure posting and previews."""
     unit_cost = line.lot.base_unit_cost
