@@ -160,13 +160,19 @@ def _line_currency(income_year, held):
 
 
 def _promoted_after(workspace, end):
-    """Return the plants an anonymous block was only given identities out of later.
+    """Return the plants a promotion dated at or after `end` gave identities to.
 
     A promoted plant is germinated on the block's own observation date — the
     seed really did come up then — so it reads as a plant that was standing at
-    the balance date. It was not: until the promotion the unit was part of the
-    block, which is where `_capture_cohorts` puts it back. Counting both would
-    capture the same seedling twice, once by name and once by number.
+    the balance date. Where the promotion itself is dated after the balance
+    date it was not: the unit was still part of the block, which is where
+    `_capture_cohorts` puts it back, and capturing both would count the same
+    seedling twice, once by name and once by number.
+
+    The test is the promotion's date, so a promotion dated *before* the
+    balance date keeps its plants whenever it happened to be typed. Such a
+    promotion leaves its block among `_recorded_late`, which stops the block
+    claiming the unit back.
     """
     promoted = set()
     for payload in CohortOperation.objects.filter(
@@ -178,9 +184,12 @@ def _promoted_after(workspace, end):
 
 def _capture_plants(income_year, user, end):
     """Freeze individual plants physically present at the balance instant."""
-    plants = list(SpecificPlant.objects.filter(
+    # Filtered in Python rather than through `exclude(pk__in=...)`: two seasons
+    # of promotions is a bind parameter each, and the rows are in hand anyway.
+    promoted = _promoted_after(income_year.workspace, end)
+    plants = [plant for plant in SpecificPlant.objects.filter(
         workspace=income_year.workspace, germinated__lt=end,
-    ).exclude(pk__in=_promoted_after(income_year.workspace, end)).select_related('batch__variety'))
+    ).select_related('batch__variety') if plant.pk not in promoted]
     events = defaultdict(list)
     for event in PlantLifecycleEvent.objects.filter(
             workspace=income_year.workspace, plant__in=plants,
@@ -233,20 +242,36 @@ UNCOSTED_COHORT_ASSUMPTION = (
 #: A cohort line's standing assumption: both halves of it are reconstructions.
 COHORT_ASSUMPTION = 'Cohort events replayed through year end, valued on the layers standing then.'
 
+#: What a line says when the block's own history and the ledger disagree about
+#: which year a fact belongs to, because it was dated before year end and
+#: recorded after it. `_recorded_late` says why the block is read as it stands.
+LATE_RECORD_ASSUMPTION = (
+    'A fact dated before year end was recorded after it, so the cost it moved '
+    'left in a later run; the block is read as it stands rather than counted '
+    'after the fact and valued before it.'
+)
+
 
 def _cohorts_at(workspace, end):
     """Return what each block's later events say it held at the balance instant.
 
     A block is read backwards from what it holds now, because a block whose
     own history predates the event log has no opening count to read forwards
-    from. Every event recorded at or after `end` is undone, so a unit sold,
-    lost, promoted, split away, merged out, counted off or taken back in the
-    spring goes back where it stood on the balance date, and the state the
-    earliest of those events found is the state the block was in. The date is
+    from. Every event dated at or after `end` is undone, so a unit sold, lost,
+    promoted, split away, merged out, counted off or taken back in the spring
+    goes back where it stood on the balance date. The date is
     `CohortOperation.occurred_at` — when the fact happened, not when it was
     typed — so a backdated loss or a corrected one lands in the year it
     belongs to, and an operation recorded late still counts against the year
-    it names.
+    it names. `_recorded_late` covers what that costs.
+
+    The state returned beside the count is the `state_before` of the earliest
+    of those events *in date order*, which is the state at `end` only where
+    the block's operations were recorded in the order they happened. A `ready`
+    dated 1 May typed before a `move` dated 10 April reads back as the May
+    one's `state_before`, so a block that was growing in March can be filed
+    under saleable plants. It picks the line's category and nothing else: no
+    count and no figure depends on it.
     """
     later = {}
     for cohort_id, delta, state in CohortEvent.objects.filter(
@@ -258,7 +283,48 @@ def _cohorts_at(workspace, end):
     return later
 
 
-def _cohort_layers_at(cohorts, end):
+def _recorded_late(workspace, end):
+    """Return the blocks whose history and whose ledger disagree about the year.
+
+    `CohortOperation.occurred_at` is the day a fact happened and
+    `CohortEvent.created` is the moment it was typed, and both are ordinary
+    inputs: a dispatch names its own `fulfilled_at` and every cohort command
+    takes an `occurred_at`. A sale dated 20 March and recorded on 5 April is
+    therefore in the count as at the balance date, because the replay reads
+    the date — but the cost it moved left in a run dated April, so the layer
+    test below leaves the sold unit's cost standing on the block. Counted
+    after the sale and valued before it, the block would file a figure that is
+    neither: four units' cost carried by three, or, for a promotion, the same
+    unit's cost on the block and on the plant at once.
+
+    Nothing on a layer distinguishes that April run from one for something
+    that really did happen in April, so such a block is read the way task 135
+    read every block — as it stands now. That is exactly right when nothing
+    else has touched the block since the balance date, and where something has
+    the line is marked provisional, which is again what task 135 did.
+    """
+    return set(CohortEvent.objects.filter(
+        workspace=workspace, operation__occurred_at__lt=end, created__gte=end,
+    ).values_list('cohort_id', flat=True))
+
+
+def _group_layers(rows):
+    """Collect `(cohort, amount, currency)` rows into a list per block."""
+    layers = defaultdict(list)
+    for cohort_id, amount, code in rows:
+        layers[cohort_id].append((amount, code))
+    return layers
+
+
+def _standing_layers(cohort_ids):
+    """Return the standing cost layers each block carries right now."""
+    return CostAllocation.objects.filter(
+        plant_cohort_id__in=cohort_ids, target_type=CostAllocation.TargetType.PLANT_COHORT,
+        reversal_of=None, reversal__isnull=True,
+    ).values_list('plant_cohort_id', 'amount', 'currency_code')
+
+
+def _cohort_layers_at(cohort_ids, end):
     """Group the standing cost layers each block carried at the balance instant.
 
     A layer carries no date of its own beyond the run that posted it, so
@@ -270,21 +336,20 @@ def _cohort_layers_at(cohorts, end):
     media application put on in April are all kept out of the closed year by
     the same test, without any of them having to be recognised.
 
-    What it cannot see is cost incurred before `end` and posted after it: a
-    late-recorded input, or an audited recalculation correcting an error. The
-    books are read as they stood, which for a block with no layer at all is
-    said out loud rather than filed as a zero.
+    What it cannot see is a run dated on the wrong side of the balance date
+    for the fact it carries, in either direction: an input applied in March and
+    posted in April drops out of the year it belongs to, and a sale dated in
+    March and recorded in April leaves its cost in one. The second is why
+    `_recorded_late` exists; the first has nowhere to go until a layer carries
+    an effective date of its own. A block with no layer at all is said out
+    loud rather than filed as a zero.
     """
-    layers = defaultdict(list)
-    rows = CostAllocation.objects.filter(
-        plant_cohort__in=cohorts, target_type=CostAllocation.TargetType.PLANT_COHORT,
+    return _group_layers(CostAllocation.objects.filter(
+        plant_cohort_id__in=cohort_ids, target_type=CostAllocation.TargetType.PLANT_COHORT,
         reversal_of=None, created__lt=end,
     ).filter(
         Q(reversal__isnull=True) | Q(reversal__created__gte=end),
-    ).values_list('plant_cohort_id', 'amount', 'currency_code')
-    for cohort_id, amount, code in rows:
-        layers[cohort_id].append((amount, code))
-    return layers
+    ).values_list('plant_cohort_id', 'amount', 'currency_code'))
 
 
 def _capture_cohorts(income_year, user, end):
@@ -304,21 +369,38 @@ def _capture_cohorts(income_year, user, end):
     that stood against it then: four units worth 1.0800 held on 31 March are
     captured as four worth 1.0800, whatever sold in September. Task 135's
     blanket flag over any block touched afterwards is gone with it.
+
+    The two halves read two different dates — the fact's for the count, the
+    run's for the cost — and `_recorded_late` names the blocks where those
+    disagree. Those keep task 135's reading, as they stand now, because half a
+    reconstruction is worse than none.
     """
-    later = _cohorts_at(income_year.workspace, end)
-    cohorts = PlantCohort.objects.filter(
-        workspace=income_year.workspace,
-    ).filter(Q(quantity__gt=0) | Q(pk__in=list(later))).select_related('batch__variety')
-    layers = _cohort_layers_at(cohorts, end)
-    rows = []
+    workspace = income_year.workspace
+    later = _cohorts_at(workspace, end)
+    late = _recorded_late(workspace, end)
+    cohorts = PlantCohort.objects.filter(workspace=workspace).filter(
+        Q(quantity__gt=0) | Q(pk__in=list(later)),
+    ).select_related('batch__variety')
+    held_at_end = []
     for cohort in cohorts:
+        if cohort.pk in late:
+            # Read as task 135 read it, and left unsettled if anything has
+            # happened to the block since the balance date as well.
+            unsettled = cohort.pk in later
+            if cohort.quantity or unsettled:
+                held_at_end.append((cohort, cohort.quantity, cohort.lifecycle_state, unsettled))
+            continue
         moved, state = later.get(cohort.pk, (0, cohort.lifecycle_state))
-        quantity = cohort.quantity - moved
         # A block first opened after `end` replays to nothing, which is what
         # keeps a split, a promotion or a customer return from being captured
         # as stock in a year it did not exist in.
-        if quantity <= 0:
-            continue
+        if cohort.quantity - moved > 0:
+            held_at_end.append((cohort, cohort.quantity - moved, state, False))
+    kept = [cohort.pk for cohort, _quantity, _state, _unsettled in held_at_end]
+    layers = _cohort_layers_at([pk for pk in kept if pk not in late], end)
+    layers.update(_group_layers(_standing_layers([pk for pk in kept if pk in late])))
+    rows = []
+    for cohort, quantity, state, unsettled in held_at_end:
         standing = layers.get(cohort.pk, [])
         held = defaultdict(Decimal)
         unpriced = 0
@@ -328,7 +410,9 @@ def _capture_cohorts(income_year, user, end):
             else:
                 held[code] += amount
         uncosted = not standing
-        assumptions = f'{COHORT_ASSUMPTION} {UNCOSTED_COHORT_ASSUMPTION}' if uncosted else COHORT_ASSUMPTION
+        assumptions = LATE_RECORD_ASSUMPTION if cohort.pk in late else COHORT_ASSUMPTION
+        if uncosted:
+            assumptions = f'{assumptions} {UNCOSTED_COHORT_ASSUMPTION}'
         mixed, assumptions = _mixed_currency(held, assumptions)
         # An uncosted block states no cost at all rather than a zero one, the
         # shape the capture already uses for an unpriced lot and for stock
@@ -344,7 +428,7 @@ def _capture_cohorts(income_year, user, end):
             currency_code=_line_currency(income_year, held),
             assumptions=assumptions,
             derived=True,
-            provisional=uncosted or bool(unpriced) or mixed,
+            provisional=unsettled or uncosted or bool(unpriced) or mixed,
             created_by=user,
         ))
     return rows
