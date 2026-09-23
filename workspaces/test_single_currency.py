@@ -42,11 +42,18 @@ from tests.factories import (
 from .currency import currency_input_refusal
 from .models import Workspace, get_current_workspace
 
-#: What a workspace recording only New Zealand dollars says about a euro.
-REFUSAL = (
-    'This workspace records every amount in NZD, so EUR cannot be entered. '
-    'Turn on multiple currencies in workspace settings to record another.'
-)
+
+def refusal_for(code):
+    """What a workspace recording only New Zealand dollars says about a code."""
+    return (
+        f'This workspace records every amount in NZD, so {code} cannot be '
+        'entered. Turn on multiple currencies in workspace settings to record '
+        'another.'
+    )
+
+
+#: The euro is the currency almost every test below tries, so it has a name.
+REFUSAL = refusal_for('EUR')
 
 
 class MultiCurrencyDefaultTests(RESTContractTestCase):
@@ -462,11 +469,108 @@ class ForeignRecordsSurviveTheSwitchTests(CurrencyInputTestCase):
             StockReceipt.objects.get(pk=self.receipt['pk']).currency_code, 'EUR',
         )
 
-    def test_sending_the_stored_currency_back_is_entering_it_again(self):
-        """The refusal cannot tell an echo from an entry, and says so plainly."""
+    def test_sending_the_stored_currency_back_saves_the_draft_unchanged(self):
+        """An echo is the draft repeating itself, and changes no recorded money."""
         response = self.client.patch(
             f"/inventory/receipts/{self.receipt['pk']}/",
             {'currency_code': 'EUR'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['currency_code'], 'EUR')
+        self.assertEqual(
+            StockReceipt.objects.get(pk=self.receipt['pk']).currency_code, 'EUR',
+        )
+
+    def test_a_currency_the_draft_is_not_in_is_still_refused(self):
+        """The draft's own code, and nothing else: the switch is still off."""
+        response = self.client.patch(
+            f"/inventory/receipts/{self.receipt['pk']}/",
+            {'currency_code': 'USD'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [str(message) for message in response.data['currency_code']],
+            [refusal_for('USD')],
+        )
+        self.assertEqual(
+            StockReceipt.objects.get(pk=self.receipt['pk']).currency_code, 'EUR',
+        )
+
+
+class ForeignPurchasingDraftsStayEditableTests(CurrencyInputTestCase):
+    """The two documents that can only be updated whole.
+
+    `PurchaseOrderViewSet` and `SupplierInvoiceViewSet` offer PUT and no
+    PATCH, and both write serializers require `currency_code`, so every edit
+    to a euro draft names a currency. While an echo was refused, the only
+    update either of them accepted was one that refiled recorded money in the
+    workspace's own currency -- which is the outcome the decisions call out by
+    name.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.workspace.multi_currency_enabled = True
+        self.workspace.save()
+        self.order = self.created('/purchasing/orders/', self.order_payload(currency_code='EUR'))
+        self.invoice = self.created('/purchasing/invoices/', self.invoice_payload(currency_code='EUR'))
+        self.workspace.multi_currency_enabled = False
+        self.workspace.save()
+
+    def created(self, url, payload):
+        """Post one document while the switch is on and return what came back."""
+        response = self.client.post(url, payload, format='json')
+        self.assertEqual(response.status_code, 201, response.data)
+        return response.data
+
+    def test_a_euro_order_is_saved_again_in_the_currency_it_carries(self):
+        """The whole document, including the currency it has always had."""
+        response = self.client.put(
+            f"/purchasing/orders/{self.order['pk']}/",
+            self.order_payload(currency_code='EUR', notes='Confirmed by phone'),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['currency_code'], 'EUR')
+        self.assertEqual(
+            PurchaseOrder.objects.get(pk=self.order['pk']).currency_code, 'EUR',
+        )
+
+    def test_a_euro_invoice_is_saved_again_the_same_way(self):
+        """The supplier's bill for it, edited the one way the route allows."""
+        response = self.client.put(
+            f"/purchasing/invoices/{self.invoice['pk']}/",
+            self.invoice_payload(currency_code='EUR', due_date='2026-10-20'),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data['currency_code'], 'EUR')
+        self.assertEqual(
+            SupplierInvoice.objects.get(pk=self.invoice['pk']).currency_code, 'EUR',
+        )
+
+    def test_the_update_still_refuses_a_currency_the_order_is_not_in(self):
+        """An echo is one answer, not an open door."""
+        response = self.client.put(
+            f"/purchasing/orders/{self.order['pk']}/",
+            self.order_payload(currency_code='USD'), format='json',
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [str(message) for message in response.data['currency_code']],
+            [refusal_for('USD')],
+        )
+
+    def test_a_new_document_cannot_borrow_a_stored_currency(self):
+        """The create path is untouched: there is no instance to echo."""
+        response = self.client.post(
+            '/purchasing/orders/', self.order_payload(number='160', currency_code='EUR'),
+            format='json',
         )
 
         self.assertEqual(response.status_code, 400, response.data)

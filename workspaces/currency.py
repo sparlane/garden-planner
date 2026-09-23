@@ -61,8 +61,27 @@ class CurrencyInputSerializerMixin:  # pylint: disable=too-few-public-methods
     """
 
     def validate_currency_code(self, value):
-        """Accept the workspace's own currency, and another only while allowed."""
+        """Accept the workspace's own currency, and another only while allowed.
+
+        An update naming the currency the record already carries is that
+        record saying again what it says, not an amount newly entered abroad,
+        so it is accepted whatever the switch says. It has to be: a record
+        already in another currency keeps it, and ``PurchaseOrderViewSet`` and
+        ``SupplierInvoiceViewSet`` offer PUT and no PATCH over two write
+        serializers that require the field, so every edit to a euro draft
+        names a currency. Refusing the echo left such a draft editable only by
+        refiling recorded money in the workspace's own currency, which is the
+        one thing this task promised not to do.
+
+        It is the *record's* currency, not a second permitted answer: a create
+        has no instance to echo, and one euro draft does not let the next new
+        document be entered in euros.
+        """
+        entered = value if value is None else value.strip().upper()
+        recorded = getattr(self.instance, 'currency_code', None)
+        if entered is not None and recorded and entered == recorded.upper():
+            return entered
         refusal = currency_input_refusal(get_current_workspace(), value)
         if refusal:
             raise serializers.ValidationError(refusal)
-        return value if value is None else value.strip().upper()
+        return entered
