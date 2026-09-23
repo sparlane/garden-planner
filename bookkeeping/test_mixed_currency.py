@@ -147,4 +147,4 @@ class MixedCurrencyCohortStockTests(MixedCurrencyTestCase):
         self.assertEqual(f'{line.value:.4f}', '0.0000')
         self.assertTrue(line.provisional)
         self.assertIn('EUR, USD', line.assumptions)
-        self.assertIn('Cohort quantity frozen', line.assumptions)
+        self.assertIn('Cohort events replayed through year end', line.assumptions)

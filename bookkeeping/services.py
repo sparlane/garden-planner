@@ -17,7 +17,7 @@ from billing.models import SupplyCorrection, SupplyDocument
 from costing.models import CostAllocation
 from inventory.models import InputTaxAdjustment, InventoryItem, StockLot, StockMovement, StockReceiptLine
 from plantings.lifecycle import PRESENT_STATES, derive_state
-from plantings.models import CohortEvent, PlantCohort, PlantLifecycleEvent, SpecificPlant
+from plantings.models import CohortEvent, CohortOperation, PlantCohort, PlantLifecycleEvent, SpecificPlant
 from purchasing.models import BusinessExpense, SupplierInvoice, SupplierPayment
 from sales.models import Payment, Refund
 
@@ -159,11 +159,28 @@ def _line_currency(income_year, held):
     return next(iter(held)) if len(held) == 1 else income_year.workspace.currency_code
 
 
+def _promoted_after(workspace, end):
+    """Return the plants an anonymous block was only given identities out of later.
+
+    A promoted plant is germinated on the block's own observation date — the
+    seed really did come up then — so it reads as a plant that was standing at
+    the balance date. It was not: until the promotion the unit was part of the
+    block, which is where `_capture_cohorts` puts it back. Counting both would
+    capture the same seedling twice, once by name and once by number.
+    """
+    promoted = set()
+    for payload in CohortOperation.objects.filter(
+            workspace=workspace, action=CohortOperation.Action.PROMOTE,
+            occurred_at__gte=end).values_list('payload', flat=True):
+        promoted.update(payload.get('plants', ()))
+    return promoted
+
+
 def _capture_plants(income_year, user, end):
     """Freeze individual plants physically present at the balance instant."""
     plants = list(SpecificPlant.objects.filter(
         workspace=income_year.workspace, germinated__lt=end,
-    ).select_related('batch__variety'))
+    ).exclude(pk__in=_promoted_after(income_year.workspace, end)).select_related('batch__variety'))
     events = defaultdict(list)
     for event in PlantLifecycleEvent.objects.filter(
             workspace=income_year.workspace, plant__in=plants,
@@ -203,58 +220,131 @@ def _capture_plants(income_year, user, end):
     return rows
 
 
+#: What a cohort line says when the subledger had not reached the block yet.
+#: The units were standing there, so the line is captured and counted, but no
+#: layer had been posted against the block by the balance date and inventing
+#: one from a later run's figures would value year-end stock out of next year's
+#: costs.
+UNCOSTED_COHORT_ASSUMPTION = (
+    'No cost layer stood against this block at the balance date, so its '
+    'inputs were priced only afterwards and no cost is stated.'
+)
+
+#: A cohort line's standing assumption: both halves of it are reconstructions.
+COHORT_ASSUMPTION = 'Cohort events replayed through year end, valued on the layers standing then.'
+
+
+def _cohorts_at(workspace, end):
+    """Return what each block's later events say it held at the balance instant.
+
+    A block is read backwards from what it holds now, because a block whose
+    own history predates the event log has no opening count to read forwards
+    from. Every event recorded at or after `end` is undone, so a unit sold,
+    lost, promoted, split away, merged out, counted off or taken back in the
+    spring goes back where it stood on the balance date, and the state the
+    earliest of those events found is the state the block was in. The date is
+    `CohortOperation.occurred_at` — when the fact happened, not when it was
+    typed — so a backdated loss or a corrected one lands in the year it
+    belongs to, and an operation recorded late still counts against the year
+    it names.
+    """
+    later = {}
+    for cohort_id, delta, state in CohortEvent.objects.filter(
+            workspace=workspace, operation__occurred_at__gte=end,
+    ).order_by('operation__occurred_at', 'pk').values_list(
+            'cohort_id', 'quantity_delta', 'state_before'):
+        moved, first = later.get(cohort_id, (0, state))
+        later[cohort_id] = (moved + delta, first)
+    return later
+
+
+def _cohort_layers_at(cohorts, end):
+    """Group the standing cost layers each block carried at the balance instant.
+
+    A layer carries no date of its own beyond the run that posted it, so
+    `created` is the date used: one posted before `end` and reversed only
+    afterwards still stood on the balance date, and one posted afterwards did
+    not. Every way a block's cost can move works through exactly that pair —
+    the superseded layer is reversed and its replacement posted in one later
+    run — so a spring sale, a sibling block's loss re-dividing a source, and a
+    media application put on in April are all kept out of the closed year by
+    the same test, without any of them having to be recognised.
+
+    What it cannot see is cost incurred before `end` and posted after it: a
+    late-recorded input, or an audited recalculation correcting an error. The
+    books are read as they stood, which for a block with no layer at all is
+    said out loud rather than filed as a zero.
+    """
+    layers = defaultdict(list)
+    rows = CostAllocation.objects.filter(
+        plant_cohort__in=cohorts, target_type=CostAllocation.TargetType.PLANT_COHORT,
+        reversal_of=None, created__lt=end,
+    ).filter(
+        Q(reversal__isnull=True) | Q(reversal__created__gte=end),
+    ).values_list('plant_cohort_id', 'amount', 'currency_code')
+    for cohort_id, amount, code in rows:
+        layers[cohort_id].append((amount, code))
+    return layers
+
+
 def _capture_cohorts(income_year, user, end):
-    """Freeze current cohort quantity, marking it provisional if observed later.
+    """Freeze each anonymous block as it stood at the balance instant.
 
     The `plant_cohort` column carries three parts of a block's cost: the stock
     still standing there (`PLANT_COHORT`), what already left with a customer
     (`COHORT_SALE`) and what died (`COHORT_LOSS`), told apart only by the
-    target type. `cohort.quantity` counts the first part, so the value has to
-    be drawn from the same part; the others are cost of sale and production
-    loss, and counting them here as well would raise profit by the amount they
-    were meant to lower it.
+    target type. The count covers the first part, so the value has to be drawn
+    from the same part; the others are cost of sale and production loss, and
+    counting them here as well would raise profit by the amount they were meant
+    to lower it.
 
-    Both halves are read as they stand at capture, not at the balance instant,
-    so a block that was sold, returned, lost, promoted, split or recounted at
-    or after `end` has a line that describes a later day. Such a line is
-    marked provisional rather than valued as at year end, which is task 148's;
-    a block emptied only after `end` is still captured, as a provisional zero,
-    so the units it held at year end do not silently drop out.
+    Neither the count nor the cost is read as it stands at capture. A year end
+    is captured weeks after the balance date and spring sales carry on in the
+    meantime, so the block is replayed back to `end` and valued on the layers
+    that stood against it then: four units worth 1.0800 held on 31 March are
+    captured as four worth 1.0800, whatever sold in September. Task 135's
+    blanket flag over any block touched afterwards is gone with it.
     """
-    changed_later = set(CohortEvent.objects.filter(
-        workspace=income_year.workspace, operation__occurred_at__gte=end,
-    ).values_list('cohort_id', flat=True))
+    later = _cohorts_at(income_year.workspace, end)
     cohorts = PlantCohort.objects.filter(
-        workspace=income_year.workspace, created__lt=end,
-    ).filter(Q(quantity__gt=0) | Q(pk__in=changed_later)).select_related('batch__variety')
+        workspace=income_year.workspace,
+    ).filter(Q(quantity__gt=0) | Q(pk__in=list(later))).select_related('batch__variety')
+    layers = _cohort_layers_at(cohorts, end)
     rows = []
     for cohort in cohorts:
-        allocations = CostAllocation.objects.filter(
-            plant_cohort=cohort, target_type=CostAllocation.TargetType.PLANT_COHORT,
-            reversal_of=None, reversal__isnull=True,
-        )
+        moved, state = later.get(cohort.pk, (0, cohort.lifecycle_state))
+        quantity = cohort.quantity - moved
+        # A block first opened after `end` replays to nothing, which is what
+        # keeps a split, a promotion or a customer return from being captured
+        # as stock in a year it did not exist in.
+        if quantity <= 0:
+            continue
+        standing = layers.get(cohort.pk, [])
         held = defaultdict(Decimal)
         unpriced = 0
-        for amount, code in allocations.values_list('amount', 'currency_code'):
+        for amount, code in standing:
             if amount is None:
                 unpriced += 1
             else:
                 held[code] += amount
-        mixed, assumptions = _mixed_currency(
-            held, 'Cohort quantity frozen from the latest observation available at capture time.',
-        )
-        value = None if mixed else money(sum(held.values(), ZERO))
+        uncosted = not standing
+        assumptions = f'{COHORT_ASSUMPTION} {UNCOSTED_COHORT_ASSUMPTION}' if uncosted else COHORT_ASSUMPTION
+        mixed, assumptions = _mixed_currency(held, assumptions)
+        # An uncosted block states no cost at all rather than a zero one, the
+        # shape the capture already uses for an unpriced lot and for stock
+        # raised in two currencies.
+        value = None if mixed or uncosted else money(sum(held.values(), ZERO))
         rows.append(StockValuationLine.objects.create(
             income_year=income_year,
-            category=(StockValuationLine.Category.SALEABLE_PLANTS if cohort.lifecycle_state == PlantCohort.LifecycleState.AVAILABLE else StockValuationLine.Category.WORK_IN_PROGRESS),
+            category=(StockValuationLine.Category.SALEABLE_PLANTS if state == PlantCohort.LifecycleState.AVAILABLE else StockValuationLine.Category.WORK_IN_PROGRESS),
             description=f'{cohort.batch.variety} — cohort {cohort.pk}',
             source_type='plant_cohort', source_id=str(cohort.pk),
-            quantity=cohort.quantity, unit_code='unit', original_cost=value,
+            quantity=quantity, unit_code='unit', original_cost=value,
             method=StockValuationLine.Method.COST, value=value or ZERO,
             currency_code=_line_currency(income_year, held),
             assumptions=assumptions,
             derived=True,
-            provisional=cohort.observed_at >= end or cohort.pk in changed_later or bool(unpriced) or mixed,
+            provisional=uncosted or bool(unpriced) or mixed,
             created_by=user,
         ))
     return rows
