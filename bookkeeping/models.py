@@ -472,6 +472,19 @@ class CurrencyConversion(WorkspaceOwnedModel, AppendOnlyModel):
                 name='bookkeeping_conversion_idx',
             ),
         ]
+        constraints = [
+            # One chain of rates per record, and -- with the one-to-one on
+            # `supersedes`, which lets nothing be replaced twice -- therefore
+            # one live rate. Without it two requests arriving together both
+            # read no earlier conversion and both write one, leaving a
+            # transaction with two current rates and the readers disagreeing
+            # about which is which.
+            models.UniqueConstraint(
+                fields=['workspace', 'source_type', 'source_id'],
+                condition=models.Q(supersedes__isnull=True),
+                name='bookkeeping_conversion_live_unique',
+            ),
+        ]
 
     def clean(self):
         """Refuse a rate that could not have converted this row."""
@@ -486,6 +499,8 @@ class CurrencyConversion(WorkspaceOwnedModel, AppendOnlyModel):
                 errors['method'] = refusal
         if self.supersedes_id:
             errors.update(self._supersedes_errors())
+        else:
+            errors.update(self._second_live_errors())
         if errors:
             raise ValidationError(errors)
 
@@ -504,6 +519,28 @@ class CurrencyConversion(WorkspaceOwnedModel, AppendOnlyModel):
                 'base-currency conversion rather than converted.'
             )}
         return {}
+
+    def _second_live_errors(self):
+        """Refuse a second current rate in the words that say what to do.
+
+        The table refuses it too, and has to: this check and the insert are two
+        statements, and two requests can pass between them. What this adds is
+        the sentence -- Django would otherwise answer a sequential attempt by
+        naming the constraint, which tells an operator nothing about recording
+        the correction as one.
+        """
+        if self.pk or not self.workspace_id:
+            return {}
+        standing = CurrencyConversion.objects.filter(
+            workspace_id=self.workspace_id, source_type=self.source_type,
+            source_id=self.source_id, supersedes__isnull=True,
+        ).exists()
+        if not standing:
+            return {}
+        return {'supersedes': (
+            'This record is already converted. Record the corrected rate as '
+            'superseding the conversion it replaces.'
+        )}
 
     def _supersedes_errors(self):
         """A correction replaces one conversion of the same row, and only one."""

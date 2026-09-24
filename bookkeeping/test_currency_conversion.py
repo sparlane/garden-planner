@@ -12,9 +12,11 @@ one it replaces.
 from datetime import date
 from decimal import Decimal
 from importlib import import_module
+from unittest.mock import patch
 
 from django.apps import apps as django_apps
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 
 from purchasing.models import SupplierInvoice, SupplierPayment
 from purchasing.services import create_invoice, record_supplier_payment
@@ -25,6 +27,7 @@ from workspaces.conversion import ConversionMethod, QuoteDirection
 from .conversion import (
     backfill_identity_conversions,
     live_conversion,
+    live_conversions,
     record_conversion,
 )
 from .models import CurrencyConversion
@@ -365,3 +368,96 @@ class IdentityBackfillTests(ConversionTestCase):
         self.assertEqual(
             list(CurrencyConversion.objects.values_list('pk', flat=True)), [typed.pk],
         )
+
+
+class OneLiveRateTests(ConversionTestCase):
+    """A transaction has one current rate, and every reader agrees which."""
+
+    def setUp(self):
+        super().setUp()
+        self.first = record_conversion(
+            self.workspace, 'supplier_invoice', self.euro_invoice.pk,
+            rate_request(), self.user,
+        )
+
+    def live_pair(self):
+        """What the two accessors say the live rate is."""
+        one = live_conversion(self.workspace, 'supplier_invoice', self.euro_invoice.pk)
+        many = live_conversions(self.workspace)
+        return one.pk, many[('supplier_invoice', str(self.euro_invoice.pk))].pk
+
+    def duplicate(self, **overrides):
+        """Build a second conversion of the same invoice, ready to be written."""
+        values = {
+            'workspace': self.workspace,
+            'source_type': 'supplier_invoice',
+            'source_id': str(self.euro_invoice.pk),
+            'source_currency_code': 'EUR', 'target_currency_code': 'NZD',
+            'rate': Decimal('2'),
+            'quote_direction': QuoteDirection.TARGET_PER_SOURCE,
+            'method': ConversionMethod.SPOT, 'rate_source': 'Typed twice',
+            'effective_date': date(2026, 8, 1), 'converted_on': date(2026, 8, 1),
+            'amounts': [],
+        }
+        values.update(overrides)
+        return CurrencyConversion(**values)
+
+    def test_the_database_refuses_a_second_rate_that_replaces_nothing(self):
+        """The guard is the table's, so two requests racing cannot both pass.
+
+        Written through `bulk_create`, which is what skips the model's own
+        validation -- and is also how the identity backfill writes, so this is
+        the path a race actually takes rather than a contrived one.
+        """
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CurrencyConversion.objects.bulk_create([self.duplicate()])
+
+    def test_a_conversion_can_only_be_superseded_once(self):
+        """Two corrections of one rate would be two chains and two live rates."""
+        record_conversion(
+            self.workspace, 'supplier_invoice', self.euro_invoice.pk,
+            rate_request(rate=Decimal('3'), supersedes=self.first.pk), self.user,
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CurrencyConversion.objects.bulk_create([
+                    self.duplicate(supersedes=self.first),
+                ])
+
+    def test_the_service_answers_a_lost_race_by_naming_the_field(self):
+        """A rate recorded between this one's read and its write is a 400.
+
+        Patching the read to see nothing is the race: a live conversion exists,
+        this request did not see it, and the write is refused. What the caller
+        gets back has to be the sentence saying to record it as a correction,
+        whether the refusal came from the record or from the table.
+        """
+        with patch('bookkeeping.conversion.live_conversion', return_value=None):
+            with self.assertRaises(ValidationError) as refused:
+                record_conversion(
+                    self.workspace, 'supplier_invoice', self.euro_invoice.pk,
+                    rate_request(rate=Decimal('2')), self.user,
+                )
+
+        self.assertIn(
+            'superseding the conversion it replaces',
+            refused.exception.message_dict['supersedes'][0],
+        )
+        self.assertEqual(
+            live_conversion(
+                self.workspace, 'supplier_invoice', self.euro_invoice.pk,
+            ).pk,
+            self.first.pk,
+        )
+
+    def test_both_readers_name_the_same_rate_before_and_after_a_correction(self):
+        self.assertEqual(self.live_pair(), (self.first.pk, self.first.pk))
+
+        corrected = record_conversion(
+            self.workspace, 'supplier_invoice', self.euro_invoice.pk,
+            rate_request(rate=Decimal('2'), supersedes=self.first.pk), self.user,
+        )
+
+        self.assertEqual(self.live_pair(), (corrected.pk, corrected.pk))
