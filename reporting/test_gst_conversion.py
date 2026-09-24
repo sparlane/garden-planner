@@ -10,6 +10,10 @@ consolidated figure and the report says which currency is waiting.
 # Test names state their behavior and are clearer than repeated method docstrings.
 # pylint: disable=missing-function-docstring,duplicate-code
 
+import csv
+
+from rest_framework.test import APIClient
+
 from bookkeeping.conversion import backfill_identity_conversions, live_conversion
 from bookkeeping.test_supply_conversion import SupplyConversionTestCase
 
@@ -181,3 +185,65 @@ class StaleIdentityConversionTests(GstConversionTestCase):
 
         rows = self.rows_for(self.periods())
         self.assertEqual(rows[('NZD', True)]['taxable_supplies_incl_tax'], '38.4124')
+
+
+class ConvertedTotalsShapeTests(GstConversionTestCase):
+    """What the range totals say, and what the drill-down file writes."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def entry_csv(self):
+        """Return the entry export's header and rows, as a spreadsheet reads it."""
+        response = self.client.get('/reports/gst-entries/export/', dict(WINDOW))
+        self.assertEqual(response.status_code, 200)
+        rows = list(csv.reader(response.content.decode('utf-8').splitlines()))
+        header = next(row for row in rows if row and row[0] == 'period_label')
+        return header, [row for row in rows[rows.index(header) + 1:] if row]
+
+    def test_the_restatement_flag_is_not_added_up_as_money(self):
+        self.convert('supply_document', self.document.pk)
+
+        converted = self.periods().totals['converted']
+
+        self.assertNotIn('consolidated', converted)
+        self.assertEqual(converted['output_tax'], '5.0103')
+
+    def test_a_missing_converted_total_says_which_absence_it_is(self):
+        self.assertEqual(self.periods().totals['converted_state'], 'withheld')
+
+        self.convert('supply_document', self.document.pk)
+
+        self.assertEqual(self.periods().totals['converted_state'], 'stated')
+
+    def test_a_range_with_nothing_to_restate_is_not_reported_as_withheld(self):
+        """The ordinary case is not a problem, and must not read as one."""
+        report = gst_period_report(
+            self.workspace, {'date_from': '2027-01-01', 'date_to': '2027-02-28'},
+        )
+
+        self.assertEqual(report.totals['converted_state'], 'not_required')
+        self.assertIsNone(report.totals['converted'])
+
+    def test_a_withheld_converted_amount_is_words_in_the_file_not_a_blank(self):
+        header, rows = self.entry_csv()
+
+        supply = next(
+            dict(zip(header, row)) for row in rows if row[header.index('kind')] == 'supply'
+        )
+        self.assertEqual(supply['converted_taxable'], 'not stated')
+        self.assertEqual(supply['converted_tax'], 'not stated')
+        self.assertEqual(supply['converted_gross'], 'not stated')
+
+    def test_a_converted_amount_is_the_figure_in_the_file(self):
+        self.convert('supply_document', self.document.pk)
+
+        header, rows = self.entry_csv()
+
+        supply = next(
+            dict(zip(header, row)) for row in rows if row[header.index('kind')] == 'supply'
+        )
+        self.assertEqual(supply['converted_taxable'], '33.4021')
+        self.assertEqual(supply['converted_gross'], '38.4124')
