@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo
 
 from django.apps import apps as global_apps
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from workspaces.conversion import ConversionMethod, QuoteDirection, convert_amount
@@ -270,10 +270,16 @@ def live_conversions(workspace, pairs=None):
 
     Live means nothing supersedes it. A superseded conversion is still in the
     table and still exported; it is simply not the rate a report reads.
+
+    A record can only have one, which the database now refuses to let go
+    otherwise. The ordering is here so that this and `live_conversion` below
+    would answer the same on a workspace migrated before that constraint
+    existed: the newest wins, because a reader disagreeing with the writer
+    about which rate is current is worse than either answer.
     """
     rows = CurrencyConversion.objects.filter(
         workspace=workspace, superseded_by__isnull=True,
-    )
+    ).order_by('pk')
     if pairs is not None:
         pairs = {(source_type, str(source_id)) for source_type, source_id in pairs}
         rows = rows.filter(source_type__in={pair[0] for pair in pairs})
@@ -284,12 +290,21 @@ def live_conversions(workspace, pairs=None):
     }
 
 
-def live_conversion(workspace, source_type, source_id):
-    """Return the one live conversion of this row, or None."""
-    return CurrencyConversion.objects.filter(
+def live_conversion(workspace, source_type, source_id, lock=False):
+    """Return the one live conversion of this row, or None.
+
+    `lock` takes the row for update, so a correction reads the rate it is
+    replacing under the same lock it replaces it under. It locks this row
+    only: `of=('self',)` keeps the lock off the nullable join to the
+    conversion this one supersedes.
+    """
+    rows = CurrencyConversion.objects.filter(
         workspace=workspace, source_type=source_type,
         source_id=str(source_id), superseded_by__isnull=True,
-    ).first()
+    ).order_by('-pk')
+    if lock:
+        rows = rows.select_for_update(of=('self',))
+    return rows.first()
 
 
 def converted_amounts(amounts, rate, direction):
@@ -316,8 +331,9 @@ def record_conversion(workspace, source_type, source_id, request, user=None):
     source = source_for(source_type)
     row = source.rows(workspace).filter(pk=source_id).first()
     if row is None:
-        missing = f'No {source.label.lower()} in this workspace has that id.'
-        raise ValidationError({'source_id': source.unsettled_refusal or missing})
+        raise ValidationError({'source_id': source.unsettled_refusal or (
+            f'No {source.label.lower()} in this workspace has that id.'
+        )})
     currency = source.currency_of(row)
     method = request.get('method') or (
         ConversionMethod.BASE_CURRENCY if currency == workspace.currency_code
@@ -336,7 +352,7 @@ def record_conversion(workspace, source_type, source_id, request, user=None):
             f'{workspace.currency_code}, so there is nothing to convert. Such '
             f'a record carries the base-currency conversion, at a rate of one.'
         )})
-    earlier = live_conversion(workspace, source_type, source_id)
+    earlier = live_conversion(workspace, source_type, source_id, lock=True)
     supersedes = request.get('supersedes')
     if earlier is not None and supersedes is None:
         raise ValidationError({'supersedes': (
@@ -347,23 +363,37 @@ def record_conversion(workspace, source_type, source_id, request, user=None):
         raise ValidationError({'supersedes': (
             'That is not the conversion this record is currently read at.'
         )})
-    return CurrencyConversion.objects.create(
-        workspace=workspace,
-        source_type=source_type,
-        source_id=str(source_id),
-        source_currency_code=currency,
-        target_currency_code=workspace.currency_code,
-        rate=rate,
-        quote_direction=direction,
-        method=method,
-        rate_source=request.get('rate_source', ''),
-        effective_date=request.get('effective_date') or source.date_of(row, workspace),
-        converted_on=request.get('converted_on') or _today(workspace),
-        amounts=converted_amounts(source.amounts(row), rate, direction),
-        supersedes=earlier if supersedes is not None else None,
-        reason=request.get('reason', ''),
-        created_by=user,
-    )
+    fields = {
+        'workspace': workspace,
+        'source_type': source_type,
+        'source_id': str(source_id),
+        'source_currency_code': currency,
+        'target_currency_code': workspace.currency_code,
+        'rate': rate,
+        'quote_direction': direction,
+        'method': method,
+        'rate_source': request.get('rate_source', ''),
+        'effective_date': request.get('effective_date') or source.date_of(row, workspace),
+        'converted_on': request.get('converted_on') or _today(workspace),
+        'amounts': converted_amounts(source.amounts(row), rate, direction),
+        'supersedes': earlier if supersedes is not None else None,
+        'reason': request.get('reason', ''),
+        'created_by': user,
+    }
+    try:
+        # Its own savepoint, so a refused write leaves the surrounding
+        # transaction usable enough to answer with why.
+        with transaction.atomic():
+            return CurrencyConversion.objects.create(**fields)
+    except IntegrityError as exc:
+        # The live-rate constraint: another request recorded the first
+        # conversion of this record between the read above and this write, so
+        # what this one is is a correction that has not said what it corrects.
+        raise ValidationError({'supersedes': (
+            'This record was converted while this rate was being recorded. '
+            'Record the corrected rate as superseding the conversion it '
+            'replaces.'
+        )}) from exc
 
 
 def _today(workspace):
