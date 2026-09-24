@@ -265,6 +265,33 @@ def source_for(source_type):
         )}) from exc
 
 
+def _convertible_row(workspace, source, source_id):
+    """Find the record a rate is being recorded against, or say why not.
+
+    Three different answers, because they are three different situations and
+    an operator can only act on the one they are in: the id is not an id, no
+    such record exists here, or the record exists but its amounts can still
+    move. `source_id` is a character column on the conversion, so an id that is
+    not a number reaches the query as text and raises rather than not matching
+    -- caught here so it answers as a refused field rather than as a fault.
+    """
+    if not str(source_id).isdigit():
+        raise ValidationError({'source_id': (
+            f'A {source.label.lower()} is identified by a number, and '
+            f'"{source_id}" is not one.'
+        )})
+    row = source.rows(workspace).filter(pk=source_id).first()
+    if row is not None:
+        return row
+    if source.settled and source.model().objects.filter(
+        **{source.workspace_lookup: workspace}, pk=source_id,
+    ).exists():
+        raise ValidationError({'source_id': source.unsettled_refusal})
+    raise ValidationError({'source_id': (
+        f'No {source.label.lower()} in this workspace has that id.'
+    )})
+
+
 def live_conversions(workspace, pairs=None):
     """Return the live conversion for each converted row, keyed by its source.
 
@@ -329,11 +356,7 @@ def record_conversion(workspace, source_type, source_id, request, user=None):
     convert an amount or a currency the row does not have.
     """
     source = source_for(source_type)
-    row = source.rows(workspace).filter(pk=source_id).first()
-    if row is None:
-        raise ValidationError({'source_id': source.unsettled_refusal or (
-            f'No {source.label.lower()} in this workspace has that id.'
-        )})
+    row = _convertible_row(workspace, source, source_id)
     currency = source.currency_of(row)
     method = request.get('method') or (
         ConversionMethod.BASE_CURRENCY if currency == workspace.currency_code
