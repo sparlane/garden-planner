@@ -65,23 +65,36 @@ export interface PotFillPendingCost extends PotCostSummary {
   pots: PlantedPotCost[]
 }
 
+export type FillCostBucket = 'departed_cost' | 'held_cost' | 'production_loss' | 'recovered_cost' | 'rounding_difference'
+
+// A media lot carries the currency of the receipt that brought it in, so a fill
+// topped up from a lot bought abroad has no single applied cost and no single
+// anything derived from it. When `mixed_currency` is true, `currency_code` and
+// every figure are null and `currencies` holds each currency's own complete
+// set — `amount` being what that currency applied, and its buckets adding back
+// up to it. Each figure is also null while `unknown_cost` is set, and the two
+// departure-dependent ones while `unknown_allocation` is.
+export interface FillCostBreakdown {
+  currency_code: string | null
+  mixed_currency: boolean
+  unknown_cost: boolean
+  unknown_allocation: boolean
+  applied_cost: string | null
+  departed_cost: string | null
+  held_cost: string | null
+  production_loss: string | null
+  recovered_cost: string | null
+  rounding_difference: string | null
+  currencies: Array<{ currency_code: string; amount: string | null; totals: Record<FillCostBucket, string | null> }>
+}
+
 export interface PotFillContents {
   digest: string
   status: 'open' | 'closed'
   plants: number[]
   numbered_plants: number[]
   media: Array<{ lot: number; base_quantity: string; base_unit: string }>
-  costs: {
-    currency_code: string
-    unknown_cost: boolean
-    unknown_allocation: boolean
-    applied_cost: string | null
-    departed_cost: string | null
-    held_cost: string | null
-    production_loss: string | null
-    recovered_cost: string | null
-    rounding_difference: string | null
-  }
+  costs: FillCostBreakdown
   pot_costs: PotFillPendingCost
 }
 

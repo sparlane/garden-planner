@@ -3,16 +3,29 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { Link } from 'react-router'
 
-import { getPotFill, getPotFillContents, getPotFills, openPotFill, PotFillTarget } from '../api/container_fills'
+import { FillCostBreakdown, FillCostBucket, getPotFill, getPotFillContents, getPotFills, openPotFill, PotFillTarget } from '../api/container_fills'
 import { getInventoryBalances } from '../api/inventory'
 import { InputApplicationForm } from '../applications/application_form'
 import { queryKeys } from '../query'
 import { InventoryItem } from '../types/inventory'
-import { errorsByField, formatMoney, formatQuantity } from '../utils'
+import { errorsByField, formatMoney, formatMoneyTotals, formatQuantity } from '../utils'
 import { PotFillClean } from './pot_fill_clean'
 import { PotFillCosts } from './pot_fill_costs'
 import { PotFillPlant } from './pot_fill_plant'
 import { PotFillNumber } from './pot_fill_number'
+
+// A fill fed from one currency reads as it always has. A fill topped up from a
+// lot bought abroad has no single figure to show, so the sides are listed
+// instead — `formatMoneyTotals` never adds them, because no exchange rate
+// exists anywhere in this application. A null bucket in the list is a missing
+// price or an unrecorded departure share, which the warnings above the table
+// already name, so it falls back to "Unknown" exactly as the single figure does.
+function fillCost(costs: FillCostBreakdown, bucket: FillCostBucket | null): string {
+  const value = bucket === null ? costs.applied_cost : costs[bucket]
+  if (!costs.mixed_currency) return formatMoney(value, costs.currency_code ?? '', 'Unknown')
+  const rows = costs.currencies.map((row) => ({ currency_code: row.currency_code, amount: bucket === null ? row.amount : row.totals[bucket] }))
+  return `${formatMoneyTotals(rows, 'Unknown')} (not combined)`
+}
 
 function FillContents({ pk }: { pk: number }) {
   const [posted, setPosted] = React.useState<number>()
@@ -23,13 +36,13 @@ function FillContents({ pk }: { pk: number }) {
   })
   if (isPending) return <p>Loading fill contents…</p>
   if (isError || !data) return <Alert variant="danger">Could not load fill contents.</Alert>
-  const totals = [
-    ['Applied', data.costs.applied_cost],
-    ['Taken by departed plants', data.costs.departed_cost],
-    ['Held in the fill', data.costs.held_cost],
-    ['Discarded', data.costs.production_loss],
-    ['Recovered', data.costs.recovered_cost],
-    ['Rounding difference', data.costs.rounding_difference]
+  const totals: Array<[string, FillCostBucket | null]> = [
+    ['Applied', null],
+    ['Taken by departed plants', 'departed_cost'],
+    ['Held in the fill', 'held_cost'],
+    ['Discarded', 'production_loss'],
+    ['Recovered', 'recovered_cost'],
+    ['Rounding difference', 'rounding_difference']
   ]
   return (
     <div className="mt-3">
@@ -75,12 +88,18 @@ function FillContents({ pk }: { pk: number }) {
         </tbody>
       </Table>
       {(data.costs.unknown_cost || data.costs.unknown_allocation) && <Alert variant="warning">Some costs or historical plant shares are unknown.</Alert>}
+      {data.costs.mixed_currency && (
+        <Alert variant="warning">
+          This fill was topped up from a lot bought in another currency ({data.costs.currencies.map((row) => row.currency_code).join(' and ')}). No exchange rate exists, so the
+          figures below are listed side by side and not combined.
+        </Alert>
+      )}
       <Table size="sm">
         <tbody>
-          {totals.map(([label, value]) => (
+          {totals.map(([label, bucket]) => (
             <tr key={label}>
               <th scope="row">{label}</th>
-              <td>{formatMoney(value, data.costs.currency_code, 'Unknown')}</td>
+              <td>{fillCost(data.costs, bucket)}</td>
             </tr>
           ))}
         </tbody>
