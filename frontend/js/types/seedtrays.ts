@@ -176,11 +176,18 @@ interface CleanGenerationResponse {
   next_generation: SeedTrayGeneration | null
 }
 
+type TrayCostBucket = 'recovered_cost' | 'wasted_cost' | 'allocated_cost' | 'unallocated_cost' | 'production_loss'
+
+// Null `cost` and `currency_code` together with `mixed_currency` when this cell
+// was fed from lots bought in two currencies: 0.08 of one and 0.04 of the other
+// is not 0.12 of anything, and dividing it per plant would be worse.
 interface GenerationCostCell {
   cell: number
   x_position: number
   y_position: number
   cost: string | null
+  currency_code: string | null
+  mixed_currency: boolean
   plants: Array<number>
   per_plant_cost: string | null
   provisional: boolean
@@ -194,26 +201,47 @@ interface GenerationCostMedia {
   base_quantity: string
   base_unit: string
   unit_cost: string | null
+  currency_code: string
   cost: string | null
 }
 
+// What one seedling's media cost, in the currency the lot it drew on was bought
+// in. A seedling raised in a cell fed from two currencies carries no figure and
+// lists its shares in `currencies` instead.
+interface GenerationCostPlant {
+  plant: number
+  cost: string | null
+  currency_code: string | null
+  mixed_currency: boolean
+  currencies: Array<{ currency_code: string; amount: string }>
+}
+
+// A media lot carries the currency of the receipt that brought it in, so a tray
+// topped up from a lot bought abroad has no single applied cost and nothing
+// derived from one. `currency_code` and every figure are then null, with
+// `mixed_currency` saying why, and `currencies` holds each currency's own
+// complete set for the screen to list side by side — the shape a batch's cost
+// breakdown uses for the same refusal. No exchange rate exists anywhere in this
+// application, so nothing may add two of them together.
 interface GenerationCostBreakdown {
   generation: number
   code: string
   status: SeedTrayGenerationStatus
-  currency_code: string
+  currency_code: string | null
+  mixed_currency: boolean
   // True when a lot has no recorded unit cost. The totals then understate the
   // real figure, so the screen says so rather than showing them as complete.
   unknown_cost: boolean
   media: Array<GenerationCostMedia>
-  applied_cost: string
-  recovered_cost: string
-  wasted_cost: string
+  applied_cost: string | null
+  recovered_cost: string | null
+  wasted_cost: string | null
   cells: Array<GenerationCostCell>
-  plants: Array<{ plant: number; cost: string | null }>
-  allocated_cost: string
-  unallocated_cost: string
-  production_loss: string
+  plants: Array<GenerationCostPlant>
+  allocated_cost: string | null
+  unallocated_cost: string | null
+  production_loss: string | null
+  currencies: Array<{ currency_code: string; amount: string; totals: Record<TrayCostBucket, string> }>
 }
 
 interface SeedTrayFilters {
@@ -244,6 +272,7 @@ export {
   CleanPlantOutcome,
   CleanSeedDisposition,
   GenerationCostBreakdown,
+  GenerationCostPlant,
   MediaDispositionChoice,
   SeedDispositionChoice,
   SeedTray,
@@ -255,5 +284,6 @@ export {
   SeedTrayModel,
   SeedTrayModelCreate,
   SeedTrayReceiptCreate,
-  SeedTrayReceiptResponse
+  SeedTrayReceiptResponse,
+  TrayCostBucket
 }

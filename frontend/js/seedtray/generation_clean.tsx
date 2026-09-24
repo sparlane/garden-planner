@@ -6,11 +6,14 @@ import {
   CleanPlantDisposition,
   CleanPlantOutcome,
   CleanSeedDisposition,
+  GenerationCostBreakdown,
+  GenerationCostPlant,
   MediaDispositionChoice,
   SeedDispositionChoice,
-  SeedTrayGenerationContents
+  SeedTrayGenerationContents,
+  TrayCostBucket
 } from '../types/seedtrays'
-import { formatDateTime, formatMeasure, formatMoney } from '../utils'
+import { formatDateTime, formatMeasure, formatMoney, formatMoneyTotals } from '../utils'
 
 const PLANT_OUTCOMES: Array<{ value: CleanPlantOutcome; label: string }> = [
   { value: 'failed', label: 'Failed' },
@@ -311,33 +314,45 @@ const GenerationCleanForm: React.FC<GenerationCleanFormProps> = ({ contents, loc
 }
 
 type GenerationCostPanelProps = {
-  breakdown: {
-    currency_code: string
-    unknown_cost: boolean
-    applied_cost: string
-    recovered_cost: string
-    wasted_cost: string
-    allocated_cost: string
-    unallocated_cost: string
-    production_loss: string
-    plants: Array<{ plant: number; cost: string | null }>
-  }
+  breakdown: GenerationCostBreakdown
+}
+
+// The sides are listed rather than added: no exchange rate exists anywhere in
+// this application, so a sum would be a figure nobody could reproduce. A null
+// bucket while `mixed_currency` is false is an ordinary missing price, which
+// the warning above the list already names.
+function trayCost(breakdown: GenerationCostBreakdown, bucket: TrayCostBucket | null): string {
+  const value = bucket === null ? breakdown.applied_cost : breakdown[bucket]
+  if (!breakdown.mixed_currency) return formatMoney(value, breakdown.currency_code ?? '')
+  const rows = breakdown.currencies.map((row) => ({ currency_code: row.currency_code, amount: bucket === null ? row.amount : row.totals[bucket] }))
+  return `${formatMoneyTotals(rows)} (not combined)`
+}
+
+function seedlingCost(row: GenerationCostPlant): string {
+  if (row.mixed_currency) return `${formatMoneyTotals(row.currencies)} (not combined)`
+  return formatMoney(row.cost, row.currency_code ?? '', 'Unknown')
 }
 
 const GenerationCostPanel: React.FC<GenerationCostPanelProps> = ({ breakdown }) => (
   <>
     {breakdown.unknown_cost && <Alert variant="warning">Some media came from a lot with no recorded unit cost, so these totals understate the real figure.</Alert>}
+    {breakdown.mixed_currency && (
+      <Alert variant="warning">
+        This fill drew on lots bought in {breakdown.currencies.map((row) => row.currency_code).join(' and ')}. No exchange rate exists, so the figures below are listed side by side
+        and not combined.
+      </Alert>
+    )}
     <dl className="row mb-2">
       <dt className="col-sm-4">Media applied</dt>
-      <dd className="col-sm-8">{formatMoney(breakdown.applied_cost, breakdown.currency_code)}</dd>
+      <dd className="col-sm-8">{trayCost(breakdown, null)}</dd>
       <dt className="col-sm-4">Reclaimed into stock</dt>
-      <dd className="col-sm-8">{formatMoney(breakdown.recovered_cost, breakdown.currency_code)}</dd>
+      <dd className="col-sm-8">{trayCost(breakdown, 'recovered_cost')}</dd>
       <dt className="col-sm-4">Reaching seedlings</dt>
-      <dd className="col-sm-8">{formatMoney(breakdown.allocated_cost, breakdown.currency_code)}</dd>
+      <dd className="col-sm-8">{trayCost(breakdown, 'allocated_cost')}</dd>
       <dt className="col-sm-4">In cells with no plant yet</dt>
-      <dd className="col-sm-8">{formatMoney(breakdown.unallocated_cost, breakdown.currency_code)}</dd>
+      <dd className="col-sm-8">{trayCost(breakdown, 'unallocated_cost')}</dd>
       <dt className="col-sm-4">Production loss</dt>
-      <dd className="col-sm-8">{formatMoney(breakdown.production_loss, breakdown.currency_code)}</dd>
+      <dd className="col-sm-8">{trayCost(breakdown, 'production_loss')}</dd>
     </dl>
     {breakdown.plants.length > 0 && (
       <Table size="sm" responsive>
@@ -351,7 +366,7 @@ const GenerationCostPanel: React.FC<GenerationCostPanelProps> = ({ breakdown }) 
           {breakdown.plants.map((row) => (
             <tr key={row.plant}>
               <td>#{row.plant}</td>
-              <td>{formatMoney(row.cost, breakdown.currency_code, 'Unknown')}</td>
+              <td>{seedlingCost(row)}</td>
             </tr>
           ))}
         </tbody>
