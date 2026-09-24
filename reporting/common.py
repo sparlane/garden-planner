@@ -54,6 +54,12 @@ class Report:  # pylint: disable=too-many-instance-attributes
     columns: tuple
     rows: list
     totals: dict = field(default_factory=dict)
+    #: Columns whose None is a withheld figure rather than an absent one, and
+    #: the words to write in place of it. A CSV cell left empty is read as a
+    #: zero by every spreadsheet, so a report that withholds a figure has to
+    #: say so in the cell rather than leave it out.
+    not_stated_columns: tuple = ()
+    not_stated: str = ''
     reconciliation: dict = field(default_factory=dict)
     data_quality: list = field(default_factory=list)
     generated_at: object = field(default_factory=timezone.now)
@@ -112,6 +118,16 @@ def report_response(request, report):
     })
 
 
+def _cell(report, row, column):
+    """Render one CSV cell, saying so where a figure was withheld."""
+    value = row.get(column)
+    if value is None and column in report.not_stated_columns:
+        return report.not_stated
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, separators=(',', ':'))
+    return value
+
+
 def csv_response(report):
     """Return a versioned CSV with metadata followed by stable tabular headers."""
     stream = StringIO(newline='')
@@ -126,11 +142,7 @@ def csv_response(report):
     writer.writerow(())
     writer.writerow(report.columns)
     for row in report.rows:
-        writer.writerow([
-            json.dumps(row.get(column), sort_keys=True, separators=(',', ':'))
-            if isinstance(row.get(column), (dict, list)) else row.get(column)
-            for column in report.columns
-        ])
+        writer.writerow([_cell(report, row, column) for column in report.columns])
     response = HttpResponse(stream.getvalue(), content_type='text/csv; charset=utf-8')
     response['Content-Disposition'] = f'attachment; filename="{report.name}-v1.csv"'
     response['X-Report-Version'] = report.version

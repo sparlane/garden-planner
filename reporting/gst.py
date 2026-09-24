@@ -54,7 +54,7 @@ from tax.services import closures_by_label
 from tax.transition import basis_transitions
 from tax.turnover import registration_warnings
 
-from bookkeeping.consolidation import ROUNDING_NOTE, Converter
+from bookkeeping.consolidation import NOT_STATED, ROUNDING_NOTE, Converter
 
 from .common import Report, decimal_string
 
@@ -74,12 +74,16 @@ PERIOD_COLUMNS = (
     'consolidated', 'filed', 'filed_at', 'filed_total_drift',
 )
 
+#: The entry columns that are null where no rate has been recorded. A CSV cell
+#: left empty reads as a zero in a spreadsheet, which is the opposite of what a
+#: withheld figure means, so these carry the words instead.
+CONVERTED_ENTRY_COLUMNS = ('converted_taxable', 'converted_tax', 'converted_gross')
+
 ENTRY_COLUMNS = (
     'period_label', 'kind', 'supply_date', 'basis', 'source_type', 'source_id',
     'document_id', 'line_id', 'tax_code', 'tax_rate',
     'taxable', 'tax', 'non_recoverable_tax', 'gross',
-    'currency_code', 'converted_taxable', 'converted_tax',
-    'converted_gross', 'converted_currency_code',
+    'currency_code', *CONVERTED_ENTRY_COLUMNS, 'converted_currency_code',
     'time_of_supply_source', 'input_tax_source',
     'adjustment_direction', 'proxy', 'exclusion',
 )
@@ -206,6 +210,8 @@ def gst_entry_report(workspace, filters):
         totals=_entry_totals(entries),
         reconciliation=dict(RECONCILIATION),
         data_quality=converter.findings(),
+        not_stated_columns=CONVERTED_ENTRY_COLUMNS,
+        not_stated=NOT_STATED,
     )
 
 
@@ -402,6 +408,11 @@ def _period_totals(rows, transitions=(), converter=None):
             'period_label', 'period_start', 'period_end', 'clipped', 'basis',
             'filing_frequency', 'gst_number', 'registration',
             'net_gst_direction', 'entry_count', 'currency_code',
+            # Whether a row restates the ones above it is a fact about the row,
+            # not a measure of it. Summed as money it made the converted total
+            # carry a `consolidated` of 1.0000, and a count of periods over a
+            # longer range.
+            'consolidated',
             # Filing status is a fact about the period, not a measure of it,
             # and drift is null wherever nothing was filed.
             'filed', 'filed_at', 'filed_total_drift',
@@ -436,25 +447,48 @@ def _period_totals(rows, transitions=(), converter=None):
         # The same boxes over the whole range, in the workspace's own currency.
         # None where any period could not be consolidated, because a range
         # total built from some of its periods is a wrong number rather than a
-        # partial one.
+        # partial one. `converted_state` tells that apart from a range with
+        # nothing to consolidate, which is the ordinary case and not a problem.
         'converted': _converted_total(
             rows, money_fields, consolidated, converter,
         ),
+        'converted_state': _converted_state(rows, converter),
     }
+
+
+def _foreign_periods(rows, converter):
+    """The periods that traded in something other than the workspace currency."""
+    return {
+        row['period_label'] for row in rows
+        if row['currency_code'] not in ('', converter.target)
+    }
+
+
+def _converted_state(rows, converter):
+    """Say which kind of absence a missing converted total is.
+
+    `not_required` where nothing was traded abroad, so there is nothing to
+    restate and the per-currency figures are already the return. `withheld`
+    where something was and a rate is missing. `stated` where the figure is
+    there. A reader that only saw None could not tell the first from the
+    second, and they are opposite answers.
+    """
+    if converter is None:
+        return None
+    wanted = _foreign_periods(rows, converter)
+    if not wanted:
+        return 'not_required'
+    stated = {row['period_label'] for row in rows if row['consolidated']}
+    return 'withheld' if wanted - stated else 'stated'
 
 
 def _converted_total(rows, money_fields, consolidated, converter):
     """Sum the consolidated rows, or state nothing if a period lost one."""
     if converter is None:
         return None
-    wanted = {
-        row['period_label'] for row in rows
-        if row['currency_code'] not in ('', converter.target)
-    }
+    wanted = _foreign_periods(rows, converter)
     stated = {row['period_label'] for row in rows if row['consolidated']}
-    if wanted - stated:
-        return None
-    if not wanted:
+    if not wanted or wanted - stated:
         return None
     return {
         **{field: decimal_string(consolidated[field], MONEY_PLACES) for field in money_fields},

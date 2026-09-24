@@ -49,6 +49,11 @@ UNCONVERTED_MESSAGE = (
     'nothing rather than a total missing a row.'
 )
 
+#: What a withheld figure reads as wherever one is written out rather than
+#: rendered. A blank cell is a zero to a spreadsheet, and a total that states
+#: nothing is the opposite of a zero.
+NOT_STATED = 'not stated'
+
 #: What it says where converted figures are published. The four-place rounding
 #: is applied to each amount separately, so the parts of a converted total can
 #: differ from the converted total by a cent; saying so is task 121's decision

@@ -16,6 +16,7 @@ from workspaces.conversion import ConversionMethod, QuoteDirection
 from workspaces.currency import CurrencyInputSerializerMixin
 from workspaces.scoping import CurrentWorkspaceSerializerMixin, CurrentWorkspaceViewSetMixin
 
+from .consolidation import NOT_STATED
 from .conversion import SOURCES, record_conversion
 from .models import BookkeepingEntry, CurrencyConversion, DepreciationSchedule, IncomeTaxYear, LegalHoldEvent, Liability, StockValuationLine, TaxAsset, TaxRetentionRecord
 from .services import build_report, capture_inventory, finalize_income_year, reverse_entry, set_legal_hold
@@ -28,11 +29,6 @@ RATE_COLUMNS = (
     'rate', 'quote_direction', 'method', 'rate_source', 'effective_date',
     'converted_on', 'supersedes', 'superseded', 'reason',
 )
-
-#: What a figure reads as when it could not be stated. Blank would be a zero to
-#: anything reading the file with a spreadsheet, and a withheld total is the
-#: opposite of a zero.
-NOT_STATED = 'not stated'
 
 
 def _stated_amount(value):
