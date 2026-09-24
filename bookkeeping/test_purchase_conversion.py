@@ -209,6 +209,26 @@ class ConversionRouteTests(PurchaseConversionTestCase):
             response.data['method'][0],
         )
 
+    def test_an_id_that_is_not_an_id_is_a_refusal_not_a_fault(self):
+        """`source_id` is a character column, so a word reaches the query."""
+        response = self.convert('stock_receipt', 'abc')
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            response.data['source_id'],
+            ['A stock receipt is identified by a number, and "abc" is not one.'],
+        )
+
+    def test_a_record_that_is_not_there_is_told_apart_from_one_not_settled(self):
+        """Three situations, three answers: only one of them is a draft."""
+        missing = self.convert('stock_receipt', 9999)
+
+        self.assertEqual(missing.status_code, 400, missing.data)
+        self.assertEqual(
+            missing.data['source_id'],
+            ['No stock receipt in this workspace has that id.'],
+        )
+
     def test_the_route_refuses_a_record_no_rate_is_recorded_against(self):
         response = self.convert('cost_layer', 1)
 
