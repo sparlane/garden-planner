@@ -65,6 +65,7 @@ class UnconvertedYearTests(IncomeYearConversionTestCase):
         self.assertIsNone(report['totals']['sales_ex_tax'])
         self.assertFalse(report['conversion']['complete'])
         self.assertEqual(report['conversion']['policy'], 'spot')
+        self.assertEqual(report['conversion']['methods'], [])
         finding = next(
             row for row in report['data_quality']
             if row['code'] == 'unconverted_source'
@@ -103,6 +104,15 @@ class ConvertedYearTests(IncomeYearConversionTestCase):
         # currency is converted at one without a record being looked up, so
         # `base_currency` appears only where one was.
         self.assertEqual(report['conversion']['methods'], ['spot'])
+        # The sentence the panel shows beside the figures, pinned because the
+        # panel shows it on exactly this state: converted, so a remainder can
+        # show. It is hidden where a rate is missing, because the totals are
+        # then withheld and there is no remainder to explain.
+        self.assertEqual(
+            report['conversion']['rounding'],
+            'Every amount is converted on its own and rounded to four places, '
+            'so converted lines can differ from a converted total by a cent.',
+        )
         self.assertNotIn(
             'unconverted_source', {row['code'] for row in report['data_quality']},
         )

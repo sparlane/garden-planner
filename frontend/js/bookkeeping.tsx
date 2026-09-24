@@ -400,7 +400,12 @@ function IncomeYearPanel({ workspace }: { workspace: Workspace }) {
                 {issue.message}
               </Alert>
             ))}
-            {!year.live_report.conversion.complete && <Alert variant="info">{year.live_report.conversion.rounding}</Alert>}
+            {/* Shown where the year IS converted, which is when a remainder
+                can show: every amount is converted on its own, so the figures
+                below can differ from each other by a cent. Where a rate is
+                missing the totals are withheld and there is no remainder to
+                explain. */}
+            {year.live_report.conversion.complete && year.live_report.conversion.methods.length > 0 && <Alert variant="info">{year.live_report.conversion.rounding}</Alert>}
             <Row>
               {Object.entries(year.live_report.totals).map(([label, amount]) => (
                 <Col sm={6} lg={4} key={label}>
