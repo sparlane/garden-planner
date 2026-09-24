@@ -4,10 +4,21 @@ from decimal import Decimal
 from fractions import Fraction
 
 from applications.models import InputApplication, InputApplicationLine
+from costing.currency import stated_currency
 from inventory.ledger import MONEY_QUANTUM, QUANTITY_QUANTUM, quantize_money, quantize_quantity
 
 from .generation_costs import quantize_cost
 from .pot_shares import counted_parts
+
+
+#: The two figures a departure whose share was never recorded leaves
+#: unstateable. `applied_cost` is not one of them: what went into the fill is
+#: known whether or not anyone can say who took it away again.
+UNALLOCATABLE_BUCKETS = ('departed_cost', 'held_cost')
+
+#: A currency nothing was disposed of in, so that a fill fed from a lot it has
+#: no residual for still reports that lot's held cost.
+NO_RESIDUALS = {'waste': Decimal('0'), 'reclaimed': Decimal('0')}
 
 
 def pot_fill_shares(fill):
@@ -94,37 +105,62 @@ def pot_fill_remaining_media(fill):
     return [] if fill.plant_share_count else pot_fill_contents(fill)
 
 
-def pot_fill_cost_breakdown(fill):
-    """Report departed, held, discarded and recovered media at fill level.
+def _applied_and_departed(fill, media, fraction):
+    """Total applied and departed media per currency of the lot it came from.
 
-    Unknown acquisition costs remain unknown. The media ledger and these
-    residuals are the source of the report; the pot's acquisition cost never
-    changes when it is filled or cleaned.
-
-    `held_cost` is all media still in the fill, including the share in any
-    unplanted counted pots, and excludes both the pots and what the plants
-    cost to raise. It is not what the planted pots would cost to dispatch;
-    `costing.pot_pending.pot_fill_pending_cost` reports that.
+    A counted fill reserves its per-pot rounding line by line in
+    `counted_fill_balance`, and a line draws on exactly one lot, so each line's
+    departures are already whole money in one currency. A numbered fill takes
+    the departed share of what was applied, and takes it inside each currency:
+    there is no rate that would let a euro share be worked out of a dollar
+    total, and taking it of the mixture and then splitting the answer would
+    invent one.
     """
-    media = pot_fill_contents(fill)
-    departures = [row for row in pot_fill_shares(fill) if row['departed_at'] is not None]
-    unknown_allocation = any(row['share'] is None for row in departures)
-    fraction = sum((row['share'] for row in departures if row['share'] is not None), Fraction(0))
-    unknown = any(row['unit_cost'] is None for row in media)
-    applied = sum((row['base_quantity'] * (row['unit_cost'] or 0) for row in media), Decimal('0'))
-    departed = quantize_cost(applied * fraction.numerator / fraction.denominator)
+    applied = {}
+    departed = {}
     if fill.stock_lot_id:
-        balance = counted_fill_balance(fill)
-        applied = sum((row['applied_cost'] or 0 for row in balance), Decimal('0'))
-        departed = sum((row['departed_cost'] or 0 for row in balance), Decimal('0'))
-    residuals = {'waste': Decimal('0'), 'reclaimed': Decimal('0')}
-    for residual in fill.residuals.filter(kind='media', pot_correction__isnull=True):
+        for row in counted_fill_balance(fill):
+            code = row['lot'].currency_code
+            applied[code] = applied.get(code, Decimal('0')) + (row['applied_cost'] or 0)
+            departed[code] = departed.get(code, Decimal('0')) + (row['departed_cost'] or 0)
+        return applied, departed
+    for row in media:
+        code = row['lot'].currency_code
+        applied[code] = applied.get(code, Decimal('0')) + row['base_quantity'] * (row['unit_cost'] or 0)
+    return applied, {
+        code: quantize_cost(value * fraction.numerator / fraction.denominator)
+        for code, value in applied.items()
+    }
+
+
+def _residuals_by_currency(fill):
+    """Total what each disposition took back out, per currency of its lot.
+
+    A residual copies the unit cost of the lot it came from, so it states the
+    same currency the application that put the media in did, and discarding a
+    euro litre is a euro loss however the rest of the fill was bought.
+    """
+    residuals = {}
+    unknown = False
+    rows = fill.residuals.filter(kind='media', pot_correction__isnull=True).select_related('lot')
+    for residual in rows:
         unknown = unknown or residual.unit_cost is None
-        residuals[residual.disposition] += residual.base_quantity * (residual.unit_cost or 0)
+        totals = residuals.setdefault(residual.lot.currency_code, dict(NO_RESIDUALS))
+        totals[residual.disposition] += residual.base_quantity * (residual.unit_cost or 0)
     if fill.stock_lot_id:
-        residuals = {key: quantize_cost(value) for key, value in residuals.items()}
+        residuals = {code: {key: quantize_cost(value) for key, value in totals.items()}
+                     for code, totals in residuals.items()}
+    return residuals, unknown
+
+
+def _fill_dispositions(fill, applied, departed, residuals):
+    """Split one currency's applied media into where that currency ended up.
+
+    The four buckets and the rounding difference add back up to `applied_cost`
+    within the currency, which is what lets a reader list the sides of a mixed
+    fill without ever needing a rate between them.
+    """
     amounts = {
-        'applied_cost': applied,
         'departed_cost': departed,
         'held_cost': applied - departed - sum(residuals.values()),
         'production_loss': residuals['waste'],
@@ -137,12 +173,92 @@ def pot_fill_cost_breakdown(fill):
     if fill.stock_lot_id and fill.status == 'closed':
         amounts['rounding_difference'] = amounts['held_cost']
         amounts['held_cost'] = Decimal('0')
+    return amounts
+
+
+def _hidden(key, unknown, unknown_allocation, mixed):
+    """Say whether one figure cannot be stated, whichever of the three reasons.
+
+    An unpriced lot means no figure at all, a departure whose share nobody
+    recorded means neither of the two figures that depend on it, and two
+    currencies mean no single figure anywhere — and the per-currency rows are
+    held to the first two rules as well, so a fill with an unpriced lot lists
+    its currencies without amounts rather than amounts that treat the unpriced
+    lot as free.
+    """
+    if unknown or mixed:
+        return True
+    return unknown_allocation and key in UNALLOCATABLE_BUCKETS
+
+
+def _stated_cost(value, hidden):
+    """Render one currency's own figure, or nothing where one is not stateable.
+
+    Rendered here rather than left a `Decimal` for the caller because
+    `container_fill_rest` only formats the top level of this report, and a
+    `Decimal` reaching the JSON encoder from inside the list would come out a
+    float — the one rendering a money column of twelve decimal places exists
+    to avoid.
+    """
+    return None if hidden else f'{quantize_cost(value):f}'
+
+
+def pot_fill_cost_breakdown(fill):
+    """Report departed, held, discarded and recovered media at fill level.
+
+    Unknown acquisition costs remain unknown. The media ledger and these
+    residuals are the source of the report; the pot's acquisition cost never
+    changes when it is filled or cleaned.
+
+    `held_cost` is all media still in the fill, including the share in any
+    unplanted counted pots, and excludes both the pots and what the plants
+    cost to raise. It is not what the planted pots would cost to dispatch;
+    `costing.pot_pending.pot_fill_pending_cost` reports that.
+
+    Two currencies are kept apart the way `costing.services` keeps a batch's
+    apart. A lot carries the currency of the receipt that brought it in, so a
+    fill topped up from a lot bought abroad holds two totals and no single
+    one: `currency_code` and every figure go null with `mixed_currency` saying
+    why, and `currencies` lists each currency's complete set of figures for a
+    reader to show side by side. A fill fed from one currency — every fill in
+    most workspaces — reads exactly as it always has.
+    """
+    media = pot_fill_contents(fill)
+    departures = [row for row in pot_fill_shares(fill) if row['departed_at'] is not None]
+    unknown_allocation = any(row['share'] is None for row in departures)
+    fraction = sum((row['share'] for row in departures if row['share'] is not None), Fraction(0))
+    applied, departed = _applied_and_departed(fill, media, fraction)
+    residuals, residual_unknown = _residuals_by_currency(fill)
+    unknown = any(row['unit_cost'] is None for row in media) or residual_unknown
+    codes = sorted(set(applied) | set(residuals))
+    amounts = {
+        code: _fill_dispositions(
+            fill, applied.get(code, Decimal('0')), departed.get(code, Decimal('0')),
+            residuals.get(code, NO_RESIDUALS),
+        )
+        for code in codes
+    }
+    currency = stated_currency(codes, fill.workspace.currency_code)
+    empty = _fill_dispositions(fill, Decimal('0'), Decimal('0'), NO_RESIDUALS)
+    figures = {'applied_cost': applied.get(currency, Decimal('0')), **amounts.get(currency, empty)}
     return {
         'fill': fill.pk, 'container_count': fill.container_count,
-        'currency_code': fill.workspace.currency_code, 'unknown_cost': unknown,
+        'currency_code': currency, 'unknown_cost': unknown,
+        'mixed_currency': len(codes) > 1,
         'unknown_allocation': unknown_allocation,
-        **{key: None if unknown or (unknown_allocation and key in ('departed_cost', 'held_cost'))
-           else quantize_cost(value) for key, value in amounts.items()},
+        'currencies': [
+            {
+                'currency_code': code,
+                'amount': _stated_cost(applied.get(code, Decimal('0')), unknown),
+                'totals': {
+                    bucket: _stated_cost(value, _hidden(bucket, unknown, unknown_allocation, False))
+                    for bucket, value in amounts[code].items()
+                },
+            }
+            for code in codes
+        ],
+        **{key: None if _hidden(key, unknown, unknown_allocation, currency is None)
+           else quantize_cost(value) for key, value in figures.items()},
     }
 
 

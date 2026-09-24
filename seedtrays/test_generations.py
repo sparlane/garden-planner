@@ -748,8 +748,8 @@ class GenerationCostTests(GenerationContentsTestCase):
         self.assertEqual(breakdown['applied_cost'], Decimal('0.160000000000'))
         self.assertFalse(breakdown['unknown_cost'])
         self.assertEqual(
-            breakdown['plants'],
-            [{'plant': plant.pk, 'cost': Decimal('0.080000000000')}],
+            [(row['plant'], row['cost']) for row in breakdown['plants']],
+            [(plant.pk, Decimal('0.080000000000'))],
         )
         self.assertEqual(breakdown['allocated_cost'], Decimal('0.080000000000'))
         self.assertEqual(breakdown['unallocated_cost'], Decimal('0.080000000000'))
@@ -764,10 +764,10 @@ class GenerationCostTests(GenerationContentsTestCase):
         breakdown = generation_cost_breakdown(self.generation)
 
         self.assertEqual(
-            breakdown['plants'],
+            [(row['plant'], row['cost']) for row in breakdown['plants']],
             [
-                {'plant': first.pk, 'cost': Decimal('0.040000000000')},
-                {'plant': second.pk, 'cost': Decimal('0.040000000000')},
+                (first.pk, Decimal('0.040000000000')),
+                (second.pk, Decimal('0.040000000000')),
             ],
         )
         self.assertEqual(sowing.quantity, 4)
@@ -786,8 +786,8 @@ class GenerationCostTests(GenerationContentsTestCase):
         breakdown = generation_cost_breakdown(self.generation)
 
         self.assertEqual(
-            breakdown['plants'],
-            [{'plant': first.pk, 'cost': Decimal('0.080000000000')}],
+            [(row['plant'], row['cost']) for row in breakdown['plants']],
+            [(first.pk, Decimal('0.080000000000'))],
         )
 
     def test_a_cell_whose_only_seedlings_were_withdrawn_raised_nothing(self):
