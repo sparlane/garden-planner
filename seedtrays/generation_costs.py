@@ -43,7 +43,7 @@ def quantize_cost(value):
     return None if value is None else Decimal(value).quantize(COST_QUANTUM)
 
 
-def one_currency(held, fallback):
+def _one_currency(held, fallback):
     """Return the currency these amounts are all in, and their total in it.
 
     Both go null together where there is more than one, because half an answer
@@ -156,7 +156,7 @@ def _cell_row(cell, costs, plants, closed, fallback):
     other is not 0.12 of anything, and a per-plant figure divided out of the
     mixture would be money in neither.
     """
-    code, cost = one_currency(costs, fallback)
+    code, cost = _one_currency(costs, fallback)
     return {
         'cell': cell.pk,
         'x_position': cell.x_position,
@@ -214,7 +214,7 @@ def _plant_row(plant_id, held, fallback):
     shares are listed in `currencies` and the row carries no figure, the same
     answer `costing.services` gives a plant whose own inputs mix.
     """
-    code, cost = one_currency(held, fallback)
+    code, cost = _one_currency(held, fallback)
     return {
         'plant': plant_id,
         'cost': quantize_cost(cost),
@@ -253,12 +253,22 @@ def _currency_payload(media, residuals, shares, closed, fallback):
     saying why, and `currencies` lists each currency's own complete set for a
     reader to show side by side — the shape `costing.services` gives a batch
     fed the same way. A fill fed from one currency reads exactly as it did.
+
+    A lot with no recorded unit cost still counts towards which currencies the
+    fill drew on, because it was bought in one whether or not anyone wrote down
+    what it cost: leaving it out would label a tray holding euro media with the
+    workspace's own code, which is the relabelling this is here to stop. It
+    contributes nothing to any amount, so the figures understate by its cost —
+    which is exactly what `unknown_cost` has always said about them, and
+    `seedtrays.pot_media` counts an unpriced lot's currency the same way.
     """
     applied = {}
+    codes = set(residuals) | set(shares['allocated']) | set(shares['unallocated'])
     for row in media:
+        codes.add(row['currency_code'])
         if row['cost'] is not None:
             _add(applied, row['currency_code'], row['cost'])
-    codes = sorted(set(applied) | set(residuals) | set(shares['allocated']) | set(shares['unallocated']))
+    codes = sorted(codes)
     amounts = {
         code: _dispositions(residuals.get(code, {}), shares, code, closed)
         for code in codes

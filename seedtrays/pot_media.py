@@ -159,6 +159,15 @@ def _fill_dispositions(fill, applied, departed, residuals):
     The four buckets and the rounding difference add back up to `applied_cost`
     within the currency, which is what lets a reader list the sides of a mixed
     fill without ever needing a rate between them.
+
+    Exactly, as long as the applied cost itself fits the twelve places these
+    figures are published at. A counted fill's is whole money already, because
+    `counted_fill_balance` quantizes each line. A numbered fill's is a nine-place
+    quantity times a twelve-place unit cost, so a lot priced to the last place
+    can carry more than twelve and the published parts can then differ from the
+    published whole by one unit in the last place — a property of rendering, not
+    of the split, and the same one place a single-currency numbered fill has
+    always been rounded at.
     """
     amounts = {
         'departed_cost': departed,
