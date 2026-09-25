@@ -17,13 +17,18 @@ import { PotFillNumber } from './pot_fill_number'
 // A fill fed from one currency reads as it always has. A fill topped up from a
 // lot bought abroad has no single figure to show, so the sides are listed
 // instead — `formatMoneyTotals` never adds them, because no exchange rate
-// exists anywhere in this application. A null bucket in the list is a missing
-// price or an unrecorded departure share, which the warnings above the table
-// already name, so it falls back to "Unknown" exactly as the single figure does.
+// exists anywhere in this application.
+//
+// Where an unpriced lot or an unrecorded departure share leaves every side null
+// there is nothing to list, so this says "Unknown" once rather than "Unknown +
+// Unknown (not combined)". Two currencies and no figure in either is still one
+// answer to the question the row asks, and the warnings above the table say
+// which absence it is.
 function fillCost(costs: FillCostBreakdown, bucket: FillCostBucket | null): string {
   const value = bucket === null ? costs.applied_cost : costs[bucket]
   if (!costs.mixed_currency) return formatMoney(value, costs.currency_code ?? '', 'Unknown')
   const rows = costs.currencies.map((row) => ({ currency_code: row.currency_code, amount: bucket === null ? row.amount : row.totals[bucket] }))
+  if (rows.every((row) => row.amount === null)) return 'Unknown'
   return `${formatMoneyTotals(rows, 'Unknown')} (not combined)`
 }
 
@@ -90,8 +95,8 @@ function FillContents({ pk }: { pk: number }) {
       {(data.costs.unknown_cost || data.costs.unknown_allocation) && <Alert variant="warning">Some costs or historical plant shares are unknown.</Alert>}
       {data.costs.mixed_currency && (
         <Alert variant="warning">
-          This fill was topped up from a lot bought in another currency ({data.costs.currencies.map((row) => row.currency_code).join(' and ')}). No exchange rate exists, so the
-          figures below are listed side by side and not combined.
+          This fill drew on lots bought in {data.costs.currencies.map((row) => row.currency_code).join(' and ')}. No exchange rate exists, so the figures below are listed side by
+          side and not combined.
         </Alert>
       )}
       <Table size="sm">
