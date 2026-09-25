@@ -37,9 +37,9 @@ from applications.services import (
 from inventory.units import UnitCode
 from plantings.counted_fills import plant_counted_fill
 from sales.test_counted_lines import CountedStockTestCase
-from tests.factories import make_specific_plant, make_stock_lot
+from tests.factories import make_specific_plant, make_specific_plant_location, make_stock_lot
 
-from .container_fills import clean_pot_fill, open_counted_fill
+from .container_fills import clean_pot_fill, open_counted_fill, open_numbered_fill
 from .generation_costs import generation_cost_breakdown
 from .generations import CloseRequest, Disposition, MediaDisposition
 from .pot_media import pot_fill_cost_breakdown, pot_fill_remaining_media
@@ -72,18 +72,26 @@ class MixedCurrencyFillTestCase(PotMediaMixin, CountedStockTestCase):
             base_unit_cost=Decimal('2'), currency_code='EUR',
         )
 
-    def top_up(self, quantity='10'):
-        """Post a second media application, drawn from the lot bought abroad."""
+    def put_media(self, fill, lot, quantity):
+        """Post one media application of `quantity` from `lot` into `fill`."""
         application = create_application_draft(self.workspace, self.user, ApplicationRequest(
             applied_at=timezone.now(),
             source_location=self.store,
             lines=(LineRequest(
-                item=self.media_item, lot=self.foreign, applied_quantity=quantity,
+                item=self.media_item, lot=lot, applied_quantity=quantity,
                 unit_code=UnitCode.LITRE, usage_basis='manual',
-                targets=(TargetRequest('container_fill', self.fill),),
+                targets=(TargetRequest('container_fill', fill),),
             ),),
         ))
         return post_application(application, self.user)
+
+    def top_up(self, quantity='10'):
+        """Post a second media application, drawn from the lot bought abroad."""
+        return self.put_media(self.fill, self.foreign, quantity)
+
+    def unprice(self, lot):
+        """Forget what a lot cost, the way a legacy receipt with no price does."""
+        type(lot).objects.filter(pk=lot.pk).update(base_unit_cost=None)
 
     def depart(self):
         """Put one plant in a pot and take it away again, posting its share."""
@@ -282,6 +290,206 @@ class MixedCurrencyFillTests(MixedCurrencyFillTestCase):
         self.assertFalse(breakdown['mixed_currency'])
         self.assertEqual(breakdown['currency_code'], 'NZD')
         self.assertEqual(breakdown['applied_cost'], Decimal('100'))
+
+
+class UnknownCostAndCurrencyTests(MixedCurrencyFillTestCase):
+    """An unknown price and a missing rate are different absences.
+
+    One is a lot nobody wrote a price for and the other is two currencies with
+    no rate between them, and this report has always answered the first by
+    stating nothing rather than a figure that treats the unpriced lot as free.
+    Task 158 holds the per-currency rows to that same rule, which is where it
+    departs from `costing.services.batch_cost_breakdown`: that one publishes the
+    understated figure with the flag beside it, and a report doing both would
+    contradict itself between its top level and its list.
+    """
+
+    def test_an_unpriced_foreign_lot_still_counts_as_a_second_currency(self):
+        """It was bought in one whether or not anybody wrote down what it cost."""
+        self.top_up()
+        self.unprice(self.foreign)
+
+        breakdown = pot_fill_cost_breakdown(self.fill)
+
+        self.assertTrue(breakdown['unknown_cost'])
+        self.assertTrue(breakdown['mixed_currency'])
+        self.assertIsNone(breakdown['currency_code'])
+        self.assertEqual(
+            [row['currency_code'] for row in breakdown['currencies']],
+            ['EUR', 'NZD'],
+        )
+
+    def test_an_unpriced_lot_leaves_no_figure_anywhere_to_understate(self):
+        """Not even the currency that is fully priced, which is the module's rule."""
+        self.top_up()
+        self.unprice(self.foreign)
+
+        breakdown = pot_fill_cost_breakdown(self.fill)
+
+        for key in ('applied_cost', 'departed_cost', 'held_cost',
+                    'production_loss', 'recovered_cost', 'rounding_difference'):
+            self.assertIsNone(breakdown[key], key)
+        for row in breakdown['currencies']:
+            self.assertIsNone(row['amount'], row['currency_code'])
+            self.assertEqual(set(row['totals'].values()), {None}, row['currency_code'])
+
+    def test_an_unpriced_lot_in_one_currency_reads_as_it_always_has(self):
+        """The rule is the module's own, not something two currencies brought."""
+        self.unprice(self.media)
+
+        breakdown = pot_fill_cost_breakdown(self.fill)
+
+        self.assertTrue(breakdown['unknown_cost'])
+        self.assertFalse(breakdown['mixed_currency'])
+        self.assertEqual(breakdown['currency_code'], 'NZD')
+        self.assertIsNone(breakdown['applied_cost'])
+        self.assertEqual(breakdown['currencies'], [{
+            'currency_code': 'NZD', 'amount': None,
+            'totals': {'departed_cost': None, 'held_cost': None,
+                       'production_loss': None, 'recovered_cost': None,
+                       'rounding_difference': None},
+        }])
+
+
+class UnknownAllocationAndCurrencyTests(MixedCurrencyFillTestCase):
+    """A departure whose share nobody recorded hides two figures, per currency.
+
+    `unknown_allocation` is the legacy case: a plant left a shared pot before
+    the denominator was frozen, so nothing says what it took. That has always
+    left `departed_cost` and `held_cost` unstateable while `applied_cost`
+    stands, because what went into the fill is known whoever carried it off —
+    and the per-currency rows answer the same way, bucket by bucket.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.unit = self.number(self.pots, 1)[0]
+        self.shared = open_numbered_fill(self.workspace, self.user, self.unit)
+        self.put_media(self.shared, self.media, '50')
+        self.put_media(self.shared, self.foreign, '10')
+
+    def test_a_legacy_departure_hides_two_figures_in_every_currency(self):
+        """Applied still stands in both; what left and what stayed do not."""
+        placement = make_specific_plant_location(
+            location_type='container_unit', container_unit=self.unit, seed_tray_cell=None,
+        )
+        type(placement).objects.filter(pk=placement.pk).update(ended=timezone.now())
+
+        breakdown = pot_fill_cost_breakdown(self.shared)
+
+        self.assertTrue(breakdown['unknown_allocation'])
+        self.assertFalse(breakdown['unknown_cost'])
+        self.assertTrue(breakdown['mixed_currency'])
+        self.assertIsNone(breakdown['departed_cost'])
+        self.assertIsNone(breakdown['held_cost'])
+        self.assertEqual(
+            [(row['currency_code'], row['amount']) for row in breakdown['currencies']],
+            [('EUR', '20.000000000000'), ('NZD', '100.000000000000')],
+        )
+        for row in breakdown['currencies']:
+            self.assertIsNone(row['totals']['departed_cost'], row['currency_code'])
+            self.assertIsNone(row['totals']['held_cost'], row['currency_code'])
+            self.assertEqual(row['totals']['production_loss'], '0.000000000000')
+
+
+class MixedCurrencyNumberedFillTests(MixedCurrencyFillTestCase):
+    """The other fill kind: one numbered pot shared by three plants.
+
+    This is the branch whose arithmetic actually changed. A counted fill's
+    departures were already whole money per line, because `counted_fill_balance`
+    splits each line's cost across the pots and a line draws on exactly one lot.
+    A numbered fill instead takes the departed fraction of what was applied, and
+    now takes it inside each currency: a third of 120 is money in neither.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.unit = self.number(self.pots, 1)[0]
+        self.shared = open_numbered_fill(self.workspace, self.user, self.unit)
+        self.put_media(self.shared, self.media, '50')
+
+    def occupy(self, count=3):
+        """Put `count` plants in the one pot, sharing its media between them."""
+        return [make_specific_plant_location(
+            location_type='container_unit', container_unit=self.unit, seed_tray_cell=None,
+        ) for _ in range(count)]
+
+    def depart_one_of_three(self):
+        """Let the first of three occupants go, freezing the third it took."""
+        placements = self.occupy()
+        placements[0].ended = timezone.now()
+        placements[0].save()
+        return placements
+
+    def test_a_third_of_the_pot_is_a_third_of_each_currency(self):
+        """33.333333333333 NZD and 6.666666666667 EUR, not a third of 120."""
+        self.put_media(self.shared, self.foreign, '10')
+        self.depart_one_of_three()
+
+        breakdown = pot_fill_cost_breakdown(self.shared)
+
+        self.assertTrue(breakdown['mixed_currency'])
+        self.assertFalse(breakdown['unknown_allocation'])
+        self.assertIsNone(breakdown['departed_cost'])
+        self.assertEqual(
+            [(row['currency_code'], row['totals']['departed_cost'])
+             for row in breakdown['currencies']],
+            [('EUR', '6.666666666667'), ('NZD', '33.333333333333')],
+        )
+        self.assertEqual(
+            [row['totals']['held_cost'] for row in breakdown['currencies']],
+            ['13.333333333333', '66.666666666667'],
+        )
+        listed = [row['amount'] for row in breakdown['currencies']]
+        listed += [value for row in breakdown['currencies'] for value in row['totals'].values()]
+        self.assertNotIn('40.000000000000', listed)
+
+    def test_each_currency_still_accounts_for_every_cent_it_put_in(self):
+        """The partition holds on this branch too, where the rounding differs."""
+        self.put_media(self.shared, self.foreign, '10')
+        self.depart_one_of_three()
+
+        for row in pot_fill_cost_breakdown(self.shared)['currencies']:
+            self.assertEqual(
+                sum(Decimal(value) for value in row['totals'].values()),
+                Decimal(row['amount']),
+                row['currency_code'],
+            )
+
+    def test_a_numbered_fill_is_unchanged_while_it_draws_on_one_currency(self):
+        """Nothing about the fraction moved for a pot bought all in one place."""
+        self.depart_one_of_three()
+
+        breakdown = pot_fill_cost_breakdown(self.shared)
+
+        self.assertFalse(breakdown['mixed_currency'])
+        self.assertEqual(breakdown['currency_code'], 'NZD')
+        self.assertEqual(breakdown['applied_cost'], Decimal('100'))
+        self.assertEqual(breakdown['departed_cost'], Decimal('33.333333333333'))
+        self.assertEqual(breakdown['held_cost'], Decimal('66.666666666667'))
+
+    def test_cleaning_an_unshared_numbered_pot_states_no_combined_loss(self):
+        """Tipping both lots out of one pot is a dollar loss and a euro loss."""
+        self.put_media(self.shared, self.foreign, '10')
+        clean_pot_fill(self.workspace, self.user, self.shared, CloseRequest(
+            reason='Wash the pot.',
+            media=tuple(MediaDisposition(row['lot'].pk, row['base_quantity'],
+                                         Disposition.WASTE, 'Tipped out.')
+                        for row in pot_fill_remaining_media(self.shared)),
+        ))
+
+        breakdown = pot_fill_cost_breakdown(self.shared)
+
+        self.assertIsNone(breakdown['production_loss'])
+        self.assertEqual(
+            [(row['currency_code'], row['totals']['production_loss'])
+             for row in breakdown['currencies']],
+            [('EUR', '20.000000000000'), ('NZD', '100.000000000000')],
+        )
+        self.assertEqual(
+            [row['totals']['held_cost'] for row in breakdown['currencies']],
+            ['0.000000000000', '0.000000000000'],
+        )
 
 
 class MixedCurrencyFillPayloadTests(MixedCurrencyFillTestCase):
@@ -492,13 +700,43 @@ class MixedCurrencyGenerationTests(MixedCurrencyGenerationTestCase):
              for row in breakdown['currencies']],
             [('EUR', '0.080000000000'), ('USD', '0.160000000000')],
         )
-        # Production loss counts the cells that raised nothing beside the media
-        # tipped out of them, as it has since this report was written; the
-        # change here is only that each currency counts its own.
+        # These two figures are wrong, and are pinned only to show the currency
+        # split reaching them. A tray that applied 0.16 USD cannot have lost
+        # 0.32: the media in an empty cell is counted once as `unallocated_cost`
+        # and again as `wasted_cost` when the clean tips that same media out.
+        # The doubling predates this task and is wrong in one currency too, and
+        # `costing/sources.py` already answers it correctly for the cost layers
+        # by netting a clean's removals off the cell allocation first. It is
+        # filed as task 164, which owns the corrected figure — and until it
+        # lands, this is the one place the tray's `amount == sum(totals)` does
+        # not hold where the pot fill's does.
         self.assertEqual(
             [(row['currency_code'], row['totals']['production_loss'])
              for row in breakdown['currencies']],
             [('EUR', '0.160000000000'), ('USD', '0.320000000000')],
+        )
+
+    def test_an_unpriced_lot_still_names_the_currency_it_came_from(self):
+        """The two reports agree on what mixed means, so one screen can ask.
+
+        Unlike the pot fill, the tray keeps publishing the figures it does know
+        with `unknown_cost` beside them — `batch_cost_breakdown`'s answer, and
+        this report's own since it was written. What task 158 adds is that the
+        unpriced lot's currency is still counted, so a tray holding euro media
+        is not labelled with the workspace's code.
+        """
+        self.apply_media()
+        self.top_up()
+        type(self.foreign_lot).objects.filter(pk=self.foreign_lot.pk).update(base_unit_cost=None)
+
+        breakdown = generation_cost_breakdown(self.generation)
+
+        self.assertTrue(breakdown['unknown_cost'])
+        self.assertTrue(breakdown['mixed_currency'])
+        self.assertIsNone(breakdown['currency_code'])
+        self.assertEqual(
+            [(row['currency_code'], row['amount']) for row in breakdown['currencies']],
+            [('EUR', '0.000000000000'), ('USD', '0.160000000000')],
         )
 
     def test_the_cost_breakdown_endpoint_publishes_the_refusal(self):
