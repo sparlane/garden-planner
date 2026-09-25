@@ -10,7 +10,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from costing.services import cohort_cost_breakdown, plant_cost_breakdown
+from costing.currency import cost_blocked, currency_amounts, held_by_currency, stated_currency
 from health.availability import is_quarantined
 from inventory.ledger import lock_lots, lock_units, unit_has_open_pot_fill, unit_physical_state, unpromised_bulk
 from inventory.models import InventoryUnit, StockLot
@@ -21,6 +21,14 @@ from plantings.lifecycle import SELLABLE_STATES, plant_lifecycle_summary
 from plantings.models import PlantCohort, SpecificPlant, SpecificPlantLocation
 
 from .calculations import money
+from .cost_of_sale import (
+    CostOfSale,
+    cohort_draw_cost,
+    combine_costs,
+    lot_draw_cost,
+    plant_cost_of_sale,
+    unit_cost_of_sale,
+)
 from .quantities import positive_quantity, remaining_quantity, returned_quantity
 from .models import (
     FulfillmentLine,
@@ -756,69 +764,70 @@ def cancel_order(order, user, reason=''):
     return order
 
 
-def _allocated_cost(allocation, currency_code):
-    """Return one promise's cost, whether it is known, and whether it is final.
+def _allocated_cost(allocation):
+    """Return one promise's cost in the currency that cost was recorded in.
 
     A counted draw is valued from its own lot's unit cost, because that is the
     price the pots in that box were bought at; a second delivery of the same
-    item is a different lot and cost something else.
+    item is a different lot and cost something else, possibly in another
+    currency. No value at all is a cost that cannot be stated rather than a
+    zero: a plant raised in two currencies has no single figure, and treating
+    it as nothing would report a complete margin over an incomplete cost.
+
+    A pot that has already shipped is read from the dispatch that shipped it
+    rather than priced again from the subledger as it stands now, so a closed
+    order's margin stops moving every time its batch is recalculated. That is
+    task 140's question, answered here only for the one allocation kind whose
+    cost is assembled out of several records; the other three still re-price.
     """
     if allocation.plant_id:
-        breakdown = plant_cost_breakdown(allocation.plant)
-        value = breakdown['provisional_value'] or breakdown['final_value']
-        # No value at all is a cost that cannot be stated rather than a zero: a
-        # plant raised in two currencies has no single figure, and treating it
-        # as nothing would report a complete margin over an incomplete cost.
-        unknown = breakdown['unknown_cost'] or value is None or breakdown['currency_code'] != currency_code
-        return value, unknown, breakdown['provisional']
+        return plant_cost_of_sale(allocation.plant)
     if allocation.stock_lot_id:
-        unit_cost = allocation.stock_lot.base_unit_cost
-        if unit_cost is None or allocation.stock_lot.currency_code != currency_code:
-            return None, True, False
-        return money(Decimal(allocation.quantity) * unit_cost), False, False
+        return lot_draw_cost(allocation.stock_lot, allocation.quantity)
     if allocation.plant_cohort_id:
-        return cohort_draw_cost(allocation.plant_cohort, allocation.quantity, currency_code)
+        return cohort_draw_cost(allocation.plant_cohort, allocation.quantity)
     if allocation.status == SalesOrderAllocation.Status.FULFILLED:
         dispatched = allocation.fulfillment_lines.filter(
             fulfillment__reversal_of__isnull=True, fulfillment__reversal__isnull=True,
         ).order_by('-pk').first()
         if dispatched is not None:
-            return dispatched.cogs_amount, dispatched.cogs_amount is None, dispatched.cogs_provisional
-    value = allocation.inventory_unit.acquisition_cost
-    unknown = value is None or allocation.inventory_unit.currency_code != currency_code
-    provisional = False
-    for placement in SpecificPlantLocation.objects.filter(
-            container_unit=allocation.inventory_unit, ended__isnull=True).select_related('specific_plant__batch'):
-        breakdown = plant_cost_breakdown(placement.specific_plant)
-        rider_value = breakdown['provisional_value'] or breakdown['final_value']
-        unknown = unknown or breakdown['unknown_cost'] or rider_value is None or breakdown['currency_code'] != currency_code
-        provisional = provisional or breakdown['provisional']
-        if value is not None and rider_value is not None:
-            value += Decimal(rider_value)
-    return value, unknown, provisional
+            return CostOfSale(
+                dispatched.cogs_amount, dispatched.cogs_currency_code,
+                dispatched.cogs_provisional,
+            )
+    unit = allocation.inventory_unit
+    return combine_costs(
+        [unit_cost_of_sale(unit), *_passenger_costs(unit)], unit.currency_code,
+    )
 
 
-def cohort_draw_cost(cohort, quantity, currency_code=None):
-    """Return what a counted draw on one cohort costs, and how sure that is.
+def _passenger_costs(unit):
+    """Return what each plant currently standing in this pot has cost.
 
-    An anonymous block divides its cost evenly per unit, so a draw on it is
-    worth its share and nothing more exact exists to charge it with. A block
-    whose inputs have no recorded price yields an unknown cost rather than a
-    zero, exactly as an unpriced lot does — a part-priced one included, because
-    a share of an incomplete total is not what the plants cost. A block bought
-    in two currencies has no unit value either, so it arrives here as None for
-    the same reason and is charged out the same way.
+    A pot ships with whatever is growing in it — `sales.containers.resolve_riders`
+    picks the same placements up at dispatch — so pricing the pot alone would
+    report a complete cost for a load whose passengers are unpriced, or were
+    raised in a currency the pot's own figure cannot be added to.
     """
-    breakdown = cohort_cost_breakdown(cohort)
-    unit_value = breakdown['unit_value']
-    wrong_currency = currency_code is not None and breakdown['currency_code'] != currency_code
-    if unit_value is None or breakdown['unknown_cost'] or wrong_currency:
-        return None, True, breakdown['provisional']
-    return money(Decimal(unit_value) * quantity), False, breakdown['provisional']
+    placements = SpecificPlantLocation.objects.filter(
+        container_unit=unit, ended__isnull=True,
+    ).select_related('specific_plant__batch')
+    return [plant_cost_of_sale(row.specific_plant) for row in placements]
 
 
 def order_margin(order):
-    """Return an ex-tax margin only when every allocated cost is known."""
+    """Return an ex-tax margin only when every allocated cost is known.
+
+    The costs are added within one currency and never across two, the same way
+    a batch's layers are. Where they land in one currency that is not the
+    order's — a nursery raising stock on a foreign lot and selling at home —
+    `cost_total` is stated under `cost_currency_code` rather than relabelled as
+    the order's, and the margin states nothing: subtracting a euro cost from
+    dollar revenue would be wrong by the exchange rate with nothing on the
+    payload saying so. `cost_blocked` names which of the three absences an
+    empty margin is, exactly as a plant's sale projection does, and
+    `currencies` lists the sides where there is more than one.
+    """
     allocations = list(
         SalesOrderAllocation.objects.filter(
             line__order=order,
@@ -835,22 +844,27 @@ def order_margin(order):
         total=Sum('quantity'),
     )['total'] or 0
     requested_count = sum(order.lines.values_list('quantity', flat=True)) - short
-    cost = Decimal('0')
-    unknown = False
-    provisional = False
-    for allocation in allocations:
-        value, is_unknown, is_provisional = _allocated_cost(allocation, order.currency_code)
-        unknown = unknown or is_unknown
-        provisional = provisional or is_provisional
-        if value is not None:
-            cost += Decimal(value)
-    complete = allocated_count == requested_count and not unknown
-    cost = money(cost)
+    costs = [_allocated_cost(allocation) for allocation in allocations]
+    # A part nobody can state leaves no amount to add, so `held_by_currency`
+    # reporting one missing is the same fact `cost_complete` publishes. There
+    # is no second flag to keep in step with it.
+    held, unknown = held_by_currency(costs)
+    codes = sorted(held)
+    currency = stated_currency(codes, order.currency_code)
+    blocked = cost_blocked(codes, currency, unknown, order.currency_code)
+    cost = None if currency is None else money(held.get(currency, Decimal('0')))
+    stateable = cost is not None and not unknown
+    complete = allocated_count == requested_count and blocked is None
     return {
         'allocation_complete': allocated_count == requested_count,
         'cost_complete': not unknown,
-        'provisional': provisional,
-        'cost_total': f'{cost:f}' if not unknown else None,
-        'estimated_margin': f'{money(order.subtotal_ex_tax - cost):f}' if complete else None,
+        'provisional': any(row.provisional for row in costs),
+        'cost_total': f'{cost:f}' if stateable else None,
+        'cost_currency_code': currency if stateable else None,
+        'cost_blocked': blocked,
+        'currencies': currency_amounts(held),
+        'estimated_margin': (
+            f'{money(order.subtotal_ex_tax - cost):f}' if complete else None
+        ),
         'currency_code': order.currency_code,
     }

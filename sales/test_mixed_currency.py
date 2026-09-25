@@ -46,6 +46,9 @@ class MixedCurrencyDispatchTests(CommerceFixtureTestCase):
         """Verification 3: 1.1600 is not what this plant cost the nursery."""
         _order, line = self.dispatch()
         self.assertIsNone(line.cogs_amount)
+        # And names no currency for it: a cost nobody can state is not money
+        # in any of them, which is what task 157's second code stores.
+        self.assertEqual(line.cogs_currency_code, '')
 
     def test_the_sale_shows_as_unvalued_in_the_profitability_report(self):
         """An unstateable cost keeps the sale out of a finalized margin."""
@@ -81,6 +84,7 @@ class SingleCurrencyDispatchTests(CommerceFixtureTestCase):
         line = FulfillmentLine.objects.get()
         self.assertEqual(line.cogs_amount, Decimal('1.1600'))
         self.assertEqual(line.currency_code, self.workspace.currency_code)
+        self.assertEqual(line.cogs_currency_code, self.workspace.currency_code)
 
 
 class IncompletePlantCostTests(CommerceFixtureTestCase):
@@ -108,28 +112,50 @@ class IncompletePlantCostTests(CommerceFixtureTestCase):
         self.assertFalse(report.totals['finalized_margin_available'])
 
     def test_single_foreign_currency_is_not_relabelled_as_order_currency(self):
-        """Known euros cannot become dollars just because the order uses them."""
+        """Known euros cannot become dollars just because the order uses them.
+
+        They are not withheld either (task 157): the figure is true, so it is
+        published under the currency it is money in, and what states nothing is
+        the margin that would have subtracted it from dollar revenue.
+        """
         plant = self.available_plant()
         apply_costed_input(self.workspace, self.user, plant, '1.0800', currency_code='EUR')
         order, allocations = self.confirmed_order([plant])
         margin = order_margin(SalesOrder.objects.get(pk=order['pk']))
-        self.assertIsNone(margin['cost_total'])
+        self.assertEqual(margin['cost_total'], '1.0800')
+        self.assertEqual(margin['cost_currency_code'], 'EUR')
+        self.assertEqual(margin['cost_blocked'], 'foreign_currency')
         self.assertIsNone(margin['estimated_margin'])
         self.fulfill(order, [row['pk'] for row in allocations])
-        self.assertIsNone(FulfillmentLine.objects.get().cogs_amount)
+        line = FulfillmentLine.objects.get()
+        self.assertEqual(line.cogs_amount, Decimal('1.0800'))
+        self.assertEqual(line.cogs_currency_code, 'EUR')
+        self.assertEqual(line.currency_code, self.workspace.currency_code)
 
 
 class ForeignCohortCostTests(CohortStockTestCase):
     """An anonymous block obeys the same currency boundary as a plant."""
 
-    def test_foreign_cohort_dispatch_and_margin_remain_unknown(self):
-        """A per-unit foreign value cannot be labelled as domestic COGS."""
+    def test_foreign_cohort_dispatch_keeps_the_block_currency(self):
+        """A per-unit foreign value is not labelled as domestic COGS.
+
+        Nor is it thrown away: the draw is charged at the block's own figure in
+        the block's own currency, and it is the order's margin that declines.
+        """
         StockLot.objects.filter(workspace=self.workspace).update(currency_code='EUR')
         self.reallocate()
-        self.assertEqual(cohort_cost_breakdown(self.cohort)['currency_code'], 'EUR')
+        breakdown = cohort_cost_breakdown(self.cohort)
+        self.assertEqual(breakdown['currency_code'], 'EUR')
+
         fulfillment = self.sell()
-        self.assertIsNone(fulfillment.lines.get().cogs_amount)
-        self.assertIsNone(order_margin(fulfillment.order)['cost_total'])
+
+        line = fulfillment.lines.get()
+        self.assertEqual(line.cogs_currency_code, 'EUR')
+        self.assertIsNotNone(line.cogs_amount)
+        margin = order_margin(fulfillment.order)
+        self.assertEqual(margin['cost_currency_code'], 'EUR')
+        self.assertEqual(margin['cost_blocked'], 'foreign_currency')
+        self.assertIsNone(margin['estimated_margin'])
 
 
 class CountedCostIntegrityTests(counted_fixtures.CountedStockTestCase):
@@ -137,15 +163,24 @@ class CountedCostIntegrityTests(counted_fixtures.CountedStockTestCase):
 
     sell = counted_fixtures.CountedFulfillmentTests.sell
 
-    def test_foreign_lot_cost_is_unknown_in_the_order_currency(self):
-        """A priced foreign lot ships without inventing an exchange rate."""
+    def test_foreign_lot_cost_keeps_the_lot_currency(self):
+        """A priced foreign lot ships without inventing an exchange rate.
+
+        The price on the box is a fact whatever the order is billed in, so it
+        is recorded under the lot's own code and the margin above it declines.
+        """
         lot = self.receive()
         StockLot.objects.filter(pk=lot.pk).update(currency_code='EUR')
         lot.refresh_from_db()
         _lot, line, fulfillment = self.sell(lot=lot)
-        self.assertIsNone(fulfillment.lines.get().cogs_amount)
-        self.assertFalse(fulfillment.lines.get().cogs_provisional)
-        self.assertIsNone(order_margin(line.order)['cost_total'])
+
+        dispatched = fulfillment.lines.get()
+        self.assertIsNotNone(dispatched.cogs_amount)
+        self.assertEqual(dispatched.cogs_currency_code, 'EUR')
+        self.assertFalse(dispatched.cogs_provisional)
+        margin = order_margin(line.order)
+        self.assertEqual(margin['cost_currency_code'], 'EUR')
+        self.assertIsNone(margin['estimated_margin'])
 
 
 class ContainerCostIntegrityTests(counted_fixtures.CountedStockTestCase):

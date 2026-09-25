@@ -511,7 +511,12 @@ class CountedFulfillmentTests(CountedStockTestCase):
 
         line = fulfillment.lines.get()
         self.assertIsNone(line.cogs_amount)
-        self.assertTrue(line.cogs_provisional)
+        self.assertEqual(line.cogs_currency_code, '')
+        # Unknown, and not provisional with it (task 157). Provisional means a
+        # production cost still waiting on its batch to be finalized, and a lot
+        # has no batch — it has a price nobody typed, which the null already
+        # says. The two absences were being reported as one.
+        self.assertFalse(line.cogs_provisional)
 
     def test_the_whole_line_is_recognised_by_one_dispatch(self):
         """Fifty positions of money leave on the one line that shipped them."""

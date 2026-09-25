@@ -19,7 +19,6 @@ from django.db import transaction
 from django.db.models import Q, Sum
 from django.utils import timezone
 
-from costing.services import plant_cost_breakdown
 from health.operations import act_on_quarantine, quarantine_observation
 from health.services import preview_observation, record_observation
 from inventory.ledger import (
@@ -64,6 +63,12 @@ from .containers import (
     riders_of,
     sell_rider,
     validate_riders_are_free,
+)
+from .cost_of_sale import (
+    combine_costs,
+    lot_draw_cost,
+    plant_cost_of_sale,
+    unit_cost_of_sale,
 )
 from .models import (
     Fulfillment,
@@ -241,26 +246,6 @@ def _position_amounts(line, positions):
     }
 
 
-def _plant_cost(plant, currency_code=None):
-    """Return what this plant has cost, or None when that cannot be stated.
-
-    A plant raised on inputs bought in two currencies has no committed value to
-    read: no exchange rate exists to make one, and `costing.currency` says why
-    inventing one here is not an option. The dispatch records an unknown cost
-    of sale instead, for the reason task 138 gives for an unpriced input — a
-    number with a conversion missing is not a smaller true cost.
-    """
-    currency_code = currency_code or plant.workspace.currency_code
-    breakdown = plant_cost_breakdown(plant)
-    value = breakdown['provisional_value'] or breakdown['final_value']
-    if breakdown['unknown_cost'] or breakdown['currency_code'] != currency_code:
-        value = None
-    return (
-        Decimal(value) if value is not None else None,
-        bool(breakdown['provisional']),
-    )
-
-
 def _require_ready_cohorts(allocations, cohorts):
     """Refuse a dispatch of anonymous stock nobody has graded ready yet.
 
@@ -375,10 +360,7 @@ def _dispatch_counted_stock(order, user, allocation, lot, *, fulfillment, fulfil
             reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
         ),
     )
-    if lot.base_unit_cost is None:
-        return movement, None, True
-    return movement, (money(quantity * lot.base_unit_cost)
-                      if lot.currency_code == order.currency_code else None), False
+    return movement, lot_draw_cost(lot, quantity)
 
 
 @transaction.atomic
@@ -501,15 +483,15 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             )
             if plant.pk in fill_plant_ids:
                 recost_container_plants([plant], user, 'Media taken on fulfillment departure.')
-            cogs_amount, provisional = _plant_cost(plant, order.currency_code)
+            cost = plant_cost_of_sale(plant)
 
         elif allocation.stock_lot_id:
-            stock_movement, cogs_amount, provisional = _dispatch_counted_stock(
+            stock_movement, cost = _dispatch_counted_stock(
                 order, user, allocation, lots[allocation.stock_lot_id],
                 fulfillment=fulfillment, fulfilled_at=fulfilled_at, quantity=needed,
             )
         elif allocation.plant_cohort_id:
-            cohort_event, cogs_amount, provisional = dispatch_cohort_stock(
+            cohort_event, cost = dispatch_cohort_stock(
                 order, user, allocation, cohorts[allocation.plant_cohort_id],
                 fulfillment=fulfillment, fulfilled_at=fulfilled_at,
             )
@@ -523,34 +505,31 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
                     reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
                 ),
             )
-            cogs_amount = unit.acquisition_cost if unit.currency_code == order.currency_code else None
-            provisional = False
+            cost = unit_cost_of_sale(unit)
         carried = riders.get(allocation.inventory_unit_id, [])
-        rider_costs = [_plant_cost(row.specific_plant, order.currency_code) for row in carried]
+        rider_costs = [plant_cost_of_sale(row.specific_plant) for row in carried]
         if carried:
             # The pot's own cost is the small half of what went out the door.
             # Leaving the plants out would understate cost of sale on exactly
             # the specimens this line exists to sell. So would counting a
             # passenger whose own cost cannot be stated as nothing, which is
             # why one such plant leaves the whole line unknown rather than
-            # quietly dropping out of it.
-            parts = [amount for amount, _ in rider_costs]
-            cogs_amount = (
-                None if cogs_amount is None or any(part is None for part in parts)
-                else cogs_amount + sum(parts, Decimal('0'))
-            )
-            provisional = provisional or any(flag for _, flag in rider_costs)
+            # quietly dropping out of it — and a passenger raised in another
+            # currency than the pot is the same absence, because there is no
+            # rate here to add the two halves with.
+            cost = combine_costs([cost, *rider_costs], order.currency_code)
         line = FulfillmentLine.objects.create(
             fulfillment=fulfillment, allocation=allocation,
             quantity=needed, unit=allocation.unit,
-            commercial_position=position, cogs_amount=cogs_amount,
-            cogs_provisional=provisional, currency_code=order.currency_code,
+            commercial_position=position, cogs_amount=cost.amount,
+            cogs_provisional=cost.provisional, currency_code=order.currency_code,
+            cogs_currency_code=cost.currency_code,
             tax_treatment=allocation.line.tax_treatment,
             lifecycle_event=lifecycle_event, stock_movement=stock_movement,
             cohort_event=cohort_event,
             **amounts,
         )
-        for placement, (rider_cost, _flag) in zip(carried, rider_costs):
+        for placement, rider_cost in zip(carried, rider_costs):
             sell_rider(line, placement, user, fulfilled_at, rider_cost)
             passengers.append(placement.specific_plant)
         SalesOrderAllocation.objects.filter(pk=allocation.pk).update(

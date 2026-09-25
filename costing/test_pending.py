@@ -9,7 +9,8 @@ from django.db import connection
 
 from applications.services import post_application
 from plantings.counted_fills import plant_counted_fill
-from sales.commerce import _plant_cost, post_fulfillment
+from sales.commerce import post_fulfillment
+from sales.cost_of_sale import plant_cost_of_sale
 from sales.models import SalesOrder
 from sales.test_commerce import CommerceFixtureTestCase
 from seedtrays.container_fills import open_numbered_fill
@@ -128,14 +129,14 @@ class PendingCostTests(PotMediaMixin, CommerceFixtureTestCase):  # pylint: disab
         self.assertFalse(any(query['sql'].lstrip().split()[0] in ('INSERT', 'UPDATE', 'DELETE') for query in queries))
         self.assertEqual(list(CostAllocation.objects.values()), layers)
         self.assertEqual(batch_cost_breakdown(plant.batch), before)
-        self.assertEqual(_plant_cost(plant), (Decimal('0'), True))
+        self.assertEqual(plant_cost_of_sale(plant), (Decimal('0'), 'NZD', True))
 
     def test_tray_has_zero_pending_and_explains_why(self):
         """Tray media already reaches the ledger and a tray is not sold."""
         plant = self.available_plant()
         make_specific_plant_location(specific_plant=plant, seed_tray_cell=plant.cell_planting.cell)
-        before = _plant_cost(plant)
+        before = plant_cost_of_sale(plant)
         preview = plant_cost_breakdown(plant)
         self.assertEqual([row['amount'] for row in preview['pending']], ['0.0000', '0.0000'])
         self.assertIn('Tray media is already committed', preview['pending'][0]['reason'])
-        self.assertEqual(_plant_cost(plant), before)
+        self.assertEqual(plant_cost_of_sale(plant), before)

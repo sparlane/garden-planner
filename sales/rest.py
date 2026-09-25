@@ -429,7 +429,8 @@ class FulfillmentLineSerializer(serializers.ModelSerializer):
             'pk', 'allocation', 'quantity', 'unit', 'commercial_position', 'gross_ex_tax',
             'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
             'total_incl_tax', 'tax_treatment', 'cogs_amount', 'cogs_provisional',
-            'currency_code', 'lifecycle_event', 'stock_movement', 'container_dispatch',
+            'currency_code', 'cogs_currency_code', 'lifecycle_event',
+            'stock_movement', 'container_dispatch',
         ]
 
 

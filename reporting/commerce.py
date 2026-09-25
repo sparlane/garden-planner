@@ -282,6 +282,14 @@ def _matches_place(line, filters, occurred_at):
     return locations.exists()
 
 
+#: What a row earns and what it cost, kept apart because they are not always
+#: recorded in the same currency. A dispatched line bills the customer in the
+#: order's currency and costs whatever the stock was raised in; the two are
+#: added into their own currency's totals and never into each other's.
+SALES_FIELDS = ('gross_sales', 'discounts', 'refunds', 'net_sales')
+COST_FIELDS = ('plant_cogs', 'tray_cogs', 'packaging_cogs', 'other_cogs', 'production_loss')
+
+
 def _base_financial_row(kind, occurred_at, currency, source_id):
     return {
         'kind': kind,
@@ -310,6 +318,10 @@ def _base_financial_row(kind, occurred_at, currency, source_id):
         'other_cogs': decimal_string(ZERO, 4),
         'production_loss': decimal_string(ZERO, 4),
         'currency_code': currency,
+        # The currency the cost fields on this row are money in. The same as
+        # the row's own for everything but a dispatched line, where the cost
+        # keeps whatever the stock was raised in (task 157).
+        'cogs_currency_code': currency,
         'provisional': False,
         'unvalued': False,
     }
@@ -341,6 +353,7 @@ def _fulfillment_rows(lines, filters):
             'gross_sales': decimal_string(line.gross_ex_tax, 4),
             'discounts': decimal_string(line.discount_ex_tax, 4),
             'net_sales': decimal_string(line.subtotal_ex_tax, 4),
+            'cogs_currency_code': line.cogs_currency_code or line.currency_code,
             'provisional': line.cogs_provisional,
             'unvalued': line.cogs_amount is None,
         })
@@ -498,6 +511,7 @@ def _return_rows(workspace, filters, start, end):
             'inventory_unit_id': line.allocation.inventory_unit_id,
             'lot_id': line.allocation.stock_lot_id,
             'cohort_id': line.allocation.plant_cohort_id,
+            'cogs_currency_code': line.cogs_currency_code or line.currency_code,
             'provisional': line.cogs_provisional,
             'unvalued': line.cogs_amount is None,
         })
@@ -689,20 +703,22 @@ def profitability_report(workspace, filters):
     rows.extend(_loss_rows(workspace, filters, start, end))
     rows.sort(key=lambda row: (row['occurred_at'], row['kind'], row['source_id']))
     lost_units = _lost_units(workspace, filters, start, end)
-    money_fields = (
-        'gross_sales', 'discounts', 'refunds', 'net_sales', 'plant_cogs',
-        'tray_cogs', 'packaging_cogs', 'other_cogs', 'production_loss',
-    )
+    money_fields = SALES_FIELDS + COST_FIELDS
     by_currency = defaultdict(lambda: defaultdict(Decimal))
     loss_by_currency = defaultdict(lambda: defaultdict(Decimal))
     for row in rows:
-        for field in money_fields:
-            if not row['provisional'] and not row['unvalued']:
-                by_currency[row['currency_code']][field] += Decimal(row[field])
-            elif field in {'gross_sales', 'discounts', 'refunds', 'net_sales'}:
-                by_currency[row['currency_code']][field] += Decimal(row[field])
-        if row['loss_cause'] and not row['provisional'] and not row['unvalued']:
-            loss_by_currency[row['currency_code']][row['loss_cause']] += (
+        for field in SALES_FIELDS:
+            by_currency[row['currency_code']][field] += Decimal(row[field])
+        if row['provisional'] or row['unvalued']:
+            continue
+        # A cost recorded abroad lands in its own currency's totals rather
+        # than under the revenue's, which is what stops a euro cost of sale
+        # being subtracted from dollar revenue. The report then holds two
+        # currencies and says so through `mixed_currency`.
+        for field in COST_FIELDS:
+            by_currency[row['cogs_currency_code']][field] += Decimal(row[field])
+        if row['loss_cause']:
+            loss_by_currency[row['cogs_currency_code']][row['loss_cause']] += (
                 Decimal(row['production_loss'])
             )
     provisional = [row for row in rows if row['provisional']]

@@ -763,6 +763,12 @@ class Fulfillment(ImmutableCommerceModel):
         ]
 
 
+#: A recorded cost of sale names the currency it is money in, and a cost that
+#: could not be stated names none: there is no currency a missing figure is
+#: money in, and picking one for it is the relabelling task 157 removed.
+STATED_COST_NAMES_ITS_CURRENCY = models.Q(cogs_amount__isnull=True, cogs_currency_code='') | (models.Q(cogs_amount__isnull=False) & ~models.Q(cogs_currency_code=''))
+
+
 class FulfillmentLine(models.Model):
     """Recognized revenue and direct cost for one exact allocation."""
 
@@ -799,6 +805,12 @@ class FulfillmentLine(models.Model):
     )
     cogs_provisional = models.BooleanField(default=False)
     currency_code = models.CharField(max_length=3)
+    # The revenue above is the order's currency; the cost is whatever the
+    # inputs behind the stock were bought in, and the two are not always the
+    # same. Storing one code for both relabelled a foreign cost of sale as the
+    # order's and the profitability report then subtracted it from revenue in
+    # another unit (task 157). Blank exactly when there is no cost to state.
+    cogs_currency_code = models.CharField(max_length=3, blank=True, default='')
     lifecycle_event = models.OneToOneField(
         PlantLifecycleEvent, on_delete=models.PROTECT, null=True, blank=True,
         related_name='fulfillment_line',
@@ -833,6 +845,10 @@ class FulfillmentLine(models.Model):
                 condition=models.Q(commercial_position__gte=1),
                 name='sales_fulfillment_line_position_positive',
             ),
+            models.CheckConstraint(
+                condition=STATED_COST_NAMES_ITS_CURRENCY,
+                name='sales_fulfillment_line_cost_currency_stated',
+            ),
         ]
 
 
@@ -863,6 +879,10 @@ class FulfillmentRider(models.Model):
         max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
         null=True, blank=True,
     )
+    # A passenger is raised in its own batch off its own inputs, so it can have
+    # cost a different currency from the pot it left in and from the order it
+    # left on. Its own row says which, whatever the line above could state.
+    cogs_currency_code = models.CharField(max_length=3, blank=True, default='')
 
     class Meta:
         ordering = ['pk']
@@ -871,6 +891,10 @@ class FulfillmentRider(models.Model):
                 fields=['fulfillment_line', 'plant'],
                 name='sales_fulfillment_rider_unique',
             ),
+            models.CheckConstraint(
+                condition=STATED_COST_NAMES_ITS_CURRENCY,
+                name='sales_fulfillment_rider_cost_currency_stated',
+            ),
         ]
 
     def __str__(self):
@@ -878,7 +902,17 @@ class FulfillmentRider(models.Model):
 
 
 class FulfillmentContainer(models.Model):
-    """The exact pot which accompanied a directly sold plant, at its own cost."""
+    """The exact pot which accompanied a directly sold plant, at its own cost.
+
+    Its `currency_code` is the pot's own, and unlike the line and rider above
+    it is stated even where `cogs_amount` is null. The two are different
+    questions here: the lot or unit the pot came out of names its currency
+    whether or not anybody typed a price for it, and this row is the only place
+    that record survives the dispatch — `costing.sources.dispatched_pot_sources`
+    reads it back as the cost layer's currency. A line's cost, by contrast, is
+    a figure assembled from several records, so where there is no figure there
+    is no currency for it to be in.
+    """
 
     fulfillment_line = models.OneToOneField(FulfillmentLine, on_delete=models.PROTECT, related_name='container_dispatch')
     placement = models.ForeignKey('plantings.SpecificPlantLocation', on_delete=models.PROTECT, related_name='container_dispatches')

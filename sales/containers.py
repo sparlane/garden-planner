@@ -127,12 +127,16 @@ def recost_container_plants(plants, user, reason):
     )
 
 
-def sell_rider(line, placement, user, fulfilled_at, cogs_amount):
+def sell_rider(line, placement, user, fulfilled_at, cost):
     """Record one plant as sold because the container holding it was.
 
     The plant's placement ends here rather than following the pot: once the
     container has left, saying the plant is still standing in it would be a
     claim about somebody else's greenhouse.
+
+    The passenger's own cost keeps its own currency code. A pot bought at home
+    can carry a plant raised abroad, and the line above records nothing at all
+    in that case; the rider row is where what each half cost stays readable.
     """
     plant = placement.specific_plant
     event = record_lifecycle_event(
@@ -147,7 +151,8 @@ def sell_rider(line, placement, user, fulfilled_at, cogs_amount):
         fulfillment_line=line,
         plant=plant,
         lifecycle_event=event,
-        cogs_amount=cogs_amount,
+        cogs_amount=cost.amount,
+        cogs_currency_code=cost.currency_code,
     )
 
 
