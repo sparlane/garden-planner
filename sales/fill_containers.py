@@ -15,6 +15,7 @@ from seedtrays.container_fills import lock_pot_fills, open_counted_fill, open_nu
 from seedtrays.models import SeedTrayGeneration, SeedTrayGenerationEvent
 from seedtrays.pot_media import pot_fill_remaining_media
 
+from .cost_of_sale import UNSTATEABLE, CostOfSale, combine_costs, unit_cost_of_sale
 from .models import FulfillmentContainer, FulfillmentLine, SalesOrderAllocation, SalesReturnLine
 
 
@@ -39,7 +40,14 @@ def lock_container_commerce(workspace, lines, destinations=()):
 
 
 def selected_pots(order, allocations, selected):
-    """Resolve explicit with-pot choices without inventing a numbered identity."""
+    """Resolve explicit with-pot choices without inventing a numbered identity.
+
+    A pot bought abroad used to be refused here, because its cost was folded
+    into a line stored under the order's currency and there was nowhere to say
+    otherwise. The dispatch now records the pot's own currency beside its own
+    cost (task 157), so a nursery potting into imported pots can sell the stock
+    it legitimately holds.
+    """
     chosen = {row.pk: row for row in allocations if row.pk in selected and row.plant_id}
     if set(chosen) != set(selected):
         raise ValidationError({'container_allocations': 'Choose selected individual plant allocations only.'})
@@ -63,7 +71,18 @@ def selected_pots(order, allocations, selected):
 
 
 def dispatch_pot(order, user, placement, fulfillment):
-    """After the plant departs, send exactly the pot its recorded fill held."""
+    """After the plant departs, send exactly the pot its recorded fill held.
+
+    Returns the movement, the currency the pot was bought in, and what it cost.
+    The currency is stated even where the cost is not: a lot or a unit names
+    its currency whether or not anybody typed a price, and the pot's own record
+    is the place that stays readable. `CostOfSale` keeps the stricter rule — no
+    figure, no currency — because it is what a line's two columns store.
+
+    The pot's currency is not always the order's: an imported pot holding a
+    home-raised plant is two currencies on one line, and `sales.cost_of_sale`
+    says what the line does with that.
+    """
     fill, = lock_pot_fills(order.workspace, [placement.container_fill_id])
     when = fulfillment.fulfilled_at
     reference = f'fulfillment:{fulfillment.pk}:pot:{placement.pk}'
@@ -74,7 +93,7 @@ def dispatch_pot(order, user, placement, fulfillment):
         movement = post_unit_movement(order.workspace, user, UnitMovementRequest(
             unit, StockMovement.MovementType.SALE, occurred_at=when, reason='Plant and pot dispatched.', reference=reference,
         ))
-        return movement, unit.acquisition_cost
+        return movement, unit.currency_code, unit_cost_of_sale(unit)
     lot = fill.stock_lot
     if unpromised_bulk(lot, fill.source_location) < 1:
         raise ValidationError({'container_allocations': 'The pot is no longer available for dispatch.'})
@@ -82,7 +101,7 @@ def dispatch_pot(order, user, placement, fulfillment):
         lot, StockMovement.MovementType.SALE, Decimal('1'), source=fill.source_location,
         occurred_at=when, reason='Plant and pot dispatched.', reference=reference,
     ))
-    return movement, lot.base_unit_cost
+    return movement, lot.currency_code, CostOfSale(lot.base_unit_cost, lot.currency_code) if lot.base_unit_cost is not None else UNSTATEABLE
 
 
 def close_dispatched_fill(fill, user, when, reason):
@@ -100,7 +119,13 @@ def close_dispatched_fill(fill, user, when, reason):
 
 
 def dispatch_selected_pots(order, user, fulfillment, placements):  # pylint: disable=too-many-locals
-    """Send each physical pot once after all its selected plants have departed."""
+    """Send each physical pot once after all its selected plants have departed.
+
+    The pot's share lands on the line in the pot's own currency, and is added
+    to what the plant cost only where the two agree. A home-raised plant in an
+    imported pot leaves the line's cost of sale unstateable rather than adding
+    a euro to a dollar — the pot's own row still says what it cost.
+    """
     groups = {}
     lines = {line.allocation.plant_id: line for line in fulfillment.lines.select_related('allocation')}
     for row in placements.values():
@@ -108,18 +133,21 @@ def dispatch_selected_pots(order, user, fulfillment, placements):  # pylint: dis
         groups.setdefault(key, []).append(row)
     for group in groups.values():
         group.sort(key=lambda row: row.specific_plant_id)
-        movement, cost = dispatch_pot(order, user, group[0], fulfillment)
-        currency_code = movement.unit.currency_code if movement.unit_id else movement.lot.currency_code
+        movement, currency_code, pot = dispatch_pot(order, user, group[0], fulfillment)
         quantities = distribute_exactly(Decimal('1.000000000'), [Decimal('1')] * len(group), quantum=Decimal('0.000000001'))
-        amounts = [None] * len(group) if cost is None else distribute_exactly(quantize_money(cost), [Decimal('1')] * len(group))
+        amounts = [None] * len(group) if pot.amount is None else distribute_exactly(quantize_money(pot.amount), [Decimal('1')] * len(group))
         for row, quantity, amount in zip(group, quantities, amounts):
             line = lines[row.specific_plant_id]
             FulfillmentContainer.objects.create(fulfillment_line=line, placement=row,
-                                                stock_movement=movement, unit_cost=cost, base_quantity=quantity,
+                                                stock_movement=movement, unit_cost=pot.amount, base_quantity=quantity,
                                                 cogs_amount=amount, currency_code=currency_code)
-            cogs = (None if amount is None or line.cogs_amount is None or currency_code != line.currency_code
-                    else line.cogs_amount + amount)
-            FulfillmentLine.objects.filter(pk=line.pk).update(cogs_amount=cogs)
+            cogs = combine_costs([
+                CostOfSale(line.cogs_amount, line.cogs_currency_code),
+                CostOfSale(amount, currency_code) if amount is not None else UNSTATEABLE,
+            ], order.currency_code)
+            FulfillmentLine.objects.filter(pk=line.pk).update(
+                cogs_amount=cogs.amount, cogs_currency_code=cogs.currency_code,
+            )
 
 
 def validate_pot_returns(items, lines):

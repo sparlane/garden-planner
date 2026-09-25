@@ -100,6 +100,7 @@ class CommerceReportTestCase(APITestCase):  # pylint: disable=too-many-instance-
             cogs_amount=Decimal('2'),
             cogs_provisional=False,
             currency_code='USD',
+            cogs_currency_code='USD',
         )
 
     def _payment(self):
@@ -234,8 +235,11 @@ class CommerceReportTests(CommerceReportTestCase):
         self.assertEqual(kinds, {'fulfillment', 'refund', 'cogs_restoration'})
 
     def test_unknown_cogs_prevents_finalized_margin(self):
+        # A cost nobody can state is money in no currency, so both halves go
+        # together: the check constraint refuses one without the other.
         self.fulfillment_line.cogs_amount = None
-        self.fulfillment_line.save(update_fields=['cogs_amount'])
+        self.fulfillment_line.cogs_currency_code = ''
+        self.fulfillment_line.save(update_fields=['cogs_amount', 'cogs_currency_code'])
         response = self.client.get('/reports/profitability/', {
             'date_from': '2026-08-01', 'date_to': '2026-08-31',
         })

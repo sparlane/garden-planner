@@ -25,8 +25,8 @@ from plantings.cohorts import change_cohort, return_cohort, sell_cohort
 from plantings.loss import LossCause
 from plantings.models import CohortOperation, ProductionBatch
 
+from .cost_of_sale import cohort_draw_cost
 from .models import SalesReturnLine
-from .services import cohort_draw_cost
 
 
 def recost_cohort_batches(cohorts, user, reason):
@@ -56,7 +56,7 @@ def dispatch_cohort_stock(order, user, allocation, cohort, *, fulfillment, fulfi
     dispatch is recorded, so reading it afterwards would price this sale
     against a division this sale had already changed.
     """
-    cogs_amount, _unknown, provisional = cohort_draw_cost(cohort, allocation.quantity, order.currency_code)
+    cost = cohort_draw_cost(cohort, allocation.quantity)
     event = sell_cohort(
         order.workspace, user,
         cohort_id=cohort.pk,
@@ -66,7 +66,7 @@ def dispatch_cohort_stock(order, user, allocation, cohort, *, fulfillment, fulfi
         reason='Order fulfillment',
         reference=f'fulfillment:{fulfillment.pk}:allocation:{allocation.pk}',
     )
-    return event, cogs_amount, provisional
+    return event, cost
 
 
 def return_cohort_stock(order, user, line, sales_return, *, returned_at,

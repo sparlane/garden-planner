@@ -111,11 +111,23 @@ interface SalesOrderLine {
   updated: string
 }
 
+// The revenue is the order's currency and the cost is whatever the stock was
+// raised in, so the payload names both. `cost_total` is stated in
+// `cost_currency_code`, which is null when the allocations were raised in more
+// than one; `estimated_margin` is stated only where that currency is the
+// order's, because subtracting a euro cost from dollar revenue would be wrong
+// by the exchange rate. `cost_blocked` says which absence an empty figure is.
 interface SalesMargin {
   allocation_complete: boolean
   cost_complete: boolean
   provisional: boolean
   cost_total: string | null
+  cost_currency_code: string | null
+  cost_blocked: 'mixed_currency' | 'foreign_currency' | 'unknown_cost' | null
+  // One entry per currency the allocations were actually costed in. An
+  // allocation whose cost cannot be stated is in none of them, so a reader
+  // listing these has `cost_complete` to tell it a part is missing.
+  currencies: Array<{ currency_code: string; amount: string }>
   estimated_margin: string | null
   currency_code: string
 }
@@ -181,6 +193,9 @@ interface FulfillmentLine {
   cogs_amount: string | null
   cogs_provisional: boolean
   currency_code: string
+  // The currency the cost of sale is money in, which is the stock's rather
+  // than the order's; blank where no cost could be stated at all.
+  cogs_currency_code: string
   lifecycle_event: number | null
   stock_movement: number | null
 }

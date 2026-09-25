@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from applications.services import reverse_application
 from plantings.cohorts import observe_cohort
-from sales.services import cohort_draw_cost
+from sales.cost_of_sale import cohort_draw_cost
 from tests.factories import (
     apply_costed_input,
     make_production_batch,
@@ -242,7 +242,7 @@ class MixedCurrencyCohortTests(MixedCurrencyTestCase):
 
     def test_a_draw_on_the_block_costs_an_unknown_amount(self):
         """What a dispatch out of it is charged: unknown, not a share of 1.16."""
-        self.assertEqual(cohort_draw_cost(self.cohort, 1), (None, True, True))
+        self.assertEqual(cohort_draw_cost(self.cohort, 1), (None, '', True))
 
 
 class ForeignCurrencyProjectionTests(CostingServiceTestCase):

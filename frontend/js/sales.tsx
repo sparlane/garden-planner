@@ -48,6 +48,7 @@ import {
   SalesAllocation,
   SalesDiscountType,
   SalesLineType,
+  SalesMargin,
   SalesOrder,
   SalesOrderLine,
   SalesShortfallWrite,
@@ -55,7 +56,7 @@ import {
 } from './types/sales'
 import { InventoryItem } from './types/inventory'
 import { Workspace } from './types/workspace'
-import { formatDate, formatDateTime, formatHoldRemaining, formatMoney, formatQuantity, localDatetimeInputValue } from './utils'
+import { formatDate, formatDateTime, formatHoldRemaining, formatMoney, formatMoneyTotals, formatQuantity, localDatetimeInputValue } from './utils'
 import { defaultTaxRate } from './workspace_mode'
 
 // 'Not yet classified' is shown as its own state rather than folded into
@@ -757,6 +758,32 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   )
 }
 
+// A blank margin has more than one reason and an operator cannot act on the
+// wrong one. Two of them are new: the costs behind this order were recorded in
+// more than one currency, or in one that is not the order's — a stateable cost
+// that still cannot be subtracted from revenue without a rate nobody has typed.
+const COST_BLOCKED_LABELS = {
+  mixed_currency: 'Two currencies, not combined',
+  foreign_currency: 'Cost in another currency',
+  unknown_cost: 'Unknown cost'
+}
+
+function marginFallback(margin: SalesMargin): string {
+  if (margin.cost_blocked) return COST_BLOCKED_LABELS[margin.cost_blocked]
+  return 'Allocate every unit'
+}
+
+// The cost is shown in the currency it was recorded in, never relabelled as
+// the order's, and the sides are listed where there is more than one. An
+// allocation whose cost cannot be stated at all belongs to no side, so it is
+// named rather than left out of that list: a total with a part missing must
+// not read as what the whole order cost.
+function costOfSale(margin: SalesMargin): string {
+  if (margin.cost_blocked !== 'mixed_currency') return formatMoney(margin.cost_total, margin.cost_currency_code ?? '', 'Unknown')
+  const sides = margin.cost_complete ? margin.currencies : [...margin.currencies, { currency_code: '', amount: null }]
+  return `${formatMoneyTotals(sides, 'Unknown')} (not combined)`
+}
+
 function OrderTotals({ order }: { order: SalesOrder }) {
   return (
     <Card body className="mb-3">
@@ -787,9 +814,14 @@ function OrderTotals({ order }: { order: SalesOrder }) {
           <strong>{formatMoney(order.total_incl_tax, order.currency_code)}</strong>
         </Col>
         <Col>
+          Cost of sale
+          <br />
+          <strong>{costOfSale(order.margin)}</strong>
+        </Col>
+        <Col>
           Margin preview
           <br />
-          <strong>{formatMoney(order.margin.estimated_margin, order.currency_code, order.margin.cost_complete ? 'Allocate every unit' : 'Unknown cost')}</strong>
+          <strong>{formatMoney(order.margin.estimated_margin, order.currency_code, marginFallback(order.margin))}</strong>
           {order.margin.provisional && <div className="text-warning small">Provisional production cost</div>}
         </Col>
       </Row>
