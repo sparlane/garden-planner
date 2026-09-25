@@ -418,7 +418,8 @@ class CurrencyConversion(WorkspaceOwnedModel, AppendOnlyModel):
     `BookkeepingEntry` above is append-only, so there is no column on the row
     to write it into. It points at the row by `source_type` and `source_id`,
     the way `TaxRetentionRecord` does, which is also what lets one record serve
-    nine kinds of row across four apps.
+    every kind of row either return derives a figure from -- twelve of them,
+    across five apps -- without a column on any of them.
 
     A wrong rate is corrected by recording the right one against the same
     source, with `supersedes` naming the one it replaces. Nothing is mutated
