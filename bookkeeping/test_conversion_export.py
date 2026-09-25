@@ -15,9 +15,11 @@ asserted here.
 
 import csv
 from datetime import date
+from decimal import Decimal
 
 from rest_framework.test import APIClient
 
+from .models import IncomeTaxYear, StockValuationLine
 from .test_supply_conversion import SupplyConversionTestCase
 
 
@@ -173,3 +175,53 @@ class ConvertedYearTests(IncomeYearConversionTestCase):
             {(row['rate'], row['superseded']) for row in recorded},
             {('1.6701057193', 'yes'), ('2.0000000000', 'no')},
         )
+
+
+class CarriedForwardStockTests(IncomeYearConversionTestCase):
+    """A year that could not state a closing stock leaves the next one blank."""
+
+    def setUp(self):
+        super().setUp()
+        # A closing-stock line recorded while the workspace was still in euros,
+        # and no rate typed against it, so the year cannot state a closing
+        # stock. Written directly because the route refuses a currency the
+        # workspace does not record today -- which is the situation itself.
+        StockValuationLine.objects.create(
+            income_year=IncomeTaxYear.objects.get(pk=self.year),
+            category=StockValuationLine.Category.SEED_MEDIA,
+            description='Seed bought in euros',
+            source_type='manual', source_id='euro-seed',
+            method=StockValuationLine.Method.COST,
+            value=Decimal('10.0000'), currency_code='EUR',
+            evidence_url='https://invoices.example/eur-1',
+            created_by=self.user,
+        )
+
+    def finalize(self):
+        """Finalize the euro year, which it may do with a rate still missing."""
+        response = self.client.post(
+            f'{self.url}{self.year}/finalize/',
+            {'confirm_zero_opening': True}, format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response.data
+
+    def test_the_next_year_says_why_it_has_no_opening_stock(self):
+        """Not blocking, and not silent: the absence has a reason and a remedy."""
+        self.finalize()
+        created = self.client.post(
+            self.url, {'year_end': '2028-03-31', 'basis': 'accrual'}, format='json',
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+
+        response = self.client.get(f"{self.url}{created.data['id']}/")
+        report = response.data['live_report']
+
+        self.assertIsNone(report['totals']['opening_stock'])
+        self.assertIsNone(report['totals']['cost_of_sales'])
+        finding = next(
+            row for row in report['data_quality']
+            if row['code'] == 'opening_stock_unstated'
+        )
+        self.assertFalse(finding['blocking'])
+        self.assertIn('no opening stock to carry forward', finding['message'])

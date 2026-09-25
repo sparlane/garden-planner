@@ -16,8 +16,14 @@ The source list is frozen here rather than read from `bookkeeping.conversion`:
 a migration has to keep doing what it did on the day it was written, and a
 source added to that module later belongs to whatever migration adds it.
 
-Reversing this drops the identity conversions and keeps any real rate that has
-been typed since, which is the only part a later run could not rebuild.
+Reversing this drops the identity conversions that stand on their own and keeps
+every real rate, which is the only part a later run could not rebuild. It
+deliberately leaves an identity conversion that is part of a correction chain:
+`supersedes` is PROTECT, so deleting one that something supersedes would fail,
+and an identity rate somebody has since corrected is a decision rather than a
+backfill. It cannot tell its own rows from identity conversions recorded since
+by `backfill_identity_conversions`, and does not try to: both are the same
+record, and running the backfill again puts back whichever it removed.
 """
 
 from decimal import Decimal
@@ -136,9 +142,11 @@ def record_identity_conversions(apps, schema_editor):
 
 
 def drop_identity_conversions(apps, schema_editor):
-    """Remove what this migration recorded, and nothing anybody typed."""
+    """Remove the identity rates that stand alone, and nothing anybody typed."""
     conversion_model = apps.get_model('bookkeeping', 'CurrencyConversion')
-    conversion_model.objects.filter(method=BASE_CURRENCY).delete()
+    conversion_model.objects.filter(
+        method=BASE_CURRENCY, supersedes__isnull=True, superseded_by__isnull=True,
+    ).delete()
 
 
 class Migration(migrations.Migration):

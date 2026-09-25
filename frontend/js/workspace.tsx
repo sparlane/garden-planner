@@ -5,6 +5,7 @@ import { Alert, Button, Form } from 'react-bootstrap'
 import { restoreAttachmentArchive } from './api/attachments'
 import { updateWorkspace } from './api/workspace'
 import { GstRegistrationSettings } from './tax/registration.js'
+import { conversionPolicy } from './workspace_mode'
 import { queryKeys } from './query'
 import { ConversionPolicy, GardenExperience, Workspace, WorkspaceMode, WorkspaceUpdate } from './types/workspace'
 import { AttachmentArchiveReport } from './types/attachments'
@@ -42,7 +43,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     garden_experience: workspace.garden_experience,
     currency_code: workspace.currency_code,
     multi_currency_enabled: workspace.multi_currency_enabled,
-    conversion_policy: workspace.conversion_policy,
+    conversion_policy: conversionPolicy(workspace),
     default_tax_rate: workspace.default_tax_rate,
     sales_prices_include_tax: workspace.sales_prices_include_tax,
     timezone: workspace.timezone,
@@ -74,7 +75,7 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
       garden_experience: workspace.garden_experience,
       currency_code: workspace.currency_code,
       multi_currency_enabled: workspace.multi_currency_enabled,
-      conversion_policy: workspace.conversion_policy,
+      conversion_policy: conversionPolicy(workspace),
       default_tax_rate: workspace.default_tax_rate,
       sales_prices_include_tax: workspace.sales_prices_include_tax,
       timezone: workspace.timezone,

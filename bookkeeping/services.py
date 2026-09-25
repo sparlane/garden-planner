@@ -618,6 +618,22 @@ def _working_result(earned, spent):
     return sum(earned) - cost_of_sales - expenses - depreciation + adjustments
 
 
+def _stock_line_row(line, converter):
+    """Render one closing-stock line, and what its value comes to converted."""
+    return {
+        'id': line.pk, 'category': line.category, 'description': line.description,
+        'source_type': line.source_type, 'source_id': line.source_id,
+        'quantity': str(line.quantity) if line.quantity is not None else None,
+        'unit_code': line.unit_code, 'method': line.method, 'value': str(line.value),
+        'currency_code': line.currency_code, 'evidence_url': line.evidence_url,
+        'assumptions': line.assumptions,
+        'converted_value': _stated(converter.amount(
+            'stock_valuation_line', line.pk, line.currency_code, line.value,
+        )),
+        'converted_currency_code': converter.target,
+    }
+
+
 def build_report(income_year):
     """Build one source-linked schedule without mutating the income-year record."""
     start = year_start(income_year)
@@ -674,13 +690,32 @@ def build_report(income_year):
     sales_total = converter.row_total(sales)
     income_total = converter.row_total(other_income)
     expense_total = converter.row_total(expenses)
-    converter.row_total(cash_reconciliation)
     cost_of_sales = _stock_cost(opening, purchases, closing)
     working_result = _working_result(
         (sales_total, income_total),
         (cost_of_sales, expense_total, depreciation, gst_adjustments),
     )
+    # Rendered before the findings are read, because rendering is what puts
+    # the rows through the converter -- including the cash reconciliation,
+    # which has no total of its own but is still part of the year, and whose
+    # missing rate is still part of the finding.
+    rendered = [
+        converter.converted_row(row)
+        for row in sales + other_income + expenses + depreciation_rows
+    ]
+    rendered_cash = [converter.converted_row(row) for row in cash_reconciliation]
+    rendered_stock = [_stock_line_row(line, converter) for line in stock_lines]
     quality = list(converter.findings())
+    if opening is None:
+        quality.append({
+            'code': 'opening_stock_unstated', 'blocking': False,
+            'message': (
+                'The prior year could not state a closing stock, so this year '
+                'has no opening stock to carry forward and every figure that '
+                'would have used one states nothing. Recording the rates that '
+                'year is waiting for settles both.'
+            ),
+        })
     provisional = sum(1 for line in stock_lines if line.provisional)
     if provisional:
         quality.append({'code': 'provisional_stock', 'count': provisional, 'blocking': True, 'message': 'Resolve every provisional stock value.'})
@@ -706,25 +741,9 @@ def build_report(income_year):
             'gst_adjustments': _stated(gst_adjustments),
             'working_result': _stated(working_result),
         },
-        'rows': [
-            converter.converted_row(row)
-            for row in sales + other_income + expenses + depreciation_rows
-        ],
-        'cash_reconciliation': [
-            converter.converted_row(row) for row in cash_reconciliation
-        ],
-        'stock_lines': [{
-            'id': line.pk, 'category': line.category, 'description': line.description,
-            'source_type': line.source_type, 'source_id': line.source_id,
-            'quantity': str(line.quantity) if line.quantity is not None else None,
-            'unit_code': line.unit_code, 'method': line.method, 'value': str(line.value),
-            'currency_code': line.currency_code, 'evidence_url': line.evidence_url,
-            'assumptions': line.assumptions,
-            'converted_value': _stated(converter.amount(
-                'stock_valuation_line', line.pk, line.currency_code, line.value,
-            )),
-            'converted_currency_code': converter.target,
-        } for line in stock_lines],
+        'rows': rendered,
+        'cash_reconciliation': rendered_cash,
+        'stock_lines': rendered_stock,
         'data_quality': quality,
     }
 

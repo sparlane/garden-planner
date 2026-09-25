@@ -1,7 +1,7 @@
 """Which records carry a rate, and how one is recorded against them.
 
 `workspaces.conversion` says how a rate converts an amount. This says what a
-rate is recorded *against*: twelve kinds of row across four apps, each named by
+rate is recorded *against*: twelve kinds of row across five apps, each named by
 a `source_type` that matches the one the GST entries and the income-year
 schedules already use, so a conversion found here is the conversion of the row
 a report is looking at rather than of something with a similar name. Between
@@ -21,6 +21,14 @@ the one it supersedes, so the live conversion is the one nothing supersedes and
 the earlier rate stays readable. Recording a second conversion without saying
 what it replaces is refused, because two live rates for one transaction is two
 answers to the question a return asks once.
+
+A conversion outlives the record it points at. A closing-stock line is deleted
+and rebuilt every time a draft year is captured again, and the rate typed
+against the old one stays in the table, listed by the route and exported with
+the rest. That is deliberate: this is an append-only record of what somebody
+recorded, and the alternative -- a cascade, or a sweep -- would erase the rate
+a figure was once filed on. Nothing reads it, because a rebuilt line is a new
+row with a new id and identifiers are not reused. Pruning is not offered.
 """
 
 from dataclasses import dataclass, field
@@ -34,7 +42,12 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from workspaces.conversion import ConversionMethod, QuoteDirection, convert_amount
+from workspaces.conversion import (
+    ConversionMethod,
+    QuoteDirection,
+    convert_amount,
+    quantize_rate,
+)
 
 from .models import CurrencyConversion
 
@@ -362,7 +375,9 @@ def record_conversion(workspace, source_type, source_id, request, user=None):
         ConversionMethod.BASE_CURRENCY if currency == workspace.currency_code
         else workspace.conversion_policy
     )
-    rate = Decimal(request.get('rate', ONE))
+    # Rounded to the places the column keeps before anything is converted at
+    # it, so the amounts stored are the amounts the stored rate produces.
+    rate = quantize_rate(request.get('rate', ONE))
     direction = request['quote_direction']
     # The record refuses this too, but the amounts are converted before the
     # record exists, and a rate of zero would fail there as a division rather
