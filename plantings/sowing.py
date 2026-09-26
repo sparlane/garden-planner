@@ -26,18 +26,19 @@ from .models import (
 )
 
 
-def _reallocate(planting, user, trigger):
+def _reallocate(planting, user, trigger, occurred_at):
     """Bring the batch's cost allocations back in step with this sowing.
 
     Imported inside the call because costing reads plantings, applications, and
     seedtrays; importing it at module level would close the cycle. The
     reallocation is idempotent, so calling it from every sowing write costs
-    nothing when nothing changed.
+    nothing when nothing changed. The seed's movement dates the layers, the
+    same date `current_sowing_consumption` values them from.
     """
     # Sowing calls back into costing, which reads sowing consumption.
     from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel,cyclic-import
 
-    reallocate_batch(planting.batch, user, trigger)
+    reallocate_batch(planting.batch, user, trigger, occurred_at=occurred_at)
 
 
 def _planting_link(planting):
@@ -93,7 +94,7 @@ def post_sowing_consumption(planting, user):
         **_planting_link(planting),
     )
     packet.stock_lot.item.mark_stock_history_started(movement.occurred_at)
-    _reallocate(planting, user, 'sowing_posted')
+    _reallocate(planting, user, 'sowing_posted', movement.occurred_at)
     return posting
 
 
@@ -177,7 +178,7 @@ def correct_sowing_consumption(
     planting.quantity = corrected_quantity
     planting.save(update_fields=['seeds_used', 'quantity'])
     packet.stock_lot.item.mark_stock_history_started(replacement.occurred_at)
-    _reallocate(planting, user, 'sowing_corrected')
+    _reallocate(planting, user, 'sowing_corrected', replacement.occurred_at)
     return {
         'planting': planting,
         'original_movement': current.movement_id,

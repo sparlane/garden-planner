@@ -29,7 +29,7 @@ from .cost_of_sale import cohort_draw_cost
 from .models import SalesReturnLine
 
 
-def recost_cohort_batches(cohorts, user, reason):
+def recost_cohort_batches(cohorts, user, reason, occurred_at=None):
     """Recalculate the batches whose anonymous stock just changed hands.
 
     Always called after the allocations involved have reached their new status,
@@ -37,6 +37,11 @@ def recost_cohort_batches(cohorts, user, reason):
     `costing.sources.sold_cohort_quantities` — so a recalculation run while a
     promise was still mid-flight would divide the batch's cost over the wrong
     number of outputs and have to be corrected by the next one.
+
+    `occurred_at` is the day the stock changed hands, which is the same date
+    the dispatch or return gives its own records. It is what dates the layers
+    the recalculation moves, so a sale dated 20 March and typed in April takes
+    its cost out of the block on 20 March.
     """
     if not cohorts:
         return []
@@ -45,6 +50,7 @@ def recost_cohort_batches(cohorts, user, reason):
     ))
     return reallocate_batches(
         batches, user, CostAllocationRun.Trigger.MANUAL_RECALCULATE, reason,
+        occurred_at=occurred_at,
     )
 
 

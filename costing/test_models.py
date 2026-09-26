@@ -9,6 +9,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from django.utils import timezone
 
 from plantings.models import SowingStockPosting
 from inventory.models import StockMovement
@@ -68,6 +69,7 @@ class CostingFixtureTestCase(TestCase):
             'base_unit': 'seed',
             'unit_cost': Decimal('0.5'),
             'amount': Decimal('5'),
+            'effective_at': timezone.now(),
         }
         values.update(overrides)
         if 'run' not in values:
@@ -184,6 +186,7 @@ class CostAllocationIdentityTests(CostingFixtureTestCase):
                     base_quantity=Decimal('1'),
                     base_unit='seed',
                     currency_code=run.workspace.currency_code,
+                    effective_at=timezone.now(),
                 ),
             ])
 

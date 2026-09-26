@@ -15,11 +15,13 @@ from datetime import date, datetime, timezone as dt_timezone
 from decimal import Decimal
 from uuid import uuid4
 
+from applications.models import InputApplication
 from applications.services import reverse_application
 from costing.models import CostAllocation
 from costing.test_services import CohortStockTestCase
+from inventory.models import StockMovement
 from plantings.cohorts import change_cohort, merge_cohorts, observe_cohort, split_cohort
-from plantings.models import CohortEvent, CohortOperation, PlantCohort
+from plantings.models import CohortEvent, CohortOperation, PlantCohort, ProductionBatch
 
 from .models import IncomeTaxYear, StockValuationLine
 from .services import build_report
@@ -49,21 +51,33 @@ def open_year(case):
 def backdate_to_january(case):
     """Move everything `case` has recorded so far back to January.
 
-    The capture reads three dates and none of them can be set to the past on
-    the way in: an operation's `occurred_at` defaults to now, and a cohort
-    event and a cost layer each stamp themselves when they are written. A fact
-    that has to predate the balance date is therefore recorded and then moved,
-    which leaves the history January would have left behind had it been
-    recorded in January — the event's `created` included, because a fact typed
-    on the day it happened is what makes these blocks ordinary rather than
-    `_recorded_late`.
+    The capture reads two dates and neither can be set to the past on the way
+    in: an operation's `occurred_at` defaults to now, and a cost layer takes
+    the date of whatever prompted the run that wrote it, which here is also
+    now. A fact that has to predate the balance date is therefore recorded and
+    then moved, which leaves the history January would have left behind had it
+    been recorded in January — the layer's `created` and the event's included,
+    because a fact typed on the day it happened is what makes these blocks
+    ordinary rather than recorded late.
+
+    The batch and the two inputs behind it move as well. A layer first posted
+    from a source is dated by that source's own record, so a block observed
+    later takes a January date only if the sowing it draws on really is in
+    January; and an application cannot predate the start of its batch, so a
+    test dating one in March needs a batch that started before March.
     """
+    ProductionBatch.objects.filter(pk=case.batch.pk).update(actual_start=JANUARY)
+    case.batch.refresh_from_db()
+    StockMovement.objects.filter(workspace=case.workspace).update(occurred_at=JANUARY)
+    InputApplication.objects.filter(workspace=case.workspace).update(applied_at=JANUARY)
     PlantCohort.objects.filter(workspace=case.workspace).update(
         created=JANUARY, observed_at=JANUARY,
     )
     CohortOperation.objects.filter(workspace=case.workspace).update(occurred_at=JANUARY)
     CohortEvent.objects.filter(workspace=case.workspace).update(created=JANUARY)
-    CostAllocation.objects.filter(batch=case.batch).update(created=JANUARY)
+    CostAllocation.objects.filter(batch=case.batch).update(
+        created=JANUARY, effective_at=JANUARY,
+    )
 
 
 class CohortStockAtTheBalanceDateTests(CohortStockTestCase):
@@ -285,7 +299,9 @@ class CohortCostAtTheBalanceDateTests(CohortStockTestCase):
             idempotency_key=uuid4(),
         )
         self.backdate()
-        CostAllocation.objects.filter(plant_cohort=later).update(created=SEPTEMBER)
+        CostAllocation.objects.filter(plant_cohort=later).update(
+            created=SEPTEMBER, effective_at=SEPTEMBER,
+        )
 
         line = self.capture()[later.pk]
         self.assertEqual(f'{line.quantity:.9f}', '3.000000000')
@@ -299,13 +315,15 @@ class CohortCostAtTheBalanceDateTests(CohortStockTestCase):
 
 
 class CohortRecordedLateTests(CohortStockTestCase):
-    """A fact dated before the balance date and typed after it.
+    """A fact dated before the balance date and typed after it (task 163).
 
-    The count is replayed on the day a thing happened and the cost is read on
-    the day the run that moved it was posted, and both dates are ordinary
-    inputs. Where they disagree the block would be counted after the fact and
-    valued before it — four units' cost carried by three — so it keeps task
-    135's reading instead, as it stands now.
+    Both halves of the capture read the day a thing happened: the count reads
+    `CohortOperation.occurred_at` and the value reads
+    `CostAllocation.effective_at`. Task 148 had only the run's stamp for the
+    cost, so a block would have been counted after the fact and valued before
+    it — four units' cost carried by three — and it fell back to reading such a
+    block as it stands. These are the figures that fallback stood in for,
+    reached now by reading the dates instead.
     """
 
     capture = capture_cohort_lines
@@ -315,12 +333,6 @@ class CohortRecordedLateTests(CohortStockTestCase):
         super().setUp()
         self.income_year = open_year(self)
         self.backdate()
-
-    def date_back(self, action):
-        """Re-date the block's `action` operation without moving when it was typed."""
-        CohortOperation.objects.filter(
-            action=action, events__cohort=self.cohort,
-        ).update(occurred_at=MARCH)
 
     def assert_three_left(self, line, provisional=False):
         """Assert one line is the three units worth 0.8100 the fact left behind."""
@@ -333,9 +345,9 @@ class CohortRecordedLateTests(CohortStockTestCase):
         """Assert the batch's captured blocks sum to the cohort cost it carries.
 
         A layer's amount is a share of a whole batch, so the batch is the level
-        a reading has to be consistent at: read one block as it stands and its
-        sibling as at the balance date, and the same cost lands in both lines
-        with nothing else in the capture noticing.
+        a reading has to be consistent at: read one block on one day and its
+        sibling on another and the same cost lands in both lines, with nothing
+        else in the capture noticing.
         """
         blocks = set(PlantCohort.objects.filter(batch=self.batch).values_list('pk', flat=True))
         captured = sum((line.value for pk, line in lines.items() if pk in blocks), Decimal('0'))
@@ -347,8 +359,7 @@ class CohortRecordedLateTests(CohortStockTestCase):
 
     def test_a_dispatch_dated_before_the_balance_date_but_recorded_after_it(self):
         """The customer had the unit on 31 March, so three units carry 0.8100."""
-        self.sell()
-        self.date_back(CohortOperation.Action.SOLD)
+        self.sell(fulfilled_at=MARCH)
 
         lines = self.capture()
         self.assert_three_left(lines[self.cohort.pk])
@@ -358,16 +369,16 @@ class CohortRecordedLateTests(CohortStockTestCase):
         """A block typed in September takes a share of what its sibling held whole.
 
         `observe_cohort` writes an event on the new block alone and then
-        reallocates the batch, so the sibling's count never moves. Named block
-        by block, the new block fell back to its current share while the
-        sibling stayed on a pre-year-end layer covering the whole batch, and
-        the capture read 1.0800 plus 0.4629 for a batch that cost 1.0800.
+        reallocates the batch, so the sibling's count never moves. What keeps
+        the two lines adding up to the batch is that the sibling's old layer is
+        withdrawn on the day the new block appeared, not on the day it was
+        typed: read as at 31 March, the sibling carries its reduced share and
+        the new block carries the rest.
         """
         second, _operation = observe_cohort(
             self.workspace, self.user, batch=self.batch, quantity=3,
-            idempotency_key=uuid4(),
+            idempotency_key=uuid4(), occurred_at=MARCH,
         )
-        CohortOperation.objects.filter(events__cohort=second).update(occurred_at=MARCH)
 
         lines = self.capture()
         self.assertEqual(
@@ -390,8 +401,7 @@ class CohortRecordedLateTests(CohortStockTestCase):
 
     def test_a_promotion_dated_before_the_balance_date_but_recorded_after_it(self):
         """The unit was a named plant on 31 March: 0.8100 plus 0.2700, not 1.3500."""
-        plant = self.promote_one()
-        self.date_back(CohortOperation.Action.PROMOTE)
+        plant = self.promote_one(occurred_at=MARCH)
 
         lines = self.capture()
         self.assert_three_left(lines[self.cohort.pk])
@@ -401,14 +411,59 @@ class CohortRecordedLateTests(CohortStockTestCase):
         )
         self.assertEqual(f'{named.value:.4f}', '0.2700')
 
-    def test_a_late_record_with_spring_activity_as_well_is_provisional(self):
-        """Read as it stands, which the spring's sale makes wrong — so it is flagged."""
+    def test_a_late_record_and_spring_activity_are_each_dated_where_they_belong(self):
+        """The March loss counts, the September sale does not, and nothing is flagged.
+
+        This is the case task 148 could only flag. Reading the late-recorded
+        block as it stood gave two units at 0.5400 — the spring's sale taken
+        off a March figure — and marked the line provisional to say so. Each
+        run is now dated by its own fact, so the loss leaves on 20 March and
+        the sale leaves in September, and the line is firm.
+        """
         self.lose(occurred_at=MARCH)
         self.sell()
 
         line = self.capture()[self.cohort.pk]
+        self.assert_three_left(line)
+        self.assertIn('valued on the layers standing then', line.assumptions)
+
+
+class CohortLayerEffectiveDateTests(CohortStockTestCase):
+    """Cost incurred before the balance date and posted after it (task 163).
+
+    The other direction of task 148's limitation, and the one its fallback
+    could not reach at all: a layer posted in April for work done in March was
+    next year's cost, because the only date it had was the run's.
+    """
+
+    capture = capture_cohort_lines
+    backdate = backdate_to_january
+
+    def setUp(self):
+        super().setUp()
+        self.income_year = open_year(self)
+        self.backdate()
+
+    def test_an_input_applied_before_the_balance_date_and_posted_after_it(self):
+        """Media that went on the block on 20 March is in the year it went on.
+
+        The document is posted now, months after year end, and its layer is
+        dated by `applied_at`. Four units worth 1.0800 plus 0.08 of media is
+        1.1600; with the run's stamp for a date the capture read 1.0800 and
+        put the media in the following year.
+        """
+        self.apply_media([self.cells[0]], '0.04', applied_at=MARCH)
+
+        line = self.capture()[self.cohort.pk]
         self.assertEqual(
             (f'{line.quantity:.9f}', f'{line.value:.4f}', line.provisional),
-            ('2.000000000', '0.5400', True),
+            ('4.000000000', '1.1600', False),
         )
-        self.assertIn('recorded after it', line.assumptions)
+
+    def test_an_input_applied_after_the_balance_date_is_still_next_years(self):
+        """The control: media applied in the spring stays in the spring."""
+        self.apply_media([self.cells[0]], '0.04')
+
+        line = self.capture()[self.cohort.pk]
+        self.assertEqual(f'{line.value:.4f}', '1.0800')
+        self.assertFalse(line.provisional)

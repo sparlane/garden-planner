@@ -213,18 +213,20 @@ class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-
         post_sowing_consumption(sowing, self.user)
         return sowing
 
-    def apply_media(self, cells, quantity, lot=None):
+    def apply_media(self, cells, quantity, lot=None, applied_at=None):
         """Post one cell-volume media application over the given cells.
 
         `lot` names which delivery of media it came out of, defaulting to the
         one the fixture stocks. A second lot is how a batch comes to hold two
         currencies: the lot carries the currency the supplier invoiced in.
+        `applied_at` is the day the media went on, which is not always the day
+        the document was posted.
         """
         application = create_application_draft(
             self.workspace,
             self.user,
             ApplicationRequest(
-                applied_at=timezone.now(),
+                applied_at=applied_at or timezone.now(),
                 source_location=self.location,
                 batch=self.batch,
                 lines=(
@@ -423,7 +425,7 @@ class CohortStockTestCase(CostingServiceTestCase):
             idempotency_key=uuid4(),
         )
 
-    def sell(self, quantity=1):
+    def sell(self, quantity=1, fulfilled_at=None):
         """Quote, reserve and dispatch one count out of the block."""
         order = create_order(self.workspace, self.user)
         line = SalesOrderLine(
@@ -444,6 +446,7 @@ class CohortStockTestCase(CostingServiceTestCase):
             order, self.user,
             operation_key=uuid4(),
             allocation_ids=[line.allocations.get().pk],
+            fulfilled_at=fulfilled_at,
         )
 
     def return_sale(self, fulfillment):
@@ -485,7 +488,7 @@ class CohortStockTestCase(CostingServiceTestCase):
         )
         return operation
 
-    def promote_one(self):
+    def promote_one(self, occurred_at=None):
         """Give one unit of the block its own plant identity, and return it."""
         self.cohort.refresh_from_db()
         plants, _promoted = promote_cohort(
@@ -494,6 +497,7 @@ class CohortStockTestCase(CostingServiceTestCase):
             expected_revision=self.cohort.revision,
             quantity=1,
             idempotency_key=uuid4(),
+            occurred_at=occurred_at,
             reason='Assign one sale plant.',
         )
         return plants[0]

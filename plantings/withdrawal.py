@@ -205,5 +205,6 @@ def withdraw_germinations(plant_ids, user, reason, occurred_at=None):
     ]
     reallocate_batches(
         locked, user, CostAllocationRun.Trigger.GERMINATION_WITHDRAWN,
+        occurred_at=occurred_at,
     )
     return corrections

@@ -600,7 +600,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
             # subledger is brought back in step here rather than drifting until
             # somebody asks for a report.
 
-            reallocate_batch(batch, user, 'germination')
+            reallocate_batch(batch, user, 'germination', occurred_at=plant.germinated)
         return plant
 
 

@@ -622,7 +622,7 @@ def post_application(application, user, revision=None, digest=None):
         updated=posted_at,
     )
     application.refresh_from_db()
-    _reallocate(locked, user, 'application_posted')
+    _reallocate(locked, user, 'application_posted', application.applied_at)
     return application, movements
 
 
@@ -693,13 +693,15 @@ def _post_movement(application, line, user, posting):
     )
 
 
-def _reallocate(batches, user, trigger):
+def _reallocate(batches, user, trigger, applied_at):
     """Bring every affected batch's cost allocations back in step.
 
     Costing reads application models, not this command module, so calling it
-    needs no deferred import.
+    needs no deferred import. The layers are dated by the day the input went
+    on, not by the day the document was typed: media applied on 20 March and
+    posted on 5 April is March's cost.
     """
-    return reallocate_batches(batches, user, trigger)
+    return reallocate_batches(batches, user, trigger, occurred_at=applied_at)
 
 
 def _posted_movement_filter(application):
@@ -741,7 +743,7 @@ def reverse_application(application, user, reason):
         updated=reversed_at,
     )
     application.refresh_from_db()
-    _reallocate(affected, user, 'application_reversed')
+    _reallocate(affected, user, 'application_reversed', reversed_at)
     return application
 
 

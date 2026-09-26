@@ -24,6 +24,16 @@ rest on a cell or in the pool becomes production loss instead, because output
 being final is precisely the statement that no further seedling is coming. The
 way to redo a frozen allocation is `plantings.batches.reopen_batch`, which is
 already an audited transition with a required reason.
+
+**A layer is dated by the fact behind it, not by the run.** `reallocate_batch`
+takes the `occurred_at` of whatever it is reacting to — an application's
+`applied_at`, a cohort operation's `occurred_at`, a fulfillment's
+`fulfilled_at` — and `_effective_dates` spreads it over the layers the run
+writes: the first layer of a source by that source's own record, and every
+reversal and replacement by the fact prompting them. So media applied in March
+and posted in April is March's cost, and a re-division moves no cost between
+years, because the superseded layer stays effective right up to the day the
+thing that superseded it happened, whenever somebody typed it.
 """
 
 # pylint: disable=duplicate-code
@@ -33,6 +43,7 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from applications.models import FACTOR_DECIMAL_PLACES
 from inventory.ledger import QUANTITY_QUANTUM, distribute_exactly, quantize_money, quantize_quantity
@@ -216,6 +227,7 @@ def intended_layers(batch):
                 'source_type': source.source_type,
                 'source': source.source,
                 'movement': source.movement,
+                'source_occurred_at': source.occurred_at,
                 'target_type': part.share.target_type,
                 'seed_tray_cell_id': part.share.cell_id,
                 'seed_tray_generation_id': part.share.generation_id,
@@ -263,12 +275,13 @@ def _matches(row, spec):
     )
 
 
-def _write_layer(run, spec, reversal_of=None):
+def _write_layer(run, spec, effective_at, reversal_of=None):
     """Append one immutable layer, or the reversal that cancels one."""
     fields = {
         'workspace': run.workspace,
         'run': run,
         'batch': run.batch,
+        'effective_at': effective_at,
         'source_type': spec['source_type'],
         spec['source_type']: spec['source'],
         'movement': spec['movement'],
@@ -490,14 +503,46 @@ def _plan(batch):
     return reverse, post
 
 
+def _effective_dates(occurred_at, reverse, post):
+    """Date every layer one run is about to write.
+
+    `occurred_at` is when the fact this run is reacting to happened. It is what
+    withdraws a superseded layer and what its replacement starts from, so those
+    two are the same date and the interval between two versions of one key has
+    no gap and no overlap. A layer whose key is not being replaced is the first
+    of its source, so it takes the source's own date instead — which is the
+    whole of the March-applied, April-posted case — and falls back to the run's
+    date where the record carries none but the moment it was typed.
+
+    The run's date is never earlier than the layers it is withdrawing. Facts
+    recorded in the order they happened never reach that clamp; one recorded
+    out of order would otherwise leave two versions of a key live at once, and
+    a year-end reader would count both.
+    """
+    withdrawn = [row.effective_at for row in reverse]
+    effective = max([occurred_at] + withdrawn) if withdrawn else occurred_at
+    replaced = {_stored_key(row) for row in reverse}
+    return effective, [
+        effective if _layer_key(spec) in replaced
+        else (spec.get('source_occurred_at') or effective)
+        for spec in post
+    ]
+
+
 @transaction.atomic
-def reallocate_batch(batch, user, trigger, reason=''):
+def reallocate_batch(batch, user, trigger, reason='', occurred_at=None):
     """Bring one batch's stored allocations back in step with its facts.
 
     Returns the run that wrote them, or None when nothing needed changing. A run
     row exists only where there was something to record: this is called from
     ordinary events, most of which change no allocation, and storing a row for
     every check would bury the runs that did something.
+
+    `occurred_at` is the day the fact that prompted this recalculation
+    happened, which every caller reacting to one has in hand. It dates the
+    layers the run writes; `_effective_dates` says how. Left out, the run is
+    dated now, which is right for a recalculation nothing in particular
+    prompted and is what the subledger did for every layer before.
     """
     try:
         trigger = CostAllocationRun.Trigger(trigger)
@@ -509,6 +554,7 @@ def reallocate_batch(batch, user, trigger, reason=''):
     reverse, post = _plan(batch)
     if not reverse and not post:
         return None
+    effective, posted_at = _effective_dates(occurred_at or timezone.now(), reverse, post)
     run = CostAllocationRun.objects.create(
         workspace=batch.workspace,
         batch=batch,
@@ -520,9 +566,9 @@ def reallocate_batch(batch, user, trigger, reason=''):
         created_by=user if user is not None and user.is_authenticated else None,
     )
     for row in reverse:
-        _write_layer(run, _spec_of(row), reversal_of=row)
-    for spec in post:
-        _write_layer(run, spec)
+        _write_layer(run, _spec_of(row), effective, reversal_of=row)
+    for spec, when in zip(post, posted_at):
+        _write_layer(run, spec, when)
     return run
 
 
@@ -549,16 +595,17 @@ def reallocate_fill_departure(placement_id):
     if placement is not None and placement.specific_plant.batch_id is not None:
         run = reallocate_batch(
             placement.specific_plant.batch, None, CostAllocationRun.Trigger.FILL_DEPARTURE,
+            occurred_at=placement.ended,
         )
     FillDepartureRecalculation.objects.filter(placement_id=placement_id).delete()
     return run
 
 
-def reallocate_batches(batches, user, trigger, reason=''):
+def reallocate_batches(batches, user, trigger, reason='', occurred_at=None):
     """Reallocate several batches in key order, so locks are never crossed."""
     runs = []
     for batch in sorted(set(batches), key=lambda item: item.pk):
-        run = reallocate_batch(batch, user, trigger, reason)
+        run = reallocate_batch(batch, user, trigger, reason, occurred_at)
         if run is not None:
             runs.append(run)
     return runs
@@ -576,6 +623,7 @@ def finalize_batch_costs(batch, user, reason=''):
         user,
         CostAllocationRun.Trigger.OUTPUT_FINALIZED,
         reason,
+        occurred_at=batch.output_finalized_at,
     )
 
 
