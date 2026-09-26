@@ -483,7 +483,10 @@ def _apply_germination(operation, user, request):
             _create_germinated_plant(operation, user, request, allocation, notes)
 
     for batch in locked_batches:
-        reallocate_batch(batch, user, CostAllocationRun.Trigger.GERMINATION)
+        reallocate_batch(
+            batch, user, CostAllocationRun.Trigger.GERMINATION,
+            occurred_at=request.occurred_at,
+        )
 
 
 @transaction.atomic

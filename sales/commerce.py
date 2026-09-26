@@ -482,7 +482,7 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
                 ),
             )
             if plant.pk in fill_plant_ids:
-                recost_container_plants([plant], user, 'Media taken on fulfillment departure.')
+                recost_container_plants([plant], user, 'Media taken on fulfillment departure.', fulfilled_at)
             cost = plant_cost_of_sale(plant)
 
         elif allocation.stock_lot_id:
@@ -564,8 +564,8 @@ def post_fulfillment(order, user, *, operation_key, allocation_ids,
             unit_cost=lot.base_unit_cost, cogs_amount=cost,
             currency_code=lot.currency_code, stock_movement=movement,
         )
-    recost_container_plants(passengers, user, 'Sold inside its container.')
-    recost_cohort_batches(cohorts.values(), user, 'Anonymous stock dispatched.')
+    recost_container_plants(passengers, user, 'Sold inside its container.', fulfilled_at)
+    recost_cohort_batches(cohorts.values(), user, 'Anonymous stock dispatched.', fulfilled_at)
     recompute_order_status(order)
     return fulfillment
 
@@ -919,8 +919,8 @@ def post_return(order, user, *, operation_key, items, reason, returned_at=None,
         )
         sales_return.health_observation = observation
         sales_return.quarantine_case = case
-    recost_container_plants(returned_riders, user, 'Returned in its container.')
-    recost_cohort_batches(returned_cohorts, user, 'Anonymous stock returned.')
+    recost_container_plants(returned_riders, user, 'Returned in its container.', returned_at)
+    recost_cohort_batches(returned_cohorts, user, 'Anonymous stock returned.', returned_at)
     recompute_order_status(order)
     return sales_return
 
@@ -1143,9 +1143,9 @@ def reverse_fulfillment(original, user, *, operation_key, reason, occurred_at=No
         reverse_movement(packaging.stock_movement, user, reason, occurred_at)
     _check_restored_reservations(sources)
     recost_container_plants(
-        [rider.plant for rider in riders_of(original)] + [line.allocation.plant for line in original.lines.all() if hasattr(line, 'container_dispatch')], user, reason,
+        [rider.plant for rider in riders_of(original)] + [line.allocation.plant for line in original.lines.all() if hasattr(line, 'container_dispatch')], user, reason, occurred_at,
     )
-    recost_cohort_batches(restored, user, reason)
+    recost_cohort_batches(restored, user, reason, occurred_at)
     recompute_order_status(original.order)
     return reversal
 
@@ -1284,8 +1284,8 @@ def reverse_return(original, user, *, operation_key, reason, occurred_at=None):
         rider.plant
         for line in original.lines.all()
         for rider in line.fulfillment_line.riders.select_related('plant')
-    ] + [line.fulfillment_line.allocation.plant for line in original.lines.all() if hasattr(line.fulfillment_line, 'container_dispatch')], user, reason)
-    recost_cohort_batches(withdrawn, user, reason)
+    ] + [line.fulfillment_line.allocation.plant for line in original.lines.all() if hasattr(line.fulfillment_line, 'container_dispatch')], user, reason, occurred_at)
+    recost_cohort_batches(withdrawn, user, reason, occurred_at)
     recompute_order_status(original.order)
     return reversal
 

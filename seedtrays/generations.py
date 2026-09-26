@@ -711,7 +711,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
     _record_event(generation, user, EventType.CLOSED, occurred_at, request.reason)
     generation.refresh_from_db()
 
-    _reallocate(batches, user, 'generation_closed')
+    _reallocate(batches, user, 'generation_closed', occurred_at)
 
     following = None
     if request.open_next:
@@ -757,7 +757,7 @@ def reopen_generation(generation, user, reason):
     )
     _record_event(generation, user, EventType.REOPENED, occurred_at, reason)
     generation.refresh_from_db()
-    _reallocate(batches, user, 'generation_closed')
+    _reallocate(batches, user, 'generation_closed', occurred_at)
     return generation
 
 
@@ -781,12 +781,17 @@ def _lock_generation_batches(generation):
     ]
 
 
-def _reallocate(batches, user, trigger):
-    """Bring each affected crop's cost allocations back in step with the fill."""
+def _reallocate(batches, user, trigger, occurred_at=None):
+    """Bring each affected crop's cost allocations back in step with the fill.
+
+    A clean is dated by the fill's `closed_at`, so the media an operator threw
+    away becomes loss on the day the tray was emptied rather than on the day
+    somebody typed it up.
+    """
     # Tray corrections call back into costing, which reads tray generations.
     from costing.services import reallocate_batches  # pylint: disable=import-outside-toplevel,cyclic-import
 
-    return reallocate_batches(batches, user, trigger)
+    return reallocate_batches(batches, user, trigger, occurred_at=occurred_at)
 
 
 def _reverse_recovered_stock(generation, user, reason):

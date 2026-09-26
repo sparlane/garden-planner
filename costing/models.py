@@ -22,6 +22,13 @@ documented:
 - **Unknown is not zero.** A lot with no recorded unit cost produces a layer
   with a null `unit_cost` and a null `amount`. Substituting zero would quietly
   understate every total built on it.
+- **A layer is dated twice.** `created` is the audit stamp of the run that
+  wrote it; `effective_at` is the day the fact behind it happened, which is the
+  separation `inventory.models.StockMovement` and
+  `plantings.models.PlantLifecycleEvent` already make. Both are needed:
+  `created` is what orders two layers written for the same thing, and
+  `effective_at` is the only one a year-end reader may ask, because a run is
+  dated when somebody typed and a balance date is not.
 
 Provisional versus final is deliberately *not* a column here. These rows cannot
 be edited, so flipping a stored flag at output finalization would mean reversing
@@ -369,6 +376,11 @@ class CostAllocation(WorkspaceOwnedModel):
         blank=True,
         related_name='reversal',
     )
+    # The day this layer became true, beside `created`, the moment it was
+    # written. A reversal carries the day the fact that withdrew its original
+    # happened, so the pair bounds an interval a reader can ask a date of:
+    # `costing.services` says where each one comes from.
+    effective_at = models.DateTimeField(editable=False)
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -377,6 +389,7 @@ class CostAllocation(WorkspaceOwnedModel):
             models.Index(fields=['batch', 'target_type'], name='cost_allocation_batch_idx'),
             models.Index(fields=['specific_plant'], name='cost_allocation_plant_idx'),
             models.Index(fields=['plant_cohort'], name='cost_allocation_cohort_idx'),
+            models.Index(fields=['plant_cohort', 'effective_at'], name='cost_allocation_cohort_at_idx'),
         ]
         constraints = [
             models.CheckConstraint(

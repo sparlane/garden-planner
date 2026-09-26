@@ -327,7 +327,10 @@ def close_germination(sowing, user, *, closed_at=None, loss_cause='', reason='')
     )
     closure.full_clean()
     closure.save()
-    reallocate_batch(batch, user, CostAllocationRun.Trigger.GERMINATION_CLOSED)
+    reallocate_batch(
+        batch, user, CostAllocationRun.Trigger.GERMINATION_CLOSED,
+        occurred_at=closure.closed_at,
+    )
     return closure
 
 
@@ -353,5 +356,8 @@ def reopen_germination(closure, user, reason):
     closure.reopened_by = _actor(user)
     closure.full_clean()
     closure.save(update_fields=['reopened_at', 'reopened_reason', 'reopened_by'])
-    reallocate_batch(batch, user, CostAllocationRun.Trigger.GERMINATION_CLOSED)
+    reallocate_batch(
+        batch, user, CostAllocationRun.Trigger.GERMINATION_CLOSED,
+        occurred_at=closure.reopened_at,
+    )
     return closure

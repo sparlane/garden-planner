@@ -103,7 +103,7 @@ def riders_of(fulfillment):
     ).select_related('plant')
 
 
-def recost_container_plants(plants, user, reason):
+def recost_container_plants(plants, user, reason, occurred_at=None):
     """Recalculate the batches whose plants just changed hands inside a pot.
 
     The container's cost reaches the plant through
@@ -124,6 +124,7 @@ def recost_container_plants(plants, user, reason):
     ))
     return reallocate_batches(
         batches, user, CostAllocationRun.Trigger.CONTAINER_SOLD, reason,
+        occurred_at=occurred_at,
     )
 
 

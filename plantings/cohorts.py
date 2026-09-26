@@ -182,9 +182,14 @@ def _container_allocation(growth, allocated, remaining_quantity):
     return allocated, remaining
 
 
-def _reallocate(batch, user, reason):
-    """Keep the append-only cost layers aligned with the changed output units."""
-    reallocate_batch(batch, user, 'manual_recalculate', reason)
+def _reallocate(batch, user, reason, operation):
+    """Keep the append-only cost layers aligned with the changed output units.
+
+    Dated by the operation, not by the run: a loss dated 20 March and typed in
+    September moves its cost out of the block on 20 March, which is where the
+    same operation's event already puts the unit.
+    """
+    reallocate_batch(batch, user, 'manual_recalculate', reason, occurred_at=operation.occurred_at)
 
 
 @transaction.atomic
@@ -227,7 +232,7 @@ def observe_cohort(workspace, user, *, batch, quantity, idempotency_key,
         'state': PlantCohort.LifecycleState.GROWING,
         'location': None,
     })
-    _reallocate(batch, user, 'Cohort observed.')
+    _reallocate(batch, user, 'Cohort observed.', operation)
     return cohort, operation
 
 
@@ -308,7 +313,7 @@ def change_cohort(workspace, user, *, cohort_id, expected_revision, action,
         loss_cause or '',
     )
     _event(operation, cohort, before)
-    _reallocate(cohort.batch, user, reason or operation.get_action_display())
+    _reallocate(cohort.batch, user, reason or operation.get_action_display(), operation)
     return cohort, operation
 
 
@@ -403,7 +408,7 @@ def correct_cohort_loss(workspace, user, *, operation_id, idempotency_key,
         reversal_of=loss,
     )
     _event(operation, cohort, before)
-    _reallocate(cohort.batch, user, reason)
+    _reallocate(cohort.batch, user, reason, operation)
     return cohort, operation
 
 
@@ -468,7 +473,7 @@ def split_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
             container_item=growth['container_item'], container_count=remaining,
             notes=reason,
         )
-    _reallocate(source.batch, user, reason)
+    _reallocate(source.batch, user, reason, operation)
     return child, operation
 
 
@@ -541,7 +546,7 @@ def merge_cohorts(workspace, user, *, target_id, revisions, source_ids,
             container_count=total_containers,
             notes=reason,
         )
-    _reallocate(target.batch, user, reason)
+    _reallocate(target.batch, user, reason, operation)
     return target, operation
 
 
@@ -615,7 +620,7 @@ def promote_cohort(workspace, user, *, cohort_id, expected_revision, quantity,
         )
     operation.payload = {**payload, 'plants': [plant.pk for plant in plants]}
     CohortOperation.objects.filter(pk=operation.pk).update(payload=operation.payload)
-    _reallocate(cohort.batch, user, reason)
+    _reallocate(cohort.batch, user, reason, operation)
     return plants, operation
 
 

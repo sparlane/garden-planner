@@ -14,8 +14,10 @@ whose cost is None all the way through, and an unvalued batch stays unvalued.
 
 # pylint: disable=duplicate-code
 
+from datetime import datetime, time
 from decimal import Decimal
 from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 from django.db.models import Q, Sum
 
@@ -93,6 +95,12 @@ class SourceInput(NamedTuple):
     #: its part of the quantity: one pot divided between two batches' plants
     #: has to be split once, whole, or the two halves lose a cent between them.
     exact_amount: object = None
+    #: When this input happened, as its own record dates it: the application's
+    #: `applied_at`, the movement's `occurred_at`, the fill's `closed_at`. It is
+    #: what a layer first posted from this source is dated by, and it is None
+    #: where the record carries no date of its own but the moment it was typed;
+    #: `costing.services` says what a layer does then.
+    occurred_at: object = None
 
     @property
     def amount(self):
@@ -109,6 +117,18 @@ class Reach(NamedTuple):
 
     fraction: Decimal
     shares: tuple
+
+
+def recorded_day(workspace, on_date):
+    """Return the instant a calendar date began where the workspace keeps time.
+
+    A purchase and an expense are dated by the day, not the moment, so the
+    layer they produce has to pick one. The start of that day in the
+    workspace's own zone is the choice `bookkeeping.services` already makes for
+    a balance date, which is what keeps a cost incurred on 31 March inside the
+    year that ended on it.
+    """
+    return datetime.combine(on_date, time.min, ZoneInfo(workspace.timezone))
 
 
 def batch_sowings(batch):
@@ -315,6 +335,7 @@ def _seed_source(sowing):
         source_type=SourceType.SOWING_POSTING,
         source=posting,
         movement=posting.movement,
+        occurred_at=posting.movement.occurred_at,
         base_quantity=quantity,
         base_unit=lot.item.base_unit,
         unit_cost=lot.base_unit_cost,
@@ -347,6 +368,7 @@ def garden_purchase_sources(batch):
             source_type=SourceType.GARDEN_PLANTING,
             source=entry,
             movement=None,
+            occurred_at=recorded_day(entry.workspace, entry.recorded_on),
             base_quantity=quantity,
             base_unit='each',
             unit_cost=Decimal(entry.purchase_cost) / quantity,
@@ -404,7 +426,7 @@ def _fill_removals(generation_ids):
     residuals = SeedTrayGenerationResidual.objects.filter(
         generation_id__in=generation_ids,
         kind=SeedTrayGenerationResidual.Kind.MEDIA,
-    ).select_related('lot__item').order_by('pk')
+    ).select_related('lot__item', 'generation').order_by('pk')
     for residual in residuals:
         if residual.movement_id is not None and hasattr(residual.movement, 'reversal'):
             continue
@@ -610,6 +632,7 @@ def application_sources(batch, generation_ids, cell_weights):
             source_type=SourceType.APPLICATION_LINE,
             source=line,
             movement=line.consumption_movement,
+            occurred_at=line.application.applied_at,
             base_quantity=Decimal(line.applied_base_quantity) * reach.fraction,
             base_unit=line.base_unit,
             unit_cost=line.lot.base_unit_cost,
@@ -655,7 +678,7 @@ def pot_media_sources(batch):
         container_fill__tray__isnull=True,
     ).filter(Q(container_fill__plant_share_count__isnull=False) | Q(container_fill__stock_lot__isnull=False)).values_list('container_fill_id', flat=True)
     lines = _posted_lines().filter(targets__container_fill_id__in=fill_ids).select_related(
-        'lot__item', 'consumption_movement',
+        'lot__item', 'consumption_movement', 'application',
     ).prefetch_related('targets__container_fill__plant_locations__specific_plant').order_by('pk')
     sources = []
     for line in lines:
@@ -674,6 +697,7 @@ def pot_media_sources(batch):
             sources.append(SourceInput(
                 source_type=SourceType.APPLICATION_LINE,
                 source=line, movement=line.consumption_movement,
+                occurred_at=line.application.applied_at,
                 base_quantity=quantity, base_unit=line.base_unit,
                 unit_cost=unit_cost, currency_code=line.lot.currency_code,
                 shares=tuple(plant_shares([placement.specific_plant_id])),
@@ -710,6 +734,7 @@ def residual_sources(batch, generation_ids):
                 source_type=SourceType.GENERATION_RESIDUAL,
                 source=residual,
                 movement=residual.movement,
+                occurred_at=residual.generation.closed_at,
                 base_quantity=Decimal(residual.base_quantity) * fraction,
                 base_unit=residual.base_unit,
                 unit_cost=residual.unit_cost,
@@ -795,6 +820,7 @@ def container_sources(batch):
             source_type=SourceType.CONTAINER_UNIT,
             source=unit,
             movement=line.stock_movement,
+            occurred_at=line.stock_movement.occurred_at,
             base_quantity=Decimal(len(mine)) / Decimal(len(carried)),
             base_unit=unit.item.base_unit,
             unit_cost=unit.acquisition_cost,
@@ -815,7 +841,8 @@ def dispatched_pot_sources(batch):
     ).values('fulfillment_line_id'))
     return [SourceInput(
         source_type=SourceType.CONTAINER_DISPATCH, source=row,
-        movement=row.stock_movement, base_quantity=row.base_quantity, base_unit='each',
+        movement=row.stock_movement, occurred_at=row.stock_movement.occurred_at,
+        base_quantity=row.base_quantity, base_unit='each',
         exact_amount=row.cogs_amount,
         unit_cost=row.unit_cost, currency_code=row.currency_code,
         shares=tuple(plant_shares([row.fulfillment_line.allocation.plant_id])),
@@ -834,6 +861,7 @@ def expense_sources(batch):
     shares = resolve_unidentified_to_cohorts(whole_source_share(), outputs)
     return [SourceInput(
         source_type=SourceType.BUSINESS_EXPENSE, source=expense, movement=None,
+        occurred_at=recorded_day(batch.workspace, expense.incurred_on),
         base_quantity=Decimal('1'), base_unit='each', unit_cost=expense.deductible_amount,
         currency_code=expense.currency_code, shares=tuple(shares),
     ) for expense in BusinessExpense.objects.filter(
