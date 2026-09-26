@@ -202,7 +202,7 @@ def clean_pot_fill(workspace, user, fill, request):
     occurred_at = request.occurred_at or timezone.now()
     contents = pot_fill_contents(fill)
     remaining = pot_fill_remaining_media(fill)
-    if request.digest is not None and request.digest != contents_digest({'plants': [], 'seeds': [], 'media': remaining}):
+    if request.digest is not None and request.digest != contents_digest({'plants': [], 'resolved': [], 'seeds': [], 'media': remaining}):
         raise ValidationError({'digest': 'The fill changed after this clean was prepared. Review it again.'})
     if occurred_at < fill.opened_at or any(occurred_at < row['latest_application'] for row in contents) or fill.plant_locations.filter(ended__gt=occurred_at).exists():
         raise ValidationError({'occurred_at': 'The clean cannot precede opening, media application or a plant departure.'})

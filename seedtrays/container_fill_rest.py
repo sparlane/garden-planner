@@ -162,7 +162,7 @@ def _contents(workspace, fill):
         'fill': fill.pk, 'status': fill.status,
         'plants': list(fill.plant_locations.filter(ended__isnull=True).values_list('specific_plant_id', flat=True)),
         'numbered_plants': list(fill.plant_locations.filter(ended__isnull=True, numbered_at__isnull=False).values_list('specific_plant_id', flat=True)),
-        'digest': contents_digest({'plants': [], 'seeds': [], 'media': media}),
+        'digest': contents_digest({'plants': [], 'resolved': [], 'seeds': [], 'media': media}),
         'media': [{'lot': row['lot'].pk, 'item': row['lot'].item_id,
                    'base_quantity': f'{row["base_quantity"]:.9f}', 'base_unit': row['base_unit'],
                    'unit_cost': None if row['unit_cost'] is None else format(row['unit_cost'], 'f')}

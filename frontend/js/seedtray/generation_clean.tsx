@@ -132,11 +132,13 @@ const GenerationCleanForm: React.FC<GenerationCleanFormProps> = ({ contents, loc
         </p>
         {nothingLeft && stillToMove.length === 0 && <Alert variant="info">Nothing is left in this fill. Cleaning it will close it and leave the tray empty.</Alert>}
 
+        {/* Said of an outcome rather than of retention, because the server refuses
+            over every resolved plant and not only a retained one. Calling a plant
+            "being kept" would be wrong in exactly the case that breadth exists for. */}
         {stillToMove.length > 0 && (
           <Alert variant="danger">
-            Being kept, and still standing in the tray: {stillToMove.map((plant) => `#${plant.pk}`).join(', ')}. An outcome has already been recorded against{' '}
-            {stillToMove.length === 1 ? 'it' : 'them'}, so the clean has nothing left to ask and will refuse while {stillToMove.length === 1 ? 'it is' : 'they are'} there. Repot or
-            move {stillToMove.length === 1 ? 'it' : 'them'} out first.
+            Still standing in the tray with an outcome already recorded: {stillToMove.map((plant) => `#${plant.pk}`).join(', ')}. The clean cannot record another, so it will refuse
+            until they have been repotted or moved out.
           </Alert>
         )}
 

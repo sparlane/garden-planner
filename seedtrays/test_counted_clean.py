@@ -96,7 +96,7 @@ class CountedFillCleanTests(PotMediaMixin, CountedStockTestCase):
     def test_clean_refuses_occupied_stale_and_backdated_confirmations(self):
         """Contents and chronology must still match when stock locks are taken."""
         row = self.join()
-        digest = contents_digest({'plants': [], 'seeds': [], 'media': pot_fill_remaining_media(self.fill)})
+        digest = contents_digest({'plants': [], 'resolved': [], 'seeds': [], 'media': pot_fill_remaining_media(self.fill)})
         with self.assertRaisesMessage(ValidationError, 'Move the plants'):
             self.clean_remaining()
         self.leave(row)

@@ -162,7 +162,7 @@ class PotMediaTests(PotMediaMixin, CountedStockTestCase):
 
     def test_stale_clean_and_backdated_application_are_refused(self):
         """Neither dates nor a stale confirmation can hide media added to a fill."""
-        digest = contents_digest({'plants': [], 'seeds': [], 'media': pot_fill_contents(self.fill)})
+        digest = contents_digest({'plants': [], 'resolved': [], 'seeds': [], 'media': pot_fill_contents(self.fill)})
         with self.assertRaises(ValidationError):
             self.draft(applied_at=self.fill.opened_at - timedelta(seconds=1))
         application = self.draft()
@@ -307,7 +307,7 @@ class PotMediaDepartureTests(PotMediaMixin, CountedStockTestCase):
     def test_clean_after_all_thirds_depart_preserves_allocation(self):
         """Cleaning and refilling do not reclaim or reassign the old plants' mix."""
         fill, placements = self.shared_numbered_fill()
-        digest = contents_digest({'plants': [], 'seeds': [], 'media': pot_fill_contents(fill)})
+        digest = contents_digest({'plants': [], 'resolved': [], 'seeds': [], 'media': pot_fill_contents(fill)})
         for placement in placements:
             placement.ended = timezone.now()
             placement.save()
