@@ -97,6 +97,17 @@ const ACTION_STATES: Record<PlantOutcomeAction, Array<PlantLifecycleState>> = {
   donate: ['growing', 'available', 'retained']
 }
 
+// The states in which the nursery still physically holds the plant, mirroring
+// PRESENT_STATES in plantings/lifecycle.py. It answers a different question
+// from `final_outcome_at`, which says whether an outcome is still owed: a
+// retained plant has one and is still standing on the bench, so a screen
+// offering nursery work on what is in front of the operator asks this instead.
+const PRESENT_STATES: Array<PlantLifecycleState> = ['growing', 'available', 'retained', 'quarantined']
+
+function plantIsPresent(plant: Pick<SpecificPlant, 'lifecycle_state'>): boolean {
+  return PRESENT_STATES.includes(plant.lifecycle_state)
+}
+
 function LifecycleStateBadge({ state }: { state: PlantLifecycleState }) {
   return <Badge bg={STATE_VARIANTS[state]}>{STATE_LABELS[state]}</Badge>
 }
@@ -294,5 +305,6 @@ export {
   PlantLifecycleBadge,
   PlantLifecycleHistory,
   PlantOutcomeDialog,
-  PlantOutcomeButtons
+  PlantOutcomeButtons,
+  plantIsPresent
 }

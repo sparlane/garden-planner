@@ -198,6 +198,16 @@ class SeedTrayGenerationSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+def _plant_row(plant):
+    """Render one seedling standing in the tray, whichever list it is in."""
+    return {
+        'pk': plant.pk,
+        'cell_planting': plant.cell_planting_id,
+        'cell': plant.cell_planting.cell_id,
+        'germinated': plant.germinated,
+    }
+
+
 def _contents_response(generation):
     """Render what a clean has to find a disposition for, plus its digest."""
     contents = generation_contents(generation)
@@ -218,15 +228,11 @@ def _contents_response(generation):
             }
             for sowing in contents['sowings']
         ],
-        'plants': [
-            {
-                'pk': plant.pk,
-                'cell_planting': plant.cell_planting_id,
-                'cell': plant.cell_planting.cell_id,
-                'germinated': plant.germinated,
-            }
-            for plant in contents['plants']
-        ],
+        'plants': [_plant_row(plant) for plant in contents['plants']],
+        # Retained stock standing in a cell. The clean cannot ask for an
+        # outcome it has already had, so the screen lists these as what has to
+        # be moved out before the tray can be emptied.
+        'resolved': [_plant_row(plant) for plant in contents['resolved']],
         'seeds': [
             {
                 'sowing': row['sowing'].pk,

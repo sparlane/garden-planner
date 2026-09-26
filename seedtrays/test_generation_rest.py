@@ -323,6 +323,51 @@ class GenerationCleanContractTests(GenerationRESTTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('digest', response.data)
 
+    def test_retained_stock_is_listed_apart_and_blocks_the_clean(self):
+        """Task 150: the screen shows what has to be moved out, and why it must.
+
+        The repot run on the tray screen is where it is moved, which is why
+        this endpoint reports it rather than leaving the operator to read a
+        refusal about a plant the clean form never showed them.
+        """
+        sowing = self.sow(self.generation)
+        plant = make_specific_plant(cell_planting=sowing.cell_plantings.get())
+        record_germination_event(plant, None)
+        make_specific_plant_location(specific_plant=plant)
+        retained = self.client.post(
+            f'/plantings/specificplants/{plant.pk}/retain/',
+            {'reason': 'Mother stock.'},
+            format='json',
+        )
+        self.assertEqual(retained.status_code, 201, retained.data)
+
+        contents = self.contents()
+        response = self.close()
+
+        self.assertEqual([row['pk'] for row in contents['plants']], [])
+        self.assertEqual([row['pk'] for row in contents['resolved']], [plant.pk])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('plants', response.data)
+        self.assertIn(str(plant.pk), str(response.data['plants']))
+        self.assertEqual(
+            SeedTrayGeneration.objects.get(pk=self.generation).status,
+            SeedTrayGeneration.Status.OPEN,
+        )
+
+    def test_an_ordinary_tray_reports_nothing_to_move_out(self):
+        """A seedling that still owes an outcome is asked about, not refused."""
+        sowing = self.sow(self.generation)
+        plant = make_specific_plant(cell_planting=sowing.cell_plantings.get())
+        record_germination_event(plant, None)
+        make_specific_plant_location(specific_plant=plant)
+
+        contents = self.contents()
+        response = self.close()
+
+        self.assertEqual([row['pk'] for row in contents['plants']], [plant.pk])
+        self.assertEqual(contents['resolved'], [])
+        self.assertEqual(response.status_code, 200, response.data)
+
     def test_cleaning_twice_is_refused(self):
         """A resubmitted confirmation resolves nothing a second time."""
         self.close()

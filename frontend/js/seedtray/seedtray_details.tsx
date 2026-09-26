@@ -50,7 +50,7 @@ import {
   repotSpecificPlants,
   reverseSpecificPlantEvent
 } from '../api/plantings'
-import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog } from '../plantings/lifecycle'
+import { PlantLifecycleBadge, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog, plantIsPresent } from '../plantings/lifecycle'
 import { PLACEMENT_LABELS, placementLabel } from '../plantings/placements'
 import { PotCodeField, potOptionLabel, useNumberedPotDestinations } from '../plantings/pot_destinations'
 import { RepotCandidate, RepotRunForm } from '../plantings/repot_run'
@@ -228,8 +228,13 @@ const SeedTrayCellView: React.FC<SeedTrayCellViewProps> = ({
             {/* Repotting is a run rather than a move each: the whole tray goes
                 onto the bench in one pass, so a seedling is selected here and
                 paired with its pot in the form under the grid. `Move` is still
-                the way to send one plant somewhere that is not a pot. */}
-            {!plant.final_outcome_at && (
+                the way to send one plant somewhere that is not a pot.
+
+                Offered on whether the plant is still here rather than on
+                whether it has an outcome: retained stock has one and is still
+                in its cell, and a tray cannot be cleaned until it has been
+                taken out. */}
+            {plantIsPresent(plant) && (
               <Button
                 size="sm"
                 variant={selectedForRepotting ? 'primary' : 'outline-primary'}
@@ -933,12 +938,14 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   // Every seedling still standing in the tray, read in the order the grid draws
   // them: a run of pots typed as a range is paired with the selection in that
   // order, so selecting the whole tray fills the bench the way it is walked.
-  // A finished seedling is not offered — repotting a culled plant would be
-  // recording where something that no longer exists is standing.
+  // A seedling the nursery no longer holds is not offered — repotting a culled
+  // plant would be recording where something that no longer exists is standing.
+  // Retained stock is held, so it is offered: it keeps an open cell until
+  // somebody moves it, and the clean refuses while it is there.
   const allRepotCandidates = seedTrayCells.flatMap((row) =>
     row.flatMap((cell) =>
       (cell ? (cellCurrentPlantMap[cell.pk] ?? []) : [])
-        .filter((plant) => !plant.final_outcome_at)
+        .filter(plantIsPresent)
         .map((plant) => ({ plantPk: plant.pk, label: `Cell ${cell?.x_position}, ${cell?.y_position} · Plant #${plant.pk}` }))
     )
   )
