@@ -136,6 +136,10 @@ interface SeedTrayGenerationContents {
   digest: string
   sowings: Array<GenerationContentsSowing>
   plants: Array<GenerationContentsPlant>
+  // Retained stock still standing in a cell. Nothing more can be recorded
+  // against it, so the clean refuses until it has been repotted or moved out
+  // rather than offering an outcome the server would reject.
+  resolved: Array<GenerationContentsPlant>
   seeds: Array<GenerationContentsSeed>
   media: Array<GenerationContentsMedia>
 }

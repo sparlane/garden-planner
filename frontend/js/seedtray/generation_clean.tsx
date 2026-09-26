@@ -116,6 +116,11 @@ const GenerationCleanForm: React.FC<GenerationCleanFormProps> = ({ contents, loc
   }
 
   const nothingLeft = contents.plants.length === 0 && contents.seeds.length === 0 && contents.media.length === 0
+  // Retained stock blocks the clean outright rather than appearing as another
+  // row to decide about: it already has its outcome, so the only thing left to
+  // say about it is where it went, and the tray screen's repot run and Move
+  // are where that is said.
+  const stillToMove = contents.resolved
 
   return (
     <Card className="mb-3 border-warning">
@@ -125,7 +130,15 @@ const GenerationCleanForm: React.FC<GenerationCleanFormProps> = ({ contents, loc
           Emptying the tray closes this fill. Nothing is deleted — its sowings, plants, and applications stay readable through the tray history — but every item below needs an
           explicit disposition first.
         </p>
-        {nothingLeft && <Alert variant="info">Nothing is left in this fill. Cleaning it will close it and leave the tray empty.</Alert>}
+        {nothingLeft && stillToMove.length === 0 && <Alert variant="info">Nothing is left in this fill. Cleaning it will close it and leave the tray empty.</Alert>}
+
+        {stillToMove.length > 0 && (
+          <Alert variant="danger">
+            Being kept, and still standing in the tray: {stillToMove.map((plant) => `#${plant.pk}`).join(', ')}. An outcome has already been recorded against{' '}
+            {stillToMove.length === 1 ? 'it' : 'them'}, so the clean has nothing left to ask and will refuse while {stillToMove.length === 1 ? 'it is' : 'they are'} there. Repot or
+            move {stillToMove.length === 1 ? 'it' : 'them'} out first.
+          </Alert>
+        )}
 
         {contents.plants.length > 0 && (
           <>
@@ -296,7 +309,7 @@ const GenerationCleanForm: React.FC<GenerationCleanFormProps> = ({ contents, loc
           onChange={(event) => setOpenNext(event.target.checked)}
         />
         <div className="mt-3 d-flex gap-2">
-          <Button variant="warning" onClick={handleConfirm} disabled={busy || !reason.trim() || recoveringWithoutDestination}>
+          <Button variant="warning" onClick={handleConfirm} disabled={busy || !reason.trim() || recoveringWithoutDestination || stillToMove.length > 0}>
             Clean the tray
           </Button>
           <Button variant="secondary" onClick={onCancel} disabled={busy}>

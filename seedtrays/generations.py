@@ -8,9 +8,11 @@ tray, which is why nothing here has to ask the caller which fill they meant.
 Cleaning is where the care goes. It writes nothing until every remaining plant,
 every seed drawn but never sown, and every quantity of media applied has an
 explicit disposition, because the alternative is a workflow that quietly decides
-seedlings failed and media was thrown away. Nothing is deleted either: sowings
-leave the tray's normal view by deriving that view from the generation's status,
-so the archive is a filter rather than a loss.
+seedlings failed and media was thrown away. A plant retained before the clean
+has no disposition left to give — it is already resolved — so the clean names it
+and refuses rather than guessing where it went. Nothing is deleted either:
+sowings leave the tray's normal view by deriving that view from the generation's
+status, so the archive is a filter rather than a loss.
 
 A generation migrated from records that predate the feature is flagged for
 review, because those records genuinely cannot say whether the sowings grouped
@@ -260,6 +262,24 @@ def unresolved_plants(generation):
     ]
 
 
+def resolved_plants(generation):
+    """Return the plants in the tray that have already recorded a final outcome.
+
+    The complement of `unresolved_plants` over the same set, so between them
+    they account for everything standing in the tray and nothing falls between
+    them. In practice this holds retained stock and nothing else: `retained`
+    resolves a plant's availability without ending its growth or closing its
+    location, so it is the one outcome that leaves a plant in its cell. Every
+    other final state is reached through a fact in `CLOSES_LOCATION`, and a
+    withdrawn seedling's location is closed by the correction itself.
+    """
+
+    return [
+        plant for plant in generation_plants(generation)
+        if is_final(plant_lifecycle_summary(plant).state)
+    ]
+
+
 def unsown_seed(sowing):
     """Return the seed this sowing drew from the packet but never placed.
 
@@ -349,6 +369,7 @@ def generation_contents(generation):
         'cell_count': generation_cells(generation).count(),
         'sowings': sowings,
         'plants': unresolved_plants(generation),
+        'resolved': resolved_plants(generation),
         'seeds': [row for row in seeds if row['quantity'] > 0],
         'media': _media_rows(generation),
     }
@@ -362,6 +383,11 @@ def contents_digest(contents):
     what the operator has to decide about is in here.
     """
     rows = [f'plant:{plant.pk}' for plant in contents['plants']]
+    # A plant standing in the tray with an outcome already against it blocks the
+    # clean, so it changes what the operator is looking at as much as one that
+    # still needs a decision. A pot fill's clean reuses this digest with no
+    # plants of either kind, which is why the key is read rather than required.
+    rows.extend(f'resolved:{plant.pk}' for plant in contents.get('resolved', ()))
     rows.extend(
         f'seed:{row["sowing"].pk}:{row["quantity"]}'
         for row in contents['seeds']
@@ -395,6 +421,29 @@ def _require_cleanable(generation):
             'review_state': (
                 f'Generation {generation.code} was migrated from earlier records '
                 'and must be reviewed before the tray can be cleaned.'
+            ),
+        })
+
+
+def _require_moved_out(contents):
+    """Refuse a clean while a plant no outcome is owed for stands in the tray.
+
+    The clean asks about the plants in `unresolved_plants` and empties the cell
+    of each one it resolves. `resolved_plants` is everything else still standing
+    in the tray, which in practice is stock retained before the clean began.
+    Nothing more can be recorded against it — `retained` is not permitted from
+    `retained`, and a second one would claim a decision nobody made twice — and
+    closing its location regardless would say the plant left the tray without
+    saying where it went. So the clean names them and stops, the way the pot
+    fill clean does while plants still stand in it, and the operator empties the
+    tray through the repot run or an ordinary move first.
+    """
+    standing = [plant.pk for plant in contents['resolved']]
+    if standing:
+        raise ValidationError({
+            'plants': (
+                'These plants already have an outcome and are still in the '
+                f'tray: {standing}. Repot or move them out before cleaning it.'
             ),
         })
 
@@ -586,6 +635,7 @@ def close_generation(generation, user, request):  # pylint: disable=too-many-loc
 
     contents = generation_contents(generation)
     _require_current(contents, request.digest)
+    _require_moved_out(contents)
 
     plant_pairs = _match_plants(contents, request.plants)
     seed_totals = {
