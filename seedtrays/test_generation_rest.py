@@ -343,6 +343,13 @@ class GenerationCleanContractTests(GenerationRESTTestCase):
 
         contents = self.contents()
         response = self.close()
+        # The payload the tray grid is drawn from, which is what `plantIsPresent`
+        # reads to offer the repot run — the way out of this refusal. A retained
+        # plant reaching it as anything but `retained` with an open cell would
+        # leave the operator refused with no offered way to comply.
+        grid = self.client.get(
+            f'/plantings/seedtray-data/{self.tray.pk}/specificplants/'
+        )
 
         self.assertEqual([row['pk'] for row in contents['plants']], [])
         self.assertEqual([row['pk'] for row in contents['resolved']], [plant.pk])
@@ -352,6 +359,17 @@ class GenerationCleanContractTests(GenerationRESTTestCase):
         self.assertEqual(
             SeedTrayGeneration.objects.get(pk=self.generation).status,
             SeedTrayGeneration.Status.OPEN,
+        )
+        self.assertEqual(grid.status_code, 200, grid.data)
+        (row,) = [item for item in grid.data if item['pk'] == plant.pk]
+        self.assertEqual(row['lifecycle_state'], 'retained')
+        self.assertEqual(
+            [
+                place['seed_tray_cell']
+                for place in row['locations']
+                if place['ended'] is None
+            ],
+            [plant.cell_planting.cell_id],
         )
 
     def test_an_ordinary_tray_reports_nothing_to_move_out(self):

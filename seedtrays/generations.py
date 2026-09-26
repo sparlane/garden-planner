@@ -253,31 +253,43 @@ def generation_plants(generation):
     ).select_related('cell_planting').prefetch_related('lifecycle_events').distinct().order_by('pk')
 
 
+def _split_by_outcome(generation):
+    """Sort what is standing in the tray by whether an outcome is still owed.
+
+    One pass, because a clean needs both halves and neither is derivable from
+    the other. Walking the tray twice would prefetch every seedling's lifecycle
+    events and derive its state twice over — a hundred and forty-four times
+    each on a full tray — and the two reads need not agree: under READ
+    COMMITTED a plant retained between them lands in both lists, and one taken
+    out of the tray between them lands in neither.
+    """
+
+    unresolved, resolved = [], []
+    for plant in generation_plants(generation):
+        bucket = resolved if is_final(plant_lifecycle_summary(plant).state) else unresolved
+        bucket.append(plant)
+    return unresolved, resolved
+
+
 def unresolved_plants(generation):
     """Return the plants in the tray that have recorded no final outcome."""
 
-    return [
-        plant for plant in generation_plants(generation)
-        if not is_final(plant_lifecycle_summary(plant).state)
-    ]
+    return _split_by_outcome(generation)[0]
 
 
 def resolved_plants(generation):
-    """Return the plants in the tray that have already recorded a final outcome.
+    """Return the plants in the tray that have already recorded one.
 
-    The complement of `unresolved_plants` over the same set, so between them
-    they account for everything standing in the tray and nothing falls between
-    them. In practice this holds retained stock and nothing else: `retained`
-    resolves a plant's availability without ending its growth or closing its
-    location, so it is the one outcome that leaves a plant in its cell. Every
-    other final state is reached through a fact in `CLOSES_LOCATION`, and a
-    withdrawn seedling's location is closed by the correction itself.
+    The other half of the same split, so between them they account for
+    everything standing in the tray and nothing falls between them. In practice
+    this holds retained stock and nothing else: `retained` resolves a plant's
+    availability without ending its growth or closing its location, so it is
+    the one outcome that leaves a plant in its cell. Every other final state is
+    reached through a fact in `CLOSES_LOCATION`, and a withdrawn seedling's
+    location is closed by the correction itself.
     """
 
-    return [
-        plant for plant in generation_plants(generation)
-        if is_final(plant_lifecycle_summary(plant).state)
-    ]
+    return _split_by_outcome(generation)[1]
 
 
 def unsown_seed(sowing):
@@ -364,12 +376,13 @@ def generation_contents(generation):
         {'sowing': sowing, 'quantity': unsown_seed(sowing)}
         for sowing in sowings
     ]
+    plants, resolved = _split_by_outcome(generation)
     return {
         'generation': generation,
         'cell_count': generation_cells(generation).count(),
         'sowings': sowings,
-        'plants': unresolved_plants(generation),
-        'resolved': resolved_plants(generation),
+        'plants': plants,
+        'resolved': resolved,
         'seeds': [row for row in seeds if row['quantity'] > 0],
         'media': _media_rows(generation),
     }
@@ -385,9 +398,10 @@ def contents_digest(contents):
     rows = [f'plant:{plant.pk}' for plant in contents['plants']]
     # A plant standing in the tray with an outcome already against it blocks the
     # clean, so it changes what the operator is looking at as much as one that
-    # still needs a decision. A pot fill's clean reuses this digest with no
-    # plants of either kind, which is why the key is read rather than required.
-    rows.extend(f'resolved:{plant.pk}' for plant in contents.get('resolved', ()))
+    # still needs a decision. A pot fill's clean reuses this digest and has no
+    # plants of either kind; it passes both keys empty rather than omitting one,
+    # so every caller states the same contents rather than half of it.
+    rows.extend(f'resolved:{plant.pk}' for plant in contents['resolved'])
     rows.extend(
         f'seed:{row["sowing"].pk}:{row["quantity"]}'
         for row in contents['seeds']
