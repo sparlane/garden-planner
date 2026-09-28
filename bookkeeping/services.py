@@ -244,6 +244,15 @@ UNCOSTED_COHORT_ASSUMPTION = (
 #: A cohort line's standing assumption: both halves of it are reconstructions.
 COHORT_ASSUMPTION = 'Cohort events replayed through year end, valued on the layers standing then.'
 
+#: What a line says when the two halves disagree after all, because a fact
+#: dated before year end was recorded after a later one. `_clamped_across`
+#: says how that is detected and why the cost could not follow the count.
+OUT_OF_ORDER_ASSUMPTION = (
+    'A fact dated before year end was recorded after a later one, so the '
+    'subledger could not move its cost back without valuing this block twice. '
+    'The count reads the earlier date and the value does not.'
+)
+
 
 def _cohorts_at(workspace, end):
     """Return what each block's later events say it held at the balance instant.
@@ -275,6 +284,44 @@ def _cohorts_at(workspace, end):
         moved, first = later.get(cohort_id, (0, state))
         later[cohort_id] = (moved + delta, first)
     return later
+
+
+def _clamped_across(workspace, end):
+    """Return the blocks whose cost was held back across the balance date.
+
+    `costing.dating` will not date a layer before the one it supersedes, so
+    two facts recorded out of the order they happened in file the earlier one
+    under the later one's date. Usually that is harmless — both fall in the
+    same year — but where the earlier fact is before `end` and the later one
+    is at or after it, the cost it moved stays on the wrong side of the
+    balance date while `_cohorts_at` moves the unit by the date it really
+    carries. The block would then be counted after the fact and valued before
+    it, which is the mismatch task 148's `_recorded_late` existed to stop,
+    arriving by the other route.
+
+    It is detectable because the run keeps the fact's own date. A *reversal*
+    always carries the run's clamped date, so a reversal effective at or after
+    `end` whose run was prompted by a fact before it is exactly a withdrawal
+    the clamp pushed across the year. A posting is not a reliable witness — a
+    first posting takes its source's date, which can straddle `end` for
+    perfectly ordinary reasons — so only reversals are read.
+
+    There is no right figure to publish instead: the version that reflects the
+    earlier fact and not the later one was never written. So the line keeps
+    the as-at reading and is marked provisional, which is what task 148 did
+    with the same disagreement and what holds the year open until somebody
+    re-costs the batch.
+    """
+    return set(
+        CostAllocation.objects
+        .filter(
+            plant_cohort__workspace=workspace,
+            target_type=CostAllocation.TargetType.PLANT_COHORT,
+            reversal_of__isnull=False,
+            run__occurred_at__lt=end, effective_at__gte=end,
+        )
+        .values_list('plant_cohort_id', flat=True)
+    )
 
 
 def _group_layers(rows):
@@ -336,9 +383,15 @@ def _capture_cohorts(income_year, user, end):
     recorded in April moves the unit and its cost together, out of the same
     year. Task 148 had to read such a block as it stood instead, a whole batch
     at a time; task 163 gave the layer its own date and that fallback is gone.
+
+    They disagree in one case, and it is flagged rather than hidden: two facts
+    recorded out of the order they happened in, straddling the balance date.
+    `_clamped_across` finds those blocks and says what the ledger could not do
+    about them.
     """
     workspace = income_year.workspace
     later = _cohorts_at(workspace, end)
+    out_of_order = _clamped_across(workspace, end)
     cohorts = PlantCohort.objects.filter(workspace=workspace).filter(
         Q(quantity__gt=0) | Q(pk__in=list(later)),
     ).select_related('batch__variety')
@@ -362,9 +415,12 @@ def _capture_cohorts(income_year, user, end):
             else:
                 held[code] += amount
         uncosted = not standing
+        unsettled = cohort.pk in out_of_order
         assumptions = COHORT_ASSUMPTION
         if uncosted:
             assumptions = f'{assumptions} {UNCOSTED_COHORT_ASSUMPTION}'
+        if unsettled:
+            assumptions = f'{assumptions} {OUT_OF_ORDER_ASSUMPTION}'
         mixed, assumptions = _mixed_currency(held, assumptions)
         # An uncosted block states no cost at all rather than a zero one, the
         # shape the capture already uses for an unpriced lot and for stock
@@ -380,7 +436,7 @@ def _capture_cohorts(income_year, user, end):
             currency_code=_line_currency(income_year, held),
             assumptions=assumptions,
             derived=True,
-            provisional=uncosted or bool(unpriced) or mixed,
+            provisional=unsettled or uncosted or bool(unpriced) or mixed,
             created_by=user,
         ))
     return rows

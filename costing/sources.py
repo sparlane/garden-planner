@@ -14,10 +14,8 @@ whose cost is None all the way through, and an unvalued batch stays unvalued.
 
 # pylint: disable=duplicate-code
 
-from datetime import datetime, time
 from decimal import Decimal
 from typing import NamedTuple
-from zoneinfo import ZoneInfo
 
 from django.db.models import Q, Sum
 
@@ -46,6 +44,7 @@ from plantings.sowing import current_sowing_consumption
 from seedtrays.generations import cell_shares
 from seedtrays.models import SeedTrayGenerationResidual
 from seedtrays.pot_shares import counted_parts
+from workspaces.timekeeping import recorded_day
 
 from .allocation import (
     area_plant_shares,
@@ -117,18 +116,6 @@ class Reach(NamedTuple):
 
     fraction: Decimal
     shares: tuple
-
-
-def recorded_day(workspace, on_date):
-    """Return the instant a calendar date began where the workspace keeps time.
-
-    A purchase and an expense are dated by the day, not the moment, so the
-    layer they produce has to pick one. The start of that day in the
-    workspace's own zone is the choice `bookkeeping.services` already makes for
-    a balance date, which is what keeps a cost incurred on 31 March inside the
-    year that ended on it.
-    """
-    return datetime.combine(on_date, time.min, ZoneInfo(workspace.timezone))
 
 
 def batch_sowings(batch):

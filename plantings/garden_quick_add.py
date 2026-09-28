@@ -1,13 +1,10 @@
 """Preview and atomically record source-neutral household garden plantings."""
 
-from datetime import datetime, time
 from decimal import Decimal
-from zoneinfo import ZoneInfo
 
 from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
-from django.utils import timezone
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -21,6 +18,7 @@ from seeds.models import SeedPacket
 from supplies.models import Supplier
 from workspaces.models import Workspace
 from workspaces.scoping import CurrentWorkspaceViewSetMixin, RequireWorkspaceModeMixin
+from workspaces.timekeeping import recorded_day
 
 from .batches import BatchRequest, create_and_activate_batch
 from .models import GardenPlanting, ProductionBatch, SpecificPlant, SpecificPlantLocation, GardenSquareDirectSowPlanting
@@ -218,7 +216,7 @@ class GardenQuickAddViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMi
         )
         values = {key: value for key, value in data.items() if key not in {'plant', 'variety', 'new_variety_name', 'batch', 'individual_names', 'override_reason'}}
         entry = GardenPlanting.objects.create(workspace=workspace, batch=batch, created_by=user, **values)
-        started = timezone.make_aware(datetime.combine(entry.recorded_on, time.min), ZoneInfo(workspace.timezone))
+        started = recorded_day(workspace, entry.recorded_on)
         if entry.tracking == GardenPlanting.Tracking.INDIVIDUAL:
             names = data['individual_names']
             if entry.location_id:
@@ -238,7 +236,11 @@ class GardenQuickAddViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMi
         if entry.seed_packet_id:
             post_sowing_consumption(entry, user)
 
-        reallocate_batch(batch, user, 'manual_recalculate')
+        # Dated by the day the planting was recorded for, not by the day it
+        # was typed: a quick-add may join a batch that already carries layers,
+        # and a 20 March planting entered on 5 April must not move them into
+        # April.
+        reallocate_batch(batch, user, 'manual_recalculate', occurred_at=started)
         return entry
 
     @staticmethod

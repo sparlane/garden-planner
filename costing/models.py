@@ -142,6 +142,12 @@ class CostAllocationRun(WorkspaceOwnedModel):
         related_name='cost_allocation_runs',
     )
     trigger = models.CharField(max_length=24, choices=Trigger.choices)
+    # When the fact that prompted this run happened, as its own record dates
+    # it, and unclamped. `costing.dating` will not date a layer before the one
+    # it supersedes, so a fact recorded out of order is filed under the later
+    # date; this is where the date it really carried survives, and it is what
+    # lets `bookkeeping.services` say a year has lost cost that way.
+    occurred_at = models.DateTimeField(editable=False)
     reason = models.TextField(blank=True, default='')
     posted_count = models.PositiveIntegerField(default=0)
     reversed_count = models.PositiveIntegerField(default=0)
@@ -388,7 +394,8 @@ class CostAllocation(WorkspaceOwnedModel):
         indexes = [
             models.Index(fields=['batch', 'target_type'], name='cost_allocation_batch_idx'),
             models.Index(fields=['specific_plant'], name='cost_allocation_plant_idx'),
-            models.Index(fields=['plant_cohort'], name='cost_allocation_cohort_idx'),
+            # Covers a lookup by block alone as well, so the plain one it
+            # replaced would only have been a second copy of its prefix.
             models.Index(fields=['plant_cohort', 'effective_at'], name='cost_allocation_cohort_at_idx'),
         ]
         constraints = [

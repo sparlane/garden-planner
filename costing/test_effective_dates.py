@@ -19,13 +19,16 @@ from uuid import uuid4
 
 from django.utils import timezone
 
+from django.db.models import Q
+
 from applications.models import InputApplication
 from inventory.models import StockMovement
 from plantings.cohorts import observe_cohort
-from plantings.models import PlantCohort, ProductionBatch
+from plantings.germination import close_germination
+from plantings.models import CohortOperation, PlantCohort, ProductionBatch
 from plantings.sowing import current_sowing_consumption
 
-from .models import CostAllocation
+from .models import CostAllocation, CostAllocationRun
 from .test_services import CohortStockTestCase, CostingServiceTestCase
 
 
@@ -54,6 +57,20 @@ def settle(case):
     InputApplication.objects.filter(workspace=case.workspace).update(applied_at=SETTLED)
     CostAllocation.objects.filter(batch=case.batch).update(created=SETTLED, effective_at=SETTLED)
     PlantCohort.objects.filter(batch=case.batch).update(observed_at=SETTLED)
+
+
+def live_at(case, when):
+    """Return the batch's layers standing at one instant, whatever they target.
+
+    The two clauses `bookkeeping.services._cohort_layers_at` reads a block
+    with, widened to the whole batch: effective before `when`, and either
+    never reversed or reversed only at or after it. A batch's live layers have
+    to add back up to what it cost at every instant, which is what catches two
+    versions of one key overlapping.
+    """
+    return CostAllocation.objects.filter(
+        batch=case.batch, reversal_of=None, effective_at__lt=when,
+    ).filter(Q(reversal__isnull=True) | Q(reversal__effective_at__gte=when))
 
 
 def cohort_layer(case):
@@ -98,6 +115,32 @@ class SourceDateTests(CostingServiceTestCase):
         ).first()
         self.assertEqual(layer.effective_at, EARLY)
         self.assertGreater(layer.created, layer.effective_at)
+
+    def test_a_pool_loss_is_dated_by_the_closure_that_retired_it(self):
+        """Not by the sowing the cost came out of (task 143 reads this).
+
+        Retiring an ungerminated remainder re-targets the sowing's own cost
+        from the cells to production loss, and the sowing is already on file,
+        so the loss starts on the day somebody said the sowing was finished.
+        Dated by the source it would have carried the sowing movement's stamp
+        and landed in whatever period the seed went in. The sowing is settled
+        back to January first, so the closure is the later of the two facts
+        and the clamp has nothing to say about it.
+        """
+        sowing = self.sow([(self.cells[0], 4)])
+        settle(self)
+
+        close_germination(
+            sowing, self.user, closed_at=EARLY,
+            loss_cause=CohortOperation.LossCause.FAILED,
+            reason='The window has passed.',
+        )
+
+        loss = CostAllocation.objects.get(
+            batch=self.batch, target_type=CostAllocation.TargetType.PRODUCTION_LOSS,
+            reversal_of=None, reversal__isnull=True,
+        )
+        self.assertEqual(loss.effective_at, EARLY)
 
     def test_every_layer_the_fixture_wrote_carries_a_date(self):
         """Criterion 1: no posting path leaves the column to be guessed at."""
@@ -177,6 +220,59 @@ class RedivisionDateTests(CohortStockTestCase):
         superseded.refresh_from_db()
         self.assertEqual(superseded.reversal.effective_at, LATE)
         self.assertEqual(cohort_layer(self).effective_at, LATE)
+
+    def test_the_clamp_leaves_the_fact_its_own_date_on_the_run(self):
+        """What the clamp costs is recorded, not silently absorbed.
+
+        The layers say 1 May because they cannot say otherwise, but the run
+        still says 20 March, which is how `bookkeeping.services` knows a year
+        end between the two has lost a fact it should have counted.
+        """
+        self.lose(occurred_at=LATE)
+
+        self.promote_one(occurred_at=EARLY)
+
+        run = CostAllocationRun.objects.filter(batch=self.batch).order_by('pk').last()
+        self.assertEqual(run.occurred_at, EARLY)
+        self.assertEqual(cohort_layer(self).effective_at, LATE)
+
+    def test_a_batch_reconciles_at_every_instant_a_sale_divides_it(self):
+        """Criterion 2's real invariant: no instant sees two versions of a key.
+
+        A dispatch gives an already-posted source a new key — the block's
+        `cohort_sale` half — and dating that by the source rather than by the
+        sale would start it in January while the layer it supersedes runs to
+        May. Read as at 20 March the batch then held 1.3500 of a cost of
+        1.0800, the same unit counted twice.
+        """
+        self.sell(fulfilled_at=LATE)
+
+        for when in (EARLY, timezone.now()):
+            with self.subTest(when=when):
+                self.assertEqual(
+                    sum(row.amount for row in live_at(self, when)),
+                    Decimal('1.0800'),
+                )
+        sold = CostAllocation.objects.get(
+            batch=self.batch, target_type=CostAllocation.TargetType.COHORT_SALE,
+            source_type=CostAllocation.SourceType.SOWING_POSTING,
+            reversal_of=None, reversal__isnull=True,
+        )
+        self.assertEqual(sold.effective_at, LATE)
+
+    def test_a_loss_gives_an_already_posted_source_no_earlier_date(self):
+        """The same shape one target over: `cohort_loss` starts at the loss."""
+        self.lose(occurred_at=LATE)
+
+        self.assertEqual(
+            sum(row.amount for row in live_at(self, EARLY)), Decimal('1.0800'),
+        )
+        lost = CostAllocation.objects.get(
+            batch=self.batch, target_type=CostAllocation.TargetType.COHORT_LOSS,
+            source_type=CostAllocation.SourceType.SOWING_POSTING,
+            reversal_of=None, reversal__isnull=True,
+        )
+        self.assertEqual(lost.effective_at, LATE)
 
     def test_a_recalculation_nothing_prompted_is_dated_now(self):
         """No fact to date it by, so the run's own moment stands in."""

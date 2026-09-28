@@ -40,6 +40,7 @@ class CostingFixtureTestCase(TestCase):
         values = {
             'trigger': CostAllocationRun.Trigger.MANUAL_RECALCULATE,
             'reason': 'Built for tests.',
+            'occurred_at': timezone.now(),
         }
         values.update(overrides)
         if 'batch' not in values:
