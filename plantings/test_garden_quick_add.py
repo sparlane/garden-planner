@@ -1,11 +1,14 @@
 """REST workflow tests for source-neutral Garden quick-add."""
 
+from datetime import date
+
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from costing.models import CostAllocation
+from costing.models import CostAllocation, CostAllocationRun
 from tests.factories import make_garden_square, make_location, make_plant
 from workspaces.models import Workspace, get_current_workspace
+from workspaces.timekeeping import recorded_day
 
 from .models import GardenPlanting, SpecificPlant, SpecificPlantLocation
 
@@ -117,6 +120,29 @@ class GardenQuickAddTests(APITestCase):
         ).order_by('specific_plant_id')
         self.assertEqual(layers.count(), 2)
         self.assertEqual([layer.amount for layer in layers], [6, 6])
+
+    def test_the_costing_run_is_dated_by_the_day_the_planting_records(self):
+        """Not by the day somebody typed it up.
+
+        A quick-add may join a batch that already carries layers, and the run
+        it prompts re-divides them, so taking today's date would move a
+        March planting's whole batch into the month it was entered in.
+        """
+        self.create_reviewed([
+            self.entry(
+                tracking=GardenPlanting.Tracking.INDIVIDUAL,
+                quantity=1, individual_names=[], purchase_cost='6.0000',
+            ),
+        ])
+
+        recorded = recorded_day(self.workspace, date(2026, 8, 1))
+        run = CostAllocationRun.objects.get()
+        self.assertEqual(run.occurred_at, recorded)
+        layer = CostAllocation.objects.get(
+            source_type=CostAllocation.SourceType.GARDEN_PLANTING,
+            reversal_of__isnull=True, reversal__isnull=True,
+        )
+        self.assertEqual(layer.effective_at, recorded)
 
     def test_generated_cycle_exposes_the_quick_origin_in_advanced_detail(self):
         """Switching presentation modes does not hide the technical origin."""

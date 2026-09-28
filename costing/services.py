@@ -28,12 +28,13 @@ already an audited transition with a required reason.
 **A layer is dated by the fact behind it, not by the run.** `reallocate_batch`
 takes the `occurred_at` of whatever it is reacting to — an application's
 `applied_at`, a cohort operation's `occurred_at`, a fulfillment's
-`fulfilled_at` — and `_effective_dates` spreads it over the layers the run
-writes: the first layer of a source by that source's own record, and every
-reversal and replacement by the fact prompting them. So media applied in March
-and posted in April is March's cost, and a re-division moves no cost between
-years, because the superseded layer stays effective right up to the day the
-thing that superseded it happened, whenever somebody typed it.
+`fulfilled_at` — stores it on the run and hands it to `costing.dating`, which
+spreads it over the layers the run writes: a source arriving for the first
+time by that source's own record, and everything else by the fact prompting
+the run. So media applied in March and posted in April is March's cost, and a
+re-division moves no cost between years, because the superseded layer stays
+effective right up to the day the thing that superseded it happened, whenever
+somebody typed it.
 """
 
 # pylint: disable=duplicate-code
@@ -54,6 +55,7 @@ from plantings.models import PlantCohort, ProductionBatch, SpecificPlant, Specif
 from .allocation import combine, loss_shares, value_shares
 from .batch_projection import batch_cost_projection
 from .currency import cost_blocked, currency_amounts, held_by_currency, stated_currency
+from .dating import run_effective_dates
 from .pending import plant_pending_cost, plant_sale_totals
 from .models import CostAllocation, CostAllocationRun, FillDepartureRecalculation
 from .cohort_weights import cohort_weights
@@ -482,16 +484,21 @@ def _frozen_plan(intended, stored, standing_at_freeze=frozenset()):
 
 
 def _plan(batch):
-    """Return the layers to reverse and the layers to post, without writing."""
+    """Return the layers to reverse, the layers to post, and the sources on file.
+
+    The third is what `costing.dating` needs to tell a source arriving for the
+    first time from one whose cost is merely being re-targeted.
+    """
     intended = intended_layers(batch)
     stored = {_stored_key(row): row for row in effective_allocations(batch)}
+    on_file = {(row.source_type, row.source_id) for row in stored.values()}
     if is_frozen(batch):
         standing_at_freeze = frozenset(
             PlantCohort.objects
             .filter(batch=batch, created__lt=batch.output_finalized_at)
             .values_list('pk', flat=True)
         )
-        return _frozen_plan(intended, stored, standing_at_freeze)
+        return (*_frozen_plan(intended, stored, standing_at_freeze), on_file)
     reverse = [
         row for key, row in stored.items()
         if key not in intended or not _matches(row, intended[key])
@@ -500,33 +507,7 @@ def _plan(batch):
         spec for key, spec in intended.items()
         if key not in stored or not _matches(stored[key], spec)
     ]
-    return reverse, post
-
-
-def _effective_dates(occurred_at, reverse, post):
-    """Date every layer one run is about to write.
-
-    `occurred_at` is when the fact this run is reacting to happened. It is what
-    withdraws a superseded layer and what its replacement starts from, so those
-    two are the same date and the interval between two versions of one key has
-    no gap and no overlap. A layer whose key is not being replaced is the first
-    of its source, so it takes the source's own date instead — which is the
-    whole of the March-applied, April-posted case — and falls back to the run's
-    date where the record carries none but the moment it was typed.
-
-    The run's date is never earlier than the layers it is withdrawing. Facts
-    recorded in the order they happened never reach that clamp; one recorded
-    out of order would otherwise leave two versions of a key live at once, and
-    a year-end reader would count both.
-    """
-    withdrawn = [row.effective_at for row in reverse]
-    effective = max([occurred_at] + withdrawn) if withdrawn else occurred_at
-    replaced = {_stored_key(row) for row in reverse}
-    return effective, [
-        effective if _layer_key(spec) in replaced
-        else (spec.get('source_occurred_at') or effective)
-        for spec in post
-    ]
+    return reverse, post, on_file
 
 
 @transaction.atomic
@@ -551,14 +532,16 @@ def reallocate_batch(batch, user, trigger, reason='', occurred_at=None):
             'trigger': f'Value {trigger!r} is not a valid choice.',
         }) from exc
     batch = lock_batch_with_plants(batch)
-    reverse, post = _plan(batch)
+    reverse, post, on_file = _plan(batch)
     if not reverse and not post:
         return None
-    effective, posted_at = _effective_dates(occurred_at or timezone.now(), reverse, post)
+    occurred_at = occurred_at or timezone.now()
+    effective, posted_at = run_effective_dates(occurred_at, reverse, post, on_file)
     run = CostAllocationRun.objects.create(
         workspace=batch.workspace,
         batch=batch,
         trigger=trigger,
+        occurred_at=occurred_at,
         reason=reason,
         posted_count=len(post),
         reversed_count=len(reverse),

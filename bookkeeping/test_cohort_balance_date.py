@@ -427,6 +427,42 @@ class CohortRecordedLateTests(CohortStockTestCase):
         self.assert_three_left(line)
         self.assertIn('valued on the layers standing then', line.assumptions)
 
+    def test_the_same_two_facts_typed_the_other_way_round_are_flagged(self):
+        """Recorded out of order, the cost cannot follow the count, and it says so.
+
+        The spring sale is typed first and the March loss after it, so the
+        loss's run has to be clamped to the sale's date: dating it 20 March
+        would restart the block's layer before the one it supersedes ended and
+        leave both live on the balance date. The count still reads 20 March,
+        so the block is counted after the loss and valued before it — the
+        mismatch task 148's `_recorded_late` existed to stop, arriving by the
+        other route, and left unflagged it overstates closing stock.
+
+        There is no right figure to publish: the version that reflects the
+        loss and not the sale was never written. So the as-at reading stands
+        and the line is provisional, which holds the year open.
+        """
+        self.sell()
+        self.lose(occurred_at=MARCH)
+
+        line = self.capture()[self.cohort.pk]
+        self.assertEqual(
+            (f'{line.quantity:.9f}', f'{line.value:.4f}', line.provisional),
+            ('3.000000000', '1.0800', True),
+        )
+        self.assertIn('recorded after a later one', line.assumptions)
+        codes = [row['code'] for row in build_report(self.income_year)['data_quality']]
+        self.assertIn('provisional_stock', codes)
+
+    def test_two_facts_typed_in_order_before_the_balance_date_are_not_flagged(self):
+        """The control: the clamp only matters where it crosses the year end."""
+        self.lose(occurred_at=MARCH)
+        self.backdate()
+
+        line = self.capture()[self.cohort.pk]
+        self.assert_three_left(line)
+        self.assertNotIn('recorded after a later one', line.assumptions)
+
 
 class CohortLayerEffectiveDateTests(CohortStockTestCase):
     """Cost incurred before the balance date and posted after it (task 163).

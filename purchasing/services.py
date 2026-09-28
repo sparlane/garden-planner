@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from inventory.models import StockReceiptLine
 from inventory.units import convert_standard_quantity
+from workspaces.timekeeping import recorded_day
 
 from .models import (
     BusinessExpense,
@@ -501,7 +502,6 @@ def _allocate_expense(expense, user):
     if expense.batch_cost_treatment == 'non_labor':
         # Domain callback: importing here keeps purchasing usable during costing setup.
         from costing.services import reallocate_batch  # pylint: disable=import-outside-toplevel,cyclic-import
-        from costing.sources import recorded_day  # pylint: disable=import-outside-toplevel,cyclic-import
         reallocate_batch(
             expense.production_batch, user, 'manual_recalculate',
             reason=f'Non-labor expense {expense.pk}: {expense.status}',
