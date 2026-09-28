@@ -306,6 +306,13 @@ def _clamped_across(workspace, end):
     first posting takes its source's date, which can straddle `end` for
     perfectly ordinary reasons — so only reversals are read.
 
+    The posting-only case is deliberately left to fall where it does. A
+    clamped run can give a block its *first* layer at or after `end` — a split
+    dated 20 March typed after a 5 April sale lands the child's layer on 5
+    April — and such a block then has no layer standing at the balance date at
+    all, so it is `uncosted`, which is already counted, unvalued and
+    provisional. Naming it here as well would flag it twice for one reason.
+
     There is no right figure to publish instead: the version that reflects the
     earlier fact and not the later one was never written. So the line keeps
     the as-at reading and is marked provisional, which is what task 148 did
