@@ -551,7 +551,7 @@ def _cohort_loss_rows(layer, losses, filters, start, end):
     layer. Each part is dated and caused by its own operation, which is what
     the identified half gets from a plant's lifecycle.
     """
-    if filters.get('garden_square') or not losses:
+    if filters.get('garden_square'):
         return []
     weights = [-event.quantity_delta for event in losses]
     amounts = distribute_exactly(layer.amount, weights)
@@ -579,8 +579,27 @@ def _cohort_loss_rows(layer, losses, filters, start, end):
 
 
 def _loss_rows(workspace, filters, start, end):
+    """Return the period's loss rows, and the loss layers nothing dates.
+
+    Every loss is placed by the fact that caused it: a plant's by the cull or
+    the failure its lifecycle records, a block's by the operation that
+    recorded each loss, and a pool loss by `effective_at` — the day the
+    germination closure, the clean that discarded the remainder, or the
+    finalization retired the cost, which task 163 put on the layer. `created`
+    is the stamp of the run that wrote the row, and a reallocation writes a
+    fresh one every time it re-divides a batch, so dating by it moved a closed
+    period's loss into the period somebody recalculated in and took it out of
+    the period it happened in.
+
+    A layer no fact dates is returned separately rather than silently dropped.
+    After task 163 a pool loss always carries a date, so the only such layer
+    is a block's whose recorded losses have all been corrected while its loss
+    layer still stands — a batch whose cost has not been recalculated against
+    its own corrected facts. That money is loss in no period, which is what
+    `undated_loss` says.
+    """
     if any(filters.get(key) for key in ('customer', 'order', 'fulfillment')):
-        return []
+        return [], []
     layers = CostAllocation.objects.filter(
         workspace=workspace, reversal_of__isnull=True, reversal__isnull=True,
     ).select_related('batch__variety', 'specific_plant')
@@ -594,16 +613,19 @@ def _loss_rows(workspace, filters, start, end):
     summaries = lifecycle_summaries(plant_ids)
     cohort_losses = _cohort_losses(layers)
     rows = []
+    undated = []
     for layer in layers.order_by('pk'):
         if layer.target_type == CostAllocation.TargetType.COHORT_LOSS:
-            rows.extend(_cohort_loss_rows(
-                layer, cohort_losses[layer.plant_cohort_id], filters, start, end,
-            ))
+            losses = cohort_losses[layer.plant_cohort_id]
+            if not losses:
+                undated.append(layer)
+                continue
+            rows.extend(_cohort_loss_rows(layer, losses, filters, start, end))
             continue
         occurred_at = None
         cause = None
         if layer.target_type == CostAllocation.TargetType.PRODUCTION_LOSS:
-            occurred_at = layer.created
+            occurred_at = layer.effective_at
         elif layer.specific_plant_id:
             summary = summaries[layer.specific_plant_id]
             if summary.final_outcome in LOSS_EVENTS:
@@ -635,7 +657,7 @@ def _loss_rows(workspace, filters, start, end):
             'unvalued': layer.amount is None,
         })
         rows.append(row)
-    return rows
+    return rows, undated
 
 
 def _placed_plant_events(events, filters):
@@ -662,6 +684,13 @@ def _lost_units(workspace, filters, start, end):
     is by its lifecycle. The two therefore count the same recorded losses, one
     in units and one in money, in the vocabulary `plantings.loss` holds for
     both.
+
+    The caused money is what reconciles against these counts, and `loss_by_cause`
+    is where it is published. A pool loss has no unit and no cause to carry:
+    ungerminated seed, a discarded media remainder and what finalization never
+    placed were never stock anybody could count. It is dated by the fact that
+    retired it, so it sits in the same period the closure, the clean or the
+    freeze does, and it shows in `production_loss` and in no cause bucket.
     """
     if any(filters.get(key) for key in ('customer', 'order', 'fulfillment')):
         return empty_totals()
@@ -700,7 +729,8 @@ def profitability_report(workspace, filters):
     rows.extend(_packaging_rows(fulfillments, filters))
     rows.extend(_refund_rows(workspace, filters, start, end))
     rows.extend(_return_rows(workspace, filters, start, end))
-    rows.extend(_loss_rows(workspace, filters, start, end))
+    loss_rows, undated_loss = _loss_rows(workspace, filters, start, end)
+    rows.extend(loss_rows)
     rows.sort(key=lambda row: (row['occurred_at'], row['kind'], row['source_id']))
     lost_units = _lost_units(workspace, filters, start, end)
     money_fields = SALES_FIELDS + COST_FIELDS
@@ -725,7 +755,14 @@ def profitability_report(workspace, filters):
     unvalued = [row for row in rows if row['unvalued']]
     unattributed = [row for row in rows if row.get('dimension_unattributed')]
     currencies = set(by_currency)
-    incomplete = bool(provisional or unvalued or unattributed or len(currencies) != 1)
+    # An undated loss keeps the margin open the way an unvalued cost does. It
+    # belongs to no period, so no period can say its loss is complete: the
+    # money may be this one's. Recalculating the batch it names is what clears
+    # it, because that is what takes a loss layer off a block that no longer
+    # records the loss it stood for.
+    incomplete = bool(
+        provisional or unvalued or unattributed or undated_loss or len(currencies) != 1
+    )
     summaries = []
     for currency, values in sorted(by_currency.items()):
         direct_cogs = sum(
@@ -757,6 +794,7 @@ def profitability_report(workspace, filters):
         ('provisional_cost', provisional, 'Provisional cost is excluded from finalized margin.'),
         ('unvalued_cost', unvalued, 'Unknown cost is not treated as zero.'),
         ('dimension_unattributed_cost', unattributed, 'Packaging cannot be exactly assigned to this production dimension.'),
+        ('undated_loss', undated_loss, 'Loss that no recorded fact dates is in no period.'),
     ):
         if selected:
             quality.append({
@@ -781,6 +819,7 @@ def profitability_report(workspace, filters):
             'provisional_rows': len(provisional),
             'unvalued_rows': len(unvalued),
             'dimension_unattributed_rows': len(unattributed),
+            'undated_loss_layers': len(undated_loss),
             'finalized_margin_available': not incomplete,
         },
         reconciliation={
@@ -792,7 +831,11 @@ def profitability_report(workspace, filters):
                 'counting anonymous cohort units and identified plants in the '
                 'same vocabulary; production loss values both halves, each '
                 'lost unit at its share of its batch\'s cost, dated and caused '
-                'by the loss that recorded it'
+                'by the loss that recorded it. Cost retired with no unit to '
+                'lose — ungerminated seed, a discarded media remainder, what '
+                'finalization never placed — is dated by the fact that retired '
+                'it and carries no cause, so it is in production loss and in '
+                'no unit count'
             ),
         },
         data_quality=quality,
