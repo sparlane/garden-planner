@@ -65,6 +65,10 @@ interface ProfitabilityTotals {
   provisional_rows: number
   unvalued_rows: number
   dimension_unattributed_rows: number
+  // Loss layers no recorded fact dates, which are therefore in no period's
+  // rows at all. They are counted here because nothing else on the report
+  // would show that the loss exists.
+  undated_loss_layers: number
   finalized_margin_available: boolean
 }
 
