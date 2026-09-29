@@ -161,6 +161,135 @@ def _line_currency(income_year, held):
     return next(iter(held)) if len(held) == 1 else income_year.workspace.currency_code
 
 
+#: What a line says when the subledger had not reached the stock yet. The
+#: units were standing there, so the line is captured and counted, but no layer
+#: had been posted against them by the balance date and inventing one from a
+#: later run's figures would value year-end stock out of next year's costs.
+#: `{thing}` is the block or the plant, which is the only difference between
+#: the two halves of the capture: the situation is one situation.
+UNCOSTED_ASSUMPTION = (
+    'No cost layer stood against this {thing} at the balance date, so its '
+    'inputs were priced only afterwards and no cost is stated.'
+)
+
+#: What a line says when the two halves disagree after all, because a fact
+#: dated before year end was recorded after a later one. `_clamped_across`
+#: says how that is detected and why the cost could not follow the count.
+OUT_OF_ORDER_ASSUMPTION = (
+    'A fact dated before year end was recorded after a later one, so the '
+    'subledger could not move its cost back without valuing this {thing} '
+    'twice. What was standing here reads the earlier date and the value does '
+    'not.'
+)
+
+
+def _clamped_across(workspace, end, column):
+    """Return the blocks, or plants, whose cost was held back across `end`.
+
+    `costing.dating` will not date a layer before the one it supersedes, so
+    two facts recorded out of the order they happened in file the earlier one
+    under the later one's date. Usually that is harmless — both fall in the
+    same year — but where the earlier fact is before `end` and the later one
+    is at or after it, the cost it moved stays on the wrong side of the
+    balance date while the capture puts the stock itself where its own date
+    says it was. The line would then be counted after the fact and valued
+    before it, which is the mismatch task 148's `_recorded_late` existed to
+    stop, arriving by the other route.
+
+    It is detectable because the run keeps the fact's own date. A *reversal*
+    always carries the run's clamped date, so a reversal effective at or after
+    `end` whose run was prompted by a fact before it is exactly a withdrawal
+    the clamp pushed across the year. A posting is not a reliable witness — a
+    first posting takes its source's date, which can straddle `end` for
+    perfectly ordinary reasons — so only reversals are read.
+
+    The posting-only case is deliberately left to fall where it does. A
+    clamped run can give a block its *first* layer at or after `end` — a split
+    dated 20 March typed after a 5 April sale lands the child's layer on 5
+    April — and such a block then has no layer standing at the balance date at
+    all, so it is `uncosted`, which is already counted, unvalued and
+    provisional. Naming it here as well would flag it twice for one reason.
+
+    There is no right figure to publish instead: the version that reflects the
+    earlier fact and not the later one was never written. So the line keeps
+    the as-at reading and is marked provisional, which is what task 148 did
+    with the same disagreement and what holds the year open until somebody
+    re-costs the batch.
+
+    `column` is the target column to read, which `CostAllocation.TargetType`
+    names identically to its own value, so it is also the target type: a
+    re-division reverses every output's layer, named or numbered, so a clamped
+    run reaches a promoted plant exactly as it reaches the block it came out
+    of.
+    """
+    return set(
+        CostAllocation.objects
+        .filter(
+            target_type=column, reversal_of__isnull=False,
+            run__occurred_at__lt=end, effective_at__gte=end,
+            **{f'{column}__workspace': workspace},
+        )
+        .values_list(f'{column}_id', flat=True)
+    )
+
+
+def _group_layers(rows):
+    """Collect `(target, amount, currency)` rows into a list per thing."""
+    layers = defaultdict(list)
+    for target_id, amount, code in rows:
+        layers[target_id].append((amount, code))
+    return layers
+
+
+def _layers_at(column, target_ids, end):
+    """Group the standing cost layers each block, or plant, carried at `end`.
+
+    A layer is effective from the day the fact behind it happened until the day
+    the fact that superseded it did, so the test is that pair: effective before
+    `end`, and either never reversed or reversed only at or after it. Every way
+    a batch's cost can move works through one shape — the superseded layer is
+    reversed and its replacement posted in the same run — so a spring sale, a
+    sibling block appearing and re-dividing a source, and a media application
+    put on in April are all kept out of the closed year by the same test,
+    without any of them having to be recognised.
+
+    The date read is `CostAllocation.effective_at`, not the run's stamp, which
+    is the same choice the count sides make and the reason the halves agree. A
+    sale dated 20 March and typed in April takes its cost out of the block on
+    20 March, and media applied on 20 March and posted on 5 April is in the
+    year it was applied in. Something with no layer at all is said out loud
+    rather than filed as a zero.
+
+    `column` is the target column, which is also the target type it carries:
+    `plant_cohort` is shared with the sold and the lost parts of a block's
+    cost, so naming the type is what keeps cost of sale and production loss out
+    of closing stock, and `specific_plant` is its own.
+    """
+    return _group_layers(CostAllocation.objects.filter(
+        target_type=column, reversal_of=None, effective_at__lt=end,
+        **{f'{column}_id__in': target_ids},
+    ).filter(
+        Q(reversal__isnull=True) | Q(reversal__effective_at__gte=end),
+    ).values_list(f'{column}_id', 'amount', 'currency_code'))
+
+
+def _held_amounts(standing):
+    """Total one thing's standing layers by currency, counting the unpriced.
+
+    A layer with no amount is an input whose own cost is not known yet, which
+    is a gap in the figure rather than a zero in it, so it is counted and not
+    summed.
+    """
+    held = defaultdict(Decimal)
+    unpriced = 0
+    for amount, code in standing:
+        if amount is None:
+            unpriced += 1
+        else:
+            held[code] += amount
+    return held, unpriced
+
+
 def _promoted_after(workspace, end):
     """Return the plants a promotion dated at or after `end` gave identities to.
 
@@ -184,8 +313,31 @@ def _promoted_after(workspace, end):
     return promoted
 
 
+#: A plant line's standing assumption. Which plants were standing there is a
+#: replay of their own facts; what they were worth is a reading of the layers
+#: that stood against them then, which is the half task 162 added.
+PLANT_ASSUMPTION = 'Lifecycle replay through year end: {state}. Valued on the layers standing then.'
+
+
 def _capture_plants(income_year, user, end):
-    """Freeze individual plants physically present at the balance instant."""
+    """Freeze individual plants physically present at the balance instant.
+
+    Both halves read the day a thing happened, never the day somebody typed
+    it. Which plants were standing there needs no reconstruction beyond the
+    one it already had: a plant's existence is dated by `germinated` and every
+    later fact about it by its own `occurred_at`, both of them operator
+    inputs, so a seedling recorded in September that came up in March is
+    captured and one that came up in September is not. That is where a block
+    differs — a block carries a running `quantity` that has to be replayed
+    backwards, while a plant is one unit that either was there or was not.
+
+    The value now reads the same date. It is the layers that stood against the
+    plant at `end`, not the ones the subledger has divided since, so an input
+    posted in April and a sibling block's spring recount re-dividing the batch
+    both leave a plant that was standing on 31 March at the figure it carried
+    then. Before that this half alone was read as it stands, and a frozen
+    year-end value moved silently whenever anything re-divided the batch.
+    """
     # Filtered in Python rather than through `exclude(pk__in=...)`: two seasons
     # of promotions is a bind parameter each, and the rows are in hand anyway.
     promoted = _promoted_after(income_year.workspace, end)
@@ -197,25 +349,28 @@ def _capture_plants(income_year, user, end):
             workspace=income_year.workspace, plant__in=plants,
             occurred_at__lt=end).order_by('occurred_at', 'pk'):
         events[event.plant_id].append(event)
-    values = defaultdict(lambda: defaultdict(Decimal))
-    unknown = set()
-    for row in CostAllocation.objects.filter(
-            specific_plant__in=plants, reversal_of=None,
-            reversal__isnull=True).values('specific_plant_id', 'amount', 'currency_code'):
-        if row['amount'] is None:
-            unknown.add(row['specific_plant_id'])
-        else:
-            values[row['specific_plant_id']][row['currency_code']] += row['amount']
+    standing = [
+        (plant, summary) for plant, summary in (
+            (plant, derive_state(events[plant.pk])) for plant in plants
+        ) if summary.state in PRESENT_STATES
+    ]
+    layers = _layers_at('specific_plant', [plant.pk for plant, _summary in standing], end)
+    out_of_order = _clamped_across(income_year.workspace, end, 'specific_plant')
     rows = []
-    for plant in plants:
-        summary = derive_state(events[plant.pk])
-        if summary.state not in PRESENT_STATES:
-            continue
-        held = values[plant.pk]
-        mixed, assumptions = _mixed_currency(
-            held, f'Lifecycle replay through year end: {summary.state}.',
-        )
-        value = None if mixed else money(sum(held.values(), ZERO))
+    for plant, summary in standing:
+        held, unpriced = _held_amounts(layers.get(plant.pk, ()))
+        uncosted = plant.pk not in layers
+        unsettled = plant.pk in out_of_order
+        assumptions = PLANT_ASSUMPTION.format(state=summary.state)
+        if uncosted:
+            assumptions = f'{assumptions} {UNCOSTED_ASSUMPTION.format(thing="plant")}'
+        if unsettled:
+            assumptions = f'{assumptions} {OUT_OF_ORDER_ASSUMPTION.format(thing="plant")}'
+        mixed, assumptions = _mixed_currency(held, assumptions)
+        # An uncosted plant states no cost at all rather than a zero one, the
+        # shape the capture already uses for an unpriced lot, for stock raised
+        # in two currencies and for a block the subledger had not reached.
+        value = None if mixed or uncosted else money(sum(held.values(), ZERO))
         rows.append(StockValuationLine.objects.create(
             income_year=income_year,
             category=(StockValuationLine.Category.SALEABLE_PLANTS if summary.sellable else StockValuationLine.Category.WORK_IN_PROGRESS),
@@ -225,33 +380,15 @@ def _capture_plants(income_year, user, end):
             method=StockValuationLine.Method.COST, value=value or ZERO,
             currency_code=_line_currency(income_year, held),
             assumptions=assumptions,
-            derived=True, provisional=plant.pk in unknown or mixed,
+            derived=True,
+            provisional=unsettled or uncosted or bool(unpriced) or mixed,
             created_by=user,
         ))
     return rows
 
 
-#: What a cohort line says when the subledger had not reached the block yet.
-#: The units were standing there, so the line is captured and counted, but no
-#: layer had been posted against the block by the balance date and inventing
-#: one from a later run's figures would value year-end stock out of next year's
-#: costs.
-UNCOSTED_COHORT_ASSUMPTION = (
-    'No cost layer stood against this block at the balance date, so its '
-    'inputs were priced only afterwards and no cost is stated.'
-)
-
 #: A cohort line's standing assumption: both halves of it are reconstructions.
 COHORT_ASSUMPTION = 'Cohort events replayed through year end, valued on the layers standing then.'
-
-#: What a line says when the two halves disagree after all, because a fact
-#: dated before year end was recorded after a later one. `_clamped_across`
-#: says how that is detected and why the cost could not follow the count.
-OUT_OF_ORDER_ASSUMPTION = (
-    'A fact dated before year end was recorded after a later one, so the '
-    'subledger could not move its cost back without valuing this block twice. '
-    'The count reads the earlier date and the value does not.'
-)
 
 
 def _cohorts_at(workspace, end):
@@ -286,86 +423,6 @@ def _cohorts_at(workspace, end):
     return later
 
 
-def _clamped_across(workspace, end):
-    """Return the blocks whose cost was held back across the balance date.
-
-    `costing.dating` will not date a layer before the one it supersedes, so
-    two facts recorded out of the order they happened in file the earlier one
-    under the later one's date. Usually that is harmless — both fall in the
-    same year — but where the earlier fact is before `end` and the later one
-    is at or after it, the cost it moved stays on the wrong side of the
-    balance date while `_cohorts_at` moves the unit by the date it really
-    carries. The block would then be counted after the fact and valued before
-    it, which is the mismatch task 148's `_recorded_late` existed to stop,
-    arriving by the other route.
-
-    It is detectable because the run keeps the fact's own date. A *reversal*
-    always carries the run's clamped date, so a reversal effective at or after
-    `end` whose run was prompted by a fact before it is exactly a withdrawal
-    the clamp pushed across the year. A posting is not a reliable witness — a
-    first posting takes its source's date, which can straddle `end` for
-    perfectly ordinary reasons — so only reversals are read.
-
-    The posting-only case is deliberately left to fall where it does. A
-    clamped run can give a block its *first* layer at or after `end` — a split
-    dated 20 March typed after a 5 April sale lands the child's layer on 5
-    April — and such a block then has no layer standing at the balance date at
-    all, so it is `uncosted`, which is already counted, unvalued and
-    provisional. Naming it here as well would flag it twice for one reason.
-
-    There is no right figure to publish instead: the version that reflects the
-    earlier fact and not the later one was never written. So the line keeps
-    the as-at reading and is marked provisional, which is what task 148 did
-    with the same disagreement and what holds the year open until somebody
-    re-costs the batch.
-    """
-    return set(
-        CostAllocation.objects
-        .filter(
-            plant_cohort__workspace=workspace,
-            target_type=CostAllocation.TargetType.PLANT_COHORT,
-            reversal_of__isnull=False,
-            run__occurred_at__lt=end, effective_at__gte=end,
-        )
-        .values_list('plant_cohort_id', flat=True)
-    )
-
-
-def _group_layers(rows):
-    """Collect `(cohort, amount, currency)` rows into a list per block."""
-    layers = defaultdict(list)
-    for cohort_id, amount, code in rows:
-        layers[cohort_id].append((amount, code))
-    return layers
-
-
-def _cohort_layers_at(cohort_ids, end):
-    """Group the standing cost layers each block carried at the balance instant.
-
-    A layer is effective from the day the fact behind it happened until the day
-    the fact that superseded it did, so the test is that pair: effective before
-    `end`, and either never reversed or reversed only at or after it. Every way
-    a block's cost can move works through one shape — the superseded layer is
-    reversed and its replacement posted in the same run — so a spring sale, a
-    sibling block's loss re-dividing a source, and a media application put on
-    in April are all kept out of the closed year by the same test, without any
-    of them having to be recognised.
-
-    The date read is `CostAllocation.effective_at`, not the run's stamp, which
-    is the same choice `_cohorts_at` makes on the count side and the reason the
-    two halves now agree. A sale dated 20 March and typed in April takes its
-    cost out of the block on 20 March, and media applied on 20 March and posted
-    on 5 April is in the year it was applied in. A block with no layer at all
-    is said out loud rather than filed as a zero.
-    """
-    return _group_layers(CostAllocation.objects.filter(
-        plant_cohort_id__in=cohort_ids, target_type=CostAllocation.TargetType.PLANT_COHORT,
-        reversal_of=None, effective_at__lt=end,
-    ).filter(
-        Q(reversal__isnull=True) | Q(reversal__effective_at__gte=end),
-    ).values_list('plant_cohort_id', 'amount', 'currency_code'))
-
-
 def _capture_cohorts(income_year, user, end):
     """Freeze each anonymous block as it stood at the balance instant.
 
@@ -395,10 +452,16 @@ def _capture_cohorts(income_year, user, end):
     recorded out of the order they happened in, straddling the balance date.
     `_clamped_across` finds those blocks and says what the ledger could not do
     about them.
+
+    The value half and the flag are shared with `_capture_plants`, which reads
+    the same two rules down the `specific_plant` column: a batch's cost divides
+    over its named and its numbered outputs together, so reading one of them as
+    at the balance date and the other as it stands would land the same cost in
+    both lines.
     """
     workspace = income_year.workspace
     later = _cohorts_at(workspace, end)
-    out_of_order = _clamped_across(workspace, end)
+    out_of_order = _clamped_across(workspace, end, 'plant_cohort')
     cohorts = PlantCohort.objects.filter(workspace=workspace).filter(
         Q(quantity__gt=0) | Q(pk__in=list(later)),
     ).select_related('batch__variety')
@@ -410,24 +473,19 @@ def _capture_cohorts(income_year, user, end):
         # as stock in a year it did not exist in.
         if cohort.quantity - moved > 0:
             held_at_end.append((cohort, cohort.quantity - moved, state))
-    layers = _cohort_layers_at([cohort.pk for cohort, _quantity, _state in held_at_end], end)
+    layers = _layers_at(
+        'plant_cohort', [cohort.pk for cohort, _quantity, _state in held_at_end], end,
+    )
     rows = []
     for cohort, quantity, state in held_at_end:
-        standing = layers.get(cohort.pk, [])
-        held = defaultdict(Decimal)
-        unpriced = 0
-        for amount, code in standing:
-            if amount is None:
-                unpriced += 1
-            else:
-                held[code] += amount
-        uncosted = not standing
+        held, unpriced = _held_amounts(layers.get(cohort.pk, ()))
+        uncosted = cohort.pk not in layers
         unsettled = cohort.pk in out_of_order
         assumptions = COHORT_ASSUMPTION
         if uncosted:
-            assumptions = f'{assumptions} {UNCOSTED_COHORT_ASSUMPTION}'
+            assumptions = f'{assumptions} {UNCOSTED_ASSUMPTION.format(thing="block")}'
         if unsettled:
-            assumptions = f'{assumptions} {OUT_OF_ORDER_ASSUMPTION}'
+            assumptions = f'{assumptions} {OUT_OF_ORDER_ASSUMPTION.format(thing="block")}'
         mixed, assumptions = _mixed_currency(held, assumptions)
         # An uncosted block states no cost at all rather than a zero one, the
         # shape the capture already uses for an unpriced lot and for stock

@@ -62,7 +62,7 @@ def settle(case):
 def live_at(case, when):
     """Return the batch's layers standing at one instant, whatever they target.
 
-    The two clauses `bookkeeping.services._cohort_layers_at` reads a block
+    The two clauses `bookkeeping.services._layers_at` reads a block or a plant
     with, widened to the whole batch: effective before `when`, and either
     never reversed or reversed only at or after it. A batch's live layers have
     to add back up to what it cost at every instant, which is what catches two
