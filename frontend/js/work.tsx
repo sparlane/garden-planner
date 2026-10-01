@@ -1,6 +1,6 @@
 import React from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Badge, Button, Card, Col, Form, Nav, Row, Table } from 'react-bootstrap'
+import { Alert, Badge, Button, Card, Col, Form, Modal, Nav, Row, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
 
 import { acknowledgeWorkTask, actOnWorkTask, addWorkRule, addWorkTask, getWorkAssignees, getWorkRules, getWorkTasks, updateWorkRule } from './api/work'
@@ -126,6 +126,104 @@ function ManualTaskForm() {
   )
 }
 
+function RescheduleTask({ task }: { task: WorkTask }) {
+  const cache = useQueryClient()
+  const id = React.useId()
+  const [show, setShow] = React.useState(false)
+  const [start, setStart] = React.useState('')
+  const [end, setEnd] = React.useState('')
+  const [reason, setReason] = React.useState('')
+  const mutation = useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      const acknowledged = task.pk === null ? await acknowledgeWorkTask(task.key) : task
+      return actOnWorkTask(acknowledged.pk as number, data)
+    },
+    onSuccess: () => {
+      setShow(false)
+      cache.invalidateQueries({ queryKey: queryKeys.work.all })
+    }
+  })
+  const errors = errorsByField(mutation.error)
+  const close = () => {
+    if (!mutation.isPending) setShow(false)
+  }
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const dueStart = parseLocalDatetimeInput(start)
+    const dueEnd = parseLocalDatetimeInput(end)
+    if (!dueStart || !dueEnd) return
+    mutation.mutate({ action: 'reschedule', due_start: dueStart.toISOString(), due_end: dueEnd.toISOString(), reason, idempotency_key: crypto.randomUUID() })
+  }
+  return (
+    <>
+      <Button
+        size="sm"
+        variant="outline-secondary"
+        onClick={() => {
+          setStart(localDatetimeInputValue(new Date(task.due_start)))
+          setEnd(localDatetimeInputValue(new Date(task.due_end)))
+          setReason('')
+          mutation.reset()
+          setShow(true)
+        }}
+      >
+        Reschedule
+      </Button>
+      <Modal show={show} onHide={close} aria-labelledby={`${id}-title`}>
+        <Form onSubmit={submit}>
+          <Modal.Header closeButton={!mutation.isPending}>
+            <Modal.Title id={`${id}-title`}>Reschedule {task.title}</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <p>
+              Choose a new due window in your device’s local time. This clears any snooze. Manual reminders keep their repeat rule and continue from the new date and time.
+              Already-created future reminders keep their dates.
+            </p>
+            {mutation.isError && <Alert variant="danger">{Object.values(errors).join(' ') || 'The reminder could not be rescheduled.'}</Alert>}
+            <Form.Group controlId={`${id}-start`} className="mb-3">
+              <Form.Label>Due from</Form.Label>
+              <Form.Control
+                autoFocus
+                required
+                type="datetime-local"
+                value={start}
+                onChange={(event) => setStart(event.target.value)}
+                isInvalid={!!errors.due_start}
+                disabled={mutation.isPending}
+              />
+              <Form.Control.Feedback type="invalid">{errors.due_start}</Form.Control.Feedback>
+            </Form.Group>
+            <Form.Group controlId={`${id}-end`} className="mb-3">
+              <Form.Label>Due by</Form.Label>
+              <Form.Control
+                required
+                type="datetime-local"
+                value={end}
+                onChange={(event) => setEnd(event.target.value)}
+                isInvalid={!!errors.due_end}
+                disabled={mutation.isPending}
+              />
+              <Form.Control.Feedback type="invalid">{errors.due_end}</Form.Control.Feedback>
+            </Form.Group>
+            <Form.Group controlId={`${id}-reason`}>
+              <Form.Label>Reason (optional)</Form.Label>
+              <Form.Control as="textarea" value={reason} onChange={(event) => setReason(event.target.value)} disabled={mutation.isPending} />
+            </Form.Group>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={close} disabled={mutation.isPending}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={mutation.isPending}>
+              {mutation.isPending ? 'Saving…' : 'Save dates'}
+            </Button>
+          </Modal.Footer>
+        </Form>
+      </Modal>
+    </>
+  )
+}
+
 function TaskActions({ task }: { task: WorkTask }) {
   const cache = useQueryClient()
   const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal) })
@@ -171,6 +269,7 @@ function TaskActions({ task }: { task: WorkTask }) {
       <Button size="sm" variant="success" onClick={() => mutation.mutate({ action: 'complete' })}>
         Complete
       </Button>
+      <RescheduleTask task={task} />
       <Button size="sm" variant="outline-danger" onClick={() => reasoned('skip')}>
         Skip
       </Button>
@@ -211,6 +310,17 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
                     <div className="small" key={entry.pk}>
                       {formatDateTime(entry.created)} · {entry.action} · {entry.actor_name ?? 'system'}
                       {entry.reason ? ` — ${entry.reason}` : ''}
+                      {entry.action === 'reschedule' &&
+                        ['due_start', 'due_end'].map((field) => {
+                          const change = entry.changes[field] as { before: string; after: string } | undefined
+                          return (
+                            change && (
+                              <div key={field}>
+                                {field === 'due_start' ? 'Due from' : 'Due by'}: {formatDateTime(change.before)} → {formatDateTime(change.after)}
+                              </div>
+                            )
+                          )
+                        })}
                     </div>
                   ))}
                 </details>

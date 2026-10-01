@@ -123,7 +123,9 @@ class ManualTaskSerializer(serializers.Serializer):
 
 
 class TaskActionSerializer(serializers.Serializer):
-    action = serializers.ChoiceField(choices=['assign', 'claim', 'snooze', 'complete', 'skip', 'reopen'])
+    action = serializers.ChoiceField(choices=['assign', 'claim', 'snooze', 'reschedule', 'complete', 'skip', 'reopen'])
+    due_start = serializers.DateTimeField(required=False)
+    due_end = serializers.DateTimeField(required=False)
     assignee = serializers.IntegerField(required=False, allow_null=True)
     until = serializers.DateTimeField(required=False)
     reason = serializers.CharField(required=False, allow_blank=True, default='')
