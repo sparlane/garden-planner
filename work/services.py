@@ -99,6 +99,11 @@ def _next_manual_occurrence(task, user):
     recurrence = task.recurrence
     if not recurrence:
         return None
+    # Reopening and rescheduling a past occurrence must not fork its series.
+    # A successor already issued keeps its own dates and audit history.
+    existing = task.following_occurrences.first()
+    if existing is not None:
+        return existing
     next_start = next_recurrence(
         task.workspace, task.due_start, recurrence['frequency'],
         recurrence.get('interval', 1), recurrence.get('weekdays', ()),
@@ -130,6 +135,31 @@ def _next_manual_occurrence(task, user):
             )
         _history(following, 'created', user, changes={'recurs_from': task.pk})
     return following
+
+
+def _reschedule(task, values):
+    """Move an open occurrence, preserving the old window as audit evidence."""
+    if task.status not in {WorkTask.Status.OPEN, WorkTask.Status.SNOOZED}:
+        raise ValidationError({'status': 'Reopen completed or skipped work before rescheduling it.'})
+    errors = {
+        field: 'Choose a date and time.'
+        for field in ('due_start', 'due_end') if values.get(field) is None
+    }
+    if errors:
+        raise ValidationError(errors)
+    if values['due_end'] < values['due_start']:
+        raise ValidationError({'due_end': 'The due window cannot end before it starts.'})
+    changes = {}
+    for field in ('due_start', 'due_end'):
+        changes[field] = {
+            'before': getattr(task, field).isoformat(),
+            'after': values[field].isoformat(),
+        }
+        setattr(task, field, values[field])
+    changes['snoozed_until'] = task.snoozed_until.isoformat() if task.snoozed_until else None
+    task.status = WorkTask.Status.OPEN
+    task.snoozed_until = None
+    return changes
 
 
 @transaction.atomic
@@ -165,6 +195,8 @@ def act_on_task(workspace, user, task_id, action, values):  # pylint: disable=to
         task.status = WorkTask.Status.SNOOZED
         task.snoozed_until = until
         changes['until'] = until.isoformat()
+    elif action == 'reschedule':
+        changes = _reschedule(task, values)
     elif action == 'complete':
         task.status = WorkTask.Status.COMPLETED
         task.completed_at = now
