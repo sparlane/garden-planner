@@ -10,8 +10,9 @@ year end and before the capture that values it.
 The plant's own membership needed nothing: `germinated` and every lifecycle
 event are dated by the operator, so a plant that came up in March and was
 typed in September was already captured and one that came up in September was
-already not. Two tests pin that, because it is the decision the task asked for
-rather than a change it made. What moved is the value.
+already not. Three tests pin that — the two culls and the promoted plant —
+because it is the decision the task asked for rather than a change it made.
+What moved is the value.
 """
 
 from decimal import Decimal
@@ -20,9 +21,14 @@ from uuid import uuid4
 from applications.services import reverse_application
 from costing.models import CostAllocation
 from costing.test_services import CohortStockTestCase, CostingServiceTestCase
-from plantings.cohorts import observe_cohort
+from plantings.cohorts import change_cohort, observe_cohort
 from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event
-from plantings.models import PlantLifecycleEvent, SpecificPlant, SpecificPlantLocation
+from plantings.models import (
+    CohortOperation,
+    PlantLifecycleEvent,
+    SpecificPlant,
+    SpecificPlantLocation,
+)
 
 from .models import StockValuationLine
 from .services import build_report, capture_inventory
@@ -240,6 +246,38 @@ class PlantShareOfTheBatchTests(CohortStockTestCase):
         line = self.capture()[self.plant.pk]
         self.assert_promoted_share(line)
         self.assertEqual(f'{line.original_cost:.4f}', '0.2700')
+
+    def recount(self, quantity=6, occurred_at=None):
+        """Record a stocktake finding `quantity` units in the block."""
+        self.cohort.refresh_from_db()
+        return change_cohort(
+            self.workspace, self.user,
+            cohort_id=self.cohort.pk, expected_revision=self.cohort.revision,
+            action=CohortOperation.Action.ADJUST, quantity=quantity,
+            occurred_at=occurred_at,
+            idempotency_key=uuid4(), reason='Counted at stocktake.',
+        )
+
+    def test_a_sibling_recount_after_the_balance_date_writes_no_layer_at_all(self):
+        """A control that passes either way, kept to notice if that stops being true.
+
+        A recount changes how many units one output holds without changing
+        which outputs the batch has, so `reallocate_batch` finds nothing to
+        re-divide and writes no layer — which is `costing.cohort_weights`'
+        rule that units found at a stocktake arrive at no cost. The plant's
+        share therefore cannot move, with or without the as-at reading, and
+        nothing else in the suite would fail if that rule changed. So the layer
+        set is asserted as well as the figure.
+        """
+        before = set(CostAllocation.objects.filter(batch=self.batch).values_list('pk', flat=True))
+
+        self.recount()
+
+        self.assertEqual(
+            set(CostAllocation.objects.filter(batch=self.batch).values_list('pk', flat=True)),
+            before,
+        )
+        self.assert_promoted_share(self.capture()[self.plant.pk])
 
     def test_a_sibling_block_observed_after_the_balance_date_leaves_the_share_alone(self):
         """Stock that came up in the spring divides the spring's batch, not March's.
