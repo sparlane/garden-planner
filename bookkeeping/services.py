@@ -209,6 +209,11 @@ def _clamped_across(workspace, end, column):
     April — and such a block then has no layer standing at the balance date at
     all, so it is `uncosted`, which is already counted, unvalued and
     provisional. Naming it here as well would flag it twice for one reason.
+    Both callers therefore read this set only where something *did* stand at
+    the balance date: a line that has no layer to publish is already saying the
+    strongest thing there is to say about its value, and adding that a clamp
+    also moved cost it does not carry reads as a contradiction. The flag is
+    about a figure being wrong, and such a line states no figure.
 
     There is no right figure to publish instead: the version that reflects the
     earlier fact and not the later one was never written. So the line keeps
@@ -263,7 +268,11 @@ def _layers_at(column, target_ids, end):
     `column` is the target column, which is also the target type it carries:
     `plant_cohort` is shared with the sold and the lost parts of a block's
     cost, so naming the type is what keeps cost of sale and production loss out
-    of closing stock, and `specific_plant` is its own.
+    of closing stock, and `specific_plant` is its own. That one name does two
+    jobs here and in `_clamped_across`, and a column renamed away from its type
+    would make both filters match nothing rather than raise, so
+    `costing.test_models.test_each_target_column_is_named_after_the_type_that_owns_it`
+    pins the two spellings together.
     """
     return _group_layers(CostAllocation.objects.filter(
         target_type=column, reversal_of=None, effective_at__lt=end,
@@ -349,18 +358,18 @@ def _capture_plants(income_year, user, end):
             workspace=income_year.workspace, plant__in=plants,
             occurred_at__lt=end).order_by('occurred_at', 'pk'):
         events[event.plant_id].append(event)
-    standing = [
-        (plant, summary) for plant, summary in (
-            (plant, derive_state(events[plant.pk])) for plant in plants
-        ) if summary.state in PRESENT_STATES
-    ]
+    standing = []
+    for plant in plants:
+        summary = derive_state(events[plant.pk])
+        if summary.state in PRESENT_STATES:
+            standing.append((plant, summary))
     layers = _layers_at('specific_plant', [plant.pk for plant, _summary in standing], end)
     out_of_order = _clamped_across(income_year.workspace, end, 'specific_plant')
     rows = []
     for plant, summary in standing:
         held, unpriced = _held_amounts(layers.get(plant.pk, ()))
         uncosted = plant.pk not in layers
-        unsettled = plant.pk in out_of_order
+        unsettled = not uncosted and plant.pk in out_of_order
         assumptions = PLANT_ASSUMPTION.format(state=summary.state)
         if uncosted:
             assumptions = f'{assumptions} {UNCOSTED_ASSUMPTION.format(thing="plant")}'
@@ -480,7 +489,7 @@ def _capture_cohorts(income_year, user, end):
     for cohort, quantity, state in held_at_end:
         held, unpriced = _held_amounts(layers.get(cohort.pk, ()))
         uncosted = cohort.pk not in layers
-        unsettled = cohort.pk in out_of_order
+        unsettled = not uncosted and cohort.pk in out_of_order
         assumptions = COHORT_ASSUMPTION
         if uncosted:
             assumptions = f'{assumptions} {UNCOSTED_ASSUMPTION.format(thing="block")}'

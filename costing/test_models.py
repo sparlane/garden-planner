@@ -27,6 +27,7 @@ from .models import (
     POOL_TARGET_TYPES,
     SOURCE_FIELDS,
     TARGET_COLUMNS,
+    TARGET_FIELDS,
     CostAllocation,
     CostAllocationRun,
 )
@@ -125,6 +126,23 @@ class CostAllocationIdentityTests(CostingFixtureTestCase):
         self.assertEqual(
             tuple(CostAllocation.TargetType.values),
             tuple(TARGET_COLUMNS) + POOL_TARGET_TYPES,
+        )
+
+    def test_each_target_column_is_named_after_the_type_that_owns_it(self):
+        """A reader may use one name as both the column and the target type.
+
+        `bookkeeping.services._layers_at` and `_clamped_across` read a block or
+        a plant with one query by passing the column as the lookup prefix *and*
+        as `target_type`, which is sound only while the two spellings agree.
+        Rename a column away from the type that owns it and neither filter
+        raises — they match no rows — so every captured stock line would come
+        back with no layer standing against it, unvalued and provisional, and a
+        year's closing stock would quietly go to zero. The test above pins the
+        keys; this pins that each owning type spells its own column.
+        """
+        self.assertEqual(
+            {field: TARGET_COLUMNS[field] for field in TARGET_FIELDS},
+            {field: field for field in TARGET_FIELDS},
         )
 
     def test_a_layer_resolves_to_the_things_it_points_at(self):
