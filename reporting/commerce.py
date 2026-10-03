@@ -49,6 +49,12 @@ RESTORES_COGS = {
 #: seed never came up, and a clean says the remainder was tipped out. Any other
 #: run reaching a finalized batch is posting cost that only the freeze turned
 #: into loss, and `_pool_loss_at` will not date that before the freeze.
+#:
+#: Only the clean carries a case of its own today: a germination closure recorded
+#: after the freeze writes no layer, and one recorded before it is held by the
+#: on-file branch instead. `GERMINATION_CLOSED` is here because a closure is the
+#: same kind of statement as a clean, so the floor should not move one if a path
+#: ever does post it late. Task 143's notes measure which clause holds what.
 DECLARES_LOSS = frozenset({
     CostAllocationRun.Trigger.GERMINATION_CLOSED,
     CostAllocationRun.Trigger.GENERATION_CLOSED,
