@@ -9,6 +9,7 @@ from uuid import uuid5
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from work.services import create_manual_task
@@ -57,6 +58,14 @@ def _require_reason(reason):
 
 
 def _validate_destination(workspace, destination, action):
+    """Check the bench an action moves its stock to, when it names one.
+
+    A cull or an escalation needs no destination: `culled` closes the plant's
+    location itself, and an escalation asks for attention without moving
+    anything. A quarantine or a release that names none is checked against the
+    stock instead, under the locks, by `_require_release_destination` — the
+    stock is what says whether a move is owed.
+    """
     if destination is None:
         return
     if destination.workspace_id != workspace.pk or not destination.active:
@@ -109,6 +118,71 @@ def _validate_members(case, plants, cohorts, quarantine=False):
             'cohorts': (
                 f'Cohort quantities changed after review: {changed}. '
                 'Split or inspect them again.'
+            ),
+        })
+
+
+#: The three ways an open placement puts a plant in a catalog location: the
+#: plant standing somewhere in its own right, the tray it rides in having been
+#: wheeled there, and the numbered pot it sits in having been put down there.
+#: Each carrier holds its own placement rather than copying it onto the plants,
+#: so all three have to be asked. `plantings/register.py`'s `standing_at`
+#: coalesces the same three for the same reason; a garden square is not one of
+#: them, because a square is not a location a nursery quarantines on.
+_STANDING_AT_TYPE = (
+    'location__location_type',
+    'seed_tray_cell__tray__inventory_unit__current_location__location_type',
+    'container_unit__current_location__location_type',
+)
+
+
+def _standing_in_quarantine():
+    """Match an open placement that stands its plant in quarantine, any way."""
+    match = Q()
+    for field in _STANDING_AT_TYPE:
+        match |= Q(**{field: Location.LocationType.QUARANTINE})
+    return match
+
+
+def _require_release_destination(plants, cohorts):
+    """Refuse a release that would leave stock on a quarantine bench.
+
+    `released_available` deliberately leaves a plant exactly where the
+    quarantine put it — `CLOSES_LOCATION` omits it, which task 91 decided — and
+    closing the case lifts the overlay that was keeping the stock off sale. The
+    destination is therefore the only thing that takes released stock off the
+    bench, and it is owed exactly when there is a bench to come off.
+
+    An open placement is also the test of whether the nursery still has the
+    plant, because every fact that takes one out of the nursery closes its
+    location. `released_available` not closing it is the whole reason this check
+    exists; a release that ends a return says the plant is with the customer
+    again, and the facts that say so have already closed the placement by the
+    time the case is closed. A block says where it stands on itself, and one
+    with nothing left in it is standing nowhere either.
+    """
+    standing = set(
+        SpecificPlantLocation.objects
+        .filter(specific_plant__in=plants, ended__isnull=True)
+        .filter(_standing_in_quarantine())
+        .values_list('specific_plant_id', flat=True)
+    )
+    quarantined_benches = set(
+        Location.objects.filter(
+            pk__in=[cohort.location_id for cohort in cohorts if cohort.location_id],
+            location_type=Location.LocationType.QUARANTINE,
+        ).values_list('pk', flat=True)
+    )
+    stranded = [f'Plant {plant.pk}' for plant in plants if plant.pk in standing]
+    stranded.extend(
+        f'Cohort {cohort.pk}' for cohort in cohorts
+        if cohort.quantity and cohort.location_id in quarantined_benches
+    )
+    if stranded:
+        raise ValidationError({
+            'destination': (
+                f'Released stock would stay in quarantine: {", ".join(stranded)}. '
+                'Name the location it is going to.'
             ),
         })
 
@@ -372,6 +446,8 @@ def act_on_quarantine(
         )
     plants, cohorts = _member_rows(case, lock=True)
     _validate_members(case, plants, cohorts)
+    if action_name == QuarantineAction.Action.RELEASE and destination is None:
+        _require_release_destination(plants, cohorts)
     action = QuarantineAction.objects.create(
         workspace=workspace, case=case, idempotency_key=idempotency_key,
         action=action_name, occurred_at=occurred_at or timezone.now(),

@@ -421,11 +421,23 @@ function ObservationActions({ observation }: { observation: HealthObservation })
 
 function QuarantineRow({ quarantine }: { quarantine: QuarantineCase }) {
   const cache = useQueryClient()
+  const { data: locations = [] } = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
   const [reason, setReason] = React.useState('')
+  // Where released stock is going. Only a release carries one, and it is owed
+  // exactly when a member is standing in a quarantine location — which only the
+  // server can see — so the field stays optional here and the refusal that
+  // comes back names the stock that needs it.
+  const [destination, setDestination] = React.useState<number | ''>('')
   const mutation = useMutation({
-    mutationFn: (action: 'release' | 'escalate' | 'cull') => actOnQuarantine(quarantine.pk, action, { idempotency_key: crypto.randomUUID(), reason }),
+    mutationFn: (action: 'release' | 'escalate' | 'cull') =>
+      actOnQuarantine(quarantine.pk, action, {
+        idempotency_key: crypto.randomUUID(),
+        reason,
+        destination: action === 'release' && destination !== '' ? destination : null
+      }),
     onSuccess: () => {
       setReason('')
+      setDestination('')
       void invalidateHealth(cache)
     }
   })
@@ -437,6 +449,18 @@ function QuarantineRow({ quarantine }: { quarantine: QuarantineCase }) {
       <td>{quarantine.reason}</td>
       <td>
         <Form.Control size="sm" placeholder="Action reason" value={reason} onChange={(event) => setReason(event.target.value)} />
+      </td>
+      <td>
+        <Form.Select size="sm" value={destination} onChange={(event) => setDestination(event.target.value ? Number(event.target.value) : '')}>
+          <option value="">Leave where it is</option>
+          {locations
+            .filter((row) => row.location_type !== 'quarantine')
+            .map((row) => (
+              <option key={row.pk} value={row.pk}>
+                {row.name}
+              </option>
+            ))}
+        </Form.Select>
       </td>
       <td className="d-flex gap-1">
         <Button size="sm" variant="success" disabled={!reason || mutation.isPending} onClick={() => mutation.mutate('release')}>
@@ -512,6 +536,7 @@ function HealthView() {
               <th>Plants</th>
               <th>Reason</th>
               <th>Action reason</th>
+              <th>Release destination</th>
               <th>Actions</th>
             </tr>
           </thead>

@@ -17,6 +17,7 @@ from plantings.lifecycle import (
     record_germination_event,
     record_lifecycle_event,
 )
+from plantings.models import SpecificPlantLocation
 from tests.api import RESTContractTestCase
 from tests.factories import make_inventory_item, make_specific_plant, make_stock_lot
 from workspaces.models import Workspace, get_current_workspace
@@ -269,12 +270,14 @@ class CommerceRESTTests(CommerceFixtureTestCase):
         self.assertEqual(response.status_code, 201, response.data)
         return order, response.data
 
-    def act_on_case(self, sales_return, action_name, reason):
+    def act_on_case(self, sales_return, action_name, reason, destination=None):
         """Close the case a quarantined return opened, as an operator would."""
+        values = {'idempotency_key': str(uuid4()), 'reason': reason}
+        if destination is not None:
+            values['destination'] = destination.pk
         response = self.client.post(
             f"/health/quarantines/{sales_return['quarantine_case']}/{action_name}/",
-            {'idempotency_key': str(uuid4()), 'reason': reason},
-            format='json',
+            values, format='json',
         )
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(response.data['active'])
@@ -290,12 +293,35 @@ class CommerceRESTTests(CommerceFixtureTestCase):
         self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.QUARANTINED)
 
     def test_a_released_return_becomes_saleable_stock_again(self):
+        """Task 130: the release says which bench the stock is saleable from.
+
+        The return stood the plant in a quarantine location, so closing the
+        case without naming somewhere else would leave it saleable there.
+        """
         plant = self.available_plant()
         _order, sales_return = self.quarantined_return(plant)
-        self.act_on_case(sales_return, 'release', 'Recovered in isolation.')
+        refused = self.client.post(
+            f"/health/quarantines/{sales_return['quarantine_case']}/release/",
+            {'idempotency_key': str(uuid4()), 'reason': 'Recovered in isolation.'},
+            format='json',
+        )
+        self.assertEqual(refused.status_code, 400, refused.data)
+        self.assertIn('destination', refused.data)
+        self.assertEqual(
+            plant_lifecycle_summary(plant).state, LifecycleState.QUARANTINED,
+        )
+        self.act_on_case(
+            sales_return, 'release', 'Recovered in isolation.',
+            destination=self.store,
+        )
         summary = plant_lifecycle_summary(plant)
         self.assertEqual(summary.state, LifecycleState.AVAILABLE)
         self.assertTrue(summary.sellable)
+        self.assertEqual(
+            SpecificPlantLocation.objects
+            .get(specific_plant=plant, ended__isnull=True).location_id,
+            self.store.pk,
+        )
         resold, allocations = self.confirmed_order([plant])
         self.fulfill(resold, [allocations[0]['pk']])
         self.assertEqual(plant_lifecycle_summary(plant).state, LifecycleState.SOLD)

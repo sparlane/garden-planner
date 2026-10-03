@@ -326,6 +326,44 @@ class QuarantineActionRestTests(RESTContractTestCase):
         self.assertTrue(row['sellable'])
         self.assertFalse(row['quarantined'])
 
+    def test_releasing_stock_off_a_quarantine_bench_needs_a_destination(self):
+        """The operator meets the rule where the destination is typed in."""
+        plant, case_pk = self.returned_case()
+        quarantine = make_location(
+            workspace=self.workspace, location_type='quarantine',
+            name='Isolation house', code='ISOLATION',
+        )
+        make_specific_plant_location(
+            specific_plant=plant, location_type='location',
+            seed_tray_cell=None, location=quarantine,
+        )
+        refused = self.client.post(
+            f'/health/quarantines/{case_pk}/release/',
+            {'idempotency_key': str(uuid4()), 'reason': 'Recovered in isolation.'},
+            format='json',
+        )
+        self.assertEqual(refused.status_code, 400, refused.data)
+        self.assertIn('destination', refused.data)
+        self.assertIn(f'Plant {plant.pk}', str(refused.data['destination']))
+        self.assertEqual(self.register_row(plant)['lifecycle_state'], 'quarantined')
+        bench = make_location(
+            workspace=self.workspace, name='Sales bench', code='SALES-BENCH',
+        )
+        released = self.client.post(
+            f'/health/quarantines/{case_pk}/release/',
+            {
+                'idempotency_key': str(uuid4()),
+                'reason': 'Recovered in isolation.',
+                'destination': bench.pk,
+            },
+            format='json',
+        )
+        self.assertEqual(released.status_code, 200, released.data)
+        self.assertFalse(released.data['active'])
+        row = self.register_row(plant)
+        self.assertTrue(row['sellable'])
+        self.assertEqual(row['standing_at'], bench.pk)
+
     def test_cull_resolves_the_plant_the_return_could_not(self):
         plant, case_pk = self.returned_case()
         response = self.client.post(
