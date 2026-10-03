@@ -567,6 +567,159 @@ class QuarantineCaseLifecycleTests(HealthOperationTestCase):
                     self.assertFalse(case_is_active(case))
 
 
+class ReleaseDestinationTests(HealthOperationTestCase):
+    """Task 130: closing a case says where the stock it held went.
+
+    `released_available` leaves a plant where the quarantine put it and the
+    closed case stops refusing sales, so a release that names no destination
+    leaves saleable stock standing on the quarantine bench. The destination is
+    owed exactly when there is a bench to come off.
+    """
+
+    def act(self, case, reason='Inspection found nothing.', **values):
+        return act_on_quarantine(
+            self.workspace, None, case,
+            action_name=QuarantineAction.Action.RELEASE,
+            idempotency_key=uuid4(), reason=reason, **values,
+        )
+
+    def quarantine_bench(self):
+        return make_location(
+            workspace=self.workspace, location_type='quarantine',
+        )
+
+    def offered_plant(self, bench=None):
+        """One plant on offer, standing on a bench of its own."""
+        plant = make_specific_plant(workspace=self.workspace)
+        record_lifecycle_event(
+            plant, None, OutcomeRequest(EventType.READY, reason='Ready for sale.'),
+        )
+        make_specific_plant_location(
+            specific_plant=plant,
+            location_type=SpecificPlantLocation.LOCATION,
+            seed_tray_cell=None,
+            location=bench or make_location(workspace=self.workspace),
+        )
+        return plant
+
+    def case_on_the_quarantine_bench(self, target_type, target):
+        """Open one case that moves its stock onto a quarantine bench."""
+        case, _action = quarantine_observation(
+            self.workspace, None, self.observe(target_type, target),
+            idempotency_key=uuid4(), reason='Keep it away from healthy stock.',
+            destination=self.quarantine_bench(),
+        )
+        return case
+
+    def standing_at(self, plant):
+        return SpecificPlantLocation.objects.get(
+            specific_plant=plant, ended__isnull=True,
+        ).location
+
+    def test_a_release_from_a_quarantine_bench_needs_a_destination(self):
+        """Verification 1: the case may not close over stranded stock."""
+        plant = self.offered_plant()
+        case = self.case_on_the_quarantine_bench('plant', plant)
+        placed_at = self.standing_at(plant)
+
+        with self.assertRaisesMessage(
+                ValidationError,
+                f'Released stock would stay in quarantine: Plant {plant.pk}.'):
+            self.act(case)
+
+        self.assertTrue(case_is_active(case))
+        self.assertFalse(
+            case.actions.filter(action=QuarantineAction.Action.RELEASE).exists(),
+        )
+        self.assertEqual(self.standing_at(plant), placed_at)
+        self.assertTrue(is_quarantined(plant))
+
+    def test_a_released_plant_stands_where_the_release_sends_it(self):
+        """Verification 3: the move ends the quarantine placement, not the release."""
+        plant = self.offered_plant()
+        case = self.case_on_the_quarantine_bench('plant', plant)
+        quarantine_placement = SpecificPlantLocation.objects.get(
+            specific_plant=plant, ended__isnull=True,
+        )
+        bench = make_location(workspace=self.workspace, name='Sales bench')
+
+        action = self.act(case, destination=bench)
+
+        quarantine_placement.refresh_from_db()
+        self.assertEqual(quarantine_placement.ended, action.occurred_at)
+        self.assertEqual(self.standing_at(plant), bench)
+        row = register_queryset(self.workspace, RegisterFilters()).get(pk=plant.pk)
+        self.assertEqual(row.standing_at, bench.pk)
+        self.assertTrue(row.sellable)
+        self.assertFalse(row.quarantined)
+
+    def test_a_release_that_moves_no_stock_needs_no_destination(self):
+        """An overlay case left the plant where it was, so nothing is owed."""
+        bench = make_location(workspace=self.workspace, name='Growing-on bench')
+        plant = self.offered_plant(bench=bench)
+        case = self.quarantine(self.observe('plant', plant))
+
+        self.act(case)
+
+        self.assertFalse(case_is_active(case))
+        self.assertEqual(self.standing_at(plant), bench)
+        row = register_queryset(self.workspace, RegisterFilters()).get(pk=plant.pk)
+        self.assertTrue(row.sellable)
+
+    def test_a_cohort_block_on_a_quarantine_bench_needs_a_destination(self):
+        """A block is counted stock in a place, so it is asked the same thing."""
+        plant = make_specific_plant(workspace=self.workspace)
+        cohort = PlantCohort.objects.create(
+            workspace=self.workspace, batch=plant.batch, quantity=4,
+        )
+        case = self.case_on_the_quarantine_bench('cohort', cohort)
+
+        with self.assertRaisesMessage(
+                ValidationError,
+                f'Released stock would stay in quarantine: Cohort {cohort.pk}.'):
+            self.act(case)
+
+        self.assertTrue(case_is_active(case))
+        bench = make_location(workspace=self.workspace, name='Block bench')
+        self.act(case, destination=bench)
+        cohort.refresh_from_db()
+        self.assertFalse(case_is_active(case))
+        self.assertEqual(cohort.location_id, bench.pk)
+        self.assertEqual(cohort.quantity, 4)
+
+    def test_a_release_names_every_member_left_in_quarantine(self):
+        """One refusal lists the whole reviewed set, as the member checks do."""
+        plant = self.offered_plant()
+        cohort = PlantCohort.objects.create(
+            workspace=self.workspace, batch=plant.batch, quantity=4,
+        )
+        scopes = [
+            {'type': 'plant', 'id': plant.pk},
+            {'type': 'cohort', 'id': cohort.pk},
+        ]
+        preview = preview_observation(self.workspace, scopes)
+        observation = record_observation(
+            self.workspace, None, scopes=scopes,
+            reviewed_digest=preview['digest'],
+            observation_type=self.observation_type,
+            severity=HealthObservation.Severity.HIGH,
+            notes='Both the bench and the block inspected.',
+        )
+        case, _action = quarantine_observation(
+            self.workspace, None, observation,
+            idempotency_key=uuid4(), reason='Keep it away from healthy stock.',
+            destination=self.quarantine_bench(),
+        )
+
+        with self.assertRaisesMessage(
+                ValidationError,
+                f'Plant {plant.pk}, Cohort {cohort.pk}. '
+                'Name the location it is going to.'):
+            self.act(case)
+
+        self.assertTrue(case_is_active(case))
+
+
 class RetainedStockQuarantineTests(HealthOperationTestCase):
     """Task 126: retained stock is resolved but still here, so it is quarantinable.
 
