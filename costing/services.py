@@ -359,7 +359,10 @@ def _reclaimed_losses(intended, stored, standing_at_freeze):
     only what stood in for them. Its reversal is reposted from today's split,
     so whatever part of it really is pool loss (seed that never germinated)
     stays pool loss. A block first observed after finalization claims nothing
-    this way; whether a late arrival may is task 147's question.
+    this way, and nor does a late individual seedling: task 147 settled that a
+    germination on a finalized batch is refused rather than priced, so the only
+    way an output appears after the freeze is through `reopen_batch`, which
+    unfreezes the split altogether.
     """
     divided = {
         (row.source_type, row.source_id)
@@ -476,6 +479,11 @@ def _frozen_plan(intended, stored, standing_at_freeze=frozenset()):
 
     reverse = [row for row in stored.values() if retired(row)]
     reversed_keys = {_stored_key(row) for row in reverse}
+    # A missing key is an input that arrived after finalization, or a cohort
+    # unit promoted after it and paid for by the cohort layer this same run
+    # re-divides. It is never a plant that appeared beside a frozen one with
+    # nothing re-divided to pay for it, because `plantings` refuses to record
+    # that germination at all: `validate_batch_for_germination` says why.
     post = [
         spec for key, spec in intended.items()
         if key not in stored or key in reversed_keys

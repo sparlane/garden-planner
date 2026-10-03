@@ -23,7 +23,7 @@ from sales.models import SalesOrderAllocation, active_allocation_prefetch
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
 from .bulk_rest import register_bulk_operation_routes
-from .batches import lock_batch_with_plants
+from .batches import lock_batch_with_plants, validate_batch_for_germination
 from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
 from .garden_quick_add import register_garden_quick_add_routes
 from .garden_register_rest import register_garden_register_routes
@@ -172,6 +172,13 @@ class SeedTrayPlantingSerializer(TrayGenerationSowingSerializerMixin, BatchedSow
     cell_plantings = SeedTrayCellPlantingNestedSerializer(many=True, required=False)
     new_batch = InlineBatchSerializer(required=False, write_only=True)
     germination = serializers.SerializerMethodField()
+    # When the batch declared its output final, which is when a germination
+    # against these cells stops being accepted at all. Exposed beside the
+    # germination summary because the tray screen asks the two questions
+    # together: whether a seedling now is late, and whether it can be recorded.
+    batch_output_finalized_at = serializers.DateTimeField(
+        source='batch.output_finalized_at', read_only=True,
+    )
     # What was sown, named on the sowing itself: a screen that only had the
     # packet id would lose the name as soon as that packet went empty and
     # dropped out of the usable-packet selectors.
@@ -182,8 +189,9 @@ class SeedTrayPlantingSerializer(TrayGenerationSowingSerializerMixin, BatchedSow
         model = SeedTrayPlanting
         fields = [
             'pk', 'planted', 'seeds_used', 'plant', 'variety', 'batch',
-            'new_batch', 'quantity', 'seed_tray', 'generation', 'location',
-            'removed', 'notes', 'cell_plantings', 'germination',
+            'batch_output_finalized_at', 'new_batch', 'quantity', 'seed_tray',
+            'generation', 'location', 'removed', 'notes', 'cell_plantings',
+            'germination',
         ]
         extra_kwargs = {
             'batch': {'required': False},
@@ -584,6 +592,10 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
             validated_data['cell_planting'] = cell_planting
             batch = lock_batch_with_plants(cell_planting.seed_tray_planting.batch)
             try:
+                # Asked of the locked batch rather than of the one reachable
+                # through the cell, so a finalization committed while this
+                # request was in flight still refuses the seedling.
+                validate_batch_for_germination(batch)
                 validate_late_germination(cell_planting, reason)
             except DjangoValidationError as exc:
                 raise serializers.ValidationError(_model_errors(exc)) from exc
@@ -887,7 +899,7 @@ class SeedTrayPlantingViewSet(
     ViewSet of SeedTrayPlanting
     """
     queryset = SeedTrayPlanting.objects.select_related(
-        'seeds_used__seeds__plant_variety__plant',
+        'seeds_used__seeds__plant_variety__plant', 'batch',
     ).order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
 
@@ -908,7 +920,7 @@ class SeedTrayPlantingViewSeedTraySet(
     sowings would draw a grid of a tray that does not exist.
     """
     queryset = SeedTrayPlanting.objects.select_related(
-        'seeds_used__seeds__plant_variety__plant',
+        'seeds_used__seeds__plant_variety__plant', 'batch',
     ).order_by('pk')
     serializer_class = SeedTrayPlantingSerializer
     pagination_class = None

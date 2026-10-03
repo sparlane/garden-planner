@@ -15,15 +15,23 @@ carries:
   are what cost allocation and the reports work from.
 
 **The late-germination policy.** A seedling that comes up after the close is a
-real event, so it is recorded as an ordinary germination and never rejected.
-Because it contradicts a stated judgement it requires a reason, which is kept
-on the plant's `GERMINATED` lifecycle event where the rest of that plant's
-history lives. The closure is left standing: it remains true that somebody
-declared the sowing finished on that date with that count, and the current
-figures move on their own as the late seedling is counted. Cost follows the
-same way, because `costing` reads the current remainder rather than the
-snapshot, so the share the late seedling earns comes back out of production
-loss on the next reallocation.
+real event, so it is recorded as an ordinary germination and not rejected for
+being late. Because it contradicts a stated judgement it requires a reason,
+which is kept on the plant's `GERMINATED` lifecycle event where the rest of that
+plant's history lives. The closure is left standing: it remains true that
+somebody declared the sowing finished on that date with that count, and the
+current figures move on their own as the late seedling is counted. Cost follows
+the same way, because `costing` reads the current remainder rather than the
+snapshot, so the share the late seedling earns comes back out of production loss
+on the next reallocation.
+
+Closing a sowing's germination is not the same statement as finalizing the
+batch's output, and only the second one stops this. Once the batch has reached
+`output_finalized_at` every plant's share is frozen, there is no share left for
+a new seedling to earn, and the germination is refused outright — by
+`plantings.batches.validate_batch_for_germination`, which every path that
+creates a seedling asks before it writes one, and which names reopening the
+batch as the way through.
 
 Reopening is the other half of the decision, and it means something different:
 the close itself was a mistake — the wrong tray, or a count taken before an
@@ -278,6 +286,10 @@ def validate_late_germination(cell_planting, reason):
     Called from every path that creates a plant, so the policy holds whether
     one seedling was entered on the tray screen or forty through the bulk
     operation. A sowing that is still open imposes nothing.
+
+    Whether the seedling may be recorded at all is the batch's question rather
+    than the sowing's, and the same paths ask
+    `plantings.batches.validate_batch_for_germination` beside this.
     """
     if not is_closed(cell_planting.seed_tray_planting):
         return

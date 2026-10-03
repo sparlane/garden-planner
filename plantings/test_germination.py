@@ -10,6 +10,7 @@ policy is only worth anything if it holds wherever a seedling is recorded.
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.utils.dateparse import parse_datetime
 from rest_framework.test import APITestCase
 
 from tests.factories import (
@@ -22,6 +23,7 @@ from tests.factories import (
 )
 from workspaces.models import Workspace
 
+from .batches import finalize_batch_output, reopen_batch
 from .germination import (
     close_germination,
     current_closure,
@@ -35,6 +37,7 @@ from .lifecycle import EventType
 from .models import (
     CohortOperation,
     PlantLifecycleEvent,
+    SeedTrayPlanting,
     SowingGerminationClosure,
     SpecificPlant,
 )
@@ -390,3 +393,116 @@ class GerminationApiTests(GerminationClosureTestCase):
         bulk = germination_summaries([self.sowing])[self.sowing.pk]
         self.assertEqual(bulk, germination_summary(self.sowing))
         self.assertEqual(bulk['late_germinations'], 1)
+
+
+class FinalizedBatchGerminationTests(GerminationClosureTestCase):
+    """Task 147: no seedling is recorded against a batch whose output is final.
+
+    Closing a sowing's germination and finalizing the batch's output are two
+    different statements, and only the second one stops a seedling being
+    recorded at all: it freezes every plant's share of every input, so a new
+    seedling has no share to take and charging it one would charge the same seed
+    twice. `costing.test_services.LateGerminationRefusalTests` holds the money
+    these refusals protect; these hold the paths.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.batch = self.sowing.batch
+
+    def finalize(self):
+        """Declare the batch's output final, which needs its sowings closed."""
+        SeedTrayPlanting.objects.filter(batch=self.batch).update(removed=True)
+        finalize_batch_output(self.batch, self.user, 'Done sowing.')
+        self.batch.refresh_from_db()
+
+    def record_bulk_germination(self, key='33333333-3333-3333-3333-333333333333'):
+        """Post one bulk germination the way the tray grid's selection does."""
+        return self.client.post(
+            '/plantings/bulk-operations/',
+            {
+                'action': 'germinate',
+                'atomicity': 'all_or_nothing',
+                'idempotency_key': key,
+                'reason': 'A straggler came up.',
+                'selection_source': {
+                    'mode': 'cell_plantings',
+                    'cell_plantings': [self.allocations[0].pk],
+                },
+                'action_payload': {
+                    'germinations': [
+                        {'cell_planting': self.allocations[0].pk, 'quantity': 2},
+                    ],
+                },
+            },
+            format='json',
+        )
+
+    def test_the_plant_endpoint_refuses_and_says_what_to_do(self):
+        """One seedling typed on the tray grid, against a frozen batch."""
+        self.germinate(self.allocations[0], 1)
+        self.finalize()
+        response = self.client.post(
+            '/plantings/specificplants/',
+            {'cell_planting': self.allocations[0].pk, 'reason': 'A straggler.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        message = response.data['batch'][0]
+        self.assertIn(self.batch.code, message)
+        self.assertIn('Reopen the batch', message)
+        self.assertEqual(SpecificPlant.objects.count(), 1)
+
+    def test_a_bulk_germination_is_refused_before_anything_is_written(self):
+        """Two seedlings in one entry are rejected whole, not half-applied."""
+        self.germinate(self.allocations[0], 1)
+        self.finalize()
+        response = self.record_bulk_germination()
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Reopen the batch', str(response.data))
+        self.assertEqual(SpecificPlant.objects.count(), 1)
+
+    def test_a_closed_sowing_on_an_open_batch_still_takes_a_late_seedling(self):
+        """The refusal is the batch's, so the close keeps its own policy."""
+        self.germinate(self.allocations[0], 1)
+        self.close()
+        response = self.client.post(
+            '/plantings/specificplants/',
+            {'cell_planting': self.allocations[0].pk, 'reason': 'A straggler.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(SpecificPlant.objects.count(), 2)
+
+    def test_a_reopened_batch_takes_the_seedling_the_frozen_one_refused(self):
+        """The refusal names a way through, so the way through has to work.
+
+        The close on the sowing is a different fact, and reopening the batch
+        leaves it standing, so a reopened batch still asks why the seedling is
+        late.
+        """
+        self.germinate(self.allocations[0], 1)
+        self.close()
+        self.finalize()
+        self.assertEqual(self.record_bulk_germination().status_code, 400)
+        reopen_batch(self.batch, self.user, 'A straggler came up after the close.')
+        self.batch.refresh_from_db()
+        response = self.record_bulk_germination(
+            key='44444444-4444-4444-4444-444444444444',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(SpecificPlant.objects.count(), 3)
+        self.assertTrue(is_closed(self.sowing))
+
+    def test_the_sowing_says_when_its_batch_finalized_its_output(self):
+        """The tray screen has to be able to stop offering what is refused."""
+        open_sowing = self.client.get(f'/plantings/seedtray/{self.sowing.pk}/')
+        self.assertEqual(open_sowing.status_code, 200)
+        self.assertIsNone(open_sowing.data['batch_output_finalized_at'])
+        self.germinate(self.allocations[0], 1)
+        self.finalize()
+        frozen = self.client.get(f'/plantings/seedtray/{self.sowing.pk}/')
+        self.assertEqual(
+            parse_datetime(frozen.data['batch_output_finalized_at']),
+            self.batch.output_finalized_at,
+        )
