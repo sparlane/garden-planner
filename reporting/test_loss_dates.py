@@ -15,7 +15,9 @@ that writes its layer and a period dated by the run is a different month from
 one dated by the fact.
 """
 
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
+from itertools import count
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -44,15 +46,30 @@ from .commerce import profitability_report
 #: The month `EARLY` falls in: the period every loss below belongs to.
 MARCH = ('2026-03-01', '2026-03-31')
 
-#: The month the test run itself happens in, which is the period every loss
-#: below was reported in while `created` was the date.
+#: The controlled clock's month, which is the period every loss below was
+#: reported in while `created` was the date.
 RUN_MONTH = ('2026-09-01', '2026-09-30')
+
+
+def start_reporting_clock(case):
+    """Keep postings in September regardless of when the suite is run."""
+    instant = datetime(2026, 9, 15, tzinfo=dt_timezone.utc)
+    ticks = count()
+    # Advance on each call so finalization and layer creation remain distinct
+    # instants, as required by the finalization-date regression below.
+    clock = patch(
+        'django.utils.timezone.now',
+        side_effect=lambda: instant + timedelta(microseconds=next(ticks)),
+    )
+    clock.start()
+    case.addCleanup(clock.stop)
 
 
 class LossPeriodTestCase(CostingServiceTestCase):
     """Read the profitability report's loss rows over a stated period."""
 
     def setUp(self):
+        start_reporting_clock(self)
         super().setUp()
         # Fixed so a month is a month: every boundary below is a UTC one.
         self.workspace.timezone = 'UTC'
@@ -270,6 +287,7 @@ class LossUnitReconciliationTests(CohortStockTestCase):
     """
 
     def setUp(self):
+        start_reporting_clock(self)
         super().setUp()
         self.workspace.timezone = 'UTC'
         self.workspace.save(update_fields=['timezone'])
@@ -321,6 +339,7 @@ class UndatedLossTests(CohortStockTestCase):
     """
 
     def setUp(self):
+        start_reporting_clock(self)
         super().setUp()
         self.workspace.timezone = 'UTC'
         self.workspace.save(update_fields=['timezone'])
