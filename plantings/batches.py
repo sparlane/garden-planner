@@ -375,6 +375,33 @@ def reopen_batch(batch, user, reason):
     return batch
 
 
+def validate_batch_for_germination(batch):
+    """Reject a seedling recorded after this batch's output was finalized.
+
+    Finalizing output froze every plant's share of every input, and a seedling
+    arriving afterwards has no share left to take. Dividing its cell again would
+    charge the same seed and the same media to the new plant *on top of* the
+    frozen one — one late straggler took a $1.08 batch to $1.62 — and taking the
+    share out of the frozen plant instead is the re-division that finalizing
+    forbids. Neither is a figure anybody can defend, so the observation is
+    refused rather than priced wrongly.
+
+    `reopen_batch` is the way through, and the refusal names it: it is already
+    an audited transition with a required reason, it unfreezes the subledger,
+    and the germination then divides the cell over both seedlings the ordinary
+    way. The close on the sowing is a different fact and is left standing, so a
+    reopened batch still asks why the seedling is late.
+    """
+    if batch.output_finalized_at is not None:
+        raise ValidationError({
+            'batch': (
+                f'Batch {batch.code} has finalized its output, so every plant '
+                'share of its cost is final and a new seedling has none to '
+                'take. Reopen the batch to record this germination.'
+            ),
+        })
+
+
 def validate_batch_for_sowing(batch, packet, workspace):
     """Reject attaching a sowing to an unusable or mismatched batch."""
     errors = {}

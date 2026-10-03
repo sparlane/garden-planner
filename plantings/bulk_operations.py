@@ -17,7 +17,7 @@ from sales.reservations import lock_plant_holders
 
 from .counted_fills import plant_counted_fill
 from .movement import move_specific_plant
-from .batches import lock_batch_with_plants
+from .batches import lock_batch_with_plants, validate_batch_for_germination
 from .germination import validate_late_germination
 from .lifecycle import (
     RELEASES_HOLD,
@@ -473,8 +473,12 @@ def _apply_germination(operation, user, request):
     locked_batches = [
         lock_batch_with_plants(batches[batch_id]) for batch_id in sorted(batches)
     ]
-    # Checked once per sowing before anything is written, so a bulk entry
-    # against a closed sowing is rejected whole rather than half-applied.
+    # Checked once per batch and once per sowing before anything is written, so
+    # a bulk entry against a finalized batch or a closed sowing is rejected
+    # whole rather than half-applied. The batch is the locked one, so a
+    # finalization committed while this operation was in flight still refuses.
+    for batch in locked_batches:
+        validate_batch_for_germination(batch)
     for allocation in allocations:
         validate_late_germination(allocation, request.reason)
     notes = request.action_payload.get('notes', '')

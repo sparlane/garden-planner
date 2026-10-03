@@ -8,7 +8,6 @@ and germinations recorded against its cells.
 
 # pylint: disable=duplicate-code
 
-import unittest
 from decimal import Decimal
 from uuid import uuid4
 
@@ -247,12 +246,16 @@ class CostingServiceTestCase(APITestCase):  # pylint: disable=too-many-instance-
         application.refresh_from_db()
         return application
 
-    def germinate(self, sowing, cell, count=1):
-        """Record `count` seedlings coming up in one cell of a sowing."""
-        cell_planting = SeedTrayCellPlanting.objects.get(
+    def allocation(self, sowing, cell):
+        """Return the cell allocation a germination is recorded against."""
+        return SeedTrayCellPlanting.objects.get(
             seed_tray_planting=sowing,
             cell=cell,
         )
+
+    def germinate(self, sowing, cell, count=1):
+        """Record `count` seedlings coming up in one cell of a sowing."""
+        cell_planting = self.allocation(sowing, cell)
         plants = []
         for _index in range(count):
             plant = SpecificPlant.objects.create(cell_planting=cell_planting)
@@ -933,18 +936,25 @@ class FrozenBatchTests(CostingServiceTestCase):
         self.reallocate(Trigger.GERMINATION)
         self.assertEqual(plant_cost_breakdown(self.plant)['final_value'], '1.0800')
 
-    @unittest.expectedFailure
     def test_a_later_germination_leaves_the_final_total_where_it_was(self):
-        """A late seedling from a frozen cell must not be charged on top of it.
+        """A late seedling from a frozen cell is refused, not charged on top.
 
-        Known failure, owned by task 147. The late seedling's shares of the
-        same sowing and media are posted beside the frozen plant's, so the seed
-        carries 1.50 against 1.00, the media 0.12 against 0.08, and the final
-        total reads 1.62. When task 147 lands this passes and the decorator
-        comes off.
+        Recorded, its shares of the same sowing and the same media would be
+        posted beside the frozen plant's, so the seed would carry 1.50 against a
+        1.00 cost, the media 0.12 against 0.08, and the final total would read
+        1.62 — more cost than the batch's inputs ever had. Task 147 refuses the
+        germination while the batch is frozen, so the only figure that changes
+        is none of them.
         """
-        self.germinate(self.sowing, self.cells[0])
-        self.reallocate(Trigger.GERMINATION)
+        allocation = self.allocation(self.sowing, self.cells[0])
+        response = self.client.post(
+            '/plantings/specificplants/',
+            {'cell_planting': allocation.pk, 'reason': 'A straggler came up.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(SpecificPlant.objects.filter(batch=self.batch).count(), 1)
+        self.assertIsNone(self.reallocate(Trigger.GERMINATION))
         self.assertEqual(batch_cost_breakdown(self.batch)['final_total'], '1.0800')
         self.assert_sources_reconcile()
 
