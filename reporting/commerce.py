@@ -13,7 +13,7 @@ from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
-from costing.models import CostAllocation
+from costing.models import CostAllocation, CostAllocationRun
 from inventory.ledger import distribute_exactly
 from plantings.lifecycle import lifecycle_summaries
 from plantings.loss import CAUSE_OF_EVENT, LOSS_CAUSES, LOSS_EVENTS, empty_totals, loss_by_cause
@@ -43,6 +43,16 @@ RESTORES_COGS = {
     SalesReturnLine.Outcome.AVAILABLE,
     SalesReturnLine.Outcome.QUARANTINED,
 }
+
+#: The runs whose own fact says something was lost, so a pool loss they wrote is
+#: dated by that fact however late it was typed: a germination closure says the
+#: seed never came up, and a clean says the remainder was tipped out. Any other
+#: run reaching a finalized batch is posting cost that only the freeze turned
+#: into loss, and `_pool_loss_at` will not date that before the freeze.
+DECLARES_LOSS = frozenset({
+    CostAllocationRun.Trigger.GERMINATION_CLOSED,
+    CostAllocationRun.Trigger.GENERATION_CLOSED,
+})
 
 
 def _local_today(workspace):
@@ -550,9 +560,10 @@ def _cohort_loss_rows(layer, losses, filters, start, end):
     the layer its units earn, split exactly so the parts add back up to the
     layer. Each part is dated and caused by its own operation, which is what
     the identified half gets from a plant's lifecycle.
+
+    The caller has already decided that a block is in scope at all: a square
+    filter selects no anonymous stock, so it never reaches here.
     """
-    if filters.get('garden_square'):
-        return []
     weights = [-event.quantity_delta for event in losses]
     amounts = distribute_exactly(layer.amount, weights)
     rows = []
@@ -578,31 +589,61 @@ def _cohort_loss_rows(layer, losses, filters, start, end):
     return rows
 
 
+def _pool_loss_at(layer):
+    """Return the day a pool loss was declared lost, not merely posted.
+
+    `effective_at` is the day the fact behind the layer happened, and for a
+    pool loss that is usually the fact that retired the cost: a germination
+    closure saying the seed never came up, or the clean that tipped a remainder
+    out. Both of those say something was lost, whenever they are typed.
+
+    Cost that merely had nowhere to go says no such thing. It is not loss until
+    the batch declares no more seedlings are coming, and a source can arrive
+    after that has been declared and still be dated before it — media applied
+    on 20 March and posted in October onto a batch finalized in October. On 31
+    March that media was sitting on a cell: unresolved cost, not loss, and
+    counted in closing stock. So a layer the freeze is the only declaration
+    for is reported no earlier than the freeze, the same `max` the dating
+    clamp in `costing.dating` takes for the same reason — a figure moved into a
+    period where nothing was lost is exactly the defect task 143 closed.
+
+    A layer already on file when output was finalized keeps its own date:
+    whatever retired it did so while the batch was still open.
+    """
+    finalized = layer.batch.output_finalized_at
+    if finalized is None or layer.created <= finalized:
+        return layer.effective_at
+    if layer.run.trigger in DECLARES_LOSS:
+        return layer.effective_at
+    return max(layer.effective_at, finalized)
+
+
 def _loss_rows(workspace, filters, start, end):
     """Return the period's loss rows, and the loss layers nothing dates.
 
     Every loss is placed by the fact that caused it: a plant's by the cull or
     the failure its lifecycle records, a block's by the operation that
-    recorded each loss, and a pool loss by `effective_at` — the day the
-    germination closure, the clean that discarded the remainder, or the
-    finalization retired the cost, which task 163 put on the layer. `created`
-    is the stamp of the run that wrote the row, and a reallocation writes a
-    fresh one every time it re-divides a batch, so dating by it moved a closed
-    period's loss into the period somebody recalculated in and took it out of
-    the period it happened in.
+    recorded each loss, and a pool loss by the fact that declared the cost
+    lost, which `_pool_loss_at` derives. `created` is the stamp of the run that
+    wrote the row, and a reallocation writes a fresh one every time it
+    re-divides a batch, so dating by it moved a closed period's loss into the
+    period somebody recalculated in and took it out of the period it happened
+    in.
 
     A layer no fact dates is returned separately rather than silently dropped.
     After task 163 a pool loss always carries a date, so the only such layer
     is a block's whose recorded losses have all been corrected while its loss
-    layer still stands — a batch whose cost has not been recalculated against
-    its own corrected facts. That money is loss in no period, which is what
+    layer still stands. No write path leaves a batch like that — correcting a
+    loss reallocates in the same transaction, and `COHORT_LOSS` is re-divided
+    even on a finalized batch — so it takes a stale row, and task 136's audit
+    query is how one is found. That money is loss in no period, which is what
     `undated_loss` says.
     """
     if any(filters.get(key) for key in ('customer', 'order', 'fulfillment')):
         return [], []
     layers = CostAllocation.objects.filter(
         workspace=workspace, reversal_of__isnull=True, reversal__isnull=True,
-    ).select_related('batch__variety', 'specific_plant')
+    ).select_related('batch__variety', 'specific_plant', 'run')
     if filters.get('variety'):
         layers = layers.filter(batch__variety_id=filters['variety'])
     if filters.get('batch'):
@@ -616,6 +657,12 @@ def _loss_rows(workspace, filters, start, end):
     undated = []
     for layer in layers.order_by('pk'):
         if layer.target_type == CostAllocation.TargetType.COHORT_LOSS:
+            if filters.get('garden_square'):
+                # A block stands at a location and never in a garden square, so
+                # a square selects no anonymous stock at all — not its rows and
+                # not the finding about a layer that has none. `_lost_units`
+                # empties the cohort events for the same reason.
+                continue
             losses = cohort_losses[layer.plant_cohort_id]
             if not losses:
                 undated.append(layer)
@@ -625,7 +672,7 @@ def _loss_rows(workspace, filters, start, end):
         occurred_at = None
         cause = None
         if layer.target_type == CostAllocation.TargetType.PRODUCTION_LOSS:
-            occurred_at = layer.effective_at
+            occurred_at = _pool_loss_at(layer)
         elif layer.specific_plant_id:
             summary = summaries[layer.specific_plant_id]
             if summary.final_outcome in LOSS_EVENTS:
