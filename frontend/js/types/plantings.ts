@@ -198,6 +198,10 @@ interface SeedTrayPlanting extends Planting {
   planted: string
   cell_plantings?: Array<{ pk: number; cell: number; quantity: number }>
   germination?: SowingGermination
+  // When the batch declared its output final, if it has. A germination against
+  // a finalized batch is refused, because every plant's share of its cost is
+  // frozen and a new seedling has none to take.
+  batch_output_finalized_at?: string | null
 }
 
 interface GardenSquareTransplanting extends Planting {
