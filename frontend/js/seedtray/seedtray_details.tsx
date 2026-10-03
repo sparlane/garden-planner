@@ -346,6 +346,11 @@ type GerminationFormProps = {
   // germinating. The server requires a reason for one of those, so the form
   // asks for it here rather than letting the save come back rejected.
   late: boolean
+  // Whether any selected cell belongs to a batch that has finalized its
+  // output. That is a refusal rather than a warning: the server will not record
+  // a germination against a frozen batch at all, so the form says why and what
+  // to do about it instead of offering a save that cannot succeed.
+  frozen: boolean
   onChangeDate: (value: string) => void
   onChangeQuantity: (cellPlantingPk: number, value: number) => void
   onChangeNotes: (value: string) => void
@@ -353,7 +358,7 @@ type GerminationFormProps = {
   onCancel: () => void
 }
 
-const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, notes, late, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => {
+const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, notes, late, frozen, onChangeDate, onChangeQuantity, onChangeNotes, onSave, onCancel }) => {
   const totalQuantity = selections.reduce((total, selection) => total + selection.quantity, 0)
   return (
     <div style={{ marginTop: 16, padding: 12, border: '1px solid #ccc', maxWidth: 400 }}>
@@ -361,7 +366,12 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, not
       <p>
         {selections.length} cell{selections.length === 1 ? '' : 's'} selected
       </p>
-      {late && (
+      {frozen && (
+        <Alert variant="danger" className="py-2">
+          This batch has finalized its output, so every plant&apos;s share of its cost is final and a new seedling has none to take. Reopen the batch to record this germination.
+        </Alert>
+      )}
+      {!frozen && late && (
         <Alert variant="warning" className="py-2">
           This sowing was declared finished germinating. A seedling recorded now is a late arrival, so it needs a reason — the closure stands and the count moves on.
         </Alert>
@@ -396,7 +406,11 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, not
         </label>
       </div>
       <div style={{ marginTop: 8 }}>
-        <Button variant="success" onClick={onSave} disabled={!date || (late && !notes.trim()) || selections.some((selection) => selection.quantity < 1) || totalQuantity > 5000}>
+        <Button
+          variant="success"
+          onClick={onSave}
+          disabled={frozen || !date || (late && !notes.trim()) || selections.some((selection) => selection.quantity < 1) || totalQuantity > 5000}
+        >
           Review {totalQuantity} plant{totalQuantity === 1 ? '' : 's'}
         </Button>{' '}
         <Button variant="secondary" onClick={onCancel}>
@@ -959,6 +973,9 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     return sowings
   }, {})
   const selectionIsLate = germinationSelections.some((selection) => sowingOfCellPlanting[selection.cellPlantingPk]?.germination?.provisional === false)
+  // Finalizing the batch output freezes the cost of every plant it raised, and
+  // the server refuses a germination against a frozen batch outright.
+  const selectionIsFrozen = germinationSelections.some((selection) => Boolean(sowingOfCellPlanting[selection.cellPlantingPk]?.batch_output_finalized_at))
   const isLoading = [seedTrayModelsQuery, seedTraysQuery, seedTrayCellsQuery, plantingsQuery, specificPlantsQuery, gardenSquaresQuery, inventoryLocationsQuery].some(
     (query) => query.isPending
   )
@@ -1491,6 +1508,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           date={germinationDate.value}
           notes={germinationNotes}
           late={selectionIsLate}
+          frozen={selectionIsFrozen}
           onChangeDate={germinationDate.change}
           onChangeQuantity={changeGerminationQuantity}
           onChangeNotes={setGerminationNotes}
