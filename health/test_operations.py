@@ -19,8 +19,11 @@ from applications.services import (
     create_application_draft,
     post_application,
 )
+from inventory.ledger import IndividualizationRequest, individualize_lot_units
 from inventory.units import UnitCode
 from plantings.cohorts import change_cohort, correct_cohort_loss
+from plantings.counted_fills import plant_counted_fill
+from plantings.movement import move_specific_plant
 from plantings.lifecycle import (
     EventType,
     LifecycleState,
@@ -32,6 +35,8 @@ from plantings.lifecycle import (
 from plantings.withdrawal import withdraw_germination
 from plantings.models import CohortOperation, PlantCohort, SpecificPlantLocation
 from plantings.register import RegisterFilters, register_queryset
+from seedtrays.container_fills import open_counted_fill, open_numbered_fill
+from seedtrays.models import SeedTrayGeneration
 from tests.factories import (
     make_inventory_item,
     make_location,
@@ -686,6 +691,109 @@ class ReleaseDestinationTests(HealthOperationTestCase):
         self.assertFalse(case_is_active(case))
         self.assertEqual(cohort.location_id, bench.pk)
         self.assertEqual(cohort.quantity, 4)
+
+    def pot_lot(self, bench, quantity='4'):
+        """Empty pots standing where a fill can claim them."""
+        return make_stock_lot(
+            item=make_inventory_item(
+                category='pot_container', base_unit='each', tracking_mode='mixed',
+            ),
+            location=bench, quantity=quantity, base_unit_cost=Decimal('3'),
+        )
+
+    def potted_plant(self, bench):
+        """One plant in a counted pot fill, as a quarantined return leaves it."""
+        fill = open_counted_fill(
+            self.workspace, None, self.pot_lot(bench), bench, 1, returned=True,
+        )
+        plant = make_specific_plant(workspace=self.workspace)
+        record_lifecycle_event(
+            plant, None, OutcomeRequest(EventType.READY, reason='Ready for sale.'),
+        )
+        plant_counted_fill(self.workspace, None, fill, [plant.pk])
+        return plant, fill
+
+    def numbered_pot_plant(self, bench):
+        """One plant in a numbered pot, which carries its own placement."""
+        lot = self.pot_lot(bench, quantity='1')
+        unit, = individualize_lot_units(
+            self.workspace, None, IndividualizationRequest(lot, bench, 1),
+        )
+        open_numbered_fill(self.workspace, None, unit, returned=True)
+        plant = make_specific_plant(workspace=self.workspace)
+        record_lifecycle_event(
+            plant, None, OutcomeRequest(EventType.READY, reason='Ready for sale.'),
+        )
+        move_specific_plant(plant, {
+            'location_type': SpecificPlantLocation.CONTAINER_UNIT,
+            'container_unit': unit,
+        }, user=None)
+        return plant, unit
+
+    def test_a_release_will_not_take_a_plant_out_of_its_pot(self):
+        """A counted fill cannot be carried, so the release says so instead.
+
+        Moving the plant would make its placement a plain bench one, leave the
+        fill open at the quarantine location with nobody in it, and freeze its
+        shares on a departure nobody recorded.
+        """
+        bench = self.quarantine_bench()
+        plant, fill = self.potted_plant(bench)
+        case = self.quarantine(self.observe('plant', plant))
+
+        with self.assertRaisesMessage(
+                ValidationError,
+                f'A counted pot fill cannot leave the location it was opened at: '
+                f'Plant {plant.pk} in pot fill {fill.pk}.'):
+            self.act(case)
+        with self.assertRaisesMessage(
+                ValidationError, 'Take the plant out of its pot'):
+            self.act(case, destination=make_location(workspace=self.workspace))
+
+        self.assertTrue(case_is_active(case))
+        placement = SpecificPlantLocation.objects.get(
+            specific_plant=plant, ended__isnull=True,
+        )
+        self.assertEqual(placement.container_fill_id, fill.pk)
+        self.assertEqual(placement.location_id, bench.pk)
+        fill.refresh_from_db()
+        self.assertEqual(fill.status, SeedTrayGeneration.Status.OPEN)
+
+    def test_a_plant_taken_out_of_its_pot_then_releases_on_its_own(self):
+        """The refusal points somewhere real: the departure is the operator's."""
+        plant, _fill = self.potted_plant(self.quarantine_bench())
+        case = self.quarantine(self.observe('plant', plant))
+        bench = make_location(workspace=self.workspace, name='Sales bench')
+        move_specific_plant(plant, {
+            'location_type': SpecificPlantLocation.LOCATION, 'location': bench,
+        }, user=None)
+
+        self.act(case)
+
+        self.assertFalse(case_is_active(case))
+        self.assertEqual(self.standing_at(plant), bench)
+
+    def test_a_numbered_pot_leaves_quarantine_carrying_its_plant(self):
+        """A pot holds its own placement, so the pot is what moves."""
+        plant, unit = self.numbered_pot_plant(self.quarantine_bench())
+        case = self.quarantine(self.observe('plant', plant))
+
+        with self.assertRaisesMessage(
+                ValidationError,
+                f'Released stock would stay in quarantine: Plant {plant.pk}.'):
+            self.act(case)
+
+        bench = make_location(workspace=self.workspace, name='Sales bench')
+        action = self.act(case, destination=bench)
+
+        unit.refresh_from_db()
+        self.assertEqual(unit.current_location_id, bench.pk)
+        placement = SpecificPlantLocation.objects.get(
+            specific_plant=plant, ended__isnull=True,
+        )
+        self.assertEqual(placement.location_type, SpecificPlantLocation.CONTAINER_UNIT)
+        self.assertEqual(placement.container_unit_id, unit.pk)
+        self.assertIsNotNone(action.results.get().stock_movement)
 
     def test_a_release_names_every_member_left_in_quarantine(self):
         """One refusal lists the whole reviewed set, as the member checks do."""

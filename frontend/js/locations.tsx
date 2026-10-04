@@ -422,4 +422,4 @@ function LocationsCatalog() {
   )
 }
 
-export { BASIS_LABELS, LocationsCatalog, TYPE_LABELS }
+export { BASIS_LABELS, LocationsCatalog, SELECTABLE_TYPES, TYPE_LABELS }

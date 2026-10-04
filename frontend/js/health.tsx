@@ -21,6 +21,7 @@ import {
 } from './api/health'
 import { getLocations } from './api/locations'
 import { activeChoices } from './catalog'
+import { SELECTABLE_TYPES } from './locations'
 import { queryKeys } from './query'
 import { HealthObservation, HealthPreview, HealthScope, HealthScopeType, HealthSeverity, QuarantineCase } from './types/health'
 import { formatDateTime } from './utils'
@@ -454,7 +455,7 @@ function QuarantineRow({ quarantine }: { quarantine: QuarantineCase }) {
         <Form.Select size="sm" value={destination} onChange={(event) => setDestination(event.target.value ? Number(event.target.value) : '')}>
           <option value="">Leave where it is</option>
           {locations
-            .filter((row) => row.location_type !== 'quarantine')
+            .filter((row) => SELECTABLE_TYPES.includes(row.location_type) && row.location_type !== 'quarantine')
             .map((row) => (
               <option key={row.pk} value={row.pk}>
                 {row.name}
