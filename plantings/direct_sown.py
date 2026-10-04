@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from locations.occupancy import check_capacity, plant_contribution
 
+from .batches import lock_batch_with_plants, validate_batch_for_new_output
 from .models import DirectSownCropEvent, GardenPlanting, SpecificPlant, SpecificPlantLocation
 from .lifecycle import record_germination_event
 
@@ -180,8 +181,20 @@ def move_direct_sown_crop(planting, user, occurred_on, garden_square=None,
 @transaction.atomic
 def individualize_direct_sown_crop(planting, user, quantity, occurred_on, names,
                                    notes='', override_reason=''):
-    """Remove exact aggregate quantity and create the same number of identities."""
+    """Remove exact aggregate quantity and create the same number of identities.
+
+    An individualized plant is a new individual output of its batch, and a
+    ground-applied input divides over the plants standing on that ground
+    (`costing.sources._area_reach`), so one created after the batch froze would
+    take a share of ground the plants already there hold whole. The batch is
+    locked and asked before anything is written, for the reason
+    `validate_batch_for_new_output` gives.
+    """
     planting = _locked(planting)
+    # Plants then the batch, the order `lock_batch_with_plants` fixes and
+    # `costing.services` explains; the planting row is already held above.
+    batch = lock_batch_with_plants(planting.batch)
+    validate_batch_for_new_output(batch, 'individualization')
     summary = direct_sown_summary(planting)
     if summary['current_plants'] is None:
         raise ValidationError({'quantity': 'Record a numeric emergence or retained count first.'})

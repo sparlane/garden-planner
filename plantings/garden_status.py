@@ -3,6 +3,7 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from .batches import lock_batch, validate_batch_for_reopening_a_sowing
 from .models import GardenPlanting, GardenPlantingStatusEvent
 
 
@@ -34,8 +35,15 @@ def finish_garden_planting(planting, user, event_type, occurred_on, reason=''):
 
 @transaction.atomic
 def correct_garden_status(event, user, reason, occurred_on):
-    """Reverse a mistaken current finish/failure and reactivate the crop."""
+    """Reverse a mistaken current finish/failure and reactivate the crop.
+
+    `batch_open_sowings` counts an unfinished aggregate crop as an open sowing,
+    so finalizing the batch's output required this crop to be finished.
+    Reactivating it afterwards is refused rather than allowed to contradict
+    that; `validate_batch_for_reopening_a_sowing` says what it would cost.
+    """
     planting = GardenPlanting.objects.select_for_update().get(pk=event.planting_id)
+    validate_batch_for_reopening_a_sowing(lock_batch(planting.batch))
     event = GardenPlantingStatusEvent.objects.select_for_update().get(pk=event.pk)
     if hasattr(event, 'reversal'):
         raise ValidationError('That event has already been corrected.')
