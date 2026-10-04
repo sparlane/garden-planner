@@ -349,7 +349,10 @@ type GerminationFormProps = {
   // Whether any selected cell belongs to a batch that has finalized its
   // output. That is a refusal rather than a warning: the server will not record
   // a germination against a frozen batch at all, so the form says why and what
-  // to do about it instead of offering a save that cannot succeed.
+  // to do about it instead of offering a save that cannot succeed. The wording
+  // below is this screen's own, deliberately not a copy of the server's
+  // message: the server states the rule and names the batch, and two copies of
+  // one sentence would only drift apart.
   frozen: boolean
   onChangeDate: (value: string) => void
   onChangeQuantity: (cellPlantingPk: number, value: number) => void
@@ -368,7 +371,8 @@ const GerminationForm: React.FC<GerminationFormProps> = ({ selections, date, not
       </p>
       {frozen && (
         <Alert variant="danger" className="py-2">
-          This batch has finalized its output, so every plant&apos;s share of its cost is final and a new seedling has none to take. Reopen the batch to record this germination.
+          This batch&apos;s output is final, so what each plant it raised cost is settled and a seedling recorded now would have no share to take. Reopen the batch — until it is
+          active again — and the cell divides over every seedling in it.
         </Alert>
       )}
       {!frozen && late && (
