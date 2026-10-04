@@ -359,10 +359,12 @@ def _reclaimed_losses(intended, stored, standing_at_freeze):
     only what stood in for them. Its reversal is reposted from today's split,
     so whatever part of it really is pool loss (seed that never germinated)
     stays pool loss. A block first observed after finalization claims nothing
-    this way, and nor does a late individual seedling: task 147 settled that a
-    germination on a finalized batch is refused rather than priced, so the only
-    way an output appears after the freeze is through `reopen_batch`, which
-    unfreezes the split altogether.
+    this way, and nor does a late individual plant: task 147 settled that a new
+    individual output on a finalized batch is refused rather than priced, so one
+    appears after the freeze only through `reopen_batch`, which unfreezes the
+    split altogether. A promotion is the one plant that still appears, and it is
+    not new output — the unit was already an output, and its share comes out of
+    the cohort layer rather than out of the source.
     """
     divided = {
         (row.source_type, row.source_id)
@@ -479,11 +481,16 @@ def _frozen_plan(intended, stored, standing_at_freeze=frozenset()):
 
     reverse = [row for row in stored.values() if retired(row)]
     reversed_keys = {_stored_key(row) for row in reverse}
-    # A missing key is an input that arrived after finalization, or a cohort
-    # unit promoted after it and paid for by the cohort layer this same run
-    # re-divides. It is never a plant that appeared beside a frozen one with
-    # nothing re-divided to pay for it, because `plantings` refuses to record
-    # that germination at all: `validate_batch_for_germination` says why.
+    # A missing key is an input that arrived after finalization, or a plant the
+    # batch has gained since. Exactly one kind of plant may be gained: a cohort
+    # unit promoted after the freeze, whose share is paid for by the cohort
+    # layer this same run re-divides. A genuinely *new* output would have
+    # nothing re-divided to pay for it, so `plantings` refuses to record one
+    # against a finalized batch — a tray germination and a direct-sown
+    # individualization both ask `validate_batch_for_new_output` first. That is
+    # a rule enforced a layer up, not an invariant this function can check: a
+    # plant key arriving here with no cohort reversal beside it means the freeze
+    # has been got round somewhere, and task 134's audit is what finds it.
     post = [
         spec for key, spec in intended.items()
         if key not in stored or key in reversed_keys

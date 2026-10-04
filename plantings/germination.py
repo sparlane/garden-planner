@@ -29,9 +29,15 @@ Closing a sowing's germination is not the same statement as finalizing the
 batch's output, and only the second one stops this. Once the batch has reached
 `output_finalized_at` every plant's share is frozen, there is no share left for
 a new seedling to earn, and the germination is refused outright — by
-`plantings.batches.validate_batch_for_germination`, which every path that
-creates a seedling asks before it writes one, and which names reopening the
+`plantings.batches.validate_batch_for_new_output`, which both paths that record
+a tray germination ask before they write a plant, and which names reopening the
 batch as the way through.
+
+That function is the batch's rule rather than this module's, and the Garden side
+asks it too: `plantings.direct_sown` asks before individualizing a plant out of
+a direct-sown crop. The two remaining writers answer it elsewhere — Garden
+quick-add requires an active batch of its own, and a cohort promotion is exempt
+on purpose, because the unit it names was already an output.
 
 Reopening is the other half of the decision, and it means something different:
 the close itself was a mistake — the wrong tray, or a count taken before an
@@ -289,7 +295,7 @@ def validate_late_germination(cell_planting, reason):
 
     Whether the seedling may be recorded at all is the batch's question rather
     than the sowing's, and the same paths ask
-    `plantings.batches.validate_batch_for_germination` beside this.
+    `plantings.batches.validate_batch_for_new_output` beside this.
     """
     if not is_closed(cell_planting.seed_tray_planting):
         return

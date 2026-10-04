@@ -375,29 +375,63 @@ def reopen_batch(batch, user, reason):
     return batch
 
 
-def validate_batch_for_germination(batch):
-    """Reject a seedling recorded after this batch's output was finalized.
+def validate_batch_for_new_output(batch, what='germination'):
+    """Reject a new individual output recorded after output was finalized.
 
-    Finalizing output froze every plant's share of every input, and a seedling
-    arriving afterwards has no share left to take. Dividing its cell again would
-    charge the same seed and the same media to the new plant *on top of* the
-    frozen one — one late straggler took a $1.08 batch to $1.62 — and taking the
-    share out of the frozen plant instead is the re-division that finalizing
-    forbids. Neither is a figure anybody can defend, so the observation is
-    refused rather than priced wrongly.
+    Finalizing froze every plant's share of every input, and a plant arriving
+    afterwards has no share left to take. Dividing its cell or its ground again
+    would charge the same input to the new plant *on top of* the frozen one —
+    one late tray straggler took a $1.08 batch to $1.62, and one plant
+    individualized out of a direct-sown crop took a $0.80 batch to $1.20 — and
+    taking the share out of the frozen plant instead is the re-division that
+    finalizing forbids. Neither is a figure anybody can defend, so the
+    observation is refused rather than priced wrongly.
+
+    **New** output is what this refuses. A cohort unit promoted after the freeze
+    is not new: it was already an output, and its plant share is paid for by the
+    cohort layer the same run re-divides, so promotion does not ask this.
 
     `reopen_batch` is the way through, and the refusal names it: it is already
     an audited transition with a required reason, it unfreezes the subledger,
-    and the germination then divides the cell over both seedlings the ordinary
-    way. The close on the sowing is a different fact and is left standing, so a
-    reopened batch still asks why the seedling is late.
+    and the cell or the ground then divides over both plants the ordinary way.
+    It names reopening *until the batch is active again* because a completed
+    batch takes two steps to get there. Facts on the sowing itself — a
+    germination closure, a finished crop — are left standing, so a reopened
+    batch still asks why the seedling is late.
+
+    `what` names the action in the operator's words, since the same rule stops a
+    tray germination and a direct-sown individualization.
     """
     if batch.output_finalized_at is not None:
         raise ValidationError({
             'batch': (
-                f'Batch {batch.code} has finalized its output, so every plant '
-                'share of its cost is final and a new seedling has none to '
-                'take. Reopen the batch to record this germination.'
+                f"Batch {batch.code} has finalized its output, so every plant's "
+                'share of its cost is final and a new plant has none to take. '
+                f'Reopen the batch until it is active again to record this {what}.'
+            ),
+        })
+
+
+def validate_batch_for_reopening_a_sowing(batch):
+    """Reject making a sowing current again once output is finalized.
+
+    `finalize_batch_output` refuses while any sowing is still open, so every
+    sowing on a finalized batch was closed when it froze. Reactivating one puts
+    the batch in the state finalizing said could not exist, and it is not
+    harmless bookkeeping: an aggregate crop made current again can be
+    individualized, and `validate_batch_for_new_output` is then the only thing
+    between the freeze and a second plant taking a share of ground the first one
+    already holds whole.
+
+    So the correction waits for the batch, the same way the output it would
+    contradict does.
+    """
+    if batch.output_finalized_at is not None:
+        raise ValidationError({
+            'batch': (
+                f'Batch {batch.code} has finalized its output, and finalizing it '
+                'required this crop to be finished. Reopen the batch until it is '
+                'active again before making the crop current.'
             ),
         })
 

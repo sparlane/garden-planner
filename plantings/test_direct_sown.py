@@ -13,8 +13,14 @@ from rest_framework.test import APITestCase
 from tests.factories import make_garden_planting, make_garden_square, make_location
 from workspaces.models import Workspace, get_current_workspace
 
+from .batches import finalize_batch_output, reopen_batch
 from .direct_sown import direct_sown_summary, record_direct_sown_event
-from .models import DirectSownCropEvent, GardenPlanting, SpecificPlantLocation
+from .models import (
+    DirectSownCropEvent,
+    GardenPlanting,
+    SpecificPlant,
+    SpecificPlantLocation,
+)
 
 
 class DirectSownLifecycleTests(TestCase):
@@ -169,3 +175,97 @@ class DirectSownApiTests(APITestCase):
         event.notes = 'Changed'
         with self.assertRaisesMessage(ValidationError, 'immutable'):
             event.save()
+
+
+class FinalizedBatchDirectSownTests(APITestCase):
+    """Task 147: a frozen batch gains no plant out of a direct-sown crop.
+
+    A surface-area input divides over the plants standing on the ground it
+    covers, so individualizing one after the batch's output was finalized takes
+    a share of ground the plants already there hold whole — measured in
+    `costing.test_late_germination.IndividualizedPlantRefusalTests` as a 0.80
+    treatment reporting 1.20.
+
+    Finalizing already requires every aggregate crop to be finished, and a
+    finished crop cannot be individualized, so these two routes are the whole
+    way in: the correction that makes the crop current again, and the
+    individualization behind it.
+    """
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='direct-frozen')
+        self.client.force_authenticate(self.user)
+        self.workspace = get_current_workspace()
+        self.workspace.mode = Workspace.Mode.GARDEN
+        self.workspace.save(update_fields=['mode'])
+        self.planting = make_garden_planting(
+            workspace=self.workspace, source=GardenPlanting.Source.DIRECT_SEED,
+            quantity=10, recorded_on=date(2026, 9, 1),
+        )
+        self.batch = self.planting.batch
+        self.url = f'/plantings/garden-register/aggregate-{self.planting.pk}/'
+        emerged = self.client.post(
+            f'{self.url}direct-event/',
+            {
+                'event_type': 'emerged', 'quantity': 4, 'count_quality': 'exact',
+                'occurred_on': '2026-09-02', 'notes': 'First flush',
+            },
+            format='json',
+        )
+        self.assertEqual(emerged.status_code, 201, emerged.data)
+        self.finish = self.client.post(
+            f'{self.url}finish/',
+            {'event_type': 'finished', 'occurred_on': '2026-09-20',
+             'reason': 'Row cleared.'},
+            format='json',
+        )
+        self.assertEqual(self.finish.status_code, 201, self.finish.data)
+        finalize_batch_output(self.batch, self.user, 'Done with this row.')
+        self.batch.refresh_from_db()
+
+    def test_correcting_the_finish_through_the_api_is_refused(self):
+        """The route the hole was found through, closed at the service."""
+        response = self.client.post(
+            f'{self.url}correct-status/',
+            {'event': self.finish.data['pk'], 'reason': 'Row was not cleared.',
+             'occurred_on': '2026-09-21'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn(self.batch.code, str(response.data))
+        self.assertIn('Reopen the batch', str(response.data))
+        self.planting.refresh_from_db()
+        self.assertIsNotNone(self.planting.finished_on)
+
+    def test_individualizing_is_refused_with_the_crop_made_current(self):
+        """The backstop, reached by clearing the column the guard protects."""
+        GardenPlanting.objects.filter(pk=self.planting.pk).update(finished_on=None)
+        response = self.client.post(
+            f'{self.url}individualize/',
+            {'quantity': 1, 'names': ['Keeper'], 'occurred_on': '2026-09-21',
+             'notes': 'A keeper.'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('Reopen the batch', str(response.data))
+        self.assertEqual(SpecificPlant.objects.filter(batch=self.batch).count(), 0)
+
+    def test_a_reopened_batch_takes_the_correction_and_the_plant(self):
+        """The refusal names a way through, so the way through has to work."""
+        reopen_batch(self.batch, self.user, 'Row was not cleared after all.')
+        self.batch.refresh_from_db()
+        corrected = self.client.post(
+            f'{self.url}correct-status/',
+            {'event': self.finish.data['pk'], 'reason': 'Row was not cleared.',
+             'occurred_on': '2026-09-21'},
+            format='json',
+        )
+        self.assertEqual(corrected.status_code, 201, corrected.data)
+        individualized = self.client.post(
+            f'{self.url}individualize/',
+            {'quantity': 1, 'names': ['Keeper'], 'occurred_on': '2026-09-21',
+             'notes': 'A keeper.'},
+            format='json',
+        )
+        self.assertEqual(individualized.status_code, 201, individualized.data)
+        self.assertEqual(SpecificPlant.objects.filter(batch=self.batch).count(), 1)
