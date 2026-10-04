@@ -62,9 +62,10 @@ def _validate_destination(workspace, destination, action):
 
     A cull or an escalation needs no destination: `culled` closes the plant's
     location itself, and an escalation asks for attention without moving
-    anything. A quarantine or a release that names none is checked against the
-    stock instead, under the locks, by `_require_release_destination` — the
-    stock is what says whether a move is owed.
+    anything. A release that names none is checked against the stock instead,
+    under the locks, by `_require_release_destination` — the stock is what says
+    whether a move is owed. Opening a case with none is checked by nothing yet,
+    which is task 169.
     """
     if destination is None:
         return
@@ -161,11 +162,17 @@ def _require_release_destination(plants, cohorts):
     time the case is closed. A block says where it stands on itself, and one
     with nothing left in it is standing nowhere either.
     """
-    standing = set(
-        SpecificPlantLocation.objects
+    standing = {
+        row.specific_plant_id: row
+        for row in SpecificPlantLocation.objects
         .filter(specific_plant__in=plants, ended__isnull=True)
         .filter(_standing_in_quarantine())
-        .values_list('specific_plant_id', flat=True)
+    }
+    # Say what is really in the way before asking for a destination that the
+    # move would then refuse: a potted plant needs taking out of its pot, not
+    # a bench naming.
+    _require_movable_members(
+        standing, [plant for plant in plants if plant.pk in standing],
     )
     quarantined_benches = set(
         Location.objects.filter(
@@ -187,40 +194,93 @@ def _require_release_destination(plants, cohorts):
         })
 
 
-def _tray_groups(plants):
-    placements = list(
-        SpecificPlantLocation.objects.filter(
+def _in_counted_fill(placement):
+    """Return whether a placement stands its plant in a counted pot fill.
+
+    Such a plant is described by the fill, and the fill's location is fixed
+    when it is opened — `SeedTrayGeneration` refuses to change it ("Cannot
+    change a fill's original location.") and the placement must match it
+    ("Counted pots must stand at their fill location"). So the pot cannot be
+    carried anywhere; only the plant leaving it can move, which is a
+    departure somebody decides, not a side effect of closing a case.
+    """
+    return bool(placement.container_fill_id) and not placement.container_unit_id
+
+
+def _carrier_groups(plants):
+    """Group open placements by the asset that moves instead of the plant.
+
+    A seed tray and a numbered pot each hold their own placement, so moving
+    the asset moves every plant it carries and leaves the placement rows
+    alone. Both are inventory units and both travel the same way. A plant
+    standing on a bench in its own right has no carrier and moves itself.
+    """
+    by_plant = {
+        row.specific_plant_id: row
+        for row in SpecificPlantLocation.objects.filter(
             specific_plant__in=plants, ended__isnull=True,
-        ).select_related('seed_tray_cell__tray__inventory_unit')
-    )
-    by_plant = {row.specific_plant_id: row for row in placements}
-    trays = {}
+        ).select_related('seed_tray_cell__tray__inventory_unit', 'container_unit')
+    }
+    carriers = {}
+    riders = {}
     for plant in plants:
         placement = by_plant.get(plant.pk)
-        if placement and placement.seed_tray_cell_id:
+        if placement is None:
+            continue
+        if placement.seed_tray_cell_id:
             tray = placement.seed_tray_cell.tray
-            trays.setdefault(tray.pk, tray)
-    return by_plant, trays
+            carriers.setdefault(tray.inventory_unit_id, (tray.inventory_unit, f'Tray {tray.pk}'))
+            riders[plant.pk] = tray.inventory_unit_id
+        elif placement.container_unit_id:
+            unit = placement.container_unit
+            carriers.setdefault(unit.pk, (unit, f'Pot {unit.pk}'))
+            riders[plant.pk] = unit.pk
+    return by_plant, carriers, riders
+
+
+def _require_movable_members(by_plant, plants):
+    """Refuse to move a plant whose pot cannot go with it.
+
+    Moving it would take it out of the pot without anybody saying so: the
+    placement would become a plain bench one, the fill would be left open at
+    the old location with nobody in it, and the departure would freeze its
+    shares and schedule its costs. That is a real operation, and it is the
+    operator's to record, so the release says what is in the way instead.
+    """
+    stuck = [
+        f'Plant {plant.pk} in pot fill {by_plant[plant.pk].container_fill_id}'
+        for plant in plants
+        if plant.pk in by_plant and _in_counted_fill(by_plant[plant.pk])
+    ]
+    if stuck:
+        raise ValidationError({
+            'destination': (
+                f'A counted pot fill cannot leave the location it was opened at: {", ".join(stuck)}. '
+                'Take the plant out of its pot, standing it where it is going, and then close the case.'
+            ),
+        })
 
 
 def _move_members(workspace, user, action, plants, cohorts, destination, reason):
-    """Move direct plants, whole cohorts, and fully selected tray carriers."""
+    """Move whole cohorts, loose plants, and fully selected tray or pot carriers."""
 
-    by_plant, trays = _tray_groups(plants)
+    by_plant, carriers, riders = _carrier_groups(plants)
+    _require_movable_members(by_plant, plants)
     selected_ids = {plant.pk for plant in plants}
-    tray_movements = {}
-    for tray_id, tray in trays.items():
+    carrier_movements = {}
+    for carrier_id, (unit, label) in carriers.items():
+        on_carrier = Q(seed_tray_cell__tray__inventory_unit=unit) | Q(container_unit=unit)
         riding = set(SpecificPlantLocation.objects.filter(
-            seed_tray_cell__tray_id=tray_id, ended__isnull=True,
-        ).values_list('specific_plant_id', flat=True))
+            ended__isnull=True,
+        ).filter(on_carrier).values_list('specific_plant_id', flat=True))
         if not riding.issubset(selected_ids):
             raise ValidationError({
-                'destination': f'Tray {tray_id} also carries unreviewed plants.',
+                'destination': f'{label} also carries unreviewed plants.',
             })
-        tray_movements[tray_id] = post_unit_movement(
+        carrier_movements[carrier_id] = post_unit_movement(
             workspace, user,
             UnitMovementRequest(
-                unit=tray.inventory_unit,
+                unit=unit,
                 movement_type=StockMovement.MovementType.TRANSFER,
                 destination=destination,
                 occurred_at=action.occurred_at,
@@ -229,11 +289,10 @@ def _move_members(workspace, user, action, plants, cohorts, destination, reason)
             ),
         )
     for plant in plants:
-        placement = by_plant.get(plant.pk)
         movement = None
         location = None
-        if placement and placement.seed_tray_cell_id:
-            movement = tray_movements[placement.seed_tray_cell.tray_id]
+        if plant.pk in riders:
+            movement = carrier_movements[riders[plant.pk]]
         else:
             location = move_specific_plant(plant, {
                 'location_type': SpecificPlantLocation.LOCATION,
