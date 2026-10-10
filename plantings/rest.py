@@ -23,7 +23,7 @@ from sales.models import SalesOrderAllocation, active_allocation_prefetch
 
 from .batch_rest import BatchedSowingSerializerMixin, InlineBatchSerializer, register_batch_routes
 from .bulk_rest import register_bulk_operation_routes
-from .batches import lock_batch_with_plants, validate_batch_for_germination
+from .batches import lock_batch_with_plants, validate_batch_for_new_output
 from .generation_rest import TrayGenerationFilterMixin, TrayGenerationSowingSerializerMixin
 from .garden_quick_add import register_garden_quick_add_routes
 from .garden_register_rest import register_garden_register_routes
@@ -595,7 +595,7 @@ class SpecificPlantSerializer(PlantLifecycleSerializerMixin, CurrentWorkspaceSer
                 # Asked of the locked batch rather than of the one reachable
                 # through the cell, so a finalization committed while this
                 # request was in flight still refuses the seedling.
-                validate_batch_for_germination(batch)
+                validate_batch_for_new_output(batch)
                 validate_late_germination(cell_planting, reason)
             except DjangoValidationError as exc:
                 raise serializers.ValidationError(_model_errors(exc)) from exc

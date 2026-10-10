@@ -16,6 +16,7 @@ to be run against PostgreSQL to mean anything here.
 
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from uuid import uuid4
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -26,13 +27,26 @@ from django.utils import timezone
 
 from inventory.models import InventoryItem, StockMovement
 from inventory.units import UnitCode
+from plantings.batches import finalize_batch_output
+from plantings.bulk_operations import (
+    BulkOperationConflict,
+    BulkOperationRequest,
+    execute_bulk_operation,
+)
 from plantings.lifecycle import (
     EventType,
     OutcomeRequest,
     record_germination_event,
     record_lifecycle_event,
 )
-from plantings.models import ProductionBatch, SowingStockPosting, SpecificPlant
+from plantings.models import (
+    BulkPlantOperation,
+    ProductionBatch,
+    SeedTrayCellPlanting,
+    SeedTrayPlanting,
+    SowingStockPosting,
+    SpecificPlant,
+)
 from tests.factories import (
     make_inventory_item,
     make_location,
@@ -200,6 +214,115 @@ class ConcurrentReallocationTests(CostingConcurrencyTestCase):
                 ]
             ]
         self.assertEqual(sum(1 for value in wrote if value), 1)
+        effective = CostAllocation.objects.filter(
+            batch_id=self.batch_pk,
+            reversal_of__isnull=True,
+            reversal__isnull=True,
+        )
+        self.assertEqual(
+            sum((row.amount for row in effective), Decimal('0')),
+            Decimal('0.5000'),
+        )
+
+
+@skipUnlessDBFeature('has_select_for_update')
+class GerminationAgainstFinalizationTests(CostingConcurrencyTestCase):
+    """A germination racing a finalization never lands on a frozen batch.
+
+    Task 147 refuses a new output against a batch whose output is final, and it
+    asks the batch `lock_batch_with_plants` just returned rather than the one
+    the cell allocation points at. That is the whole difference between a rule
+    and a race: a finalization committed while the germination was in flight
+    leaves the in-memory batch row saying the output is still provisional, and a
+    refusal read off that row would wave the seedling through.
+
+    So exactly one of these two writers gets its way. Either the batch freezes
+    and the germination is refused, or the seedling is recorded and the freeze
+    divides the cell over it — and the layers add back up to what the seed cost
+    either way, which is the figure the whole task exists to protect.
+    """
+
+    def setUp(self):
+        super().setUp()
+        plant = self.make_costed_plant('freeze-racer')
+        sowing = plant.cell_planting.seed_tray_planting
+        self.allocation_pk = plant.cell_planting_id
+        self.batch_pk = sowing.batch_id
+        self.workspace_pk = sowing.workspace_id
+        # Finalizing refuses while any sowing is still open, so the fixture is
+        # put in the state an operator would have it in before pressing it.
+        SeedTrayPlanting.objects.filter(batch_id=self.batch_pk).update(removed=True)
+        reallocate_batch(
+            ProductionBatch.objects.get(pk=self.batch_pk),
+            self.user,
+            CostAllocationRun.Trigger.MANUAL_RECALCULATE,
+        )
+
+    def _germinate(self):
+        """Record a second seedling through the real bulk operation."""
+        close_old_connections()
+        user = get_user_model().objects.get(pk=self.user.pk)
+        allocation = SeedTrayCellPlanting.objects.get(pk=self.allocation_pk)
+        request = BulkOperationRequest(
+            action=BulkPlantOperation.Action.GERMINATE,
+            atomicity=BulkPlantOperation.Atomicity.ALL_OR_NOTHING,
+            occurred_at=timezone.now(),
+            reason='A straggler came up.',
+            selection_source={
+                'mode': 'cell_plantings', 'cell_plantings': [self.allocation_pk],
+            },
+            action_payload={
+                'germinations': ({'cell_planting': allocation, 'quantity': 1},),
+                'notes': '',
+            },
+            idempotency_key=uuid4(),
+        )
+        try:
+            execute_bulk_operation(
+                Workspace.objects.get(pk=self.workspace_pk), user, request,
+            )
+        except (ValidationError, BulkOperationConflict):
+            result = 'germination refused'
+        else:
+            result = 'germinated'
+        close_old_connections()
+        return result
+
+    def _finalize(self):
+        """Declare the batch's output final on another connection."""
+        close_old_connections()
+        user = get_user_model().objects.get(pk=self.user.pk)
+        try:
+            finalize_batch_output(
+                ProductionBatch.objects.get(pk=self.batch_pk), user, 'Done sowing.',
+            )
+        except ValidationError:
+            result = 'finalize refused'
+        else:
+            result = 'finalized'
+        close_old_connections()
+        return result
+
+    def test_the_seedling_is_refused_or_the_freeze_counts_it(self):
+        """Both orders are correct; a frozen batch plus a free seedling is not."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = sorted(
+                future.result()
+                for future in [
+                    pool.submit(self._germinate),
+                    pool.submit(self._finalize),
+                ]
+            )
+        self.assertIn(
+            results,
+            [['finalized', 'germinated'], ['finalized', 'germination refused']],
+        )
+        batch = ProductionBatch.objects.get(pk=self.batch_pk)
+        self.assertIsNotNone(batch.output_finalized_at)
+        self.assertEqual(
+            SpecificPlant.objects.filter(batch_id=self.batch_pk).count(),
+            2 if results[1] == 'germinated' else 1,
+        )
         effective = CostAllocation.objects.filter(
             batch_id=self.batch_pk,
             reversal_of__isnull=True,
