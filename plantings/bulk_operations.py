@@ -298,7 +298,12 @@ def _germination_preview(workspace, request, lock=False):
         seed_tray_planting__workspace=workspace,
     )
     if lock:
-        queryset = queryset.select_for_update()
+        # `of=('self',)` because the `select_related` below joins through to the
+        # sowing and the batch, and a bare `FOR UPDATE` would lock a row in
+        # every joined table. That takes the batch *before* the plants, which
+        # inverts the order `lock_batch_with_plants` fixes and deadlocks against
+        # a finalization. Nothing here needs the sowing row held.
+        queryset = queryset.select_for_update(of=('self',))
     allocations = list(
         queryset.select_related('seed_tray_planting__batch').order_by('pk')
     )
@@ -461,7 +466,10 @@ def _apply_germination(operation, user, request):
     }
     allocation_ids = list(quantities)
     allocations = list(
-        SeedTrayCellPlanting.objects.select_for_update()
+        # `of=('self',)` for the reason `_germination_preview` gives: the
+        # `select_related` reaches the batch, and locking it here would take it
+        # before the plants `lock_batch_with_plants` is about to take.
+        SeedTrayCellPlanting.objects.select_for_update(of=('self',))
         .filter(pk__in=allocation_ids)
         .select_related('seed_tray_planting__batch', 'cell')
         .order_by('pk')

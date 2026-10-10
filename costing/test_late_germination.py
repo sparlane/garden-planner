@@ -210,7 +210,14 @@ class LateGerminationRefusalTests(CostingServiceTestCase):
         plants = list(SpecificPlant.objects.filter(batch=self.batch).order_by('pk'))
         self.assertEqual(plant_cost_breakdown(plants[0])['final_value'], '1.0800')
         self.assertEqual(plant_cost_breakdown(plants[1])['final_value'], '0.5400')
-        with self.assertRaises(AssertionError):
+        # The surplus itself rather than a bare AssertionError, so that some
+        # unrelated assertion inside the helper cannot satisfy this. Encoding the
+        # *un-refused* behaviour as an invariant is deliberate: if a later
+        # change teaches `_frozen_plan` to reverse a stray plant key instead of
+        # leaving it, this test is meant to fail and be rewritten, because the
+        # figure it measures would no longer be what the refusal is worth.
+        with self.assertRaisesRegex(
+                AssertionError, r"1\.5000.*1\.0000.*SOWING_POSTING"):
             self.assert_sources_reconcile()
 
 
@@ -410,7 +417,10 @@ class IndividualizedPlantRefusalTests(CostingServiceTestCase):
             totals_by_source(self.effective())[CostAllocation.SourceType.APPLICATION_LINE],
             Decimal('1.2000'),
         )
-        with self.assertRaises(AssertionError):
+        # The surplus itself, and deliberately an invariant over the un-refused
+        # behaviour, for the reasons the tray case above gives.
+        with self.assertRaisesRegex(
+                AssertionError, r"1\.2000.*0\.8000.*APPLICATION_LINE"):
             self.assert_sources_reconcile()
 
     def test_a_reopened_batch_divides_the_ground_over_both_plants(self):
