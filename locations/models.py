@@ -89,6 +89,18 @@ class Location(WorkspaceOwnedModel):
     #: Location types the system creates and retires for itself.
     SYSTEM_TYPES = frozenset({LocationType.SEED_PACKET})
 
+    #: Location types no plant stands in. `adjustment` is the ledger's
+    #: balancing point, posted against rather than stood on, and a seed packet
+    #: holds seed for the packet the system made it for. Both are real places
+    #: for stock arithmetic and neither is a bench, so a workflow asking where
+    #: a plant is going has to leave them out.
+    #: `frontend/js/locations.tsx`'s `SELECTABLE_TYPES` is the same rule, for
+    #: the types an operator may pick at all.
+    NON_PLANT_TYPES = frozenset({
+        LocationType.ADJUSTMENT,
+        LocationType.SEED_PACKET,
+    })
+
     name = models.CharField(max_length=255)
     code = models.CharField(max_length=64)
     location_type = models.CharField(max_length=16, choices=LocationType.choices)

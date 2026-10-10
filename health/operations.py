@@ -71,6 +71,8 @@ def _validate_destination(workspace, destination, action):
         return
     if destination.workspace_id != workspace.pk or not destination.active:
         raise ValidationError({'destination': 'Choose an active location in this workspace.'})
+    if destination.location_type in Location.NON_PLANT_TYPES:
+        raise ValidationError({'destination': 'Stock cannot stand in an adjustment or seed-packet location.'})
     quarantine = destination.location_type == Location.LocationType.QUARANTINE
     if action == QuarantineAction.Action.QUARANTINE and not quarantine:
         raise ValidationError({'destination': 'Quarantined stock must move to a quarantine location.'})
@@ -119,77 +121,6 @@ def _validate_members(case, plants, cohorts, quarantine=False):
             'cohorts': (
                 f'Cohort quantities changed after review: {changed}. '
                 'Split or inspect them again.'
-            ),
-        })
-
-
-#: The three ways an open placement puts a plant in a catalog location: the
-#: plant standing somewhere in its own right, the tray it rides in having been
-#: wheeled there, and the numbered pot it sits in having been put down there.
-#: Each carrier holds its own placement rather than copying it onto the plants,
-#: so all three have to be asked. `plantings/register.py`'s `standing_at`
-#: coalesces the same three for the same reason; a garden square is not one of
-#: them, because a square is not a location a nursery quarantines on.
-_STANDING_AT_TYPE = (
-    'location__location_type',
-    'seed_tray_cell__tray__inventory_unit__current_location__location_type',
-    'container_unit__current_location__location_type',
-)
-
-
-def _standing_in_quarantine():
-    """Match an open placement that stands its plant in quarantine, any way."""
-    match = Q()
-    for field in _STANDING_AT_TYPE:
-        match |= Q(**{field: Location.LocationType.QUARANTINE})
-    return match
-
-
-def _require_release_destination(plants, cohorts):
-    """Refuse a release that would leave stock on a quarantine bench.
-
-    `released_available` deliberately leaves a plant exactly where the
-    quarantine put it — `CLOSES_LOCATION` omits it, which task 91 decided — and
-    closing the case lifts the overlay that was keeping the stock off sale. The
-    destination is therefore the only thing that takes released stock off the
-    bench, and it is owed exactly when there is a bench to come off.
-
-    An open placement is also the test of whether the nursery still has the
-    plant, because every fact that takes one out of the nursery closes its
-    location. `released_available` not closing it is the whole reason this check
-    exists; a release that ends a return says the plant is with the customer
-    again, and the facts that say so have already closed the placement by the
-    time the case is closed. A block says where it stands on itself, and one
-    with nothing left in it is standing nowhere either.
-    """
-    standing = {
-        row.specific_plant_id: row
-        for row in SpecificPlantLocation.objects
-        .filter(specific_plant__in=plants, ended__isnull=True)
-        .filter(_standing_in_quarantine())
-    }
-    # Say what is really in the way before asking for a destination that the
-    # move would then refuse: a potted plant needs taking out of its pot, not
-    # a bench naming.
-    _require_movable_members(
-        standing, [plant for plant in plants if plant.pk in standing],
-    )
-    quarantined_benches = set(
-        Location.objects.filter(
-            pk__in=[cohort.location_id for cohort in cohorts if cohort.location_id],
-            location_type=Location.LocationType.QUARANTINE,
-        ).values_list('pk', flat=True)
-    )
-    stranded = [f'Plant {plant.pk}' for plant in plants if plant.pk in standing]
-    stranded.extend(
-        f'Cohort {cohort.pk}' for cohort in cohorts
-        if cohort.quantity and cohort.location_id in quarantined_benches
-    )
-    if stranded:
-        raise ValidationError({
-            'destination': (
-                f'Released stock would stay in quarantine: {", ".join(stranded)}. '
-                'Name the location it is going to.'
             ),
         })
 
@@ -259,6 +190,79 @@ def _require_movable_members(by_plant, plants):
                 'Take the plant out of its pot, standing it where it is going, and then close the case.'
             ),
         })
+
+
+#: The three ways an open placement puts a plant in a catalog location: the
+#: plant standing somewhere in its own right, the tray it rides in having been
+#: wheeled there, and the numbered pot it sits in having been put down there.
+#: Each carrier holds its own placement rather than copying it onto the plants,
+#: so all three have to be asked. `plantings/register.py`'s `standing_at`
+#: coalesces the same three for the same reason; a garden square is not one of
+#: them, because a square is not a location a nursery quarantines on.
+_STANDING_AT_TYPE = (
+    'location__location_type',
+    'seed_tray_cell__tray__inventory_unit__current_location__location_type',
+    'container_unit__current_location__location_type',
+)
+
+
+def _standing_in_quarantine():
+    """Match an open placement that stands its plant in quarantine, any way."""
+    match = Q()
+    for field in _STANDING_AT_TYPE:
+        match |= Q(**{field: Location.LocationType.QUARANTINE})
+    return match
+
+
+def _require_release_destination(plants, cohorts):
+    """Refuse a release that would leave stock on a quarantine bench.
+
+    `released_available` deliberately leaves a plant exactly where the
+    quarantine put it — `CLOSES_LOCATION` omits it, which task 91 decided — and
+    closing the case lifts the overlay that was keeping the stock off sale. The
+    destination is therefore the only thing that takes released stock off the
+    bench, and it is owed exactly when there is a bench to come off.
+
+    An open placement is also the test of whether the nursery still has the
+    plant, because every fact that takes one out of the nursery closes its
+    location. `released_available` not closing it is the whole reason this check
+    exists; a release that ends a return says the plant is with the customer
+    again, and the facts that say so have already closed the placement by the
+    time the case is closed. A block says where it stands on itself, and one
+    with nothing left in it is standing nowhere either.
+    """
+    standing = set(
+        SpecificPlantLocation.objects
+        .filter(specific_plant__in=plants, ended__isnull=True)
+        .filter(_standing_in_quarantine())
+        .values_list('specific_plant_id', flat=True)
+    )
+    quarantined_benches = set(
+        Location.objects.filter(
+            pk__in=[cohort.location_id for cohort in cohorts if cohort.location_id],
+            location_type=Location.LocationType.QUARANTINE,
+        ).values_list('pk', flat=True)
+    )
+    stranded = [f'Plant {plant.pk}' for plant in plants if plant.pk in standing]
+    stranded.extend(
+        f'Cohort {cohort.pk}' for cohort in cohorts
+        if cohort.quantity and cohort.location_id in quarantined_benches
+    )
+    if not stranded:
+        return
+    # Say what is really in the way before asking for a destination that the
+    # move would then refuse. The pot is asked about across the whole case, not
+    # just the stranded members, because the destination this is about to demand
+    # applies to every member: a potted plant standing somewhere perfectly good
+    # would block it just as surely as one on the quarantine bench.
+    by_plant, _carriers, _riders = _carrier_groups(plants)
+    _require_movable_members(by_plant, plants)
+    raise ValidationError({
+        'destination': (
+            f'Released stock would stay in quarantine: {", ".join(stranded)}. '
+            'Name the location it is going to.'
+        ),
+    })
 
 
 def _move_members(workspace, user, action, plants, cohorts, destination, reason):
