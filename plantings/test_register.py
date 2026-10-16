@@ -562,6 +562,25 @@ class RegisterOrderingTests(RegisterTestCase):
         self.assertEqual(self.row_ids(self.page(ordering='variety')), [first.pk, last.pk])
         self.assertEqual(self.row_ids(self.page(ordering='-variety')), [last.pk, first.pk])
 
+    def test_plants_sort_by_pot_number_so_a_pots_plants_sit_together(self):
+        """Plants sharing a numbered pot are adjacent, and unpotted plants trail."""
+        bench = make_location(location_type=Location.LocationType.BENCH)
+        pots = [make_numbered_container(location=bench) for _ in range(2)]
+        plants = []
+        for pot in (pots[1], pots[0], pots[1]):
+            plant = self.make_plant()
+            make_specific_plant_location(
+                specific_plant=plant,
+                location_type=SpecificPlantLocation.CONTAINER_UNIT,
+                seed_tray_cell=None,
+                container_unit=pot,
+                started=self.start,
+            )
+            plants.append(plant)
+        loose = self.make_plant()
+        ids = self.row_ids(self.page(ordering='pot'))
+        self.assertEqual(ids, [plants[1].pk, plants[0].pk, plants[2].pk, loose.pk])
+
 
 class RegisterSelectionTests(RegisterTestCase):
     """A bulk selection is a filter, resolved when it is acted on."""

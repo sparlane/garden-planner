@@ -34,17 +34,17 @@ function toggleSelected(selection: RegisterSelection, plantPk: number): Register
 // A tray is named by its number first and its model second. The model alone
 // names every tray of that kind at once, which is no help to somebody trying
 // to find the one plant they are looking at. A numbered pot is named by the
-// code printed on it, which is exactly what somebody in the nursery can read
-// but says nothing about what kind of place it is, so the kind goes under it.
+// number it was given, with the asset code and the kind of place under it.
 function LocationCell({ row }: { row: NurseryRegisterRow }) {
   if (row.location_type === null) {
     return <span className="text-muted">Not placed</span>
   }
-  const heading = row.location_type === 'seed_tray_cell' ? `Tray #${row.seed_tray}` : row.location_label
+  const isPot = row.location_type === 'container_unit' && row.container_unit !== null
+  const heading = row.location_type === 'seed_tray_cell' ? `Tray #${row.seed_tray}` : isPot ? `Pot #${row.container_unit}` : row.location_label
   const detail = row.location_type === 'seed_tray_cell' ? row.location_label : row.location_type === 'container_unit' ? PLACEMENT_LABELS.container_unit : null
   return (
     <>
-      {row.location_type === 'container_unit' && row.container_unit !== null ? (
+      {isPot ? (
         <NavLink className="fw-bold text-nowrap" to={`/inventory/serialized-units/${row.container_unit}`}>
           {heading}
         </NavLink>
@@ -52,6 +52,7 @@ function LocationCell({ row }: { row: NurseryRegisterRow }) {
         heading
       )}
       {detail !== null && <div className="text-muted small">{detail}</div>}
+      {isPot && <div className="text-muted small text-break">{row.location_label}</div>}
       {row.located_since !== null && <div className="text-muted small">since {formatDate(row.located_since)}</div>}
     </>
   )
