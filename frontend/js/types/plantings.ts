@@ -757,6 +757,8 @@ type NurseryRegisterOrdering =
   | '-location'
   | 'standing_at'
   | '-standing_at'
+  | 'pot'
+  | '-pot'
   | 'cost'
   | '-cost'
   | 'state'

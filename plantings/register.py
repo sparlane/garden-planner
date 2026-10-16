@@ -46,6 +46,7 @@ ORDERINGS = {
     'variety': ('variety_name', 'plant_name', 'pk'),
     'location': ('current_location_label', 'pk'),
     'standing_at': ('standing_at_label', 'pk'),
+    'pot': ('current_container_unit', 'pk'),
     'cost': ('cost', 'pk'),
     'state': ('lifecycle_state', 'pk'),
     'state_since': ('last_state_at', 'pk'),

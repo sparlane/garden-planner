@@ -21,6 +21,7 @@ const ORDERING_OPTIONS: Array<{ value: NurseryRegisterOrdering; label: string }>
   { value: 'variety', label: 'Crop A–Z' },
   { value: 'location', label: 'Location' },
   { value: 'standing_at', label: 'Where it is standing' },
+  { value: 'pot', label: 'Pot number' },
   { value: 'state', label: 'State' },
   { value: 'state_since', label: 'In this state longest' },
   { value: 'first_ready', label: 'First offered' },
