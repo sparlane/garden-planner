@@ -40,7 +40,9 @@ interface IncomeTaxReport {
   // `blocking` is false for a finding that a year can still be finalized with,
   // which an unconverted amount is.
   data_quality: Array<{ code: string; message: string; count?: number; blocking?: boolean }>
-  conversion: {
+  // Absent from a report frozen before currency conversion was recorded; a
+  // finalized year serves that report as it was, so it is never backfilled.
+  conversion?: {
     policy: string
     methods: Array<string>
     // False where at least one amount in the year has no rate recorded.
