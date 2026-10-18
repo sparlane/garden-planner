@@ -58,10 +58,10 @@ import { GerminationSummary } from '../plantings/germination'
 import { RECORDABLE_LOSS_CAUSES, lossCauseLabel } from '../plantings/loss_causes'
 import { CohortLossCause } from '../types/plantings'
 import { ApiErrorAlert } from '../api_error_alert'
-import { GardenSquare } from '../types/garden'
+import { GardenBed, GardenSquare } from '../types/garden'
 import { SelectOption } from '../types/others'
 import { InventoryItem, SerializedInventoryUnit } from '../types/inventory'
-import { getGardenSquares } from '../api/garden'
+import { getGardenBeds, getGardenSquares } from '../api/garden'
 import { getLocations } from '../api/locations'
 import { queryClient, queryKeys } from '../query'
 import { InputApplicationForm } from '../applications/application_form'
@@ -481,6 +481,7 @@ type MovePlantFormProps = {
   form: MoveForm
   date: string
   gardenSquares: GardenSquare[] | undefined
+  gardenBeds: GardenBed[] | undefined
   allSeedTrays: SeedTray[] | undefined
   moveCells: SeedTrayCell[] | undefined
   moveCellsLoading: boolean | undefined
@@ -543,10 +544,18 @@ const DestinationPicker: React.FC<DestinationPickerProps> = ({ label, options, v
   )
 }
 
+// Square names repeat from bed to bed (every bed has an A1), so a square is
+// only identifiable with its bed's name in front of it.
+function squareLabel(square: GardenSquare, beds: GardenBed[] | undefined): string {
+  const bed = (beds ?? []).find((candidate) => candidate.pk === square.bed)
+  return bed ? `${bed.name} - ${square.name}` : square.name
+}
+
 const MovePlantForm: React.FC<MovePlantFormProps> = ({
   form,
   date,
   gardenSquares,
+  gardenBeds,
   allSeedTrays,
   moveCells,
   moveCellsLoading,
@@ -560,7 +569,10 @@ const MovePlantForm: React.FC<MovePlantFormProps> = ({
   onSave,
   onCancel
 }) => {
-  const gardenSquareOptions = React.useMemo(() => (gardenSquares ?? []).map((square) => ({ value: square.pk, label: square.name })), [gardenSquares])
+  const gardenSquareOptions = React.useMemo(
+    () => (gardenSquares ?? []).map((square) => ({ value: square.pk, label: squareLabel(square, gardenBeds) })),
+    [gardenSquares, gardenBeds]
+  )
   const trayOptions = React.useMemo(() => (allSeedTrays ?? []).map((tray) => ({ value: tray.pk, label: trayOptionLabel(tray) })), [allSeedTrays])
   const cellOptions = React.useMemo(() => (moveCells ?? []).map((cell) => ({ value: cell.pk, label: `(${cell.x_position},${cell.y_position})` })), [moveCells])
   const potItemOptions = React.useMemo(() => potItems.map((item) => ({ value: item.pk, label: item.name })), [potItems])
@@ -803,6 +815,10 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     queryKey: queryKeys.garden.squares,
     queryFn: ({ signal }) => getGardenSquares(signal)
   })
+  const gardenBedsQuery = useQuery({
+    queryKey: queryKeys.garden.beds,
+    queryFn: ({ signal }) => getGardenBeds(signal)
+  })
   const generationsQuery = useQuery({
     queryKey: queryKeys.seedTrays.generations(seedTrayPk),
     queryFn: ({ signal }) => getSeedTrayGenerations(seedTrayPk, signal)
@@ -930,6 +946,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
   const plantings = plantingsQuery.data ?? []
   const specificPlants = specificPlantsQuery.data ?? []
   const gardenSquares = gardenSquaresQuery.data ?? []
+  const gardenBeds = gardenBedsQuery.data ?? []
   const inventoryLocations = inventoryLocationsQuery.data ?? []
   const inventoryDestinations = inventoryLocations.filter((location) => location.code !== 'SYSTEM-TRAY-UNKNOWN' && location.location_type !== 'seed_packet')
   const inventoryMovements = inventoryMovementsQuery.data ?? []
@@ -1138,7 +1155,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     }
     if (location.location_type === 'garden_square') {
       const square = gardenSquares.find((candidate) => candidate.pk === location.garden_square)
-      return square ? square.name : `Square #${location.garden_square}`
+      return square ? squareLabel(square, gardenBeds) : `Square #${location.garden_square}`
     }
     // A pot or a bench is not drawn on this page, so there is no row here to
     // name it from. `placementLabel` names a pot by the code printed on it,
@@ -1530,6 +1547,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
           form={moveForm}
           date={moveDate.value}
           gardenSquares={gardenSquares}
+          gardenBeds={gardenBeds}
           allSeedTrays={seedTrays}
           moveCells={moveCellsQuery.data}
           moveCellsLoading={moveCellsQuery.isPending}
