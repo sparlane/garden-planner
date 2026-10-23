@@ -6,6 +6,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import ProtectedError
 from django.http import QueryDict
 from rest_framework import mixins, routers, serializers, status, viewsets
 from rest_framework.decorators import action
@@ -216,7 +217,7 @@ class SalesOrderLineSerializer(
         # The column carries no model default, so the field would otherwise be
         # built required and a line that leaves the rate to the workspace would
         # be refused before `validate` was reached.
-        extra_kwargs = {'tax_rate': {'required': False}}
+        extra_kwargs = {'tax_rate': {'required': False}, 'description': {'required': False, 'allow_blank': True}}
 
     workspace_field_lookups = {
         'order': 'workspace',
@@ -238,6 +239,11 @@ class SalesOrderLineSerializer(
         # a standard-rated supply by definition, and zero stays unclassified
         # rather than being guessed at. So a blank treatment takes the fill and
         # a stated one that is not standard keeps its zero.
+        if not attrs.get('description', '' if self.instance is None else 'kept').strip():
+            # The snapshot freezes what the line was called when it was sold, so
+            # an unentered one takes the name the catalog gives the target now.
+            target = attrs.get('variety') or attrs.get('item') or self.instance.variety or self.instance.item
+            attrs['description'] = target.name
         return self.fill_tax_rate(attrs)
 
 
@@ -626,7 +632,12 @@ class SalesOrderLineViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMi
 
     def destroy(self, request, *args, **kwargs):
         """Translate the model's confirmed-term deletion guard."""
-        _run(self.get_object().delete)
+        try:
+            _run(self.get_object().delete)
+        except ProtectedError as exc:
+            # Allocations and their reservation history outlive a release, so a
+            # line that ever held stock is kept rather than rewritten.
+            raise ValidationError({'order': 'A line that has held stock cannot be deleted; cancel the order instead.'}) from exc
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -686,7 +697,8 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
                 raise ValidationError({'filters': 'Register filters select seedlings only.'})
             query = QueryDict('', mutable=True)
             for name, value in data['filters'].items():
-                query.setlist(name, value if isinstance(value, list) else [str(value)])
+                # JSON booleans must reach the strict query parsers as `true`/`false`.
+                query.setlist(name, value if isinstance(value, list) else [str(value).lower() if isinstance(value, bool) else str(value)])
             query['variety'] = str(line.variety_id)
             plant_ids = list(register_queryset(order.workspace, parse_register_filters(query)).values_list('pk', flat=True)[:5001])
             if len(plant_ids) > 5000:

@@ -9,6 +9,7 @@ import {
   createCustomer,
   createSalesOrder,
   createSalesOrderLine,
+  deleteSalesOrderLine,
   editableOrder,
   getAvailableSerializedUnits,
   getCustomers,
@@ -36,6 +37,7 @@ import { getHealthObservationTypes } from './api/health'
 import { getCohorts } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { activeChoices } from './catalog'
+import { parseBenchNumbers } from './inventory/bench_numbers'
 import { queryClient, queryKeys } from './query'
 import { CohortFilters, PlantCohort } from './types/plantings'
 import {
@@ -109,6 +111,18 @@ function invalidateSales(orderPk?: number) {
   void queryClient.invalidateQueries({ queryKey: queryKeys.sales.all })
   void queryClient.invalidateQueries({ queryKey: queryKeys.plantings.registerAll })
   if (orderPk !== undefined) void queryClient.invalidateQueries({ queryKey: queryKeys.sales.order(orderPk) })
+}
+
+// A line that never held stock can be taken off a quote or draft. One that did
+// keeps its allocation history, so it stays and the order is cancelled instead.
+function RemoveLineButton({ order, line }: { order: SalesOrder; line: SalesOrderLine }) {
+  const remove = useMutation({ mutationFn: () => deleteSalesOrderLine(line.pk), onSuccess: () => invalidateSales(order.pk) })
+  if (line.allocations.length > 0) return null
+  return (
+    <Button size="sm" variant="outline-danger" className="mb-2" disabled={remove.isPending} onClick={() => remove.mutate()}>
+      Remove line
+    </Button>
+  )
 }
 
 function CustomerForm({ customer }: { customer?: Customer }) {
@@ -318,7 +332,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
         </Col>
         <Col md={2}>
           <Form.Label>Description snapshot</Form.Label>
-          <Form.Control value={description} onChange={(event) => setDescription(event.target.value)} />
+          <Form.Control placeholder="Optional — defaults to the name" value={description} onChange={(event) => setDescription(event.target.value)} />
         </Col>
         <Col md={1}>
           <Form.Label>Quantity</Form.Label>
@@ -369,7 +383,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
           <Form.Control disabled={discountType === 'none'} type="number" min={0} step="0.0001" value={discountValue} onChange={(event) => setDiscountValue(event.target.value)} />
         </Col>
         <Col md={1}>
-          <Button disabled={target === '' || !description.trim() || !unitPrice} onClick={() => mutation.mutate()}>
+          <Button disabled={target === '' || !unitPrice} onClick={() => mutation.mutate()}>
             Add
           </Button>
         </Col>
@@ -440,6 +454,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   const [location, setLocation] = React.useState('')
   const [readyTo, setReadyTo] = React.useState('')
   const [selectedUnits, setSelectedUnits] = React.useState<Array<number>>([])
+  const [unitNumbers, setUnitNumbers] = React.useState('')
   const [draw, setDraw] = React.useState<{ balance: string; quantity: string }>({ balance: '', quantity: '1' })
   const [cohortDraw, setCohortDraw] = React.useState<{ cohort: number | ''; quantity: number }>({ cohort: '', quantity: 1 })
   const [expiresAt, setExpiresAt] = React.useState('')
@@ -448,10 +463,11 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   // from the release buttons because a shortfall is a different statement: the
   // stock is not going back to the pool, it never grew.
   const [shortfall, setShortfall] = React.useState<{ allocation: number; quantity: string; reason: string }>()
+  const typedBench = parseBenchNumbers(unitNumbers)
   const units = useQuery({
-    queryKey: queryKeys.sales.availableUnits(line.item ?? 0),
-    queryFn: ({ signal }) => getAvailableSerializedUnits(line.item as number, signal),
-    enabled: line.line_type === 'unit'
+    queryKey: queryKeys.sales.availableUnits(line.item ?? 0, JSON.stringify(typedBench.ranges)),
+    queryFn: ({ signal }) => getAvailableSerializedUnits(line.item as number, typedBench.ranges, signal),
+    enabled: line.line_type === 'unit' && typedBench.unreadable.length === 0
   })
   // The counted line draws on a pool, so the choice is which lot at which
   // place — pots from two deliveries cost different amounts, and the balance
@@ -702,17 +718,29 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
               </Col>
             </Row>
           ) : (
-            <Form.Select
-              multiple
-              value={selectedUnits.map(String)}
-              onChange={(event) => setSelectedUnits(Array.from(event.target.selectedOptions).map((option) => Number(option.value)))}
-            >
-              {(units.data ?? []).map((unit) => (
-                <option key={unit.pk} value={unit.pk}>
-                  {unit.asset_code}
-                </option>
-              ))}
-            </Form.Select>
+            <>
+              <Form.Label>Pot numbers</Form.Label>
+              <Form.Control
+                className="mb-2"
+                placeholder="Number written on the pot, e.g. 85 or 81-88, 130 — blank lists every available unit"
+                value={unitNumbers}
+                isInvalid={typedBench.unreadable.length > 0}
+                onChange={(event) => setUnitNumbers(event.target.value)}
+              />
+              {typedBench.unreadable.length > 0 && <Form.Text className="text-danger">Cannot read: {typedBench.unreadable.join(', ')}</Form.Text>}
+              {units.data?.length === 0 && typedBench.ranges.length > 0 && <Form.Text muted>No available unit has that number.</Form.Text>}
+              <Form.Select
+                multiple
+                value={selectedUnits.map(String)}
+                onChange={(event) => setSelectedUnits(Array.from(event.target.selectedOptions).map((option) => Number(option.value)))}
+              >
+                {(units.data ?? []).map((unit) => (
+                  <option key={unit.pk} value={unit.pk}>
+                    #{unit.pk} · {unit.asset_code}
+                  </option>
+                ))}
+              </Form.Select>
+            </>
           )}
           <Row className="g-2 align-items-end mt-1">
             <Col md={4}>
@@ -1331,6 +1359,7 @@ function SalesOrderDetailView({ orderPk, workspace }: { orderPk: number; workspa
             Discount {line.discount_type === 'percentage' ? `${line.discount_value}%` : formatMoney(line.discount_value, order.currency_code)} · Tax {line.tax_rate}% (
             {TAX_TREATMENT_LABELS[line.tax_treatment]}) · Total {formatMoney(line.total_incl_tax, order.currency_code)}
           </div>
+          {editable && <RemoveLineButton order={order} line={line} />}
           <AllocationPanel order={order} line={line} />
         </Card>
       ))}
