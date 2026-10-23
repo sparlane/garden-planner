@@ -153,6 +153,17 @@ class SalesRESTTests(RESTContractTestCase):
 
         self.assertEqual(refused.status_code, 400, refused.data)
 
+    def test_a_line_naming_nothing_is_refused_rather_than_failing(self):
+        """No variety, item or description is a client error, not a server one."""
+        order = self.create_order()
+
+        response = self.client.post(self.lines_url, {
+            'order': order['pk'], 'line_type': 'seedling', 'quantity': 1,
+            'unit_price': '11.5000', 'tax_rate': '15.0000',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400, response.data)
+
     def test_filter_preview_accepts_the_booleans_the_screen_sends(self):
         """The seedling picker sends JSON booleans, which must reach the register as true/false."""
         plant = self.make_available_plant()

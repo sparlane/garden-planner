@@ -76,7 +76,7 @@ function getSerializedUnit(pk: number, signal?: AbortSignal): Promise<Serialized
   return fetchAsJson<SerializedInventoryUnit>(`${SERIALIZED_UNITS_URL}${pk}/`, signal)
 }
 
-function getSerializedUnits(filters: SerializedUnitFilters = {}, signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
+function serializedUnitsUrl(filters: SerializedUnitFilters): string {
   const params = new URLSearchParams()
   if (filters.item !== undefined) params.set('item', String(filters.item))
   if (filters.location !== undefined) params.set('location', String(filters.location))
@@ -87,8 +87,19 @@ function getSerializedUnits(filters: SerializedUnitFilters = {}, signal?: AbortS
   if (filters.number_from !== undefined) params.set('number_from', String(filters.number_from))
   if (filters.number_to !== undefined) params.set('number_to', String(filters.number_to))
   if (filters.page_size !== undefined) params.set('page_size', String(filters.page_size))
+  if (filters.page !== undefined) params.set('page', String(filters.page))
   const query = params.size ? `?${params.toString()}` : ''
-  return fetchAsJson<Array<SerializedInventoryUnit>>(`${SERIALIZED_UNITS_URL}${query}`, signal)
+  return `${SERIALIZED_UNITS_URL}${query}`
+}
+
+function getSerializedUnits(filters: SerializedUnitFilters = {}, signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
+  return fetchAsJson<Array<SerializedInventoryUnit>>(serializedUnitsUrl(filters), signal)
+}
+
+// One page with its `next` link intact, for a caller that has to walk a list
+// wider than the server's page cap.
+function getSerializedUnitsPage(filters: SerializedUnitFilters, signal?: AbortSignal): Promise<{ results: Array<SerializedInventoryUnit>; next: string | null }> {
+  return fetchAsJson(serializedUnitsUrl(filters), signal, true)
 }
 
 // A fragment can match more than a page. The resolver needs all matches to
@@ -211,6 +222,7 @@ export {
   getInputTaxAdjustments,
   getSerializedUnit,
   getSerializedUnits,
+  getSerializedUnitsPage,
   getItemUnitConversions,
   getStockReceipts,
   getStocktake,

@@ -293,7 +293,7 @@ interface SalesOrderLineWrite {
   line_type: SalesLineType
   variety: number | null
   item: number | null
-  description: string
+  description?: string
   quantity: CommerceQuantity
   unit?: UnitCode
   unit_price: string

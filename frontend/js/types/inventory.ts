@@ -115,6 +115,7 @@ interface SerializedUnitFilters {
   // and a page that silently held the first hundred of a wider range would be
   // an arbitrary slice of the pots the operator meant.
   page_size?: number
+  page?: number
 }
 
 interface ItemUnitConversion {
