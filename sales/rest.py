@@ -242,7 +242,11 @@ class SalesOrderLineSerializer(
         if not attrs.get('description', '' if self.instance is None else 'kept').strip():
             # The snapshot freezes what the line was called when it was sold, so
             # an unentered one takes the name the catalog gives the target now.
-            target = attrs.get('variety') or attrs.get('item') or self.instance.variety or self.instance.item
+            target = attrs.get('variety') or attrs.get('item')
+            if target is None and self.instance is not None:
+                target = self.instance.variety or self.instance.item
+            if target is None:
+                raise ValidationError({'description': 'Name a variety or item, or enter a description.'})
             attrs['description'] = target.name
         return self.fill_tax_rate(attrs)
 

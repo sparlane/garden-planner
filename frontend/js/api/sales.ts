@@ -1,10 +1,8 @@
 import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 import { NumberRange } from '../inventory/bench_numbers'
-import { SerializedInventoryUnit } from '../types/inventory'
-import { getSerializedUnits } from './inventory'
+import { SerializedInventoryUnit, SerializedUnitFilters } from '../types/inventory'
+import { getSerializedUnitsPage } from './inventory'
 
-// The most pots one answer may hold; the server caps page_size here.
-const MAX_UNIT_PAGE = 500
 import {
   AllocationPreview,
   CohortDraw,
@@ -25,6 +23,8 @@ import {
 
 const CUSTOMERS_URL = '/sales/customers/'
 const ORDERS_URL = '/sales/orders/'
+// The most pots one answer may hold; the server caps page_size here.
+const MAX_UNIT_PAGE = 500
 const LINES_URL = '/sales/order-lines/'
 
 function getCustomers(signal?: AbortSignal): Promise<Array<Customer>> {
@@ -111,14 +111,22 @@ async function closeAllocations(pk: number, action: 'release' | 'expire', alloca
   return response.json() as Promise<Array<SalesAllocation>>
 }
 
-// An item's pots outrun the default page, so the list asks for the widest one
-// the server allows. Typed numbers are resolved on the server one range at a
-// time, never by filtering a fetched list that may not hold the pot.
+// An item's pots outrun any page, so every page is followed. Typed numbers are
+// resolved on the server one range at a time, never by filtering a fetched list
+// that may not hold the pot.
 async function getAvailableSerializedUnits(item: number, ranges: Array<NumberRange> = [], signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
-  const base = { item, physical_state: 'available' as const, page_size: MAX_UNIT_PAGE }
-  if (!ranges.length) return getSerializedUnits(base, signal)
-  const pages = await Promise.all(ranges.map((range) => getSerializedUnits({ ...base, number_from: range.from, number_to: range.to }, signal)))
-  return pages.flat().sort((first, second) => first.pk - second.pk)
+  const bounds = ranges.length ? ranges.map((range) => ({ number_from: range.from, number_to: range.to })) : [{}]
+  const found = await Promise.all(bounds.map((bound) => getEveryAvailableUnit({ item, physical_state: 'available', page_size: MAX_UNIT_PAGE, ...bound }, signal)))
+  return found.flat().sort((first, second) => first.pk - second.pk)
+}
+
+async function getEveryAvailableUnit(filters: SerializedUnitFilters, signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
+  const units: Array<SerializedInventoryUnit> = []
+  for (let page = 1; ; page += 1) {
+    const rows = await getSerializedUnitsPage({ ...filters, page }, signal)
+    units.push(...rows.results)
+    if (!rows.next) return units
+  }
 }
 
 function editableOrder(status: SalesOrderStatus): boolean {
