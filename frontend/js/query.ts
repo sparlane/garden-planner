@@ -24,7 +24,7 @@ const queryKeys = {
     customers: ['sales', 'customers'] as const,
     orders: ['sales', 'orders'] as const,
     order: (pk: number) => ['sales', 'orders', pk] as const,
-    availableUnits: (item: number) => ['sales', 'available-units', item] as const
+    availableUnits: (item: number, numbers = '') => ['sales', 'available-units', item, numbers] as const
   },
   health: {
     all: ['health'] as const,

@@ -127,6 +127,47 @@ class SalesRESTTests(RESTContractTestCase):
         )
         self.assertEqual(failed.status_code, 400)
 
+    def test_a_line_without_a_description_takes_the_target_name(self):
+        """The snapshot is optional; left blank it freezes the variety's name."""
+        plant = self.make_available_plant()
+        order = self.create_order()
+
+        for extra in ({}, {'description': '  '}):
+            response = self.client.post(self.lines_url, {
+                'order': order['pk'], 'line_type': 'seedling', 'variety': plant.batch.variety_id,
+                'quantity': 1, 'unit_price': '11.5000', 'tax_rate': '15.0000', **extra,
+            }, format='json')
+            self.assertEqual(response.status_code, 201, response.data)
+            self.assertEqual(response.data['description'], plant.batch.variety.name)
+
+    def test_a_line_can_be_deleted_until_it_has_held_stock(self):
+        """An empty line comes off a draft; one with allocation history is refused cleanly."""
+        plant = self.make_available_plant()
+        order = self.create_order()
+        empty = self.add_seedling_line(order, plant)
+        held = self.add_seedling_line(order, plant)
+        self.allocate(order, held, plants=[plant.pk])
+
+        self.assertEqual(self.client.delete(f"{self.lines_url}{empty['pk']}/").status_code, 204)
+        refused = self.client.delete(f"{self.lines_url}{held['pk']}/")
+
+        self.assertEqual(refused.status_code, 400, refused.data)
+
+    def test_filter_preview_accepts_the_booleans_the_screen_sends(self):
+        """The seedling picker sends JSON booleans, which must reach the register as true/false."""
+        plant = self.make_available_plant()
+        order = self.create_order()
+        line = self.add_seedling_line(order, plant)
+
+        preview = self.client.post(
+            f"{self.orders_url}{order['pk']}/allocation-preview/",
+            {'line': line['pk'], 'filters': {'state': ['available'], 'reserved': False, 'quarantined': False}},
+            format='json',
+        )
+
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual(preview.data['selected'], [plant.pk])
+
     def test_tentative_claims_name_competing_orders_without_blocking(self):
         """Soft claims stay selectable while every affected screen names them."""
         plant = self.make_available_plant()

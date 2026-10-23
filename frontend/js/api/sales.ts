@@ -1,4 +1,10 @@
-import { csrfPatch, csrfPost, fetchAsJson } from '../utils'
+import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
+import { NumberRange } from '../inventory/bench_numbers'
+import { SerializedInventoryUnit } from '../types/inventory'
+import { getSerializedUnits } from './inventory'
+
+// The most pots one answer may hold; the server caps page_size here.
+const MAX_UNIT_PAGE = 500
 import {
   AllocationPreview,
   CohortDraw,
@@ -53,6 +59,10 @@ async function updateSalesOrder(pk: number, data: Partial<Pick<SalesOrder, 'cust
   return response.json() as Promise<SalesOrder>
 }
 
+async function deleteSalesOrderLine(pk: number): Promise<void> {
+  await csrfDelete(`${LINES_URL}${pk}/`)
+}
+
 async function createSalesOrderLine(data: SalesOrderLineWrite): Promise<SalesOrderLine> {
   const response = await csrfPost(LINES_URL, data)
   return response.json() as Promise<SalesOrderLine>
@@ -101,8 +111,14 @@ async function closeAllocations(pk: number, action: 'release' | 'expire', alloca
   return response.json() as Promise<Array<SalesAllocation>>
 }
 
-function getAvailableSerializedUnits(item: number, signal?: AbortSignal): Promise<Array<{ pk: number; item: number; asset_code: string }>> {
-  return fetchAsJson(`/inventory/serialized-units/?item=${item}&physical_state=available`, signal)
+// An item's pots outrun the default page, so the list asks for the widest one
+// the server allows. Typed numbers are resolved on the server one range at a
+// time, never by filtering a fetched list that may not hold the pot.
+async function getAvailableSerializedUnits(item: number, ranges: Array<NumberRange> = [], signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
+  const base = { item, physical_state: 'available' as const, page_size: MAX_UNIT_PAGE }
+  if (!ranges.length) return getSerializedUnits(base, signal)
+  const pages = await Promise.all(ranges.map((range) => getSerializedUnits({ ...base, number_from: range.from, number_to: range.to }, signal)))
+  return pages.flat().sort((first, second) => first.pk - second.pk)
 }
 
 function editableOrder(status: SalesOrderStatus): boolean {
@@ -159,6 +175,7 @@ export {
   createCustomer,
   createSalesOrder,
   createSalesOrderLine,
+  deleteSalesOrderLine,
   editableOrder,
   getFulfillments,
   getAvailableSerializedUnits,

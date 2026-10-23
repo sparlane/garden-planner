@@ -389,6 +389,18 @@ class NumberRangeLookupTests(SerializedInventoryTestCase):
             wanted,
         )
 
+    def test_the_sales_picker_query_finds_one_numbered_available_pot(self):
+        """The picker names a pot by its number, among available units only."""
+        wanted = self.units[2].pk
+
+        self.assertEqual(
+            self.lookup(
+                item=self.units[2].item_id, physical_state='available',
+                number_from=wanted, number_to=wanted, page_size=500,
+            ),
+            [wanted],
+        )
+
     def test_one_bound_runs_to_the_end_of_the_numbers(self):
         """Half a range is still a range; the other end is simply open."""
         self.assertEqual(
