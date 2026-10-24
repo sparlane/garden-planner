@@ -68,6 +68,8 @@ class MixedCurrencyDispatchTests(CommerceFixtureTestCase):
         self.assertFalse(margin['cost_complete'])
         self.assertIsNone(margin['cost_total'])
         self.assertIsNone(margin['estimated_margin'])
+        # Two currencies have no single priced part either.
+        self.assertIsNone(margin['cost_known'])
 
 
 class SingleCurrencyDispatchTests(CommerceFixtureTestCase):
@@ -103,6 +105,11 @@ class IncompletePlantCostTests(CommerceFixtureTestCase):
         order, allocations = self.confirmed_order([plant])
         margin = order_margin(SalesOrder.objects.get(pk=order['pk']))
         self.assertIsNone(margin['cost_total'])
+        # The priced part is reported beside the gap, never as the total.
+        self.assertFalse(margin['cost_complete'])
+        self.assertEqual(margin['cost_known'], '1.0800')
+        self.assertEqual(margin['cost_known_currency_code'], self.workspace.currency_code)
+        self.assertIsNone(margin['estimated_margin'])
         self.fulfill(order, [row['pk'] for row in allocations])
         line = FulfillmentLine.objects.get()
         self.assertIsNone(line.cogs_amount)

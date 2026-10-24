@@ -124,6 +124,10 @@ interface SalesMargin {
   cost_total: string | null
   cost_currency_code: string | null
   cost_blocked: 'mixed_currency' | 'foreign_currency' | 'unknown_cost' | null
+  // The priced part of a cost with an unpriced part, in one currency. It is
+  // shown beside a marker and is never the cost: nothing is subtracted from it.
+  cost_known: string | null
+  cost_known_currency_code: string | null
   // One entry per currency the allocations were actually costed in. An
   // allocation whose cost cannot be stated is in none of them, so a reader
   // listing these has `cost_complete` to tell it a part is missing.

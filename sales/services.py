@@ -25,6 +25,7 @@ from .cost_of_sale import (
     CostOfSale,
     cohort_draw_cost,
     combine_costs,
+    known_by_currency,
     lot_draw_cost,
     plant_cost_of_sale,
     unit_cost_of_sale,
@@ -854,6 +855,10 @@ def order_margin(order):
     blocked = cost_blocked(codes, currency, unknown, order.currency_code)
     cost = None if currency is None else money(held.get(currency, Decimal('0')))
     stateable = cost is not None and not unknown
+    # What is priced of a cost with an unpriced part, for the order screen to
+    # show beside a marker. Never an input to the margin.
+    known = known_by_currency(costs) if unknown else {}
+    known_code = next(iter(known)) if len(known) == 1 else None
     complete = allocated_count == requested_count and blocked is None
     return {
         'allocation_complete': allocated_count == requested_count,
@@ -862,6 +867,8 @@ def order_margin(order):
         'cost_total': f'{cost:f}' if stateable else None,
         'cost_currency_code': currency if stateable else None,
         'cost_blocked': blocked,
+        'cost_known': None if known_code is None else f'{money(known[known_code]):f}',
+        'cost_known_currency_code': known_code,
         'currencies': currency_amounts(held),
         'estimated_margin': (
             f'{money(order.subtotal_ex_tax - cost):f}' if complete else None
