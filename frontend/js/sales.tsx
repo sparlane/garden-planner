@@ -833,7 +833,7 @@ function marginFallback(margin: SalesMargin): string {
 // named rather than left out of that list: a total with a part missing must
 // not read as what the whole order cost.
 function costOfSale(margin: SalesMargin): string {
-  if (!margin.cost_complete && margin.cost_known !== null && margin.cost_blocked !== 'mixed_currency') {
+  if (!margin.cost_complete && margin.cost_known != null && margin.cost_blocked !== 'mixed_currency') {
     return `${formatMoney(margin.cost_known, margin.cost_known_currency_code ?? '')} + unknown`
   }
   if (margin.cost_blocked !== 'mixed_currency') return formatMoney(margin.cost_total, margin.cost_currency_code ?? '', 'Unknown')

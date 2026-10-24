@@ -10,7 +10,7 @@ from django.db import connection
 from applications.services import post_application
 from plantings.counted_fills import plant_counted_fill
 from sales.commerce import post_fulfillment
-from sales.cost_of_sale import plant_cost_of_sale
+from sales.cost_of_sale import CostOfSale, plant_cost_of_sale
 from sales.models import SalesOrder
 from sales.test_commerce import CommerceFixtureTestCase
 from seedtrays.container_fills import open_numbered_fill
@@ -129,7 +129,7 @@ class PendingCostTests(PotMediaMixin, CommerceFixtureTestCase):  # pylint: disab
         self.assertFalse(any(query['sql'].lstrip().split()[0] in ('INSERT', 'UPDATE', 'DELETE') for query in queries))
         self.assertEqual(list(CostAllocation.objects.values()), layers)
         self.assertEqual(batch_cost_breakdown(plant.batch), before)
-        self.assertEqual(plant_cost_of_sale(plant), (Decimal('0'), 'NZD', True))
+        self.assertEqual(plant_cost_of_sale(plant), CostOfSale(Decimal('0'), 'NZD', True))
 
     def test_tray_has_zero_pending_and_explains_why(self):
         """Tray media already reaches the ledger and a tray is not sold."""
