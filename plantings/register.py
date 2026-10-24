@@ -88,6 +88,7 @@ class RegisterFilters(NamedTuple):
     stage: object = None
     grade: object = None
     container: object = None
+    pots: tuple = ()
     expected_ready_from: object = None
     expected_ready_to: object = None
     stage_overdue: object = None
@@ -117,6 +118,10 @@ def parse_register_filters(query_params):
     if allocation_status is not None and allocation_status not in ALLOCATION_STATUSES:
         raise ValidationError({'allocation_status': 'Select a valid allocation status.'})
 
+    # A pot's number is its unit's primary key, so a run written on the pots
+    # selects the plants standing in them without a second identity.
+    pots = tuple(parse_integer(value, 'pot') for value in query_params.getlist('pot') if value)
+
     return RegisterFilters(
         variety=parse_integer(query_params.get('variety'), 'variety'),
         batch=parse_integer(query_params.get('batch'), 'batch'),
@@ -135,6 +140,7 @@ def parse_register_filters(query_params):
         stage=parse_integer(query_params.get('stage'), 'stage'),
         grade=parse_integer(query_params.get('grade'), 'grade'),
         container=parse_integer(query_params.get('container'), 'container'),
+        pots=pots,
         expected_ready_from=parse_date(query_params.get('expected_ready_from'), 'expected_ready_from'),
         expected_ready_to=parse_date(query_params.get('expected_ready_to'), 'expected_ready_to'),
         stage_overdue=parse_boolean(query_params.get('stage_overdue'), 'stage_overdue'),
@@ -452,6 +458,8 @@ def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
         queryset = queryset.filter(current_grade=filters.grade)
     if filters.container is not None:
         queryset = queryset.filter(current_container=filters.container)
+    if filters.pots:
+        queryset = queryset.filter(current_container_unit__in=filters.pots)
     if filters.expected_ready_from is not None:
         queryset = queryset.filter(current_expected_ready__gte=filters.expected_ready_from)
     if filters.expected_ready_to is not None:

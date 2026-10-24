@@ -581,6 +581,28 @@ class RegisterOrderingTests(RegisterTestCase):
         ids = self.row_ids(self.page(ordering='pot'))
         self.assertEqual(ids, [plants[1].pk, plants[0].pk, plants[2].pk, loose.pk])
 
+    def test_plants_are_filtered_by_the_numbers_of_the_pots_they_stand_in(self):
+        """A run of pot numbers selects the plants in those pots and no others."""
+        bench = make_location(location_type=Location.LocationType.BENCH)
+        pots = [make_numbered_container(location=bench) for _ in range(3)]
+        plants = []
+        for pot in pots:
+            plant = self.make_plant()
+            make_specific_plant_location(
+                specific_plant=plant,
+                location_type=SpecificPlantLocation.CONTAINER_UNIT,
+                seed_tray_cell=None,
+                container_unit=pot,
+                started=self.start,
+            )
+            plants.append(plant)
+        self.make_plant()
+
+        ids = self.row_ids(self.page(pot=[pots[0].pk, pots[2].pk]))
+
+        self.assertEqual(sorted(ids), sorted([plants[0].pk, plants[2].pk]))
+        self.assertEqual(self.client.get(self.url, {'pot': 'eighty'}).status_code, 400)
+
 
 class RegisterSelectionTests(RegisterTestCase):
     """A bulk selection is a filter, resolved when it is acted on."""

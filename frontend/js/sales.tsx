@@ -37,7 +37,7 @@ import { getHealthObservationTypes } from './api/health'
 import { getCohorts } from './api/plantings'
 import { getPlantVarieties } from './api/plants'
 import { activeChoices } from './catalog'
-import { parseBenchNumbers } from './inventory/bench_numbers'
+import { parseBenchNumbers, rangeNumbers } from './inventory/bench_numbers'
 import { queryClient, queryKeys } from './query'
 import { CohortFilters, PlantCohort } from './types/plantings'
 import {
@@ -447,8 +447,12 @@ function previewedQuantity(preview: AllocationPreview): number {
   return preview.selected.reduce<number>((total, entry) => total + (typeof entry === 'number' ? 1 : Number(entry.quantity)), 0)
 }
 
+// A typed run is expanded in the browser, so a slip of a zero cannot ask for millions.
+const MAX_TYPED_POTS = 500
+
 function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderLine }) {
   const [plantIds, setPlantIds] = React.useState('')
+  const [potNumbers, setPotNumbers] = React.useState('')
   const [batch, setBatch] = React.useState('')
   const [tray, setTray] = React.useState('')
   const [location, setLocation] = React.useState('')
@@ -464,6 +468,8 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
   // stock is not going back to the pool, it never grew.
   const [shortfall, setShortfall] = React.useState<{ allocation: number; quantity: string; reason: string }>()
   const typedBench = parseBenchNumbers(unitNumbers)
+  // The plants standing in these pots, for a seedling line sold with its pot.
+  const typedPots = parseBenchNumbers(potNumbers)
   const units = useQuery({
     queryKey: queryKeys.sales.availableUnits(line.item ?? 0, JSON.stringify(typedBench.ranges)),
     queryFn: ({ signal }) => getAvailableSerializedUnits(line.item as number, typedBench.ranges, signal),
@@ -497,6 +503,7 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         .split(',')
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isInteger(value) && value > 0)
+      const pots = rangeNumbers(typedPots.ranges)
       if (line.line_type === 'unit') return previewAllocation(order.pk, { line: line.pk, unit_ids: selectedUnits })
       if (line.line_type === 'lot_quantity') {
         const row = drawRows.find((entry) => `${entry.lot}:${entry.location}` === draw.balance)
@@ -509,12 +516,15 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         return previewAllocation(order.pk, { line: line.pk, cohort_requests: cohortRequests })
       }
       if (ids.length) return previewAllocation(order.pk, { line: line.pk, plant_ids: ids })
+      if (typedPots.unreadable.length) throw new Error(`Cannot read pot numbers: ${typedPots.unreadable.join(', ')}`)
+      if (typedPots.count > MAX_TYPED_POTS) throw new Error(`Name at most ${MAX_TYPED_POTS} pots at a time.`)
       return previewAllocation(order.pk, {
         line: line.pk,
         filters: {
           state: ['available'],
           reserved: false,
           quarantined: false,
+          ...(pots.length ? { pot: pots.map(String) } : {}),
           ...(batch ? { batch } : {}),
           ...(tray ? { seed_tray: tray } : {}),
           ...(location ? { location } : {}),
@@ -649,6 +659,15 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
               <Col md={3}>
                 <Form.Control placeholder="Plant IDs, comma-separated" value={plantIds} onChange={(event) => setPlantIds(event.target.value)} />
               </Col>
+              <Col md={3}>
+                <Form.Control
+                  placeholder="Pot numbers, e.g. 85 or 81-88"
+                  title="Selects the plants standing in these numbered pots"
+                  value={potNumbers}
+                  isInvalid={typedPots.unreadable.length > 0}
+                  onChange={(event) => setPotNumbers(event.target.value)}
+                />
+              </Col>
               <Col md={2}>
                 <Form.Control placeholder="Batch ID filter" value={batch} onChange={(event) => setBatch(event.target.value)} />
               </Col>
@@ -729,6 +748,9 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
               />
               {typedBench.unreadable.length > 0 && <Form.Text className="text-danger">Cannot read: {typedBench.unreadable.join(', ')}</Form.Text>}
               {units.data?.length === 0 && typedBench.ranges.length > 0 && <Form.Text muted>No available unit has that number.</Form.Text>}
+              <Form.Text muted className="d-block">
+                Pots with a plant in them are not listed: sell the plant on a seedling line and send its pot at fulfillment.
+              </Form.Text>
               <Form.Select
                 multiple
                 value={selectedUnits.map(String)}
