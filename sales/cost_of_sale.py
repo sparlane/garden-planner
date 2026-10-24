@@ -40,6 +40,11 @@ class CostOfSale(NamedTuple):
     relabelling this module exists to stop, and the two columns behind this
     carry a check constraint saying the same thing.
 
+    `known_amount` is the priced part of a cost that has an unpriced part, in
+    `known_currency_code`. It is a reading for a person looking at an order, not
+    a cost: nothing may subtract it from revenue, and it is set only where
+    `amount` is None.
+
     A figure that is missing one of its inputs is such an absence. A plant fed
     one priced input and one unpriced one has no cost of sale — task 138's
     reason, which is also task 142's: a number with a part missing is not a
@@ -50,12 +55,33 @@ class CostOfSale(NamedTuple):
     amount: Optional[Decimal]
     currency_code: str
     provisional: bool = False
+    known_amount: Optional[Decimal] = None
+    known_currency_code: str = ''
 
 
 #: What a thing costs when nothing about its cost can be stated. Naming it is
 #: worth one line, because five readings return it and each returns it for a
 #: different reason.
 UNSTATEABLE = CostOfSale(None, '')
+
+
+def known_part(cost):
+    """Return (amount, currency) for what is priced of a cost, or None."""
+    if cost.amount is not None:
+        return cost.amount, cost.currency_code
+    if cost.known_amount is not None:
+        return cost.known_amount, cost.known_currency_code
+    return None
+
+
+def known_by_currency(costs):
+    """Add the priced part of each cost up within each currency."""
+    held = {}
+    for cost in costs:
+        part = known_part(cost)
+        if part is not None:
+            held[part[1]] = held.get(part[1], Decimal('0')) + part[0]
+    return held
 
 
 def combine_costs(parts, fallback):
@@ -72,6 +98,10 @@ def combine_costs(parts, fallback):
     currency = stated_currency(sorted(held), fallback)
     provisional = any(part.provisional for part in parts)
     if missing or currency is None:
+        known = known_by_currency(parts)
+        if len(known) == 1:
+            code = next(iter(known))
+            return CostOfSale(None, '', provisional, money(known[code]), code)
         return CostOfSale(None, '', provisional)
     return CostOfSale(money(held.get(currency, Decimal('0'))), currency, provisional)
 
@@ -89,8 +119,12 @@ def plant_cost_of_sale(plant):
     """
     breakdown = plant_cost_breakdown(plant)
     value = breakdown['provisional_value'] or breakdown['final_value']
-    if value is None or breakdown['unknown_cost']:
+    if value is None:
         return CostOfSale(None, '', breakdown['provisional'])
+    if breakdown['unknown_cost']:
+        return CostOfSale(
+            None, '', breakdown['provisional'], Decimal(value), breakdown['currency_code'],
+        )
     return CostOfSale(Decimal(value), breakdown['currency_code'], breakdown['provisional'])
 
 
@@ -107,12 +141,14 @@ def cohort_draw_cost(cohort, quantity):
     """
     breakdown = cohort_cost_breakdown(cohort)
     unit_value = breakdown['unit_value']
-    if unit_value is None or breakdown['unknown_cost']:
+    if unit_value is None:
         return CostOfSale(None, '', breakdown['provisional'])
-    return CostOfSale(
-        money(Decimal(unit_value) * quantity), breakdown['currency_code'],
-        breakdown['provisional'],
-    )
+    amount = money(Decimal(unit_value) * quantity)
+    if breakdown['unknown_cost']:
+        return CostOfSale(
+            None, '', breakdown['provisional'], amount, breakdown['currency_code'],
+        )
+    return CostOfSale(amount, breakdown['currency_code'], breakdown['provisional'])
 
 
 def lot_draw_cost(lot, quantity):
