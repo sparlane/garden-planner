@@ -503,7 +503,6 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
         .split(',')
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isInteger(value) && value > 0)
-      const pots = rangeNumbers(typedPots.ranges)
       if (line.line_type === 'unit') return previewAllocation(order.pk, { line: line.pk, unit_ids: selectedUnits })
       if (line.line_type === 'lot_quantity') {
         const row = drawRows.find((entry) => `${entry.lot}:${entry.location}` === draw.balance)
@@ -517,7 +516,12 @@ function AllocationPanel({ order, line }: { order: SalesOrder; line: SalesOrderL
       }
       if (ids.length) return previewAllocation(order.pk, { line: line.pk, plant_ids: ids })
       if (typedPots.unreadable.length) throw new Error(`Cannot read pot numbers: ${typedPots.unreadable.join(', ')}`)
-      if (typedPots.count > MAX_TYPED_POTS) throw new Error(`Name at most ${MAX_TYPED_POTS} pots at a time.`)
+      // Judged from the ends of each range, before any range is expanded: a slip
+      // of a zero, or a number too big to count with, must not be walked.
+      if (typedPots.ranges.some((range) => !Number.isSafeInteger(range.to)) || typedPots.count > MAX_TYPED_POTS) {
+        throw new Error(`Name at most ${MAX_TYPED_POTS} pots at a time.`)
+      }
+      const pots = rangeNumbers(typedPots.ranges)
       return previewAllocation(order.pk, {
         line: line.pk,
         filters: {
