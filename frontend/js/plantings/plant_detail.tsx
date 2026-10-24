@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Card, Col, Row, Table } from 'react-bootstrap'
 import { NavLink } from 'react-router'
@@ -8,12 +8,12 @@ import { getPlantCostBreakdown } from '../api/costing'
 import { getSpecificPlant, getSpecificPlantLifecycleEvents } from '../api/plantings'
 import { queryKeys } from '../query'
 import { PlantCostBreakdown } from '../types/costing'
-import { SpecificPlantLocation } from '../types/plantings'
+import { PlantOutcomeAction, SpecificPlantLocation } from '../types/plantings'
 import { Workspace } from '../types/workspace'
 import { formatDate, formatDateTime, formatMoney, formatMoneyTotals } from '../utils'
 import { costSourceLabel, PENDING_COST_LABELS } from './cost_sources'
 import { placementLabel } from './placements'
-import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory } from './lifecycle'
+import { EVENT_LABELS, LifecycleStateBadge, PlantAvailabilitySpans, PlantLifecycleHistory, PlantOutcomeButtons, PlantOutcomeDialog } from './lifecycle'
 import { PlantTimeline } from './timeline'
 
 // Physical history in the order it happened, which stays its own card rather
@@ -158,6 +158,7 @@ interface PlantDetailViewProps {
 
 function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
   const queryClient = useQueryClient()
+  const [selectedOutcome, setSelectedOutcome] = useState<PlantOutcomeAction>()
   const { data: plant, isPending } = useQuery({
     queryKey: queryKeys.plantings.specificPlantDetail(plantPk),
     queryFn: ({ signal }) => getSpecificPlant(plantPk, signal)
@@ -182,6 +183,14 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
   }
 
   const refreshPlant = () => queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantDetail(plantPk) })
+  const refreshOutcomeData = () =>
+    Promise.all([
+      refreshPlant(),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.specificPlantsAll }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.plantLifecycle(plantPk) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.plantTimelineAll }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.plantings.currentGardenSquares })
+    ])
 
   return (
     <main className="container py-3">
@@ -193,6 +202,10 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
       <p>
         Raised in batch <NavLink to={`/plantings/batches/${plant.batch}`}>#{plant.batch}</NavLink>, germinated {formatDateTime(plant.germinated)}.
       </p>
+      <div className="mb-3">
+        <h2 className="h5">Record an outcome</h2>
+        <PlantOutcomeButtons plant={plant} disabled={selectedOutcome !== undefined} onOutcome={(_, outcome) => setSelectedOutcome(outcome)} />
+      </div>
 
       <Row className="g-3">
         <Col md={12}>
@@ -357,6 +370,12 @@ function PlantDetailView({ plantPk, workspace }: PlantDetailViewProps) {
           </Col>
         )}
       </Row>
+      <PlantOutcomeDialog
+        plant={selectedOutcome === undefined ? undefined : plant}
+        outcome={selectedOutcome}
+        onClose={() => setSelectedOutcome(undefined)}
+        onRecorded={refreshOutcomeData}
+      />
     </main>
   )
 }
