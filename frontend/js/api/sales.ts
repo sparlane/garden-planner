@@ -111,12 +111,14 @@ async function closeAllocations(pk: number, action: 'release' | 'expire', alloca
   return response.json() as Promise<Array<SalesAllocation>>
 }
 
-// An item's pots outrun any page, so every page is followed. Typed numbers are
+// Pots with a plant in them are left out: they are sold on the plant's own
+// seedling line, with the pot sent from its fill. An item's pots outrun any
+// page, so every page is followed. Typed numbers are
 // resolved on the server one range at a time, never by filtering a fetched list
 // that may not hold the pot.
 async function getAvailableSerializedUnits(item: number, ranges: Array<NumberRange> = [], signal?: AbortSignal): Promise<Array<SerializedInventoryUnit>> {
   const bounds = ranges.length ? ranges.map((range) => ({ number_from: range.from, number_to: range.to })) : [{}]
-  const found = await Promise.all(bounds.map((bound) => getEveryAvailableUnit({ item, physical_state: 'available', page_size: MAX_UNIT_PAGE, ...bound }, signal)))
+  const found = await Promise.all(bounds.map((bound) => getEveryAvailableUnit({ item, physical_state: 'available', in_use: false, page_size: MAX_UNIT_PAGE, ...bound }, signal)))
   return found.flat().sort((first, second) => first.pk - second.pk)
 }
 
