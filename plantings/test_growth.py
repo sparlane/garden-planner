@@ -15,7 +15,7 @@ from tests.api import RESTContractTestCase
 from tests.factories import make_specific_plant
 from workspaces.models import Workspace, get_current_workspace
 
-from .growth import correct_observation, current_growth, record_observation
+from .growth import correct_observation, current_growth, current_growths, record_observation
 from .models import GrowthStage, NurseryObservation, PlantGrade
 
 
@@ -80,6 +80,23 @@ class GrowthObservationTests(TestCase):
                 self.workspace, None, observation_id=old.pk,
                 notes='A second correction is not allowed.',
             )
+
+    def test_batched_projection_matches_one_at_a_time(self):
+        other = make_specific_plant()
+        old = record_observation(
+            self.workspace, None, plant_ids=[self.plant.pk, other.pk],
+            stage=self.stage, grade=self.grade,
+        )
+        record_observation(
+            self.workspace, None, plant_ids=[self.plant.pk],
+            container_item=self.container, container_count=1,
+        )
+        correct_observation(self.workspace, None, observation_id=old.pk, notes='Wrong plants.')
+        untouched = make_specific_plant()
+        targets = [self.plant, other, untouched]
+        with self.assertNumQueries(2):
+            batched = current_growths(targets)
+        self.assertEqual(batched, [current_growth(target) for target in targets])
 
 
 class GrowthRestTests(RESTContractTestCase):
