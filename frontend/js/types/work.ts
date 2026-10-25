@@ -1,5 +1,5 @@
 type WorkTaskStatus = 'open' | 'snoozed' | 'completed' | 'skipped'
-type WorkView = 'today' | 'week' | 'overdue' | 'snoozed' | 'completed'
+type WorkView = 'today' | 'upcoming' | 'week' | 'overdue' | 'snoozed' | 'completed'
 
 interface WorkLink {
   role: 'target' | 'result'

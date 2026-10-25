@@ -51,6 +51,7 @@ const TRIGGERS = [
 const VIEWS: Array<[WorkView, string]> = [
   ['today', 'Today'],
   ['week', 'This week'],
+  ['upcoming', 'Upcoming'],
   ['overdue', 'Overdue'],
   ['snoozed', 'Snoozed'],
   ['completed', 'Completed']
@@ -664,7 +665,14 @@ function WorkQueueView() {
           </Form.Select>
         </Col>
       </Row>
-      <TaskTable tasks={tasks.data ?? []} />
+      {view === 'upcoming' && <p>Open reminders whose due windows reach tomorrow or later in the workspace timezone, including work beyond this week.</p>}
+      {tasks.isPending ? (
+        <p role="status">Loading work…</p>
+      ) : tasks.isError ? (
+        <Alert variant="danger">Could not load work. Please try again.</Alert>
+      ) : (
+        <TaskTable tasks={tasks.data ?? []} />
+      )}
       <RuleEditor />
     </main>
   )

@@ -180,9 +180,10 @@ def _in_view(task, view, workspace, now):
         return False
     if view == 'overdue':
         return task.due_end < now
-    if view == 'week':
-        return task.due_start < week_end and task.due_end >= week_start
-    return task.due_start < day_end and task.due_end >= day_start
+    return {
+        'upcoming': task.due_end >= day_end,
+        'week': task.due_start < week_end and task.due_end >= week_start,
+    }.get(view, task.due_start < day_end and task.due_end >= day_start)
 
 
 def _has_target(task, target_type, object_id):
