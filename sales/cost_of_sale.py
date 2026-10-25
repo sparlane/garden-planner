@@ -25,6 +25,7 @@ transaction it came from.
 from decimal import Decimal
 from typing import NamedTuple, Optional
 
+from costing.bulk import plant_committed_costs
 from costing.currency import held_by_currency, stated_currency
 from costing.services import cohort_cost_breakdown, plant_cost_breakdown
 
@@ -117,7 +118,24 @@ def plant_cost_of_sale(plant):
     true cost. A plant raised wholly in one foreign currency does have a value,
     and keeps it under that currency rather than the order's.
     """
-    breakdown = plant_cost_breakdown(plant)
+    return _plant_cost(plant_cost_breakdown(plant))
+
+
+def plant_costs_of_sale(plants):
+    """Return `plant_cost_of_sale` for each plant, read in a fixed number of queries.
+
+    Each plant must have `batch__workspace` loaded. The answers are the same as
+    asking one at a time; what differs is that the layers of every plant come
+    from one query and nothing replays the batch's lifecycle to produce a
+    figure that never mentions it.
+    """
+    plants = list(plants)
+    committed = plant_committed_costs(plants)
+    return {plant.pk: _plant_cost(committed[plant.pk]) for plant in plants}
+
+
+def _plant_cost(breakdown):
+    """Return a plant's cost of sale from its committed-cost figures."""
     value = breakdown['provisional_value'] or breakdown['final_value']
     if value is None:
         return CostOfSale(None, '', breakdown['provisional'])
@@ -128,7 +146,7 @@ def plant_cost_of_sale(plant):
     return CostOfSale(Decimal(value), breakdown['currency_code'], breakdown['provisional'])
 
 
-def cohort_draw_cost(cohort, quantity):
+def cohort_draw_cost(cohort, quantity, breakdown=None):
     """Return what a counted draw on one cohort costs, and how sure that is.
 
     An anonymous block divides its cost evenly per unit, so a draw on it is
@@ -138,8 +156,12 @@ def cohort_draw_cost(cohort, quantity):
     share of an incomplete total is not what the plants cost. A block bought in
     two currencies has no unit value either, so it arrives here as nothing for
     the same reason and is charged out the same way.
+
+    `breakdown` is the block's figures when a caller pricing several blocks has
+    already read them together through `costing.services.cohort_committed_costs`.
     """
-    breakdown = cohort_cost_breakdown(cohort)
+    if breakdown is None:
+        breakdown = cohort_cost_breakdown(cohort)
     unit_value = breakdown['unit_value']
     if unit_value is None:
         return CostOfSale(None, '', breakdown['provisional'])

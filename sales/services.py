@@ -10,6 +10,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from costing.bulk import cohort_committed_costs
 from costing.currency import cost_blocked, currency_amounts, held_by_currency, stated_currency
 from health.availability import is_quarantined
 from inventory.ledger import lock_lots, lock_units, unit_has_open_pot_fill, unit_physical_state, unpromised_bulk
@@ -27,10 +28,10 @@ from .cost_of_sale import (
     combine_costs,
     known_by_currency,
     lot_draw_cost,
-    plant_cost_of_sale,
+    plant_costs_of_sale,
     unit_cost_of_sale,
 )
-from .quantities import positive_quantity, remaining_quantity, returned_quantity
+from .quantities import positive_quantity, remaining_quantity, returned_quantity, returned_quantities
 from .models import (
     FulfillmentLine,
     ReservationEvent,
@@ -766,26 +767,6 @@ def cancel_order(order, user, reason=''):
     return order
 
 
-def _unshipped_cost(allocation, quantity):
-    """Return what `quantity` of this promise would cost if it left now.
-
-    A counted draw is valued from its own lot's unit cost, because that is the
-    price the pots in that box were bought at; a second delivery of the same
-    item is a different lot and cost something else, possibly in another
-    currency.
-    """
-    if allocation.plant_id:
-        return plant_cost_of_sale(allocation.plant)
-    if allocation.stock_lot_id:
-        return lot_draw_cost(allocation.stock_lot, quantity)
-    if allocation.plant_cohort_id:
-        return cohort_draw_cost(allocation.plant_cohort, quantity)
-    unit = allocation.inventory_unit
-    return combine_costs(
-        [unit_cost_of_sale(unit), *_passenger_costs(unit)], unit.currency_code,
-    )
-
-
 def _shipped_cost(line, kept):
     """Return the recorded cost of the `kept` part of one dispatch line.
 
@@ -804,10 +785,59 @@ def _shipped_cost(line, kept):
     )
 
 
-def _allocated_cost(allocation):
-    """Return one promise's cost in the currency that cost was recorded in.
+def _live_costs(wanted):
+    """Price `wanted`, a list of (allocation, quantity), as if it all left now.
 
-    The promise is split by quantity into what shipped and was kept, and what
+    Pricing a promise one at a time asks the subledger a handful of questions
+    per allocation, and the answers for two plants of one batch overlap almost
+    entirely. Everything an order can need is gathered first, so the number of
+    queries depends on the kinds of stock the order holds and not on how many
+    allocations it has. A counted draw is valued from its own lot's unit cost,
+    because that is the price the pots in that box were bought at; a second
+    delivery of the same item is a different lot and cost something else,
+    possibly in another currency.
+    """
+    cohorts = cohort_committed_costs({
+        allocation.plant_cohort_id: allocation.plant_cohort
+        for allocation, _quantity in wanted if allocation.plant_cohort_id
+    }.values())
+    units = [
+        allocation.inventory_unit for allocation, _quantity in wanted
+        if allocation.inventory_unit_id
+    ]
+    passengers = {}
+    for row in SpecificPlantLocation.objects.filter(
+        container_unit__in=units, ended__isnull=True,
+    ).select_related('specific_plant__batch__workspace'):
+        passengers.setdefault(row.container_unit_id, []).append(row.specific_plant)
+    plants = {
+        allocation.plant_id: allocation.plant
+        for allocation, _quantity in wanted if allocation.plant_id
+    }
+    for riders in passengers.values():
+        plants.update({plant.pk: plant for plant in riders})
+    plant_costs = plant_costs_of_sale(plants.values())
+
+    def price(allocation, quantity):
+        if allocation.plant_id:
+            return plant_costs[allocation.plant_id]
+        if allocation.stock_lot_id:
+            return lot_draw_cost(allocation.stock_lot, quantity)
+        if allocation.plant_cohort_id:
+            return cohort_draw_cost(
+                allocation.plant_cohort, quantity, cohorts[allocation.plant_cohort_id],
+            )
+        unit = allocation.inventory_unit
+        riders = [plant_costs[plant.pk] for plant in passengers.get(unit.pk, [])]
+        return combine_costs([unit_cost_of_sale(unit), *riders], unit.currency_code)
+
+    return {allocation.pk: price(allocation, quantity) for allocation, quantity in wanted}
+
+
+def _allocated_costs(allocations):
+    """Return each promise's cost in the currency that cost was recorded in.
+
+    Each promise is split by quantity into what shipped and was kept, and what
     has not. The shipped part is read from the dispatch that shipped it rather
     than priced again from the subledger as it stands now, so a closed order's
     margin stops moving every time its batch is recalculated (task 140). The
@@ -817,36 +847,47 @@ def _allocated_cost(allocation):
     No value at all is a cost that cannot be stated rather than a zero: a plant
     raised in two currencies has no single figure, and treating it as nothing
     would report a complete margin over an incomplete cost.
+
+    Dispatches and returns are read for every allocation in two queries, and
+    the live costs by `_live_costs`, so the whole is a fixed number of queries
+    however many allocations the order has (task 141).
     """
-    lines = list(allocation.fulfillment_lines.filter(
-        fulfillment__reversal_of__isnull=True, fulfillment__reversal__isnull=True,
-    ).select_related('allocation__plant__batch').prefetch_related('settlements'))
-    outstanding = allocation.promised_units
-    parts = []
+    by_pk = {allocation.pk: allocation for allocation in allocations}
+    dispatched = {}
+    lines = list(
+        FulfillmentLine.objects.filter(
+            allocation__in=allocations,
+            fulfillment__reversal_of__isnull=True, fulfillment__reversal__isnull=True,
+        ).prefetch_related('settlements').order_by('pk')
+    )
     for line in lines:
-        kept = line.quantity - returned_quantity(line)
-        outstanding -= kept
-        if kept > 0:
-            parts.append(_shipped_cost(line, kept))
-    if outstanding > 0 or not parts:
-        parts.append(_unshipped_cost(allocation, outstanding if parts else allocation.quantity))
-    if len(parts) == 1:
-        return parts[0]
-    return combine_costs(parts, allocation.line.order.currency_code)
-
-
-def _passenger_costs(unit):
-    """Return what each plant currently standing in this pot has cost.
-
-    A pot ships with whatever is growing in it — `sales.containers.resolve_riders`
-    picks the same placements up at dispatch — so pricing the pot alone would
-    report a complete cost for a load whose passengers are unpriced, or were
-    raised in a currency the pot's own figure cannot be added to.
-    """
-    placements = SpecificPlantLocation.objects.filter(
-        container_unit=unit, ended__isnull=True,
-    ).select_related('specific_plant__batch')
-    return [plant_cost_of_sale(row.specific_plant) for row in placements]
+        line.allocation = by_pk[line.allocation_id]
+        dispatched.setdefault(line.allocation_id, []).append(line)
+    returned = returned_quantities(lines)
+    shipped, wanted = {}, []
+    for allocation in allocations:
+        outstanding = allocation.promised_units
+        shipped[allocation.pk] = []
+        for line in dispatched.get(allocation.pk, []):
+            kept = line.quantity - returned[line.pk]
+            outstanding -= kept
+            if kept > 0:
+                shipped[allocation.pk].append(_shipped_cost(line, kept))
+        if outstanding > 0 or not shipped[allocation.pk]:
+            wanted.append((
+                allocation, outstanding if shipped[allocation.pk] else allocation.quantity,
+            ))
+    live_parts = _live_costs(wanted)
+    costs = []
+    for allocation in allocations:
+        parts = shipped[allocation.pk]
+        if allocation.pk in live_parts:
+            parts = [*parts, live_parts[allocation.pk]]
+        costs.append(
+            parts[0] if len(parts) == 1
+            else combine_costs(parts, allocation.line.order.currency_code)
+        )
+    return costs
 
 
 def order_margin(order):
@@ -866,7 +907,10 @@ def order_margin(order):
         SalesOrderAllocation.objects.filter(
             line__order=order,
             status__in=[SalesOrderAllocation.Status.PENDING, SalesOrderAllocation.Status.RESERVED, SalesOrderAllocation.Status.FULFILLED],
-        ).select_related('plant__batch', 'inventory_unit', 'stock_lot', 'plant_cohort__batch', 'line__order')
+        ).select_related(
+            'plant__batch__workspace', 'inventory_unit', 'stock_lot',
+            'plant_cohort__batch', 'plant_cohort__workspace', 'line__order',
+        )
     )
     allocated_count = sum(
         1 if row.quantity is None else row.quantity for row in allocations
@@ -878,7 +922,7 @@ def order_margin(order):
         total=Sum('quantity'),
     )['total'] or 0
     requested_count = sum(order.lines.values_list('quantity', flat=True)) - short
-    costs = [_allocated_cost(allocation) for allocation in allocations]
+    costs = _allocated_costs(allocations)
     # A part nobody can state leaves no amount to add, so `held_by_currency`
     # reporting one missing is the same fact `cost_complete` publishes. There
     # is no second flag to keep in step with it.
