@@ -5,6 +5,7 @@ import { NavLink } from 'react-router'
 
 import { acknowledgeWorkTask, actOnWorkTask, addWorkRule, addWorkTask, getWorkAssignees, getWorkRules, getWorkTasks, updateWorkRule } from './api/work'
 import { getLocations } from './api/locations'
+import { getGardenRegister } from './api/plantings'
 import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, mergeChoices, retiredRowClass } from './catalog'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
@@ -59,9 +60,18 @@ const VIEWS: Array<[WorkView, string]> = [
   ['completed', 'Completed']
 ]
 
-function ManualTaskForm() {
+function ManualTaskForm({ garden }: { garden: boolean }) {
   const cache = useQueryClient()
   const [location, setLocation] = React.useState('')
+  const [gardenTarget, setGardenTarget] = React.useState('')
+  const [targetSearch, setTargetSearch] = React.useState('')
+  const [targetPage, setTargetPage] = React.useState(1)
+  const targetFilters = { search: targetSearch, page: targetPage }
+  const targets = useQuery({
+    queryKey: queryKeys.plantings.gardenRegister(targetFilters),
+    queryFn: ({ signal }) => getGardenRegister(targetFilters, signal),
+    enabled: garden
+  })
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
   const [title, setTitle] = React.useState('')
   const [taskType, setTaskType] = React.useState('custom')
@@ -84,6 +94,7 @@ function ManualTaskForm() {
       title,
       task_type: taskType,
       location: location ? Number(location) : null,
+      garden_target: gardenTarget,
       due_start: start.toISOString(),
       due_end: end.toISOString(),
       recurrence: frequency ? { frequency, interval: 1, weekdays: frequency === 'weekly' ? [new Date(start).getDay() === 0 ? 6 : new Date(start).getDay() - 1] : [] } : {}
@@ -98,8 +109,15 @@ function ManualTaskForm() {
         <Form onSubmit={submit}>
           <Form.Group controlId="manual-reminder-location" className="mb-2">
             <Form.Label>Reminder location</Form.Label>
-            <Form.Select value={location} onChange={(event) => setLocation(event.target.value)} disabled={locations.isPending || locations.isError}>
-              <option value="">Whole garden</option>
+            <Form.Select
+              value={location}
+              onChange={(event) => {
+                setLocation(event.target.value)
+                setGardenTarget('')
+              }}
+              disabled={locations.isPending || locations.isError}
+            >
+              <option value="">{gardenTarget ? 'Plant or crop selected below' : 'Whole garden'}</option>
               {locations.data?.map((place) => (
                 <option key={place.pk} value={place.pk}>
                   {place.full_name}
@@ -117,6 +135,74 @@ function ManualTaskForm() {
             )}
             {locations.isSuccess && locations.data.length === 0 && <Form.Text>No active locations yet. You can still schedule a whole-garden reminder.</Form.Text>}
           </Form.Group>
+          {garden && (
+            <Form.Group controlId="manual-reminder-crop" className="mb-2">
+              <Form.Label>Reminder plant or crop</Form.Label>
+              <Form.Control
+                aria-label="Search reminder plants and crops"
+                placeholder="Search plants and crops"
+                value={targetSearch}
+                onChange={(event) => {
+                  setTargetSearch(event.target.value)
+                  setTargetPage(1)
+                  setGardenTarget('')
+                }}
+              />
+              <Form.Select
+                value={gardenTarget}
+                disabled={targets.isPending || targets.isError}
+                onChange={(event) => {
+                  setGardenTarget(event.target.value)
+                  setLocation('')
+                }}
+              >
+                <option value="">No plant or crop selected</option>
+                {targets.data?.results.map((row) => (
+                  <option key={row.key} value={row.key}>
+                    {row.name || row.plant_name} — {row.variety_name} — {row.location_label} ({row.record_type === 'individual' ? 'Plant' : 'Crop'} {row.record_id})
+                  </option>
+                ))}
+              </Form.Select>
+              {targets.isPending && <Form.Text>Loading plants and crops…</Form.Text>}
+              {targets.isError && (
+                <Alert variant="danger">
+                  Could not load plants and crops.{' '}
+                  <Button variant="link" onClick={() => targets.refetch()}>
+                    Retry
+                  </Button>
+                </Alert>
+              )}
+              {targets.isSuccess && targets.data.count === 0 && (
+                <Form.Text>No current plants or crops match. You can still schedule a location or whole-garden reminder.</Form.Text>
+              )}
+              {targets.data && (targetPage > 1 || targets.data.next) && (
+                <div className="d-flex gap-2 align-items-center mt-1">
+                  <Button
+                    variant="outline-secondary"
+                    disabled={targetPage === 1}
+                    onClick={() => {
+                      setTargetPage(targetPage - 1)
+                      setGardenTarget('')
+                    }}
+                  >
+                    Previous plants and crops
+                  </Button>
+                  <span>Page {targetPage}</span>
+                  <Button
+                    variant="outline-secondary"
+                    disabled={!targets.data.next}
+                    onClick={() => {
+                      setTargetPage(targetPage + 1)
+                      setGardenTarget('')
+                    }}
+                  >
+                    Next plants and crops
+                  </Button>
+                </div>
+              )}
+              <Form.Text>Select a current plant or crop instead of a location. Changing the search or page clears the plant selection.</Form.Text>
+            </Form.Group>
+          )}
           <Row className="g-2">
             <Col md={4}>
               <Form.Control required aria-label="Work to do" placeholder="Work to do" value={title} onChange={(event) => setTitle(event.target.value)} />
@@ -796,7 +882,7 @@ function WorkQueueView({ workspace }: { workspace: Workspace }) {
     <main className="container-fluid py-3">
       <h1>{workspace.mode === 'garden' ? 'Garden reminders' : 'Nursery work'}</h1>
       <p>Generated and manually scheduled work stays here until it is completed or deliberately skipped.</p>
-      <ManualTaskForm />
+      <ManualTaskForm garden={workspace.mode === 'garden'} />
       <Nav variant="tabs" activeKey={view} onSelect={(key) => key && setView(key as WorkView)}>
         {VIEWS.map(([value, label]) => (
           <Nav.Item key={value}>
