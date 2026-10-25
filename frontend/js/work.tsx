@@ -371,6 +371,92 @@ function TaskAgenda({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: str
   )
 }
 
+// Calendar arithmetic uses UTC placeholders for civil dates, never elapsed days
+// in the workspace timezone (which can be 23 or 25 hours across DST).
+function calendarDate(value: string, timezone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(value))
+  return ['year', 'month', 'day'].map((type) => parts.find((part) => part.type === type)!.value).join('-')
+}
+
+function TaskCalendar({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: string }) {
+  const today = calendarDate(new Date().toISOString(), timezone)
+  const [selected, setSelected] = React.useState(today)
+  const month = selected.slice(0, 7)
+  const first = new Date(`${month}-01T00:00:00Z`)
+  const days = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate()
+  const offset = (first.getUTCDay() + 6) % 7
+  const monthLabel = new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(first)
+  const dayLabel = (day: string) => new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', dateStyle: 'full' }).format(new Date(`${day}T00:00:00Z`))
+  const groups = new Map<string, Array<WorkTask>>()
+  for (const task of tasks) {
+    const day = calendarDate(task.due_end, timezone)
+    const entries = groups.get(day) ?? []
+    entries.push(task)
+    groups.set(day, entries)
+  }
+  const monthCount = tasks.filter((task) => calendarDate(task.due_end, timezone).startsWith(month)).length
+  const changeMonth = (amount: number) => setSelected(new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + amount, 1)).toISOString().slice(0, 10))
+  return (
+    <section aria-label="Reminder calendar">
+      <p>Calendar shows the selected view and filters, by due-by date in {timezone}. Choose Upcoming to browse future reminders. Future repeats appear when scheduled.</p>
+      <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+        <Button variant="outline-secondary" onClick={() => changeMonth(-1)}>
+          Previous month
+        </Button>
+        <Button variant="outline-secondary" onClick={() => setSelected(today)}>
+          Current day
+        </Button>
+        <Button variant="outline-secondary" onClick={() => changeMonth(1)}>
+          Next month
+        </Button>
+        <h2 className="h5 mb-0" aria-live="polite">
+          {monthLabel}
+        </h2>
+      </div>
+      <p role="status">
+        {monthCount} reminder{monthCount === 1 ? '' : 's'} in this month · {tasks.length - monthCount} outside this month in the selected view.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: '0.25rem', maxWidth: '48rem' }}>
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
+          <div key={day} className="text-center small" aria-hidden="true">
+            {day}
+          </div>
+        ))}
+        {Array.from({ length: offset }, (_, index) => (
+          <div key={`blank-${index}`} />
+        ))}
+        {Array.from({ length: days }, (_, index) => {
+          const day = `${month}-${String(index + 1).padStart(2, '0')}`
+          const count = groups.get(day)?.length ?? 0
+          return (
+            <Button
+              key={day}
+              variant={selected === day ? 'primary' : 'outline-secondary'}
+              className="px-0 py-2"
+              style={{ minHeight: '3.5rem' }}
+              aria-label={`${dayLabel(day)}: ${count} reminder${count === 1 ? '' : 's'}`}
+              aria-pressed={selected === day}
+              aria-current={day === today ? 'date' : undefined}
+              onClick={() => setSelected(day)}
+            >
+              <span className="d-block">{index + 1}</span>
+              {count > 0 && <span className="d-block small">({count})</span>}
+            </Button>
+          )
+        })}
+      </div>
+      <h3 className="h5 mt-4" aria-live="polite">
+        {dayLabel(selected)}
+      </h3>
+      {groups.has(selected) ? (
+        <TaskAgenda tasks={groups.get(selected)!} timezone={timezone} />
+      ) : (
+        <p className="text-muted">No reminders due on this date in the selected view. Choose another date, change the view, or clear the filters.</p>
+      )}
+    </section>
+  )
+}
+
 function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
   return (
     <Table responsive hover>
@@ -726,6 +812,7 @@ function WorkQueueView({ workspace }: { workspace: Workspace }) {
         <Form.Label>Presentation</Form.Label>
         <Form.Select value={presentation} onChange={(event) => setPresentation(event.target.value)} style={{ maxWidth: '16rem' }}>
           <option value="agenda">Agenda</option>
+          <option value="calendar">Calendar</option>
           <option value="table">Table</option>
         </Form.Select>
       </Form.Group>
@@ -734,6 +821,8 @@ function WorkQueueView({ workspace }: { workspace: Workspace }) {
         <p role="status">Loading work…</p>
       ) : tasks.isError ? (
         <Alert variant="danger">Could not load work. Please try again.</Alert>
+      ) : presentation === 'calendar' ? (
+        <TaskCalendar tasks={tasks.data ?? []} timezone={workspace.timezone} />
       ) : presentation === 'agenda' ? (
         <TaskAgenda tasks={tasks.data ?? []} timezone={workspace.timezone} />
       ) : (
