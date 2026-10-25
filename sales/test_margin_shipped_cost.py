@@ -1,17 +1,21 @@
 """An order's margin prices what shipped at the cost it shipped for (task 140)."""
 
-# pylint: disable=duplicate-code
+# pylint: disable=duplicate-code,protected-access
 
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest import mock
 from uuid import uuid4
 
 from costing.models import CostAllocationRun
 from costing.services import reallocate_batch
 from inventory.models import StockLot
+from reporting.commerce import profitability_report
 from tests.factories import apply_costed_input
 
 from .models import FulfillmentLine, SalesOrder
-from .services import order_margin
+from .cost_of_sale import CostOfSale
+from .services import _shipped_cost, order_margin
 from .test_commerce import CommerceFixtureTestCase
 
 
@@ -74,3 +78,25 @@ class ShippedCostMarginTests(CommerceFixtureTestCase):
         self.assertEqual(returned.status_code, 201, returned.data)
         FulfillmentLine.objects.update(cogs_amount=Decimal('9.0000'))
         self.assertNotEqual(self.margin()['cost_total'], '9.0000')
+
+    def test_the_margin_cost_is_the_profitability_reports_cost_for_the_order(self):
+        """Both screens read one record of what the order cost."""
+        self.fulfill(self.order, self.allocation_ids)
+        self.reprice_input()
+        rows = [
+            row for row in profitability_report(self.workspace, {}).rows
+            if row.get('order_id') == self.order['pk'] and row['kind'] == 'fulfillment'
+        ]
+        reported = sum(Decimal(row['plant_cogs']) for row in rows)
+        self.assertEqual(self.margin()['cost_total'], f'{reported:f}')
+
+    def test_part_of_a_line_is_priced_in_proportion(self):
+        """A partly returned line keeps the matching share of its recorded cost."""
+        line = SimpleNamespace(quantity=Decimal('4'))
+        with mock.patch('sales.services.cost_of_line', return_value=CostOfSale(Decimal('1.0800'), 'NZD')):
+            kept = _shipped_cost(line, Decimal('3'))
+            whole = _shipped_cost(line, Decimal('4'))
+        self.assertEqual(kept.amount, Decimal('0.8100'))
+        self.assertEqual(whole.amount, Decimal('1.0800'))
+        with mock.patch('sales.services.cost_of_line', return_value=CostOfSale(None, '', True)):
+            self.assertIsNone(_shipped_cost(line, Decimal('3')).amount)
