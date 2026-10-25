@@ -15,6 +15,7 @@ from rest_framework.response import Response
 
 from common.catalog import CatalogViewSetMixin
 from health.availability import target_alert_count
+from locations.models import Location, location_full_name
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CodedSettingSerializer,
@@ -104,6 +105,15 @@ class ManualTaskSerializer(serializers.Serializer):
         allow_null=True,
     )
     recurrence = serializers.JSONField(required=False, default=dict)
+    location = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.none(), required=False, allow_null=True,
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['location'].queryset = Location.objects.filter(
+            workspace=self.context['workspace'], active=True,
+        )
 
     def validate(self, attrs):
         if attrs['due_end'] < attrs['due_start']:
@@ -253,13 +263,17 @@ class WorkTaskViewSet(OperationalWorkMixin, viewsets.GenericViewSet):
         ])
 
     def create(self, request):
-        serializer = ManualTaskSerializer(data=request.data)
+        serializer = ManualTaskSerializer(
+            data=request.data, context={'workspace': self.get_current_workspace()},
+        )
         serializer.is_valid(raise_exception=True)
         values = serializer.validated_data
         assignee = values.pop('assignee', None)
+        location = values.pop('location', None)
+        targets = [(location, location_full_name(location), '/locations')] if location else []
         task = create_manual_task(
             self.get_current_workspace(), request.user,
-            {**values, 'assignee': assignee},
+            {**values, 'assignee': assignee}, targets=targets,
         )
         return Response(WorkTaskSerializer(task).data, status=status.HTTP_201_CREATED)
 
