@@ -16,6 +16,7 @@ from .filters import (
     InventoryBalanceFilters,
     MovementFilters,
     OrderFilters,
+    PotVarietyFilters,
     ProductionFilters,
     SerializedTrayFilters,
     StocktakeVarianceFilters,
@@ -27,6 +28,7 @@ from .commerce import dashboard_report, order_report, profitability_report
 from .documents import supply_document_report
 from .germination import germination_rates
 from .gst import gst_entry_report, gst_period_report
+from .pots import pot_varieties
 from .production import production_batches
 from .traceability import lot_trace, plant_trace
 from .inventory import (
@@ -85,6 +87,10 @@ SerializedTrayView = _view(
 )
 SerializedTrayExportView = _view(
     'SerializedTrayExportView', SerializedTrayFilters, serialized_trays, True,
+)
+PotVarietyView = _view('PotVarietyView', PotVarietyFilters, pot_varieties)
+PotVarietyExportView = _view(
+    'PotVarietyExportView', PotVarietyFilters, pot_varieties, True,
 )
 MovementView = _view('MovementView', MovementFilters, movement_history)
 MovementExportView = _view(

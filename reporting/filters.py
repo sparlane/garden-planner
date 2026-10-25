@@ -57,6 +57,15 @@ class SerializedTrayFilters(BaseReportFilters):  # pylint: disable=abstract-meth
     in_use = ReportBooleanField(required=False)
 
 
+class PotVarietyFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Filters for the pot number to variety list."""
+
+    variety = serializers.IntegerField(required=False, min_value=1)
+    plant = serializers.IntegerField(required=False, min_value=1)
+    location = serializers.IntegerField(required=False, min_value=1)
+    order = serializers.ChoiceField(required=False, choices=('pot', 'variety'))
+
+
 class MovementFilters(BaseReportFilters):  # pylint: disable=abstract-method
     """Filters for immutable movement history."""
 
