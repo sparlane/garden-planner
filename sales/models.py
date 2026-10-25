@@ -852,6 +852,65 @@ class FulfillmentLine(models.Model):
         ]
 
 
+class FulfillmentLineSettlement(models.Model):
+    """The final cost of sale of a line that was provisional when it was posted.
+
+    `FulfillmentLine.cogs_amount` is a snapshot and stays one: the line is the
+    record of what was known at dispatch, and the profitability report for a
+    period already published was read from it. A line posted before its batch's
+    output was finalized carries `cogs_provisional`, and nothing ever revisited
+    it (task 139). This row is what does, beside the line rather than over it,
+    for the reason `tax_treatment` is snapshotted: a later fact must not
+    silently restate the record it follows.
+
+    More than one row may exist for a line, and the latest stands. That is only
+    possible when a batch is reopened and finalized again with its plants
+    divided differently; a second finalization that finds the same figure writes
+    nothing. Absent amount and absent currency go together, exactly as they do on
+    the line: a plant that is still unpriced at finalization is settled as
+    unstateable, not as zero.
+    """
+
+    class Source(models.TextChoices):
+        """What produced this settlement."""
+
+        FINALIZED = 'finalized', 'Batch output finalized'
+        BACKFILL = 'backfill', 'Settled retrospectively'
+
+    line = models.ForeignKey(
+        FulfillmentLine, on_delete=models.PROTECT, related_name='settlements',
+    )
+    cogs_amount = models.DecimalField(
+        max_digits=MONEY_MAX_DIGITS, decimal_places=MONEY_DECIMAL_PLACES,
+        null=True, blank=True,
+    )
+    cogs_currency_code = models.CharField(max_length=3, blank=True, default='')
+    source = models.CharField(max_length=16, choices=Source.choices)
+    reason = models.TextField(blank=True, default='')
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+        editable=False, related_name='+',
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['pk']
+        constraints = [
+            models.CheckConstraint(
+                condition=STATED_COST_NAMES_ITS_CURRENCY,
+                name='sales_line_settlement_cost_currency_stated',
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Posted commerce records are immutable.')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Posted commerce records cannot be deleted.')
+
+
 class FulfillmentRider(models.Model):
     """One plant that left inside a sold container.
 

@@ -42,6 +42,7 @@ from .models import (
     Customer,
     Fulfillment,
     FulfillmentLine,
+    FulfillmentLineSettlement,
     FulfillmentContainer,
     FulfillmentPackagingLine,
     Payment,
@@ -56,6 +57,7 @@ from .models import (
     SalesReturnLine,
 )
 from .reservations import close_reservations
+from .settlement import settlement_of
 from .services import (
     CohortRequest,
     LotRequest,
@@ -429,9 +431,22 @@ class FulfillmentContainerSerializer(serializers.ModelSerializer):
         fields = ['pk', 'placement', 'stock_movement', 'unit_cost', 'base_quantity', 'cogs_amount', 'currency_code']
 
 
+class FulfillmentLineSettlementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FulfillmentLineSettlement
+        fields = ['pk', 'cogs_amount', 'cogs_currency_code', 'source', 'reason', 'created']
+
+
 class FulfillmentLineSerializer(serializers.ModelSerializer):
     container_dispatch = FulfillmentContainerSerializer(read_only=True)
     quantity = CommerceQuantityField()
+    # The snapshot above is what was known at dispatch. This is the figure that
+    # stands once the batch's output was finalized, or null while none does.
+    settlement = serializers.SerializerMethodField()
+
+    def get_settlement(self, line):
+        row = settlement_of(line)
+        return None if row is None else FulfillmentLineSettlementSerializer(row).data
 
     class Meta:
         model = FulfillmentLine
@@ -440,7 +455,7 @@ class FulfillmentLineSerializer(serializers.ModelSerializer):
             'discount_ex_tax', 'subtotal_ex_tax', 'tax_total',
             'total_incl_tax', 'tax_treatment', 'cogs_amount', 'cogs_provisional',
             'currency_code', 'cogs_currency_code', 'lifecycle_event',
-            'stock_movement', 'container_dispatch',
+            'stock_movement', 'container_dispatch', 'settlement',
         ]
 
 
@@ -790,7 +805,7 @@ class SalesOrderViewSet(RequireWorkspaceModeMixin, CurrentWorkspaceViewSetMixin,
         """List fulfillment history or atomically post one dispatch."""
         order = self.get_object()
         if request.method == 'GET':
-            rows = order.fulfillments.prefetch_related('lines', 'packaging_lines')
+            rows = order.fulfillments.prefetch_related('lines__settlements', 'packaging_lines')
             return Response(FulfillmentSerializer(rows, many=True).data)
         values = FulfillmentWriteSerializer(data=request.data)
         values.is_valid(raise_exception=True)

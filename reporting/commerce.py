@@ -25,6 +25,7 @@ from plantings.models import (
     SpecificPlantLocation,
 )
 from sales.commerce import order_commerce_summary
+from sales.settlement import cost_of_line, restored_cost, settlement_of
 from sales.models import (
     Fulfillment,
     FulfillmentLine,
@@ -219,7 +220,7 @@ def _commerce_queryset(workspace, filters, start, end):
         'fulfillment__order__customer', 'allocation__line',
         'allocation__plant__batch', 'allocation__inventory_unit',
         'allocation__plant_cohort__batch',
-    )
+    ).prefetch_related('settlements')
     if filters.get('variety'):
         queryset = queryset.filter(allocation__line__variety_id=filters['variety'])
     if filters.get('batch'):
@@ -339,6 +340,10 @@ def _base_financial_row(kind, occurred_at, currency, source_id):
         # keeps whatever the stock was raised in (task 157).
         'cogs_currency_code': currency,
         'provisional': False,
+        # True on a dispatch whose cost was provisional when it was posted and
+        # has since been settled, so a margin that appears after a batch is
+        # finalized can be told from one that moved because a sale did.
+        'settled': False,
         'unvalued': False,
     }
 
@@ -349,6 +354,7 @@ def _fulfillment_rows(lines, filters):
     for line in lines:
         if not _matches_place(line, filters, line.fulfillment.fulfilled_at):
             continue
+        cost = cost_of_line(line)
         row = _base_financial_row(
             'fulfillment', line.fulfillment.fulfilled_at,
             line.currency_code, line.pk,
@@ -369,12 +375,13 @@ def _fulfillment_rows(lines, filters):
             'gross_sales': decimal_string(line.gross_ex_tax, 4),
             'discounts': decimal_string(line.discount_ex_tax, 4),
             'net_sales': decimal_string(line.subtotal_ex_tax, 4),
-            'cogs_currency_code': line.cogs_currency_code or line.currency_code,
-            'provisional': line.cogs_provisional,
-            'unvalued': line.cogs_amount is None,
+            'cogs_currency_code': cost.currency_code or line.currency_code,
+            'provisional': cost.provisional,
+            'settled': settlement_of(line) is not None and not cost.provisional,
+            'unvalued': cost.amount is None,
         })
-        if line.cogs_amount is not None:
-            row[_cogs_bucket(line.allocation)] = decimal_string(line.cogs_amount, 4)
+        if cost.amount is not None:
+            row[_cogs_bucket(line.allocation)] = decimal_string(cost.amount, 4)
         rows.append(row)
         included_fulfillments[line.fulfillment_id] = line.fulfillment
     return rows, included_fulfillments
@@ -485,7 +492,7 @@ def _return_rows(workspace, filters, start, end):
         'fulfillment_line__allocation__line',
         'fulfillment_line__allocation__plant__batch',
         'fulfillment_line__allocation__plant_cohort__batch',
-    )
+    ).prefetch_related('fulfillment_line__settlements')
     if filters.get('variety'):
         queryset = queryset.filter(
             fulfillment_line__allocation__line__variety_id=filters['variety'],
@@ -510,6 +517,8 @@ def _return_rows(workspace, filters, start, end):
         line = return_line.fulfillment_line
         if not _matches_place(line, filters, line.fulfillment.fulfilled_at):
             continue
+        cost = cost_of_line(line)
+        restored = restored_cost(return_line, cost)
         row = _base_financial_row(
             'cogs_restoration', return_line.sales_return.returned_at,
             line.currency_code, return_line.pk,
@@ -527,12 +536,13 @@ def _return_rows(workspace, filters, start, end):
             'inventory_unit_id': line.allocation.inventory_unit_id,
             'lot_id': line.allocation.stock_lot_id,
             'cohort_id': line.allocation.plant_cohort_id,
-            'cogs_currency_code': line.cogs_currency_code or line.currency_code,
-            'provisional': line.cogs_provisional,
-            'unvalued': line.cogs_amount is None,
+            'cogs_currency_code': cost.currency_code or line.currency_code,
+            'provisional': cost.provisional,
+            'settled': settlement_of(line) is not None and not cost.provisional,
+            'unvalued': cost.amount is None,
         })
-        if return_line.cogs_amount is not None:
-            row[_cogs_bucket(line.allocation)] = decimal_string(-return_line.cogs_amount, 4)
+        if restored is not None:
+            row[_cogs_bucket(line.allocation)] = decimal_string(-restored, 4)
         rows.append(row)
     return rows
 
