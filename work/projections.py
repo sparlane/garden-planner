@@ -15,7 +15,7 @@ from django.utils import timezone
 from health.models import HealthFollowUp, HealthObservation, HealthTreatment
 from locations.models import location_full_name
 from plantings.assumption_variance import assumption_variance_rows
-from plantings.growth import current_growth
+from plantings.growth import current_growths
 from plantings.lifecycle import PRESENT_STATES, with_lifecycle_state
 from plantings.models import (
     GardenRowDirectSowPlanting,
@@ -430,15 +430,12 @@ def _growth_candidates(rule):
         lifecycle_state__in=sorted(PRESENT_STATES),
     ).select_related('batch__variety__plant').prefetch_related(
         'locations__location', 'locations__seed_tray_cell__tray__inventory_unit__current_location',
-        'nursery_observation_targets__observation__stage',
     )
     cohorts = PlantCohort.objects.filter(
         workspace=rule.workspace, quantity__gt=0, batch__status__in=OPEN_BATCHES,
-    ).select_related('batch__variety__plant', 'location').prefetch_related(
-        'nursery_observation_targets__observation__stage',
-    )
-    for target in list(plants) + list(cohorts):
-        growth = current_growth(target)
+    ).select_related('batch__variety__plant', 'location')
+    targets = list(plants) + list(cohorts)
+    for target, growth in zip(targets, current_growths(targets)):
         location = target.location if isinstance(target, PlantCohort) else _plant_location(target)
         yield target, target.batch, location, growth
 

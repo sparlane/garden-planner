@@ -1,10 +1,14 @@
 """Audited nursery growth observations and current-value projections."""
 
+from collections import defaultdict
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
 
-from .models import NurseryObservation, NurseryObservationTarget, PlantCohort, SpecificPlant
+from .models import (
+    NurseryObservation, NurseryObservationTarget, PlantCohort, SpecificPlant, SpecificPlantLocation,
+)
 
 
 OBSERVED_FIELDS = (
@@ -115,9 +119,60 @@ def effective_observations(target):
     )
 
 
+def _container_placements(plants):
+    """Return each plant's newest container placement, in one query."""
+    placements = {}
+    rows = SpecificPlantLocation.objects.filter(
+        Q(container_unit__isnull=False) | Q(container_fill__isnull=False),
+        specific_plant__in=plants,
+    ).select_related(
+        'container_unit__item', 'container_fill__stock_lot__item',
+    ).order_by('-started', '-pk')
+    for row in rows:
+        placements.setdefault(row.specific_plant_id, row)
+    return placements
+
+
 def current_growth(target):
     """Project each current fact independently from append-only history."""
     rows = list(effective_observations(target))
+    placement = None
+    if isinstance(target, SpecificPlant):
+        placement = target.locations.filter(Q(container_unit__isnull=False) | Q(container_fill__isnull=False)).select_related(
+            'container_unit__item', 'container_fill__stock_lot__item',
+        ).order_by('-started', '-pk').first()
+    return _project_growth(rows, placement)
+
+
+def current_growths(targets):
+    """Project `current_growth` for many targets in a fixed number of queries.
+
+    A queue that asks of every plant and cohort in the nursery would otherwise
+    spend two queries on each, which is the whole cost of the screen.
+    """
+    targets = list(targets)
+    plants = [target for target in targets if isinstance(target, SpecificPlant)]
+    cohorts = [target for target in targets if isinstance(target, PlantCohort)]
+    observed = defaultdict(list)
+    links = NurseryObservationTarget.objects.filter(
+        Q(plant__in=plants) | Q(cohort__in=cohorts), observation__correction__isnull=True,
+    ).select_related(
+        'observation__stage', 'observation__grade', 'observation__container_item',
+        'observation__created_by',
+    ).order_by('-observation__occurred_at', '-observation__pk')
+    for link in links:
+        observed[('plant', link.plant_id) if link.plant_id else ('cohort', link.cohort_id)].append(link.observation)
+    placements = _container_placements(plants)
+    return [
+        _project_growth(
+            observed[('plant', target.pk) if isinstance(target, SpecificPlant) else ('cohort', target.pk)],
+            placements.get(target.pk) if isinstance(target, SpecificPlant) else None,
+        )
+        for target in targets
+    ]
+
+
+def _project_growth(rows, placement):
     current = {field: None for field in OBSERVED_FIELDS}
     current['stage_observed_at'] = None
     current['container_count'] = None
@@ -126,11 +181,6 @@ def current_growth(target):
     current['container_footprint_m2'] = None
     current['container_observation'] = None
     current['container_fill'] = None
-    placement = None
-    if isinstance(target, SpecificPlant):
-        placement = target.locations.filter(Q(container_unit__isnull=False) | Q(container_fill__isnull=False)).select_related(
-            'container_unit__item', 'container_fill__stock_lot__item',
-        ).order_by('-started', '-pk').first()
     for row in rows:
         for field in OBSERVED_FIELDS:
             if field == 'container_item' and placement and (
