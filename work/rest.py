@@ -70,8 +70,7 @@ class LinkSerializer(serializers.ModelSerializer):
         ]
 
     def get_active_health_alerts(self, link):
-
-        return target_alert_count(link.target)
+        return _target_health_alert_count(link.target, self.context.get('alerts'))
 
 
 class WorkTaskSerializer(serializers.ModelSerializer):
@@ -133,7 +132,7 @@ class TaskActionSerializer(serializers.Serializer):
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=64, default='')
 
 
-def _projected_data(task):
+def _projected_data(task, alerts=None):
     return {
         'pk': None, 'key': task.key, 'origin': task.origin, 'rule': task.rule.pk,
         'task_type': task.task_type, 'title': task.title, 'notes': '',
@@ -148,15 +147,20 @@ def _projected_data(task):
             'target_type': row.target._meta.model_name,
             'object_id': row.target.pk, 'label': row.label, 'url': row.url,
             'snapshot': {},
-            'active_health_alerts': _target_health_alert_count(row.target),
+            'active_health_alerts': _target_health_alert_count(row.target, alerts),
         } for row in task.targets],
         'history': [], 'created': None, 'updated': None,
     }
 
 
-def _target_health_alert_count(target):
-
-    return target_alert_count(target)
+def _target_health_alert_count(target, alerts=None):
+    """Count alerts once per target; many tasks in a queue share a few targets."""
+    if alerts is None:
+        return target_alert_count(target)
+    key = (target._meta.model_name, target.pk)  # pylint: disable=protected-access
+    if key not in alerts:
+        alerts[key] = target_alert_count(target)
+    return alerts[key]
 
 
 def _effective_status(task, now):
@@ -241,8 +245,10 @@ class WorkTaskViewSet(OperationalWorkMixin, viewsets.GenericViewSet):
             if value and value.isdigit():
                 rows = [row for row in rows if _has_target(row, target_type, int(value))]
         rows.sort(key=lambda row: (row.due_end, -row.priority, row.key))
+        alerts = {}
         return Response([
-            _projected_data(row) if isinstance(row, ProjectedTask) else WorkTaskSerializer(row).data
+            _projected_data(row, alerts) if isinstance(row, ProjectedTask)
+            else WorkTaskSerializer(row, context={'alerts': alerts}).data
             for row in rows
         ])
 
