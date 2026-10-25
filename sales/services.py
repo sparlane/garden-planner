@@ -40,6 +40,7 @@ from .models import (
     SalesOrderNumberSequence,
     SalesOrderShortfall,
 )
+from .settlement import cost_of_line
 from .reservations import HOLDING_STATUSES, close_reservations, record_reservation_event
 
 
@@ -765,41 +766,73 @@ def cancel_order(order, user, reason=''):
     return order
 
 
-def _allocated_cost(allocation):
-    """Return one promise's cost in the currency that cost was recorded in.
+def _unshipped_cost(allocation, quantity):
+    """Return what `quantity` of this promise would cost if it left now.
 
     A counted draw is valued from its own lot's unit cost, because that is the
     price the pots in that box were bought at; a second delivery of the same
     item is a different lot and cost something else, possibly in another
-    currency. No value at all is a cost that cannot be stated rather than a
-    zero: a plant raised in two currencies has no single figure, and treating
-    it as nothing would report a complete margin over an incomplete cost.
-
-    A pot that has already shipped is read from the dispatch that shipped it
-    rather than priced again from the subledger as it stands now, so a closed
-    order's margin stops moving every time its batch is recalculated. That is
-    task 140's question, answered here only for the one allocation kind whose
-    cost is assembled out of several records; the other three still re-price.
+    currency.
     """
     if allocation.plant_id:
         return plant_cost_of_sale(allocation.plant)
     if allocation.stock_lot_id:
-        return lot_draw_cost(allocation.stock_lot, allocation.quantity)
+        return lot_draw_cost(allocation.stock_lot, quantity)
     if allocation.plant_cohort_id:
-        return cohort_draw_cost(allocation.plant_cohort, allocation.quantity)
-    if allocation.status == SalesOrderAllocation.Status.FULFILLED:
-        dispatched = allocation.fulfillment_lines.filter(
-            fulfillment__reversal_of__isnull=True, fulfillment__reversal__isnull=True,
-        ).order_by('-pk').first()
-        if dispatched is not None:
-            return CostOfSale(
-                dispatched.cogs_amount, dispatched.cogs_currency_code,
-                dispatched.cogs_provisional,
-            )
+        return cohort_draw_cost(allocation.plant_cohort, quantity)
     unit = allocation.inventory_unit
     return combine_costs(
         [unit_cost_of_sale(unit), *_passenger_costs(unit)], unit.currency_code,
     )
+
+
+def _shipped_cost(line, kept):
+    """Return the recorded cost of the `kept` part of one dispatch line.
+
+    The line is the record of what the stock cost when it left, following any
+    settlement, so a later recalculation of its batch does not move it. A part
+    of a line that came back is not kept here; the caller prices that live.
+    """
+    cost = cost_of_line(line)
+    if kept == line.quantity:
+        return cost
+    if cost.amount is None:
+        return CostOfSale(None, '', cost.provisional)
+    return CostOfSale(
+        money(cost.amount * kept / line.quantity), cost.currency_code,
+        cost.provisional,
+    )
+
+
+def _allocated_cost(allocation):
+    """Return one promise's cost in the currency that cost was recorded in.
+
+    The promise is split by quantity into what shipped and was kept, and what
+    has not. The shipped part is read from the dispatch that shipped it rather
+    than priced again from the subledger as it stands now, so a closed order's
+    margin stops moving every time its batch is recalculated (task 140). The
+    rest — including anything that was returned, which is back in stock with
+    its cost — is priced live.
+
+    No value at all is a cost that cannot be stated rather than a zero: a plant
+    raised in two currencies has no single figure, and treating it as nothing
+    would report a complete margin over an incomplete cost.
+    """
+    lines = list(allocation.fulfillment_lines.filter(
+        fulfillment__reversal_of__isnull=True, fulfillment__reversal__isnull=True,
+    ).select_related('allocation__plant__batch').prefetch_related('settlements'))
+    outstanding = allocation.promised_units
+    parts = []
+    for line in lines:
+        kept = line.quantity - returned_quantity(line)
+        outstanding -= kept
+        if kept > 0:
+            parts.append(_shipped_cost(line, kept))
+    if outstanding > 0 or not parts:
+        parts.append(_unshipped_cost(allocation, outstanding if parts else allocation.quantity))
+    if len(parts) == 1:
+        return parts[0]
+    return combine_costs(parts, allocation.line.order.currency_code)
 
 
 def _passenger_costs(unit):
@@ -833,7 +866,7 @@ def order_margin(order):
         SalesOrderAllocation.objects.filter(
             line__order=order,
             status__in=[SalesOrderAllocation.Status.PENDING, SalesOrderAllocation.Status.RESERVED, SalesOrderAllocation.Status.FULFILLED],
-        ).select_related('plant__batch', 'inventory_unit', 'stock_lot', 'plant_cohort__batch')
+        ).select_related('plant__batch', 'inventory_unit', 'stock_lot', 'plant_cohort__batch', 'line__order')
     )
     allocated_count = sum(
         1 if row.quantity is None else row.quantity for row in allocations
