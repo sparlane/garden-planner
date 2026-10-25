@@ -13,6 +13,7 @@ from plantings.lifecycle import lifecycle_summaries
 from plantings.models import SpecificPlant
 from plantings.timeline import timeline_rows
 from sales.models import FulfillmentLine
+from sales.settlement import settlement_of
 
 from .common import NOT_CONSOLIDATED, Report, decimal_string
 
@@ -107,7 +108,7 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
         fulfillment__reversal__isnull=True,
     ).select_related(
         'fulfillment__order__customer', 'allocation__line',
-    ).order_by('fulfillment__fulfilled_at', 'pk'))
+    ).prefetch_related('settlements').order_by('fulfillment__fulfilled_at', 'pk'))
     commerce = [{
         'fulfillment_line_id': line.pk,
         'fulfillment_id': line.fulfillment_id,
@@ -123,6 +124,10 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
         'revenue_ex_tax': decimal_string(line.subtotal_ex_tax, 4),
         'cogs_amount': decimal_string(line.cogs_amount, 4),
         'cogs_provisional': line.cogs_provisional,
+        'settled_cogs_amount': decimal_string(
+            settlement_of(line).cogs_amount if settlement_of(line) else None, 4,
+        ),
+        'cogs_settled': settlement_of(line) is not None,
     } for line in fulfillment_lines]
     # The same projection the plant screen reads, so a recall answers "what
     # was done to this plant and when" from here rather than from four screens.

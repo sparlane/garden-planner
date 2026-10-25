@@ -285,6 +285,12 @@ def finalize_batch_output(batch, user, reason=''):
     from costing.services import finalize_batch_costs  # pylint: disable=import-outside-toplevel,cyclic-import
 
     finalize_batch_costs(batch, user, reason)
+    # The freeze is what makes a plant's cost final, so a sale posted before it
+    # is settled in the same transaction (task 139).
+    from sales.settlement import settle_batch_sales  # pylint: disable=import-outside-toplevel,cyclic-import
+    from sales.models import FulfillmentLineSettlement  # pylint: disable=import-outside-toplevel,cyclic-import
+
+    settle_batch_sales(batch, user, FulfillmentLineSettlement.Source.FINALIZED, reason)
     return batch
 
 
