@@ -63,7 +63,16 @@ class PotVarietyFilters(BaseReportFilters):  # pylint: disable=abstract-method
     variety = serializers.IntegerField(required=False, min_value=1)
     plant = serializers.IntegerField(required=False, min_value=1)
     location = serializers.IntegerField(required=False, min_value=1)
+    pot_from = serializers.IntegerField(required=False, min_value=0)
+    pot_to = serializers.IntegerField(required=False, min_value=0)
     order = serializers.ChoiceField(required=False, choices=('pot', 'variety'))
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        low, high = attrs.get('pot_from'), attrs.get('pot_to')
+        if low is not None and high is not None and low > high:
+            raise serializers.ValidationError({'pot_to': 'Must not be below pot_from.'})
+        return attrs
 
 
 class MovementFilters(BaseReportFilters):  # pylint: disable=abstract-method

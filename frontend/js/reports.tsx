@@ -89,7 +89,7 @@ function Pagination({ report, params, setParams }: { report: ReportEnvelope; par
     setParams(updated)
   }
   return (
-    <div className="d-flex align-items-center gap-2 my-3">
+    <div className="d-flex align-items-center gap-2 my-3 d-print-none">
       <Button size="sm" variant="outline-secondary" disabled={!report.previous} onClick={() => move(page - 1)}>
         Previous
       </Button>
@@ -135,7 +135,7 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
   const dated = ['dashboard', 'production', 'germination', 'assumptions', 'orders', 'profitability', 'gst'].includes(page)
   const gstEntries = page === 'gst' && params.get('section') === 'entries'
   return (
-    <Card body className="mb-3">
+    <Card body className="mb-3 d-print-none">
       <Row className="g-2">
         {dated && <FilterField label="From" name="date_from" type="date" params={params} update={update} />}
         {dated && <FilterField label="To" name="date_to" type="date" params={params} update={update} />}
@@ -170,6 +170,8 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Item ID" name="item" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Lot ID" name="lot" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />}
+        {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="From pot number" name="pot_from" type="number" params={params} update={update} />}
+        {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="To pot number" name="pot_to" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'pots' && (
           <Col md={3}>
             <Form.Label>Sort by</Form.Label>
@@ -392,13 +394,13 @@ function ReportsView({ page }: { page: ReportPage }) {
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h1 className="mb-0">{page === 'dashboard' ? 'Nursery dashboard' : page === 'gst' ? 'GST' : `Nursery ${page}`}</h1>
         {reportName && (
-          <Button as="a" variant="outline-primary" href={reportExportUrl(reportName, apiParams)}>
+          <Button as="a" className="d-print-none" variant="outline-primary" href={reportExportUrl(reportName, apiParams)}>
             Export CSV
           </Button>
         )}
       </div>
       {page === 'inventory' && (
-        <Form.Select className="mb-3" value={section} onChange={(event) => setParams(new URLSearchParams({ section: event.target.value }))}>
+        <Form.Select className="mb-3 d-print-none" value={section} onChange={(event) => setParams(new URLSearchParams({ section: event.target.value }))}>
           <option value="balances">Balances and valuation</option>
           <option value="trays">Serialized trays</option>
           <option value="pots">Pot numbers by variety</option>
@@ -435,6 +437,7 @@ function ReportsView({ page }: { page: ReportPage }) {
       {query.data && (
         <>
           {page === 'gst' && <GstRecognitionNote report={query.data} />}
+          <p className="text-muted">Generated {formatDateTime(query.data.generated_at)}</p>
           <QualityWarnings report={query.data} />
           {page === 'dashboard' ? <Dashboard report={query.data as unknown as ReportEnvelope<DashboardRow>} /> : null}
           {page === 'profitability' ? <ProfitabilitySummary totals={query.data.totals as unknown as ProfitabilityTotals} /> : null}
