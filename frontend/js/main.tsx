@@ -342,7 +342,7 @@ function FrontEndPage() {
           path="/work"
           element={
             <WorkspaceModeRoute workspace={workspace} enabledModes={['garden', 'nursery']}>
-              <WorkQueueView />
+              <WorkQueueView workspace={workspace} />
             </WorkspaceModeRoute>
           }
         />

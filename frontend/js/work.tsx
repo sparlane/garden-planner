@@ -7,6 +7,7 @@ import { acknowledgeWorkTask, actOnWorkTask, addWorkRule, addWorkTask, getWorkAs
 import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, mergeChoices, retiredRowClass } from './catalog'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
+import { Workspace } from './types/workspace'
 import { WorkFilters, WorkRule, WorkTask, WorkView } from './types/work'
 import { errorsByField, formatDateTime, localDatetimeInputValue, parseLocalDatetimeInput } from './utils'
 
@@ -278,6 +279,98 @@ function TaskActions({ task }: { task: WorkTask }) {
   )
 }
 
+function TaskDetails({ task, formatDate = formatDateTime }: { task: WorkTask; formatDate?: (value: string) => string }) {
+  return (
+    <>
+      <strong>{task.title}</strong>
+      <div>
+        <Badge bg={task.origin === 'generated' ? 'info' : 'secondary'}>{task.origin}</Badge> {task.task_type.replaceAll('_', ' ')}
+      </div>
+      {task.notes && <div>{task.notes}</div>}
+      {task.history.length > 0 && (
+        <details className="mt-1">
+          <summary>History ({task.history.length})</summary>
+          {task.history.map((entry) => (
+            <div className="small" key={entry.pk}>
+              {formatDate(entry.created)} · {entry.action} · {entry.actor_name ?? 'system'}
+              {entry.reason ? ` — ${entry.reason}` : ''}
+              {entry.action === 'reschedule' &&
+                ['due_start', 'due_end'].map((field) => {
+                  const change = entry.changes[field] as { before: string; after: string } | undefined
+                  return (
+                    change && (
+                      <div key={field}>
+                        {field === 'due_start' ? 'Due from' : 'Due by'}: {formatDate(change.before)} → {formatDate(change.after)}
+                      </div>
+                    )
+                  )
+                })}
+            </div>
+          ))}
+        </details>
+      )}
+    </>
+  )
+}
+
+function TaskTargets({ task }: { task: WorkTask }) {
+  return (
+    <>
+      {task.links
+        .filter((link) => link.role === 'target')
+        .map((link) => (
+          <div key={`${link.target_type}:${link.object_id}`}>
+            {link.url ? <NavLink to={link.url}>{link.label}</NavLink> : link.label}
+            {link.active_health_alerts > 0 && (
+              <Badge bg="warning" text="dark" className="ms-1">
+                Health alert
+              </Badge>
+            )}
+          </div>
+        ))}
+    </>
+  )
+}
+
+function TaskAgenda({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: string }) {
+  const dateLabel = new Intl.DateTimeFormat(undefined, { timeZone: timezone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const dateTime = new Intl.DateTimeFormat(undefined, { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' })
+  const groups = new Map<string, Array<WorkTask>>()
+  for (const task of tasks) {
+    const day = dateLabel.format(new Date(task.due_end))
+    const group = groups.get(day) ?? []
+    group.push(task)
+    groups.set(day, group)
+  }
+  if (tasks.length === 0) return <p className="text-muted">No work in this view. Try another view or clear the filters.</p>
+  return (
+    <>
+      <p className="text-muted">Grouped by due-by date. Dates and times use {timezone}.</p>
+      {Array.from(groups, ([day, entries]) => (
+        <section key={day} className="mb-4">
+          <h2 className="h5">{day}</h2>
+          <ul className="list-unstyled">
+            {entries.map((task) => (
+              <li key={task.key} className="border rounded p-3 mb-2 text-break">
+                <TaskDetails task={task} formatDate={(value) => dateTime.format(new Date(value))} />
+                <p className="small my-2">
+                  Due from <time dateTime={task.due_start}>{dateTime.format(new Date(task.due_start))}</time>
+                  {' · '}Due by <time dateTime={task.due_end}>{dateTime.format(new Date(task.due_end))}</time>
+                </p>
+                <TaskTargets task={task} />
+                <div className="small text-muted mb-2">
+                  {task.assignee_name ?? 'Unassigned'} · Priority {task.priority}
+                </div>
+                <TaskActions task={task} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </>
+  )
+}
+
 function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
   return (
     <Table responsive hover>
@@ -299,47 +392,10 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
               <div className="small text-muted">to {formatDateTime(task.due_end)}</div>
             </td>
             <td>
-              <strong>{task.title}</strong>
-              <div>
-                <Badge bg={task.origin === 'generated' ? 'info' : 'secondary'}>{task.origin}</Badge> {task.task_type.replaceAll('_', ' ')}
-              </div>
-              {task.notes && <div>{task.notes}</div>}
-              {task.history.length > 0 && (
-                <details className="mt-1">
-                  <summary>History ({task.history.length})</summary>
-                  {task.history.map((entry) => (
-                    <div className="small" key={entry.pk}>
-                      {formatDateTime(entry.created)} · {entry.action} · {entry.actor_name ?? 'system'}
-                      {entry.reason ? ` — ${entry.reason}` : ''}
-                      {entry.action === 'reschedule' &&
-                        ['due_start', 'due_end'].map((field) => {
-                          const change = entry.changes[field] as { before: string; after: string } | undefined
-                          return (
-                            change && (
-                              <div key={field}>
-                                {field === 'due_start' ? 'Due from' : 'Due by'}: {formatDateTime(change.before)} → {formatDateTime(change.after)}
-                              </div>
-                            )
-                          )
-                        })}
-                    </div>
-                  ))}
-                </details>
-              )}
+              <TaskDetails task={task} />
             </td>
             <td>
-              {task.links
-                .filter((link) => link.role === 'target')
-                .map((link) => (
-                  <div key={`${link.target_type}:${link.object_id}`}>
-                    {link.url ? <NavLink to={link.url}>{link.label}</NavLink> : link.label}
-                    {link.active_health_alerts > 0 && (
-                      <Badge bg="warning" text="dark" className="ms-1">
-                        Health alert
-                      </Badge>
-                    )}
-                  </div>
-                ))}
+              <TaskTargets task={task} />
             </td>
             <td>{task.assignee_name ?? 'Unassigned'}</td>
             <td>{task.priority}</td>
@@ -605,7 +661,8 @@ function RuleEditor() {
   )
 }
 
-function WorkQueueView() {
+function WorkQueueView({ workspace }: { workspace: Workspace }) {
+  const [presentation, setPresentation] = React.useState(workspace.mode === 'garden' ? 'agenda' : 'table')
   const [view, setView] = React.useState<WorkView>('today')
   const [taskType, setTaskType] = React.useState('')
   const [priority, setPriority] = React.useState('')
@@ -624,7 +681,7 @@ function WorkQueueView() {
   const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal) })
   return (
     <main className="container-fluid py-3">
-      <h1>Nursery work</h1>
+      <h1>{workspace.mode === 'garden' ? 'Garden reminders' : 'Nursery work'}</h1>
       <p>Generated and manually scheduled work stays here until it is completed or deliberately skipped.</p>
       <ManualTaskForm />
       <Nav variant="tabs" activeKey={view} onSelect={(key) => key && setView(key as WorkView)}>
@@ -665,11 +722,20 @@ function WorkQueueView() {
           </Form.Select>
         </Col>
       </Row>
+      <Form.Group controlId="work-presentation" className="mb-3">
+        <Form.Label>Presentation</Form.Label>
+        <Form.Select value={presentation} onChange={(event) => setPresentation(event.target.value)} style={{ maxWidth: '16rem' }}>
+          <option value="agenda">Agenda</option>
+          <option value="table">Table</option>
+        </Form.Select>
+      </Form.Group>
       {view === 'upcoming' && <p>Open reminders whose due windows reach tomorrow or later in the workspace timezone, including work beyond this week.</p>}
       {tasks.isPending ? (
         <p role="status">Loading work…</p>
       ) : tasks.isError ? (
         <Alert variant="danger">Could not load work. Please try again.</Alert>
+      ) : presentation === 'agenda' ? (
+        <TaskAgenda tasks={tasks.data ?? []} timezone={workspace.timezone} />
       ) : (
         <TaskTable tasks={tasks.data ?? []} />
       )}
