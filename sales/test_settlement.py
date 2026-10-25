@@ -10,8 +10,10 @@ period as unreportable because of it.
 
 from decimal import Decimal
 from io import StringIO
+from types import SimpleNamespace
 from uuid import uuid4
 
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 
 from costing.models import CostAllocationRun
@@ -24,7 +26,7 @@ from tests.factories import apply_costed_input
 
 from .cost_of_sale import plant_cost_of_sale
 from .models import FulfillmentLine, FulfillmentLineSettlement
-from .settlement import cost_of_line, settle_batch_sales
+from .settlement import cost_of_line, restored_cost, settle_batch_sales
 from .test_commerce import CommerceFixtureTestCase
 
 
@@ -170,8 +172,33 @@ class SettleCostOfSaleTests(CommerceFixtureTestCase):
         out = StringIO()
         call_command('settle_cost_of_sale', '--dry-run', stdout=out)
         self.assertIn('would settle 1', out.getvalue())
+        self.assertIn(f'fulfillment line {FulfillmentLine.objects.get().pk}', out.getvalue())
         self.assertFalse(FulfillmentLineSettlement.objects.exists())
         call_command('settle_cost_of_sale', stdout=out)
         settlement = FulfillmentLineSettlement.objects.get()
         self.assertEqual(settlement.source, FulfillmentLineSettlement.Source.BACKFILL)
         self.assertIn('settled 1', out.getvalue())
+
+    def test_a_return_of_a_line_settled_as_unstateable_restores_no_figure(self):
+        """The return-time snapshot must not stand in for a cost settled as unknown."""
+        _order, _fulfillment, line = self.sell()
+        self.finalize()
+        FulfillmentLineSettlement.objects.filter(line=line).update(
+            cogs_amount=None, cogs_currency_code='',
+        )
+        line = FulfillmentLine.objects.get(pk=line.pk)
+        return_line = SimpleNamespace(
+            fulfillment_line=line, quantity=line.quantity, cogs_amount=Decimal('1.0800'),
+        )
+        cost = cost_of_line(line)
+        self.assertIsNone(cost.amount)
+        self.assertIsNone(restored_cost(return_line, cost))
+
+    def test_an_unknown_settlement_source_is_refused(self):
+        """Audit readers can interpret every source a settlement carries."""
+        _order, _fulfillment, line = self.sell()
+        with self.assertRaises(ValidationError):
+            FulfillmentLineSettlement.objects.create(
+                line=line, cogs_amount=Decimal('1.0800'), cogs_currency_code='USD',
+                source='guess',
+            )

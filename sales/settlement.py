@@ -50,10 +50,16 @@ def cost_of_line(line):
 
 
 def restored_cost(return_line, line_cost):
-    """Return the cost of sale a return gives back, following any settlement."""
+    """Return the cost of sale a return gives back, following any settlement.
+
+    A line settled as unstateable gives back nothing stateable, whatever figure
+    its return recorded while the cost was still provisional.
+    """
     line = return_line.fulfillment_line
-    if line_cost.provisional or settlement_of(line) is None or line_cost.amount is None:
+    if line_cost.provisional or settlement_of(line) is None:
         return return_line.cogs_amount
+    if line_cost.amount is None:
+        return None
     if return_line.quantity == line.quantity:
         return line_cost.amount
     return money(line_cost.amount * return_line.quantity / line.quantity)

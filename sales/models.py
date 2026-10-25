@@ -900,11 +900,17 @@ class FulfillmentLineSettlement(models.Model):
                 condition=STATED_COST_NAMES_ITS_CURRENCY,
                 name='sales_line_settlement_cost_currency_stated',
             ),
+            models.CheckConstraint(
+                condition=models.Q(source__in=('finalized', 'backfill')),
+                name='sales_line_settlement_source_controlled',
+            ),
         ]
 
     def save(self, *args, **kwargs):
         if self.pk:
             raise ValidationError('Posted commerce records are immutable.')
+        if self.source not in self.Source.values:
+            raise ValidationError(f'Unknown settlement source: {self.source!r}.')
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
