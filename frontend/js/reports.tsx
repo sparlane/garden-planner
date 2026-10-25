@@ -23,6 +23,7 @@ const GST_SECTIONS: Record<string, string> = {
 const INVENTORY_SECTIONS: Record<string, string> = {
   balances: 'inventory-balances',
   trays: 'serialized-trays',
+  pots: 'pot-varieties',
   movements: 'inventory-movements',
   stocktakes: 'stocktake-variances'
 }
@@ -168,6 +169,16 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
         {page === 'profitability' && <FilterField label="Customer ID" name="customer" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Item ID" name="item" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Lot ID" name="lot" type="number" params={params} update={update} />}
+        {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />}
+        {page === 'inventory' && params.get('section') === 'pots' && (
+          <Col md={3}>
+            <Form.Label>Sort by</Form.Label>
+            <Form.Select value={params.get('order') ?? ''} onChange={(event) => update('order', event.target.value)}>
+              <option value="">Pot number</option>
+              <option value="variety">Variety</option>
+            </Form.Select>
+          </Col>
+        )}
         {gstEntries && <FilterField label="Period" name="period" params={params} update={update} />}
         {gstEntries && <FilterField label="Kind" name="kind" params={params} update={update} />}
         {gstEntries && <FilterField label="Tax code" name="tax_code" params={params} update={update} />}
@@ -390,6 +401,7 @@ function ReportsView({ page }: { page: ReportPage }) {
         <Form.Select className="mb-3" value={section} onChange={(event) => setParams(new URLSearchParams({ section: event.target.value }))}>
           <option value="balances">Balances and valuation</option>
           <option value="trays">Serialized trays</option>
+          <option value="pots">Pot numbers by variety</option>
           <option value="movements">Movement history</option>
           <option value="stocktakes">Stocktake variances</option>
         </Form.Select>
