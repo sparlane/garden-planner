@@ -82,7 +82,11 @@ class Migration(migrations.Migration):
                             _connector="OR",
                         ),
                         name="sales_line_settlement_cost_currency_stated",
-                    )
+                    ),
+                    models.CheckConstraint(
+                        condition=models.Q(source__in=("finalized", "backfill")),
+                        name="sales_line_settlement_source_controlled",
+                    ),
                 ],
             },
         ),

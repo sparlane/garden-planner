@@ -39,9 +39,12 @@ class Command(BaseCommand):
         total = 0
         for batch in batches:
             if options['dry_run']:
-                total += sum(
-                    1 for line in provisional_plant_lines(batch) if settlement_of(line) is None
-                )
+                pending = [
+                    line for line in provisional_plant_lines(batch) if settlement_of(line) is None
+                ]
+                for line in pending:
+                    self.stdout.write(f'batch {batch.pk}: fulfillment line {line.pk}')
+                total += len(pending)
                 continue
             total += len(settle_batch_sales(
                 batch, None, FulfillmentLineSettlement.Source.BACKFILL,

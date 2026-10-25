@@ -127,6 +127,9 @@ def plant_trace(workspace, plant_id, filters):  # pylint: disable=too-many-local
         'settled_cogs_amount': decimal_string(
             settlement_of(line).cogs_amount if settlement_of(line) else None, 4,
         ),
+        'settled_cogs_currency_code': (
+            settlement_of(line).cogs_currency_code if settlement_of(line) else ''
+        ),
         'cogs_settled': settlement_of(line) is not None,
     } for line in fulfillment_lines]
     # The same projection the plant screen reads, so a recall answers "what
