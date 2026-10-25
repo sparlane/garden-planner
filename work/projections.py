@@ -4,6 +4,7 @@
 # and projector functions keep source-specific facts together for auditability.
 # pylint: disable=too-many-instance-attributes,too-many-arguments,too-many-positional-arguments,too-many-locals
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -407,7 +408,22 @@ def _plant_location(plant):
     return None
 
 
+# Which plants and cohorts are held does not depend on the rule asking, only the
+# workspace, and every growth and calendar rule asks. One projection run shares
+# a single load between them.
+_growth_cache = ContextVar('growth_candidates', default=None)
+
+
 def _growth_candidates(rule):
+    cache = _growth_cache.get()
+    if cache is None:
+        return list(_load_growth_candidates(rule.workspace))
+    if rule.workspace_id not in cache:
+        cache[rule.workspace_id] = list(_load_growth_candidates(rule.workspace))
+    return cache[rule.workspace_id]
+
+
+def _load_growth_candidates(workspace):
     """Yield the plants and cohorts the nursery still holds in open batches.
 
     Both halves ask whether anything is still here, of two representations. A
@@ -424,7 +440,7 @@ def _growth_candidates(rule):
     """
     plants = with_lifecycle_state(
         SpecificPlant.objects.filter(
-            workspace=rule.workspace, batch__status__in=OPEN_BATCHES,
+            workspace=workspace, batch__status__in=OPEN_BATCHES,
         ),
     ).filter(
         lifecycle_state__in=sorted(PRESENT_STATES),
@@ -432,7 +448,7 @@ def _growth_candidates(rule):
         'locations__location', 'locations__seed_tray_cell__tray__inventory_unit__current_location',
     )
     cohorts = PlantCohort.objects.filter(
-        workspace=rule.workspace, quantity__gt=0, batch__status__in=OPEN_BATCHES,
+        workspace=workspace, quantity__gt=0, batch__status__in=OPEN_BATCHES,
     ).select_related('batch__variety__plant', 'location')
     targets = list(plants) + list(cohorts)
     for target, growth in zip(targets, current_growths(targets)):
@@ -789,11 +805,15 @@ def projected_tasks(workspace, today=None):
     rules = WorkTaskRule.objects.filter(workspace=workspace, active=True).select_related(
         'workspace', 'variety', 'stage', 'location', 'default_assignee',
     )
-    for rule in rules:
-        if rule.trigger == WorkTaskRule.Trigger.CALENDAR:
-            tasks.extend(_calendar_tasks(rule, today))
-        else:
-            tasks.extend(PROJECTORS[rule.trigger](rule))
+    token = _growth_cache.set({})
+    try:
+        for rule in rules:
+            if rule.trigger == WorkTaskRule.Trigger.CALENDAR:
+                tasks.extend(_calendar_tasks(rule, today))
+            else:
+                tasks.extend(PROJECTORS[rule.trigger](rule))
+    finally:
+        _growth_cache.reset(token)
     acknowledged = _acknowledged_occurrences(workspace, tasks)
     return sorted(
         (task for task in tasks if task.key not in acknowledged),
