@@ -69,7 +69,7 @@ function ManualTaskForm() {
     mutationFn: addWorkTask,
     onSuccess: () => {
       setTitle('')
-      cache.invalidateQueries({ queryKey: queryKeys.work.all })
+      cache.invalidateQueries({ queryKey: queryKeys.work.allTasks })
     }
   })
   const submit = (event: React.FormEvent) => {
@@ -142,7 +142,7 @@ function RescheduleTask({ task }: { task: WorkTask }) {
     },
     onSuccess: () => {
       setShow(false)
-      cache.invalidateQueries({ queryKey: queryKeys.work.all })
+      cache.invalidateQueries({ queryKey: queryKeys.work.allTasks })
     }
   })
   const errors = errorsByField(mutation.error)

@@ -36,6 +36,7 @@ const queryKeys = {
   },
   work: {
     all: ['work'] as const,
+    allTasks: ['work', 'tasks'] as const,
     tasks: (filters: WorkFilters) => ['work', 'tasks', filters] as const,
     rules: ['work', 'rules'] as const,
     assignees: ['work', 'assignees'] as const
