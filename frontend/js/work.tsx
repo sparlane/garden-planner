@@ -4,6 +4,7 @@ import { Alert, Badge, Button, Card, Col, Form, Modal, Nav, Row, Table } from 'r
 import { NavLink } from 'react-router'
 
 import { acknowledgeWorkTask, actOnWorkTask, addWorkRule, addWorkTask, getWorkAssignees, getWorkRules, getWorkTasks, updateWorkRule } from './api/work'
+import { getLocations } from './api/locations'
 import { CatalogSearch, DuplicateWarning, MergeDialog, MergedIntoNote, RetireButton, RetiredBadge, mergeChoices, retiredRowClass } from './catalog'
 import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
@@ -60,6 +61,8 @@ const VIEWS: Array<[WorkView, string]> = [
 
 function ManualTaskForm() {
   const cache = useQueryClient()
+  const [location, setLocation] = React.useState('')
+  const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
   const [title, setTitle] = React.useState('')
   const [taskType, setTaskType] = React.useState('custom')
   const [dueStart, setDueStart] = React.useState(localDatetimeInputValue())
@@ -80,6 +83,7 @@ function ManualTaskForm() {
     mutation.mutate({
       title,
       task_type: taskType,
+      location: location ? Number(location) : null,
       due_start: start.toISOString(),
       due_end: end.toISOString(),
       recurrence: frequency ? { frequency, interval: 1, weekdays: frequency === 'weekly' ? [new Date(start).getDay() === 0 ? 6 : new Date(start).getDay() - 1] : [] } : {}
@@ -89,13 +93,36 @@ function ManualTaskForm() {
     <Card className="mb-3">
       <Card.Header>Schedule manual work</Card.Header>
       <Card.Body>
+        {mutation.isError && <Alert variant="danger">{Object.values(errorsByField(mutation.error)).join(' ') || 'Could not save the reminder. Please try again.'}</Alert>}
+        {mutation.isSuccess && <Alert variant="success">Reminder added. Choose the queue view matching its due date to review it.</Alert>}
         <Form onSubmit={submit}>
+          <Form.Group controlId="manual-reminder-location" className="mb-2">
+            <Form.Label>Reminder location</Form.Label>
+            <Form.Select value={location} onChange={(event) => setLocation(event.target.value)} disabled={locations.isPending || locations.isError}>
+              <option value="">Whole garden</option>
+              {locations.data?.map((place) => (
+                <option key={place.pk} value={place.pk}>
+                  {place.full_name}
+                </option>
+              ))}
+            </Form.Select>
+            {locations.isPending && <Form.Text>Loading locations…</Form.Text>}
+            {locations.isError && (
+              <Alert variant="danger">
+                Could not load locations.{' '}
+                <Button variant="link" onClick={() => locations.refetch()}>
+                  Retry
+                </Button>
+              </Alert>
+            )}
+            {locations.isSuccess && locations.data.length === 0 && <Form.Text>No active locations yet. You can still schedule a whole-garden reminder.</Form.Text>}
+          </Form.Group>
           <Row className="g-2">
             <Col md={4}>
-              <Form.Control required placeholder="Work to do" value={title} onChange={(event) => setTitle(event.target.value)} />
+              <Form.Control required aria-label="Work to do" placeholder="Work to do" value={title} onChange={(event) => setTitle(event.target.value)} />
             </Col>
             <Col md={2}>
-              <Form.Select value={taskType} onChange={(event) => setTaskType(event.target.value)}>
+              <Form.Select aria-label="Reminder type" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
                 {TASK_TYPES.map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
@@ -104,10 +131,10 @@ function ManualTaskForm() {
               </Form.Select>
             </Col>
             <Col md={2}>
-              <Form.Control required type="datetime-local" value={dueStart} onChange={(event) => setDueStart(event.target.value)} />
+              <Form.Control required aria-label="Due window start" type="datetime-local" value={dueStart} onChange={(event) => setDueStart(event.target.value)} />
             </Col>
             <Col md={2}>
-              <Form.Control required type="datetime-local" value={dueEnd} onChange={(event) => setDueEnd(event.target.value)} />
+              <Form.Control required aria-label="Due window end" type="datetime-local" value={dueEnd} onChange={(event) => setDueEnd(event.target.value)} />
             </Col>
             <Col md={1}>
               <Form.Select aria-label="Recurrence" value={frequency} onChange={(event) => setFrequency(event.target.value)}>
