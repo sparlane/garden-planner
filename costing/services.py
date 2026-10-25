@@ -893,31 +893,39 @@ def plant_cost_breakdown(plant):
         )
         .order_by('pk')
     )
-    held, unknown = held_by_currency(rows)
-    codes = sorted(held)
-    currency = stated_currency(codes, batch.workspace.currency_code)
-    value = None if currency is None else held.get(currency, Decimal('0'))
+    committed, value, blocked = _committed_plant_cost(batch, rows)
     state, disposition = plant_dispositions(batch).get(plant.pk, (None, None))
-    frozen = is_frozen(batch)
     pending = plant_pending_cost(plant)
-    blocked = cost_blocked(codes, currency, unknown, batch.workspace.currency_code)
     return {
         **pending,
         **plant_sale_totals(value or Decimal('0'), blocked is not None, pending),
         'plant': plant.pk,
         'batch': batch.pk,
+        'sale_blocked': blocked,
+        **committed,
+        'state': state,
+        'disposition': disposition,
+        'layers': [_layer_row(row) for row in rows],
+    }
+
+
+def _committed_plant_cost(batch, rows):
+    """Return a plant's committed-cost figures, its value and why it may be unstated."""
+    held, unknown = held_by_currency(rows)
+    codes = sorted(held)
+    currency = stated_currency(codes, batch.workspace.currency_code)
+    value = None if currency is None else held.get(currency, Decimal('0'))
+    frozen = is_frozen(batch)
+    blocked = cost_blocked(codes, currency, unknown, batch.workspace.currency_code)
+    return {
         'currency_code': currency,
         'mixed_currency': len(codes) > 1,
-        'sale_blocked': blocked,
         'currencies': currency_amounts(held),
         'provisional': not frozen,
         'unknown_cost': unknown,
-        'state': state,
-        'disposition': disposition,
         'provisional_value': None if frozen or value is None else f'{quantize_money(value):f}',
         'final_value': f'{quantize_money(value):f}' if frozen and value is not None else None,
-        'layers': [_layer_row(row) for row in rows],
-    }
+    }, value, blocked
 
 
 def cohort_cost_breakdown(cohort):
@@ -959,13 +967,20 @@ def cohort_cost_breakdown(cohort):
         )
         .order_by('pk')
     )
+    breakdown = _cohort_cost(
+        cohort, rows, sold_cohort_quantities(cohort.batch), cohort_weights(cohort.batch),
+    )
+    return {**breakdown, 'layers': [_layer_row(row) for row in rows]}
+
+
+def _cohort_cost(cohort, rows, sold, weights):
+    """Return one block's cost figures from layers, sales and weights already read."""
     held, unknown = held_by_currency(rows)
     codes = sorted(held)
     currency = stated_currency(codes, cohort.workspace.currency_code)
     value = None if currency is None else quantize_money(held.get(currency, Decimal('0')))
-    sold = sold_cohort_quantities(cohort.batch).get(cohort.pk, 0)
+    sold = sold.get(cohort.pk, 0)
     units = cohort.quantity + sold
-    weights = cohort_weights(cohort.batch)
     weight = weights.weigh('cohort', cohort.pk, cohort.quantity) + weights.weigh('cohort_sale', cohort.pk, sold)
     per_unit = weights.weigh('cohort', cohort.pk, 1) if cohort.quantity else weights.weigh('cohort_sale', cohort.pk, 1)
     frozen = is_frozen(cohort.batch)
@@ -981,5 +996,4 @@ def cohort_cost_breakdown(cohort):
         'provisional_value': None if frozen or value is None else f'{value:f}',
         'final_value': f'{value:f}' if frozen and value is not None else None,
         'unit_value': None if not units or value is None else f'{value * per_unit / Decimal(weight):f}',
-        'layers': [_layer_row(row) for row in rows],
     }

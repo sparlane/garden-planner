@@ -48,3 +48,20 @@ def returned_quantity(line):
         sales_return__reversal_of__isnull=True,
         sales_return__reversal__isnull=True,
     ).aggregate(total=Sum('quantity'))['total'] or Decimal('0')
+
+
+def returned_quantities(lines):
+    """Return `returned_quantity` for each of many fulfillment lines, keyed by pk.
+
+    The same effective returns, summed in one query, for a reader that would
+    otherwise ask once per line.
+    """
+    from .models import SalesReturnLine  # pylint: disable=import-outside-toplevel
+    totals = dict(
+        SalesReturnLine.objects.filter(
+            fulfillment_line__in=lines,
+            sales_return__reversal_of__isnull=True,
+            sales_return__reversal__isnull=True,
+        ).values_list('fulfillment_line').annotate(total=Sum('quantity'))
+    )
+    return {line.pk: totals.get(line.pk, Decimal('0')) for line in lines}
