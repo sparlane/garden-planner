@@ -16,6 +16,11 @@ from rest_framework.response import Response
 from common.catalog import CatalogViewSetMixin
 from health.availability import target_alert_count
 from locations.models import Location, location_full_name
+from plantings.garden_register import GardenRegisterFilters, garden_register_rows
+from plantings.models import (
+    GardenPlanting, GardenRowDirectSowPlanting, GardenSquareDirectSowPlanting,
+    GardenSquareTransplant, SpecificPlant,
+)
 from workspaces.models import Workspace
 from workspaces.scoping import (
     CodedSettingSerializer,
@@ -105,6 +110,7 @@ class ManualTaskSerializer(serializers.Serializer):
         allow_null=True,
     )
     recurrence = serializers.JSONField(required=False, default=dict)
+    garden_target = serializers.CharField(required=False, allow_blank=True, default='')
     location = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.none(), required=False, allow_null=True,
     )
@@ -115,7 +121,33 @@ class ManualTaskSerializer(serializers.Serializer):
             workspace=self.context['workspace'], active=True,
         )
 
+    def validate_garden_target(self, key):
+        if not key:
+            return None
+        workspace = self.context['workspace']
+        if workspace.mode != Workspace.Mode.GARDEN:
+            raise serializers.ValidationError('Plant and crop reminders require Garden mode.')
+        row = next((row for row in garden_register_rows(workspace, GardenRegisterFilters())
+                    if row['key'] == key), None)
+        if row is None:
+            raise serializers.ValidationError('Choose a current plant or crop in this garden.')
+        models = {
+            'aggregate': GardenPlanting, 'individual': SpecificPlant,
+            'direct-row': GardenRowDirectSowPlanting,
+            'direct-square': GardenSquareDirectSowPlanting,
+            'transplant': GardenSquareTransplant,
+        }
+        target = models[row['target_kind']].objects.filter(
+            workspace=workspace, pk=row['record_id'],
+        ).first()
+        if target is None:
+            raise serializers.ValidationError('This plant or crop is no longer available.')
+        label = f"{row['name'] or row['plant_name']} — {row['variety_name']} — {row['location_label']}"
+        return target, label[:255], f"/plantings/garden-register/{key}"
+
     def validate(self, attrs):
+        if attrs.get('garden_target') and attrs.get('location'):
+            raise serializers.ValidationError({'garden_target': 'Choose either a plant or crop, or a location.'})
         if attrs['due_end'] < attrs['due_start']:
             raise serializers.ValidationError({'due_end': 'The due window cannot end before it starts.'})
         recurrence = attrs['recurrence']
@@ -270,7 +302,10 @@ class WorkTaskViewSet(OperationalWorkMixin, viewsets.GenericViewSet):
         values = serializer.validated_data
         assignee = values.pop('assignee', None)
         location = values.pop('location', None)
+        garden_target = values.pop('garden_target', None)
         targets = [(location, location_full_name(location), '/locations')] if location else []
+        if garden_target:
+            targets.append(garden_target)
         task = create_manual_task(
             self.get_current_workspace(), request.user,
             {**values, 'assignee': assignee}, targets=targets,
