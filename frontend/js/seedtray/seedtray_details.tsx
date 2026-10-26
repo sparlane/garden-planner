@@ -993,6 +993,16 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
     })
     return sowings
   }, {})
+  // How many seedlings of each sowing have left the tray: any plant that has
+  // ever been placed somewhere other than a tray cell was repotted or planted
+  // out, whether or not it is still alive.
+  const transplantedBySowing = specificPlants.reduce<Record<number, number>>((counts, plant) => {
+    const sowing = sowingOfCellPlanting[plant.cell_planting]
+    if (sowing && plant.locations.some((loc) => loc.location_type !== 'seed_tray_cell')) {
+      counts[sowing.pk] = (counts[sowing.pk] ?? 0) + 1
+    }
+    return counts
+  }, {})
   const selectionIsLate = germinationSelections.some((selection) => sowingOfCellPlanting[selection.cellPlantingPk]?.germination?.provisional === false)
   // Finalizing the batch output freezes the cost of every plant it raised, and
   // the server refuses a germination against a frozen batch outright.
@@ -1445,6 +1455,7 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
               </td>
               <td>
                 <GerminationSummary germination={planting.germination} />
+                <div className="small text-muted">{transplantedBySowing[planting.pk] ?? 0} transplanted / repotted</div>
                 <div className="mt-1">
                   {planting.germination?.provisional ? (
                     <Button size="sm" variant="outline-secondary" onClick={() => setClosingSowing(planting)} disabled={germinationClosureMutation.isPending}>
