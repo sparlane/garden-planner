@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from applications.services import LineRequest, TargetRequest, post_application
-from plantings.lifecycle import OutcomeRequest, record_lifecycle_event
+from plantings.lifecycle import EventType, OutcomeRequest, record_lifecycle_event, reverse_lifecycle_event
 from plantings.movement import move_specific_plant
 from sales.test_counted_lines import CountedStockTestCase
 from seedtrays.container_fills import clean_empty_fill, open_numbered_fill
@@ -74,6 +74,29 @@ class PotMediaCostTests(PotMediaMixin, CountedStockTestCase):
         open_numbered_fill(self.workspace, self.user, self.unit)
         for placement in self.placements:
             self.assertEqual(self.layers(placement)[0].pk, next(row.pk for row in recorded if row.specific_plant_id == placement.specific_plant_id))
+
+    def test_correcting_a_failure_returns_the_plant_to_its_pot_and_its_cost(self):
+        """Withdrawing the failure puts the plant back in the fill and reposts the crop."""
+        plant = self.placements[0].specific_plant
+        with self.captureOnCommitCallbacks(execute=True):
+            event = record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.FAILED))
+        self.placements[0].refresh_from_db()
+        self.assertIsNotNone(self.placements[0].ended)
+        self.assertEqual(len(effective_allocations(plant.batch)), 1)
+        with self.captureOnCommitCallbacks(execute=True):
+            reverse_lifecycle_event(event, self.user, 'Wrong plant.', restore_location=True)
+        self.placements[0].refresh_from_db()
+        self.assertIsNone(self.placements[0].ended)
+        self.assertEqual(effective_allocations(plant.batch), [])
+
+    def test_a_cleaned_fill_is_not_reopened_by_a_correction(self):
+        """Once the fill is cleaned the plant cannot rejoin it."""
+        plants = [row.specific_plant for row in self.placements]
+        events = [record_lifecycle_event(plant, self.user, OutcomeRequest(EventType.FAILED)) for plant in plants]
+        clean_empty_fill(self.workspace, self.user, self.fill, reason='Wash used pot.')
+        reverse_lifecycle_event(events[-1], self.user, 'Wrong plant.', restore_location=True)
+        self.placements[-1].refresh_from_db()
+        self.assertIsNotNone(self.placements[-1].ended)
 
     def test_siblings_keep_separate_line_layers(self):
         """A batch with several participants must not overwrite a sibling's cost."""
