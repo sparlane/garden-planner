@@ -40,7 +40,7 @@ const LOCATION_OPTIONS: Array<{ value: NonNullable<NurseryRegisterFilters['locat
 
 // The states an operator asks about first. The rest are reachable through the
 // totals, which always report every state whether or not it is filtered on.
-const STATE_OPTIONS: Array<PlantLifecycleState> = ['growing', 'available', 'retained', 'failed', 'culled', 'donated', 'harvested']
+const STATE_OPTIONS: Array<PlantLifecycleState> = ['growing', 'available', 'retained', 'failed', 'culled', 'donated', 'harvested', 'sold']
 
 interface TotalsProps {
   totals: NurseryRegisterTotals
@@ -59,6 +59,7 @@ function RegisterTotals({ totals }: TotalsProps) {
     { label: 'Reserved', value: totals.reserved, variant: 'text-primary' },
     { label: 'Unresolved', value: totals.unresolved },
     { label: 'Retained', value: totals.retained },
+    { label: 'Sold', value: totals.sold, variant: 'text-success' },
     { label: 'Lost', value: totals.failed + totals.culled, variant: 'text-danger' }
   ]
   return (
