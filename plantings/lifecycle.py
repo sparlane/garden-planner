@@ -817,7 +817,10 @@ def _reopen_closed_location(plant, event):
     If that placement is still the latest and still ends then, the plant never
     left it, so the departure is withdrawn with the fact that caused it. A
     placement in a pot fill stays closed: its departure has already fixed the
-    fill's shares and posted the media cost, which a reopening cannot undo.
+    fill's shares and posted the media cost. That is undone only while the
+    fill is still open and nothing else has taken the pot: the shares are
+    fixed per participant, so the plant simply holds its share again, and the
+    crop's media cost is recalculated once the correction commits.
     """
     if event.event_type not in CLOSES_LOCATION:
         return None
@@ -828,11 +831,43 @@ def _reopen_closed_location(plant, event):
         .order_by('-started', '-pk')
         .first()
     )
-    if latest is None or latest.ended != event.occurred_at or latest.container_fill_id:
+    if latest is None or latest.ended != event.occurred_at:
         return None
+    if latest.container_fill_id:
+        return _reopen_fill_placement(latest)
     latest.ended = None
     latest.save(update_fields=['ended'])
     return latest
+
+
+def _reopen_fill_placement(placement):
+    """Return a plant to the pot fill it left, if that fill can still hold it.
+
+    The model refuses to edit a recorded fill departure, so the departure is
+    withdrawn directly, and only for a fill that has not been cleaned and a pot
+    nobody else now occupies.
+    """
+    # pylint: disable=import-outside-toplevel,cyclic-import
+    from costing.models import CostAllocationRun, FillDepartureRecalculation
+    from costing.services import reallocate_batch
+    from seedtrays.models import SeedTrayGeneration
+
+    fill = SeedTrayGeneration.objects.select_for_update().get(pk=placement.container_fill_id)
+    if fill.status != SeedTrayGeneration.Status.OPEN:
+        return None
+    if fill.stock_lot_id and fill.plant_locations.filter(ended__isnull=True).exists():
+        return None
+    SpecificPlantLocation.objects.filter(pk=placement.pk).update(ended=None)
+    placement.ended = None
+    FillDepartureRecalculation.objects.filter(placement=placement).delete()
+    batch = placement.specific_plant.batch
+    if batch is not None:
+        # After commit, so the batch locks follow the plant's and the pot's.
+        transaction.on_commit(lambda: reallocate_batch(
+            batch, None, CostAllocationRun.Trigger.MANUAL_RECALCULATE,
+            'Plant returned to its container fill after a corrected outcome.',
+        ), robust=True)
+    return placement
 
 
 @transaction.atomic
