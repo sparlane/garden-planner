@@ -125,6 +125,7 @@ function Dashboard({ workspace }: { workspace: Workspace }) {
         <Alert variant="success">Orders, receipts, and invoices reconcile.</Alert>
       ) : (
         summary.warnings.map((warning, index) => (
+          // eslint-disable-next-line @eslint-react/no-array-index-key -- warnings carry no id and the list is rebuilt wholesale
           <Alert key={`${warning.code}-${warning.source_id}-${index}`} variant="warning" className="py-2">
             {warning.message}
           </Alert>
@@ -136,7 +137,7 @@ function Dashboard({ workspace }: { workspace: Workspace }) {
 
 function InvoicePayment({ invoice, workspace, onSaved }: { invoice: SupplierInvoice; workspace: Workspace; onSaved: () => Promise<void> }) {
   const [shown, setShown] = React.useState(false)
-  const [paidOn, setPaidOn] = React.useState(localToday())
+  const [paidOn, setPaidOn] = React.useState(() => localToday())
   const [amount, setAmount] = React.useState(invoice.state.balance_due)
   const [reference, setReference] = React.useState('')
   const mutation = useMutation({
@@ -183,7 +184,7 @@ function InvoicePayment({ invoice, workspace, onSaved }: { invoice: SupplierInvo
 function InvoiceCorrection({ invoice, onClosed, onSaved }: { invoice: SupplierInvoice; onClosed: () => void; onSaved: () => Promise<void> }) {
   const [kind, setKind] = React.useState<'credit' | 'debit'>('credit')
   const [reference, setReference] = React.useState('')
-  const [correctedOn, setCorrectedOn] = React.useState(localToday())
+  const [correctedOn, setCorrectedOn] = React.useState(() => localToday())
   const [subtotal, setSubtotal] = React.useState('0')
   const [tax, setTax] = React.useState('0')
   const [total, setTotal] = React.useState('0')
@@ -262,17 +263,17 @@ function Invoices({
   const { data: categories = [] } = useQuery({ queryKey: queryKeys.purchasing.categories, queryFn: ({ signal }) => getExpenseCategories(signal) })
   const [supplier, setSupplier] = React.useState<number | ''>('')
   const [reference, setReference] = React.useState('')
-  const [invoiceDate, setInvoiceDate] = React.useState(localToday())
+  const [invoiceDate, setInvoiceDate] = React.useState(() => localToday())
   const [dueDate, setDueDate] = React.useState('')
   const [attachmentUrl, setAttachmentUrl] = React.useState('')
   const [lines, setLines] = React.useState<Array<DraftInvoiceLine>>([])
   const [correcting, setCorrecting] = React.useState<SupplierInvoice | null>(null)
-  const nextKey = React.useRef(0)
+  const nextKeyRef = React.useRef(0)
   // An invoice is created as a draft and then confirmed, and only the confirm
   // step can discover that a line was claimed by someone else in between. The
   // draft it leaves behind already holds the invoice number, so a retry has to
   // replace that draft rather than post a second one against a taken reference.
-  const draftPk = React.useRef<number | null>(null)
+  const draftPkRef = React.useRef<number | null>(null)
   // A receipt line stays claimable until an invoice that has not been cancelled
   // holds it: `confirm_invoice` refuses a second confirmed claim on one line,
   // and a draft is on its way to becoming that claim.
@@ -291,8 +292,8 @@ function Invoices({
     await queryClient.invalidateQueries({ queryKey: queryKeys.inventory.receiptsAll })
   }
   function addLine(line: Omit<DraftInvoiceLine, 'key'>) {
-    nextKey.current += 1
-    setLines((current) => [...current, { ...line, key: `line-${nextKey.current}` }])
+    nextKeyRef.current += 1
+    setLines((current) => [...current, { ...line, key: `line-${nextKeyRef.current}` }])
   }
   function updateLine(key: string, changes: Partial<DraftInvoiceLine>) {
     setLines((current) => current.map((line) => (line.key === key ? { ...line, ...changes } : line)))
@@ -348,10 +349,10 @@ function Invoices({
           total_incl_tax: sumMoney([line.subtotal, line.tax])
         }))
       }
-      const draft = draftPk.current === null ? await createSupplierInvoice(payload) : await replaceSupplierInvoiceDraft(draftPk.current, payload)
-      draftPk.current = draft.pk
+      const draft = draftPkRef.current === null ? await createSupplierInvoice(payload) : await replaceSupplierInvoiceDraft(draftPkRef.current, payload)
+      draftPkRef.current = draft.pk
       const confirmed = await confirmSupplierInvoice(draft.pk)
-      draftPk.current = null
+      draftPkRef.current = null
       return confirmed
     },
     onSuccess: async () => {
@@ -600,7 +601,7 @@ function Requisitions({ suppliers, items }: { suppliers: Awaited<ReturnType<type
   const { data: rows = [] } = useQuery({ queryKey: queryKeys.purchasing.requisitions, queryFn: ({ signal }) => getRequisitions(signal) })
   const [item, setItem] = React.useState<number | ''>('')
   const [supplier, setSupplier] = React.useState<number | ''>('')
-  const [requiredOn, setRequiredOn] = React.useState(localToday())
+  const [requiredOn, setRequiredOn] = React.useState(() => localToday())
   const [quantity, setQuantity] = React.useState('1')
   const [estimate, setEstimate] = React.useState('0')
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })
@@ -766,7 +767,7 @@ function Orders({
   const [expected, setExpected] = React.useState('')
   const [quantity, setQuantity] = React.useState('1')
   const [unitPrice, setUnitPrice] = React.useState('0')
-  const [taxRate, setTaxRate] = React.useState(defaultTaxRate(workspace, 'standard'))
+  const [taxRate, setTaxRate] = React.useState(() => defaultTaxRate(workspace, 'standard'))
   const [freight, setFreight] = React.useState('0')
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.purchasing.all })
@@ -1059,7 +1060,7 @@ function Expenses({ workspace, suppliers }: { workspace: Workspace; suppliers: A
   const [category, setCategory] = React.useState<number | ''>('')
   const [supplier, setSupplier] = React.useState<number | ''>('')
   const [payee, setPayee] = React.useState('')
-  const [incurredOn, setIncurredOn] = React.useState(localToday())
+  const [incurredOn, setIncurredOn] = React.useState(() => localToday())
   const [paidOn, setPaidOn] = React.useState('')
   const [amountBasis, setAmountBasis] = React.useState<AmountBasis>('incl')
   const [amount, setAmount] = React.useState('0')

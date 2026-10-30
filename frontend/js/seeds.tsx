@@ -772,10 +772,10 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
   const priceRequired = isAdvanced(workspace)
   const [seedPk, setSeedPk] = React.useState<number | undefined>(draft?.seeds)
   const [certainty, setCertainty] = React.useState<SeedQuantityCertainty>(draft?.quantity_certainty ?? 'unknown')
-  const [quantity, setQuantity] = React.useState(draft?.quantity ? formatQuantity(draft.quantity) : '')
+  const [quantity, setQuantity] = React.useState(() => (draft?.quantity ? formatQuantity(draft.quantity) : ''))
   const [price, setPrice] = React.useState(draft?.supplier_cost_incl_tax ?? draft?.line_price ?? (priceRequired ? '' : '0'))
   const [freight, setFreight] = React.useState(draft?.freight_acquisition_amount ?? '0')
-  const [receivedDate, setReceivedDate] = React.useState(draft?.received_date ?? new Date().toISOString().slice(0, 10))
+  const [receivedDate, setReceivedDate] = React.useState(() => draft?.received_date ?? new Date().toISOString().slice(0, 10))
   const [sowBy, setSowBy] = React.useState(draft?.sow_by ?? '')
   const [supplierLot, setSupplierLot] = React.useState(draft?.supplier_lot_reference ?? '')
   const [vendorPk, setVendorPk] = React.useState<number | undefined>(draft?.supplier)
@@ -787,7 +787,7 @@ function PacketReceiptForm({ seeds, suppliers, plants, varieties, draft, onSave,
   const [evidenceUrl, setEvidenceUrl] = React.useState(draft?.evidence_url ?? '')
   // The box is only shown for a standard-rated packet, so it opens on what
   // the workspace charges and the operator changes it only for an import.
-  const [taxRate, setTaxRate] = React.useState(draft?.tax_rate ?? defaultTaxRate(workspace, 'standard'))
+  const [taxRate, setTaxRate] = React.useState(() => draft?.tax_rate ?? defaultTaxRate(workspace, 'standard'))
   const [taxTreatment, setTaxTreatment] = React.useState<PurchaseTaxTreatment>(draft?.tax_treatment ?? 'unknown')
   const [inputTaxSource, setInputTaxSource] = React.useState<InputTaxSource>(draft?.input_tax_source ?? 'none')
   const [inputTaxAmount, setInputTaxAmount] = React.useState(draft?.input_tax_amount ?? '0')

@@ -653,11 +653,13 @@ function BatchDetailsForm({ batch, workspace }: BatchDetailsFormProps) {
       Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.plantings.batch(batch.pk) }), queryClient.invalidateQueries({ queryKey: queryKeys.plantings.batchesAll })])
   })
 
-  React.useEffect(() => {
+  const [formBatch, setFormBatch] = React.useState(batch)
+  if (formBatch !== batch) {
+    setFormBatch(batch)
     setCode(batch.code)
     setPlannedStart(batch.planned_start ?? '')
     setNotes(batch.notes)
-  }, [batch])
+  }
 
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()

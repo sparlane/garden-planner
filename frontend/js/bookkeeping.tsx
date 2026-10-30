@@ -32,7 +32,7 @@ function EntryPanel({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const query = useQuery({ queryKey: queryKeys.bookkeeping.entries, queryFn: ({ signal }) => getEntries(signal) })
   const liabilities = useQuery({ queryKey: queryKeys.bookkeeping.liabilities, queryFn: ({ signal }) => getLiabilities(signal) })
-  const [form, setForm] = React.useState({
+  const [form, setForm] = React.useState(() => ({
     kind: 'other_income',
     occurred_on: new Date().toISOString().slice(0, 10),
     description: '',
@@ -41,7 +41,7 @@ function EntryPanel({ workspace }: { workspace: Workspace }) {
     account_reference: '',
     external_reference: '',
     liability: ''
-  })
+  }))
   const create = useMutation({
     mutationFn: () =>
       createEntry({
@@ -340,7 +340,7 @@ function LiabilityPanel({ workspace }: { workspace: Workspace }) {
 function IncomeYearPanel({ workspace }: { workspace: Workspace }) {
   const queryClient = useQueryClient()
   const query = useQuery({ queryKey: queryKeys.bookkeeping.years, queryFn: ({ signal }) => getIncomeYears(signal) })
-  const [yearEnd, setYearEnd] = React.useState(nextYearEnd())
+  const [yearEnd, setYearEnd] = React.useState(() => nextYearEnd())
   const [basis, setBasis] = React.useState<'cash' | 'accrual'>('accrual')
   const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.bookkeeping.all })
   const create = useMutation({ mutationFn: () => createIncomeYear({ year_end: yearEnd, basis }), onSuccess: refresh })

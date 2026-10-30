@@ -86,7 +86,11 @@ function PlantTimeline({ plantPk }: PlantTimelineProps) {
     queryFn: ({ signal }) => getSpecificPlantTimeline(plantPk, page, PAGE_SIZE, signal)
   })
 
-  React.useEffect(() => setPage(1), [plantPk])
+  const [pagedPlant, setPagedPlant] = React.useState(plantPk)
+  if (pagedPlant !== plantPk) {
+    setPagedPlant(plantPk)
+    setPage(1)
+  }
 
   if (isPending) {
     return <p className="text-muted mb-0">Loading history…</p>

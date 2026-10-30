@@ -273,7 +273,7 @@ function LineForm({ order, workspace }: { order: SalesOrder; workspace: Workspac
   const [quantity, setQuantity] = React.useState('1')
   const unit = lineType === 'lot_quantity' ? (items.data?.find((item) => item.pk === target)?.base_unit ?? 'each') : 'each'
   const [unitPrice, setUnitPrice] = React.useState('')
-  const [taxRate, setTaxRate] = React.useState(defaultTaxRate(workspace, 'standard'))
+  const [taxRate, setTaxRate] = React.useState(() => defaultTaxRate(workspace, 'standard'))
   // Only asked for when the rate is zero. A rate above zero is a standard-rated
   // supply by definition and the server derives it; a rate of zero is three
   // different kinds of supply that a GST return reports in different boxes.

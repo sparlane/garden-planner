@@ -75,8 +75,8 @@ function ManualTaskForm({ garden }: { garden: boolean }) {
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
   const [title, setTitle] = React.useState('')
   const [taskType, setTaskType] = React.useState('custom')
-  const [dueStart, setDueStart] = React.useState(localDatetimeInputValue())
-  const [dueEnd, setDueEnd] = React.useState(localDatetimeInputValue(new Date(Date.now() + 60 * 60 * 1000)))
+  const [dueStart, setDueStart] = React.useState(() => localDatetimeInputValue())
+  const [dueEnd, setDueEnd] = React.useState(() => localDatetimeInputValue(new Date(Date.now() + 60 * 60 * 1000)))
   const [frequency, setFrequency] = React.useState('')
   const mutation = useMutation({
     mutationFn: addWorkTask,
@@ -492,7 +492,7 @@ function calendarDate(value: string, timezone: string): string {
 }
 
 function TaskCalendar({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: string }) {
-  const today = calendarDate(new Date().toISOString(), timezone)
+  const today = React.useMemo(() => calendarDate(new Date().toISOString(), timezone), [timezone])
   const [selected, setSelected] = React.useState(today)
   const month = selected.slice(0, 7)
   const first = new Date(`${month}-01T00:00:00Z`)

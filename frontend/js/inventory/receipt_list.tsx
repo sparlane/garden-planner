@@ -267,7 +267,7 @@ function InputTaxAdjustments({ receipt }: { receipt: StockReceipt }) {
   const queryKey = ['input-tax-adjustments', receipt.pk]
   const [show, setShow] = React.useState(false)
   const [line, setLine] = React.useState(receipt.lines[0]?.pk ?? 0)
-  const [adjustmentDate, setAdjustmentDate] = React.useState(new Date().toISOString().slice(0, 10))
+  const [adjustmentDate, setAdjustmentDate] = React.useState(() => new Date().toISOString().slice(0, 10))
   const [revisedPercentage, setRevisedPercentage] = React.useState('')
   const [basis, setBasis] = React.useState('')
   const [reason, setReason] = React.useState('')

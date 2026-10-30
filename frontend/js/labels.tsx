@@ -20,6 +20,8 @@ import './labels.css'
 
 function Barcode({ format, payload }: { format: LabelFormat; payload: string }) {
   const svg = bwipjs.toSVG({ bcid: format === 'qr' ? 'qrcode' : 'code128', text: payload, scale: 2, includetext: false })
+  // The SVG is generated locally by bwip-js from the payload, never taken from user markup.
+  // eslint-disable-next-line @eslint-react/dom-no-dangerously-set-innerhtml
   return <div aria-label={`${format === 'qr' ? 'QR' : 'Code 128'} code`} dangerouslySetInnerHTML={{ __html: svg }} />
 }
 
@@ -85,7 +87,7 @@ const PAGE_SIZE = 100
 
 function LabelsView() {
   const [selected, setSelected] = React.useState<Array<number>>([])
-  const [templatePk, setTemplatePk] = React.useState<number | ''>('')
+  const [chosenTemplate, setChosenTemplate] = React.useState<number | ''>('')
   const [payloadMode, setPayloadMode] = React.useState<'code' | 'url'>('url')
   const [preview, setPreview] = React.useState<LabelPrintJob>()
   const [targetType, setTargetType] = React.useState('')
@@ -96,6 +98,7 @@ function LabelsView() {
     queryFn: ({ signal }) => getLabelIdentities(identityQuery, signal)
   })
   const templates = useQuery({ queryKey: queryKeys.labels.templates, queryFn: ({ signal }) => getLabelTemplates(signal) })
+  const templatePk = chosenTemplate === '' && templates.data?.length ? templates.data[0].pk : chosenTemplate
   const selectedTemplate = templates.data?.find((entry) => entry.pk === templatePk)
   const previewMutation = useMutation({ mutationFn: () => previewLabels(templatePk as number, selected, payloadMode), onSuccess: setPreview })
   const printMutation = useMutation({
@@ -108,17 +111,21 @@ function LabelsView() {
       }
     }
   })
-  React.useEffect(() => {
-    if (templatePk === '' && templates.data?.length) setTemplatePk(templates.data[0].pk)
-  }, [templatePk, templates.data])
+  // Both reset when their trigger changes; doing it during render rather than
+  // in an effect avoids painting one frame of the stale value.
+  const [pagedType, setPagedType] = React.useState(targetType)
+  if (pagedType !== targetType) {
+    setPagedType(targetType)
+    setPage(1)
+  }
 
-  React.useEffect(() => setPage(1), [targetType])
-
-  React.useEffect(() => {
+  const [modeTemplate, setModeTemplate] = React.useState(selectedTemplate)
+  if (modeTemplate !== selectedTemplate) {
+    setModeTemplate(selectedTemplate)
     if (selectedTemplate?.format === 'code128') setPayloadMode('code')
     else if (selectedTemplate) setPayloadMode(selectedTemplate.payload_mode)
     setPreview(undefined)
-  }, [selectedTemplate])
+  }
 
   // A selection is a set of identities rather than a set of rows, so it
   // outlives both the filter and the page it was made on — printing a sheet of
@@ -148,7 +155,7 @@ function LabelsView() {
         <Row className="g-2 mb-3">
           <Col md={6}>
             <Form.Label>Template</Form.Label>
-            <Form.Select value={templatePk} onChange={(event) => setTemplatePk(Number(event.target.value))}>
+            <Form.Select value={templatePk} onChange={(event) => setChosenTemplate(Number(event.target.value))}>
               {(templates.data ?? [])
                 .filter((entry) => entry.active)
                 .map((entry) => (
@@ -168,7 +175,7 @@ function LabelsView() {
         </Row>
         <TemplateForm
           onCreated={async (created) => {
-            setTemplatePk(created.pk)
+            setChosenTemplate(created.pk)
             await templates.refetch()
           }}
         />
@@ -284,8 +291,8 @@ function ScannerView() {
   const [orderScanned, setOrderScanned] = React.useState<Array<{ id: number; code: string; display: string }>>([])
   const [returnDestination, setReturnDestination] = React.useState<number | ''>('')
   const [orderConflict, setOrderConflict] = React.useState('')
-  const video = React.useRef<HTMLVideoElement>(null)
-  const controls = React.useRef<IScannerControls | undefined>(undefined)
+  const videoRef = React.useRef<HTMLVideoElement>(null)
+  const controlsRef = React.useRef<IScannerControls | undefined>(undefined)
   const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true) })
   const orders = useQuery({ queryKey: queryKeys.sales.orders, queryFn: ({ signal }) => getSalesOrders(signal) })
   const chosenOrder = orders.data?.find((entry) => entry.pk === salesOrder)
@@ -449,7 +456,7 @@ function ScannerView() {
     setCameraError('')
     try {
       const reader = new BrowserMultiFormatReader()
-      controls.current = await reader.decodeFromVideoDevice(undefined, video.current ?? undefined, (decoded) => {
+      controlsRef.current = await reader.decodeFromVideoDevice(undefined, videoRef.current ?? undefined, (decoded) => {
         if (decoded) {
           const text = decoded.getText()
           setValue(text)
@@ -461,10 +468,13 @@ function ScannerView() {
     }
   }
 
+  // A scan handed over in the URL is submitted once, on arrival.
+  /* eslint-disable @eslint-react/exhaustive-deps */
   React.useEffect(() => {
     if (code) submit(code)
-    return () => controls.current?.stop()
+    return () => controlsRef.current?.stop()
   }, [])
+  /* eslint-enable @eslint-react/exhaustive-deps */
 
   const ids = scanned.map((entry) => entry.id)
   return (
@@ -482,12 +492,12 @@ function ScannerView() {
             </Alert>
           )}
           <Card body>
-            <video ref={video} className="scanner-video" muted playsInline />
+            <video ref={videoRef} className="scanner-video" muted playsInline />
             <div className="d-flex gap-2 mt-2">
               <Button size="lg" onClick={startCamera}>
                 Start camera
               </Button>
-              <Button size="lg" variant="outline-secondary" onClick={() => controls.current?.stop()}>
+              <Button size="lg" variant="outline-secondary" onClick={() => controlsRef.current?.stop()}>
                 Stop
               </Button>
             </div>

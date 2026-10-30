@@ -52,6 +52,7 @@ function ApiErrorAlert() {
       {details.length > 0 && (
         <ul className="mb-0">
           {details.map((detail, index) => (
+            // eslint-disable-next-line @eslint-react/no-array-index-key -- details are plain strings that may repeat
             <li key={`${index}-${detail}`}>{detail}</li>
           ))}
         </ul>

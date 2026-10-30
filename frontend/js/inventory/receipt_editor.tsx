@@ -413,16 +413,16 @@ interface ReceiptEditorProps {
 // effect.
 function ReceiptEditor({ workspace, receipt, items, locations, suppliers, units, seedTrayItemIds, onClosed }: ReceiptEditorProps) {
   const queryClient = useQueryClient()
-  const nextKey = React.useRef(0)
+  const nextKeyRef = React.useRef(0)
 
   function freshKey() {
-    nextKey.current += 1
-    return `new-${nextKey.current}`
+    nextKeyRef.current += 1
+    return `new-${nextKeyRef.current}`
   }
 
   const [receiptPk, setReceiptPk] = React.useState<number | null>(receipt?.pk ?? null)
   const [supplier, setSupplier] = React.useState<number | ''>(receipt?.supplier ?? '')
-  const [receivedDate, setReceivedDate] = React.useState(receipt?.received_date ?? new Date().toISOString().slice(0, 10))
+  const [receivedDate, setReceivedDate] = React.useState(() => receipt?.received_date ?? new Date().toISOString().slice(0, 10))
   const [supplierReference, setSupplierReference] = React.useState(receipt?.supplier_reference ?? '')
   const [invoiceDate, setInvoiceDate] = React.useState(receipt?.invoice_date ?? '')
   const [sourceDocumentType, setSourceDocumentType] = React.useState<ReceiptDocumentType>(receipt?.source_document_type ?? 'none')

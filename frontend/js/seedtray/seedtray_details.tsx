@@ -1512,9 +1512,11 @@ function SeedTrayDetails({ seedTrayPk }: SeedTrayDetailsProps) {
         <tbody>
           {seedTrayModel &&
             seedTrayCells.map((row, rowIndex) => (
+              // eslint-disable-next-line @eslint-react/no-array-index-key -- rows are positional; the grid never reorders
               <tr key={rowIndex}>
                 {row.map((cell, cellIndex) => (
                   <SeedTrayCellView
+                    // eslint-disable-next-line @eslint-react/no-array-index-key -- cells are positional; the grid never reorders
                     key={cellIndex}
                     cell={cell}
                     total={cell ? cellTotals[cell.pk] || 0 : 0}

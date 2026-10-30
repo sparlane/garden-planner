@@ -27,7 +27,7 @@ function selectedLines(selected: Set<string>, lines: Array<InvoiceableLine>) {
 
 function IssueForm({ order, onIssued }: { order: SalesOrder; onIssued: () => void }) {
   const invoiceable = useQuery({ queryKey: queryKeys.billing.invoiceable(order.pk), queryFn: ({ signal }) => getInvoiceable(order.pk, signal) })
-  const [selected, setSelected] = React.useState<Set<string>>(new Set())
+  const [selected, setSelected] = React.useState<Set<string>>(() => new Set())
   const [issuedOn, setIssuedOn] = React.useState('')
   const [buyerName, setBuyerName] = React.useState('')
   const [buyerIdentifier, setBuyerIdentifier] = React.useState('')
