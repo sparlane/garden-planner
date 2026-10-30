@@ -205,10 +205,10 @@ function useRecordSave<Payload>(save: (data: Payload) => Promise<unknown>) {
 // object changed would throw away whatever the gardener was in the middle of
 // typing the moment they came back to the tab.
 function useLoadedRecord<Record extends { pk: number }>(record: Record | undefined, fill: (record: Record) => void) {
-  const loaded = React.useRef<number | null>(null)
+  const loadedRef = React.useRef<number | null>(null)
   React.useEffect(() => {
-    if (!record || loaded.current === record.pk) return
-    loaded.current = record.pk
+    if (!record || loadedRef.current === record.pk) return
+    loadedRef.current = record.pk
     fill(record)
   }, [record, fill])
 }

@@ -493,7 +493,7 @@ function referenceSetFilename(name: string, source: string): string {
 // every record they have retired. Reading the file and handing it over whole is
 // the whole of what happens here.
 function ReferenceSetControls<Document extends ReferenceSetDocument, Result>({ name, onExport, onImport, describe }: ReferenceSetControlsProps<Document, Result>) {
-  const chooser = React.useRef<HTMLInputElement>(null)
+  const chooserRef = React.useRef<HTMLInputElement>(null)
   const [busy, setBusy] = React.useState<'export' | 'import' | null>(null)
   const [failure, setFailure] = React.useState<string | null>(null)
   const [installed, setInstalled] = React.useState<string | null>(null)
@@ -545,12 +545,12 @@ function ReferenceSetControls<Document extends ReferenceSetDocument, Result>({ n
         <Button variant="outline-secondary" disabled={busy !== null} onClick={() => void exportSet()}>
           {busy === 'export' ? 'Exporting…' : 'Export catalog'}
         </Button>
-        <Button variant="outline-secondary" disabled={busy !== null} onClick={() => chooser.current?.click()}>
+        <Button variant="outline-secondary" disabled={busy !== null} onClick={() => chooserRef.current?.click()}>
           {busy === 'import' ? 'Installing…' : 'Import catalog'}
         </Button>
       </div>
       <Form.Control
-        ref={chooser}
+        ref={chooserRef}
         type="file"
         accept="application/json,.json"
         className="d-none"

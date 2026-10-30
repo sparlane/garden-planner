@@ -423,6 +423,7 @@ function GardenQuickAddModal({ show, onClose, initialSquare }: GardenQuickAddMod
             </thead>
             <tbody>
               {staged.map((entry, index) => (
+                // eslint-disable-next-line @eslint-react/no-array-index-key -- staged entries have no id of their own
                 <tr key={`${entry.plant}-${index}`}>
                   <td>{selectedPlantName(entry)}</td>
                   <td>{selectedVarietyName(entry)}</td>
@@ -455,6 +456,7 @@ function GardenQuickAddModal({ show, onClose, initialSquare }: GardenQuickAddMod
             ) : (
               <ul>
                 {review.warnings.map((warning, index) => (
+                  // eslint-disable-next-line @eslint-react/no-array-index-key -- warnings carry no id and the list is rebuilt wholesale
                   <li key={`${warning.code}-${warning.entry}-${index}`}>
                     Row {warning.entry + 1}: {warning.message}
                   </li>

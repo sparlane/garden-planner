@@ -165,6 +165,9 @@ function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcom
   const actionDetails = OUTCOME_ACTIONS.find((entry) => entry.action === outcome)
   const reasonRequired = outcome !== undefined && REASON_REQUIRED_ACTIONS.includes(outcome)
 
+  // Reopening the dialog for another plant or outcome starts the form afresh,
+  // and `mutation.reset()` is a store update, which does not belong in render.
+  /* eslint-disable @eslint-react/set-state-in-effect, @eslint-react/exhaustive-deps -- reset is keyed on the dialog's subject only */
   React.useEffect(() => {
     if (plant !== undefined && outcome !== undefined) {
       occurredAt.reset()
@@ -172,6 +175,7 @@ function PlantOutcomeDialog({ plant, outcome, onClose, onRecorded }: PlantOutcom
       mutation.reset()
     }
   }, [plant?.pk, outcome])
+  /* eslint-enable @eslint-react/set-state-in-effect, @eslint-react/exhaustive-deps */
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()

@@ -201,9 +201,11 @@ function ReviseAssumptionForm({ assumption, onDone }: { assumption: NurseryPlann
     queryFn: ({ signal }) => getAssumptionRevisionDraft(assumption.pk, signal)
   })
   const [values, setValues] = React.useState<NurseryAssumptionRevisionDraft | null>(null)
-  React.useEffect(() => {
+  const [valuesDraft, setValuesDraft] = React.useState(draft.data)
+  if (valuesDraft !== draft.data) {
+    setValuesDraft(draft.data)
     if (draft.data) setValues(draft.data)
-  }, [draft.data])
+  }
   const save = useMutation({
     mutationFn: () =>
       reviseAssumption(assumption.pk, {

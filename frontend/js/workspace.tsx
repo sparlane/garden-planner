@@ -14,6 +14,29 @@ import { AttachmentArchiveReport } from './types/attachments'
 // and must not send that field back and undo a gardener's answer.
 type WorkspaceProfile = Omit<WorkspaceUpdate, 'garden_setup_state'>
 
+function profileOf(workspace: Workspace): WorkspaceProfile {
+  return {
+    name: workspace.name,
+    legal_name: workspace.legal_name,
+    trading_name: workspace.trading_name,
+    business_address: workspace.business_address,
+    mode: workspace.mode,
+    garden_experience: workspace.garden_experience,
+    currency_code: workspace.currency_code,
+    multi_currency_enabled: workspace.multi_currency_enabled,
+    conversion_policy: conversionPolicy(workspace),
+    default_tax_rate: workspace.default_tax_rate,
+    sales_prices_include_tax: workspace.sales_prices_include_tax,
+    timezone: workspace.timezone,
+    measurement_system: workspace.measurement_system,
+    override_tolerance_percent: workspace.override_tolerance_percent,
+    override_tolerance_floor: workspace.override_tolerance_floor,
+    assumption_tolerance_percent: workspace.assumption_tolerance_percent,
+    assumption_minimum_samples: workspace.assumption_minimum_samples,
+    stocktake_two_person_required: workspace.stocktake_two_person_required
+  }
+}
+
 interface WorkspaceSettingsProps {
   workspace: Workspace
 }
@@ -34,26 +57,7 @@ function WorkspaceModeRoute({ workspace, enabledModes, children }: WorkspaceMode
 
 function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
   const queryClient = useQueryClient()
-  const [form, setForm] = React.useState<WorkspaceProfile>({
-    name: workspace.name,
-    legal_name: workspace.legal_name,
-    trading_name: workspace.trading_name,
-    business_address: workspace.business_address,
-    mode: workspace.mode,
-    garden_experience: workspace.garden_experience,
-    currency_code: workspace.currency_code,
-    multi_currency_enabled: workspace.multi_currency_enabled,
-    conversion_policy: conversionPolicy(workspace),
-    default_tax_rate: workspace.default_tax_rate,
-    sales_prices_include_tax: workspace.sales_prices_include_tax,
-    timezone: workspace.timezone,
-    measurement_system: workspace.measurement_system,
-    override_tolerance_percent: workspace.override_tolerance_percent,
-    override_tolerance_floor: workspace.override_tolerance_floor,
-    assumption_tolerance_percent: workspace.assumption_tolerance_percent,
-    assumption_minimum_samples: workspace.assumption_minimum_samples,
-    stocktake_two_person_required: workspace.stocktake_two_person_required
-  })
+  const [form, setForm] = React.useState<WorkspaceProfile>(() => profileOf(workspace))
   const mutation = useMutation({
     mutationFn: updateWorkspace,
     onSuccess: (updated) => queryClient.setQueryData(queryKeys.workspace.current, updated)
@@ -65,28 +69,11 @@ function WorkspaceSettings({ workspace }: WorkspaceSettingsProps) {
     onSuccess: setArchiveReport
   })
 
-  React.useEffect(() => {
-    setForm({
-      name: workspace.name,
-      legal_name: workspace.legal_name,
-      trading_name: workspace.trading_name,
-      business_address: workspace.business_address,
-      mode: workspace.mode,
-      garden_experience: workspace.garden_experience,
-      currency_code: workspace.currency_code,
-      multi_currency_enabled: workspace.multi_currency_enabled,
-      conversion_policy: conversionPolicy(workspace),
-      default_tax_rate: workspace.default_tax_rate,
-      sales_prices_include_tax: workspace.sales_prices_include_tax,
-      timezone: workspace.timezone,
-      measurement_system: workspace.measurement_system,
-      override_tolerance_percent: workspace.override_tolerance_percent,
-      override_tolerance_floor: workspace.override_tolerance_floor,
-      assumption_tolerance_percent: workspace.assumption_tolerance_percent,
-      assumption_minimum_samples: workspace.assumption_minimum_samples,
-      stocktake_two_person_required: workspace.stocktake_two_person_required
-    })
-  }, [workspace])
+  const [formWorkspace, setFormWorkspace] = React.useState(workspace)
+  if (formWorkspace !== workspace) {
+    setFormWorkspace(workspace)
+    setForm(profileOf(workspace))
+  }
 
   function updateField<Field extends keyof WorkspaceProfile>(field: Field, value: WorkspaceProfile[Field]) {
     setForm((current) => ({ ...current, [field]: value }))

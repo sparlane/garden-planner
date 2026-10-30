@@ -54,7 +54,8 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
   const [scopeId, setScopeId] = React.useState<number | ''>('')
   const [scopes, setScopes] = React.useState<Array<HealthScope>>(initialScopes)
   const [preview, setPreview] = React.useState<HealthPreview>()
-  const [observationType, setObservationType] = React.useState<number | ''>('')
+  const [chosenType, setChosenType] = React.useState<number | ''>('')
+  const observationType = chosenType === '' && types.length > 0 ? types[0].pk : chosenType
   const [severity, setSeverity] = React.useState<HealthSeverity>('moderate')
   const [diagnosis, setDiagnosis] = React.useState<number | ''>('')
   const [certainty, setCertainty] = React.useState<'suspected' | 'confirmed'>('suspected')
@@ -64,10 +65,6 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
   const [photos, setPhotos] = React.useState<Array<File>>([])
   const [photoWarning, setPhotoWarning] = React.useState('')
   const [photoTarget, setPhotoTarget] = React.useState<number | null>(null)
-
-  React.useEffect(() => {
-    if (observationType === '' && types.length > 0) setObservationType(types[0].pk)
-  }, [types, observationType])
 
   const previewMutation = useMutation({
     mutationFn: () => previewHealthObservation(scopes),
@@ -163,7 +160,7 @@ function ObservationComposer({ initialScopes = [] }: { initialScopes?: Array<Hea
       <Row className="g-2 mt-1">
         <Col md={4}>
           <Form.Label>Observation type</Form.Label>
-          <Form.Select value={observationType} onChange={(event) => setObservationType(Number(event.target.value))}>
+          <Form.Select value={observationType} onChange={(event) => setChosenType(Number(event.target.value))}>
             {activeChoices(types).map((row) => (
               <option key={row.pk} value={row.pk}>
                 {row.name}

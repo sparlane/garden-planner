@@ -190,8 +190,10 @@ class SeedTrayCellGrid extends React.PureComponent<SeedTrayCellGridProps> {
     const { cells, model, cellQuantities, onToggleCell } = this.props
     const cellGrid = buildSeedTrayCellGrid(model, cells)
     const cellGridRows = cellGrid.map((rowCells, rowIndex) => (
+      // eslint-disable-next-line @eslint-react/no-array-index-key -- rows are positional; the grid never reorders
       <tr key={rowIndex}>
         {rowCells.map((cell, columnIndex) => (
+          // eslint-disable-next-line @eslint-react/no-array-index-key -- cells are positional; the grid never reorders
           <td key={cell?.pk ?? `empty-${rowIndex}-${columnIndex}`} style={{ padding: '4px', border: '1px solid #ccc', textAlign: 'center' }}>
             {cell && (
               <Button

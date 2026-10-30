@@ -71,9 +71,11 @@ const GenerationCleanForm: React.FC<GenerationCleanFormProps> = ({ contents, loc
 
   // The digest pins this form to the contents it was built from, so rebuilding
   // it when they change is the same act as taking a fresh digest.
-  React.useEffect(() => {
+  const [decisionContents, setDecisionContents] = React.useState(contents)
+  if (decisionContents !== contents) {
+    setDecisionContents(contents)
     setDecisions(initialDecisions(contents))
-  }, [contents])
+  }
 
   function setPlant(plantPk: number, change: Partial<PlantChoice>) {
     setDecisions((current) => ({ ...current, plants: { ...current.plants, [plantPk]: { ...current.plants[plantPk], ...change } } }))

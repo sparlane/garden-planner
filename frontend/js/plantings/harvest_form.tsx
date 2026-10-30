@@ -64,8 +64,9 @@ function invalidateHarvests(queryClient: ReturnType<typeof useQueryClient>, batc
 
 function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded, workspace }: HarvestFormProps) {
   const queryClient = useQueryClient()
-  const [batch, setBatch] = React.useState<number | ''>(batches.length === 1 ? batches[0].pk : '')
-  const [harvestedAt, setHarvestedAt] = React.useState(localDatetimeInputValue())
+  const [chosenBatch, setChosenBatch] = React.useState<number | ''>('')
+  const batch = chosenBatch === '' && batches.length === 1 ? batches[0].pk : chosenBatch
+  const [harvestedAt, setHarvestedAt] = React.useState(() => localDatetimeInputValue())
   const [quantity, setQuantity] = React.useState('')
   const [unitCode, setUnitCode] = React.useState<HarvestUnitCode>('kg')
   const [qualityRating, setQualityRating] = React.useState('')
@@ -77,12 +78,6 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
   const [photos, setPhotos] = React.useState<Array<File>>([])
   const [photoWarning, setPhotoWarning] = React.useState('')
   const [photoTarget, setPhotoTarget] = React.useState<number | null>(null)
-
-  React.useEffect(() => {
-    if (batches.length === 1) {
-      setBatch(batches[0].pk)
-    }
-  }, [batches])
 
   const batchPlants = plants.filter((plant) => plant.batch === batch)
   const chosen = batchPlants.filter((plant) => selected.includes(plant.pk))
@@ -149,7 +144,7 @@ function HarvestForm({ batches, plants = [], gardenSquare, gardenRow, onRecorded
         <Col md={4}>
           <Form.Group controlId="harvest-batch">
             <Form.Label>Crop</Form.Label>
-            <Form.Select value={batch} onChange={(event) => setBatch(event.target.value === '' ? '' : Number(event.target.value))}>
+            <Form.Select value={batch} onChange={(event) => setChosenBatch(event.target.value === '' ? '' : Number(event.target.value))}>
               <option value="">Choose a crop…</option>
               {batches.map((option) => (
                 <option key={option.pk} value={option.pk}>

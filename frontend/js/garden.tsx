@@ -133,6 +133,7 @@ function GardenSquareDetailsModal({ area, bed, square, plantings, records, onClo
               return (
                 <section
                   className="garden-planting-detail"
+                  // eslint-disable-next-line @eslint-react/no-array-index-key -- the same planting can appear more than once
                   key={`${planting.planting_pk}-${planting.transplanting_pk ?? 'direct'}-${planting.specific_plant_pk ?? 'aggregate'}-${index}`}
                 >
                   <h2 className="h5">{plantingName(planting)}</h2>
