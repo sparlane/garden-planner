@@ -840,8 +840,10 @@ class SpecificPlant(WorkspaceOwnedModel):
             origin_batch_id = self.promoted_from_cohort.batch_id
         else:
             origin_batch_id = self.garden_planting.batch_id
+        # batch_id is the FK's attname, which pylint cannot see as a declared attribute.
+        # pylint: disable-next=access-member-before-definition
         if self.batch_id is None:
-            setattr(self, 'batch_id', origin_batch_id)
+            self.batch_id = origin_batch_id  # pylint: disable=attribute-defined-outside-init
         elif self.batch_id != origin_batch_id:
             raise ValidationError({'batch': 'The batch does not match the plant origin.'})
 
