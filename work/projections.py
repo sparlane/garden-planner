@@ -37,6 +37,7 @@ from plants.models import MaturityBasis
 from sales.models import SalesOrder, SalesOrderAllocation
 
 from .models import WorkTask, WorkTaskRule
+from .garden_projections import garden_date_tasks
 
 
 OPEN_BATCHES = (ProductionBatch.Status.PLANNED, ProductionBatch.Status.ACTIVE)
@@ -151,6 +152,7 @@ def _allows(rule, variety=None, stage=None, location=None):
 
 
 def _source_task(rule, occurrence, title, start_day, end_day, targets, snapshot):
+    """Build a source window with the rule's calendar offsets and season filter."""
     due_start, due_end = _window(rule, start_day, end_day)
     if not _in_season(rule, due_end.astimezone(ZoneInfo(rule.workspace.timezone)).date()):
         return None
@@ -207,13 +209,19 @@ def _germination_assessment_tasks(rule):
 
 def _sowing_tasks(rule, maturity=False):
     prefix = 'maturity' if maturity else 'germination'
-    label = 'Harvest review' if maturity else 'Germination check'
+    label = rule.name
     if maturity:
         rows = SeedTrayPlanting.objects.filter(
             workspace=rule.workspace, removed=False, batch__status__in=OPEN_BATCHES,
         ).select_related('batch__variety__plant', 'seed_tray')
     else:
         rows = _open_germination_sowings(rule)
+    if maturity and rule.workspace.mode == rule.workspace.Mode.GARDEN:
+        rows = rows.exclude(Exists(SpecificPlant.objects.filter(
+            workspace=rule.workspace, cell_planting__seed_tray_planting_id=OuterRef('pk'),
+        ))).exclude(Exists(GardenSquareTransplant.objects.filter(
+            workspace=rule.workspace, original_planting_id=OuterRef('pk'), removed=False,
+        )))
     tasks = []
     for sowing in rows:
         variety = sowing.batch.variety
@@ -808,7 +816,19 @@ def projected_tasks(workspace, today=None):
     token = _growth_cache.set({})
     try:
         for rule in rules:
-            if rule.trigger == WorkTaskRule.Trigger.CALENDAR:
+            if rule.trigger in {WorkTaskRule.Trigger.GARDEN_PLANTED, WorkTaskRule.Trigger.GARDEN_FINISHED}:
+                tasks.extend(garden_date_tasks(rule, _source_task, TargetLink))
+            elif workspace.mode == workspace.Mode.GARDEN and rule.trigger in {
+                    WorkTaskRule.Trigger.GERMINATION, WorkTaskRule.Trigger.GERMINATION_WINDOW_END,
+                    WorkTaskRule.Trigger.MATURITY}:
+                tasks.extend(garden_date_tasks(rule, _source_task, TargetLink))
+                if rule.trigger == WorkTaskRule.Trigger.GERMINATION_WINDOW_END:
+                    tasks.extend(_germination_assessment_tasks(rule))
+                elif rule.trigger == WorkTaskRule.Trigger.MATURITY:
+                    tasks.extend(_maturity_tasks(rule))
+                else:
+                    tasks.extend(_sowing_tasks(rule))
+            elif rule.trigger == WorkTaskRule.Trigger.CALENDAR:
                 tasks.extend(_calendar_tasks(rule, today))
             else:
                 tasks.extend(PROJECTORS[rule.trigger](rule))
