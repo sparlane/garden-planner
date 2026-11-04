@@ -6,6 +6,9 @@ function getLabelIdentities(query: LabelIdentityQuery = {}, signal?: AbortSignal
   if (query.targetType) params.set('target_type', query.targetType)
   if (query.objectId !== undefined) params.set('object_id', String(query.objectId))
   if (query.potType !== undefined) params.set('pot_type', String(query.potType))
+  if (query.numberFrom !== undefined) params.set('number_from', String(query.numberFrom))
+  if (query.numberTo !== undefined) params.set('number_to', String(query.numberTo))
+  if (query.pageSize !== undefined) params.set('page_size', String(query.pageSize))
   if (query.page !== undefined && query.page > 1) params.set('page', String(query.page))
   const suffix = params.size > 0 ? `?${params.toString()}` : ''
   return fetchAsJson<LabelIdentityPage>(`/labels/identities/${suffix}`, signal)

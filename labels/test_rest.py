@@ -337,6 +337,19 @@ class LabelIdentityFilterTests(TestCase):
         self.assertEqual(types[other.item_id], 1)
         self.assertEqual(sum(types.values()), len(self.units) + 1)
 
+    def test_a_pot_number_range_returns_only_the_pots_numbered_in_it(self):
+        """Typing 81-88 on the bench card must find exactly those pots."""
+        wanted = sorted(unit.pk for unit in self.units)[:2]
+        rows = self.identities(number_from=wanted[0], number_to=wanted[1])
+        self.assertEqual(sorted(row['object_id'] for row in rows), list(range(wanted[0], wanted[1] + 1)))
+        self.assertEqual({row['target_type'] for row in rows}, {'inventoryunit'})
+
+    def test_a_backwards_or_half_given_pot_range_narrows_to_nothing(self):
+        """A range the server cannot honour must not print the workspace."""
+        first = self.units[0].pk
+        self.assertEqual(self.identities(number_from=first + 1, number_to=first), [])
+        self.assertEqual(self.identities(number_from=first), [])
+
     def test_a_malformed_pot_type_narrows_to_nothing(self):
         """A filter the server cannot read must not print every pot."""
         self.assertEqual(self.identities(pot_type='abc'), [])

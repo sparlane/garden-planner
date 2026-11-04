@@ -500,6 +500,18 @@ class LabelIdentityViewSet(CurrentWorkspaceViewSetMixin, mixins.ListModelMixin, 
             # pots of that type and nothing else.
             pots = InventoryUnit.objects.filter(item_id=int(pot_type)).values('pk')
             queryset = queryset.filter(target_content_type__model='inventoryunit', target_object_id__in=pots)
+        first = request.query_params.get('number_from')
+        last = request.query_params.get('number_to')
+        if first or last:
+            # A pot's number is its pk, which is the object id its label
+            # identity carries. Both ends are required, as on the pot list.
+            if not (first and last and first.isdigit() and last.isdigit()) or int(first) > int(last):
+                return queryset.none()
+            queryset = queryset.filter(
+                target_content_type__model='inventoryunit',
+                target_object_id__gte=int(first),
+                target_object_id__lte=int(last),
+            )
         object_id = request.query_params.get('object_id')
         if object_id:
             if not object_id.isdigit():

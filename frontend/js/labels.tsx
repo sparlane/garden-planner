@@ -9,6 +9,7 @@ import { createLabelPrintJob, deleteLabelTemplate, getLabelIdentities, getLabelT
 import { getLocations } from './api/locations'
 import { queryClient, queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution, LabelTemplate } from './types/labels'
+import { numberList, parseBenchNumbers, rangeNumbers } from './inventory/bench_numbers'
 import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
 import { labelInsets, sheetLayout } from './labels/sheet'
 import { TemplateForm } from './labels/template_form'
@@ -99,6 +100,11 @@ function PrintArea({ job, bordered = false }: { job: LabelPrintJob; bordered?: b
 // place the two have to agree.
 const PAGE_SIZE = 100
 
+// The server's largest page. A typed run is capped at the same figure so each
+// range is answered by one request, rather than the screen having to follow
+// pages to learn whether a number was found.
+const MAX_TYPED_POTS = 500
+
 // A made-up print job the size of one page of the chosen template. It is never
 // sent to the server: it exists so the grower can print the layout on plain
 // paper, hold it against the label stock, and see the cut lines.
@@ -144,6 +150,8 @@ function LabelsView() {
   const [targetType, setTargetType] = React.useState('')
   const [potType, setPotType] = React.useState<number | ''>('')
   const [sample, setSample] = React.useState(false)
+  const [typedPots, setTypedPots] = React.useState('')
+  const [typedMessage, setTypedMessage] = React.useState('')
   const [templateEdit, setTemplateEdit] = React.useState<'edit' | 'copy'>()
   const [page, setPage] = React.useState(1)
   const identityQuery = { targetType: targetType || undefined, potType: potType === '' ? undefined : potType, page }
@@ -161,6 +169,28 @@ function LabelsView() {
       setSample(false)
       setPreview(job)
     }
+  })
+  const typed = parseBenchNumbers(typedPots)
+  const typedTooMany = typed.ranges.some((range) => !Number.isSafeInteger(range.to)) || typed.count > MAX_TYPED_POTS
+  // Typed numbers are resolved on the server one range at a time, never by
+  // looking through the page in hand: the pots wanted need not be on it.
+  const selectTyped = useMutation({
+    mutationFn: async () => {
+      const found = await Promise.all(
+        typed.ranges
+          .map((range) => getLabelIdentities({ numberFrom: range.from, numberTo: range.to, pageSize: MAX_TYPED_POTS }))
+          .map((request) => request.then((page) => page.results))
+      )
+      return found.flat()
+    },
+    onSuccess: (rows) => {
+      const have = new Set(rows.map((row) => row.object_id))
+      const missing = rangeNumbers(typed.ranges).filter((number) => !have.has(number))
+      setSelected((current) => [...current, ...rows.map((row) => row.identity).filter((identity) => !current.includes(identity))])
+      setPreview(undefined)
+      setTypedMessage(`Selected ${rows.length} pot label${rows.length === 1 ? '' : 's'}.${missing.length ? ` No printable label for ${numberList(missing)}.` : ''}`)
+    },
+    onError: (caught: unknown) => setTypedMessage(caught instanceof Error ? caught.message : String(caught))
   })
   const deleteMutation = useMutation({
     mutationFn: (pk: number) => deleteLabelTemplate(pk),
@@ -325,6 +355,38 @@ function LabelsView() {
                   </option>
                 ))}
               </Form.Select>
+            </Col>
+          )}
+        </Row>
+        <Row className="g-2 mb-2 align-items-end">
+          <Col md={6}>
+            <Form.Label htmlFor="label-pot-numbers">Select pots by number</Form.Label>
+            <Form.Control
+              id="label-pot-numbers"
+              placeholder="Pot numbers, e.g. 85 or 81-88, 90"
+              value={typedPots}
+              isInvalid={typed.unreadable.length > 0 || typedTooMany}
+              onChange={(event) => {
+                setTypedPots(event.target.value)
+                setTypedMessage('')
+              }}
+            />
+            <Form.Control.Feedback type="invalid">
+              {typed.unreadable.length > 0 ? `Cannot read pot numbers: ${typed.unreadable.join(', ')}` : `Name at most ${MAX_TYPED_POTS} pots at a time.`}
+            </Form.Control.Feedback>
+          </Col>
+          <Col md="auto">
+            <Button
+              variant="outline-primary"
+              disabled={typed.count === 0 || typed.unreadable.length > 0 || typedTooMany || selectTyped.isPending}
+              onClick={() => selectTyped.mutate()}
+            >
+              Select these pots
+            </Button>
+          </Col>
+          {typedMessage && (
+            <Col md={12} className="text-muted small">
+              {typedMessage}
             </Col>
           )}
         </Row>

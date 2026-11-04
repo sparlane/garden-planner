@@ -25,6 +25,10 @@ interface LabelIdentityQuery {
   targetType?: string
   objectId?: number
   potType?: number
+  // Numbered pots whose number falls in this range, both ends inclusive.
+  numberFrom?: number
+  numberTo?: number
+  pageSize?: number
   page?: number
 }
 
