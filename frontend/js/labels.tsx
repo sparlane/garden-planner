@@ -5,10 +5,10 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Alert, Badge, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { Link, useParams } from 'react-router'
 
-import { createLabelPrintJob, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel } from './api/labels'
+import { createLabelPrintJob, deleteLabelTemplate, getLabelIdentities, getLabelTemplates, markLabelPrintJobPrinted, previewLabels, resolveLabel } from './api/labels'
 import { getLocations } from './api/locations'
 import { queryClient, queryKeys } from './query'
-import { LabelFormat, LabelPrintJob, LabelResolution } from './types/labels'
+import { LabelFormat, LabelPrintJob, LabelResolution, LabelTemplate } from './types/labels'
 import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
 import { sheetLayout } from './labels/sheet'
 import { TemplateForm } from './labels/template_form'
@@ -25,7 +25,7 @@ function Barcode({ format, payload }: { format: LabelFormat; payload: string }) 
   return <div aria-label={`${format === 'qr' ? 'QR' : 'Code 128'} code`} dangerouslySetInnerHTML={{ __html: svg }} />
 }
 
-function PrintArea({ job }: { job: LabelPrintJob }) {
+function PrintArea({ job, bordered = false }: { job: LabelPrintJob; bordered?: boolean }) {
   const dimensions = job.template.dimensions
   const width = `${dimensions.label_width_mm}mm`
   const height = `${dimensions.label_height_mm}mm`
@@ -42,7 +42,7 @@ function PrintArea({ job }: { job: LabelPrintJob }) {
           fewer, every label of it on the wrong gum. */}
       <style>{`@page { size: ${sheet.pageWidthMm}mm ${sheet.pageHeightMm}mm; margin: ${sheet.marginTopMm}mm ${sheet.marginSideMm}mm; }`}</style>
       <div
-        className="label-print-area label-sheet"
+        className={`label-print-area label-sheet${bordered ? ' label-bordered' : ''}`}
         style={{
           gridTemplateColumns: `repeat(${sheet.columns}, ${width})`,
           columnGap: `${sheet.columnGapMm}mm`,
@@ -65,6 +65,8 @@ function PrintArea({ job }: { job: LabelPrintJob }) {
                         <div>code:</div>
                         <div className="label-code">{String(value)}</div>
                       </>
+                    ) : field === 'pot_number' ? (
+                      <strong>Pot #{String(value)}</strong>
                     ) : (
                       `${field.replaceAll('_', ' ')}: ${String(value)}`
                     )}
@@ -85,25 +87,82 @@ function PrintArea({ job }: { job: LabelPrintJob }) {
 // place the two have to agree.
 const PAGE_SIZE = 100
 
+// A made-up print job the size of one page of the chosen template. It is never
+// sent to the server: it exists so the grower can print the layout on plain
+// paper, hold it against the label stock, and see the cut lines.
+function sampleJob(template: LabelTemplate, payloadMode: 'code' | 'url'): LabelPrintJob {
+  const count = Math.max(1, sheetLayout(template).perPage)
+  const format = template.format
+  const items = Array.from({ length: count }, (_, index) => {
+    const code = `SAMPLE-${String(index + 1).padStart(3, '0')}`
+    return {
+      position: index,
+      identity: 0,
+      code,
+      payload: format === 'code128' || payloadMode === 'code' ? code : `${window.location.origin}/#/scan/${code}`,
+      is_reprint: false,
+      target: {
+        identity: 0,
+        target_type: 'inventoryunit',
+        object_id: index + 1,
+        display: 'Sample label',
+        code,
+        variety: 'Variety',
+        batch: 'BATCH-1',
+        sowing_date: '2026-01-01',
+        expected_ready: '2026-03-01',
+        quantity: 1,
+        stage: 'Stage',
+        grade: 'Grade',
+        container: 'Container',
+        container_count: 1,
+        pot_number: index + 1,
+        print_date: new Date().toISOString().slice(0, 10)
+      }
+    }
+  })
+  return { job: null, printed_at: null, template: { ...template }, items }
+}
+
 function LabelsView() {
   const [selected, setSelected] = React.useState<Array<number>>([])
   const [chosenTemplate, setChosenTemplate] = React.useState<number | ''>('')
   const [payloadMode, setPayloadMode] = React.useState<'code' | 'url'>('url')
   const [preview, setPreview] = React.useState<LabelPrintJob>()
   const [targetType, setTargetType] = React.useState('')
+  const [potType, setPotType] = React.useState<number | ''>('')
+  const [sample, setSample] = React.useState(false)
+  const [templateEdit, setTemplateEdit] = React.useState<'edit' | 'copy'>()
   const [page, setPage] = React.useState(1)
-  const identityQuery = { targetType: targetType || undefined, page }
+  const identityQuery = { targetType: targetType || undefined, potType: potType === '' ? undefined : potType, page }
   const identities = useQuery({
     queryKey: queryKeys.labels.identities(identityQuery),
     queryFn: ({ signal }) => getLabelIdentities(identityQuery, signal)
   })
   const templates = useQuery({ queryKey: queryKeys.labels.templates, queryFn: ({ signal }) => getLabelTemplates(signal) })
-  const templatePk = chosenTemplate === '' && templates.data?.length ? templates.data[0].pk : chosenTemplate
+  const firstActive = templates.data?.find((entry) => entry.active)
+  const templatePk = chosenTemplate === '' && firstActive ? firstActive.pk : chosenTemplate
   const selectedTemplate = templates.data?.find((entry) => entry.pk === templatePk)
-  const previewMutation = useMutation({ mutationFn: () => previewLabels(templatePk as number, selected, payloadMode), onSuccess: setPreview })
+  const previewMutation = useMutation({
+    mutationFn: () => previewLabels(templatePk as number, selected, payloadMode),
+    onSuccess: (job) => {
+      setSample(false)
+      setPreview(job)
+    }
+  })
+  const deleteMutation = useMutation({
+    mutationFn: (pk: number) => deleteLabelTemplate(pk),
+    onSuccess: async () => {
+      setChosenTemplate('')
+      setTemplateEdit(undefined)
+      setPreview(undefined)
+      await templates.refetch()
+    }
+  })
   const printMutation = useMutation({
     mutationFn: () => createLabelPrintJob(templatePk as number, selected, payloadMode),
     onSuccess: async (job) => {
+      setSample(false)
       setPreview(job)
       if (job.job !== null) {
         await markLabelPrintJobPrinted(job.job)
@@ -113,9 +172,9 @@ function LabelsView() {
   })
   // Both reset when their trigger changes; doing it during render rather than
   // in an effect avoids painting one frame of the stale value.
-  const [pagedType, setPagedType] = React.useState(targetType)
-  if (pagedType !== targetType) {
-    setPagedType(targetType)
+  const [pagedType, setPagedType] = React.useState(`${targetType}:${potType}`)
+  if (pagedType !== `${targetType}:${potType}`) {
+    setPagedType(`${targetType}:${potType}`)
     setPage(1)
   }
 
@@ -125,6 +184,7 @@ function LabelsView() {
     if (selectedTemplate?.format === 'code128') setPayloadMode('code')
     else if (selectedTemplate) setPayloadMode(selectedTemplate.payload_mode)
     setPreview(undefined)
+    setSample(false)
   }
 
   // A selection is a set of identities rather than a set of rows, so it
@@ -139,6 +199,7 @@ function LabelsView() {
   // The per-type counts describe the workspace, not the filter or the page, so
   // their sum is what "everything" means however the list is currently narrowed.
   const typeCounts = new Map((identities.data?.target_types ?? []).map((entry) => [entry.target_type, entry.count]))
+  const potTypes = identities.data?.pot_types ?? []
   const labelled = [...typeCounts.values()].reduce((running, entry) => running + entry, 0)
   const hiddenSelections = identities.isPending ? 0 : selected.filter((entry) => !rows.some((identity) => identity.identity === entry)).length
 
@@ -173,16 +234,56 @@ function LabelsView() {
             </Form.Select>
           </Col>
         </Row>
-        <TemplateForm
-          onCreated={async (created) => {
-            setChosenTemplate(created.pk)
-            await templates.refetch()
-          }}
-        />
+        <div className="d-flex gap-2 mb-3">
+          <TemplateForm
+            key="new"
+            onCreated={async (created) => {
+              setChosenTemplate(created.pk)
+              await templates.refetch()
+            }}
+          />
+          {selectedTemplate && (
+            <>
+              <Button variant="outline-secondary" className="mb-3" onClick={() => setTemplateEdit(selectedTemplate.built_in ? 'copy' : 'edit')}>
+                {selectedTemplate.built_in ? 'Copy template' : 'Edit template'}
+              </Button>
+              {!selectedTemplate.built_in && (
+                <Button
+                  variant="outline-danger"
+                  className="mb-3"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => window.confirm(`Remove template "${selectedTemplate.name}"?`) && deleteMutation.mutate(selectedTemplate.pk)}
+                >
+                  Remove template
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+        {templateEdit && selectedTemplate && (
+          <TemplateForm
+            key={`${templateEdit}:${selectedTemplate.pk}`}
+            initial={selectedTemplate}
+            editing={templateEdit === 'edit'}
+            onCancel={() => setTemplateEdit(undefined)}
+            onCreated={async (saved) => {
+              setChosenTemplate(saved.pk)
+              setPreview(undefined)
+              await templates.refetch()
+            }}
+          />
+        )}
         <Row className="g-2 mb-2 align-items-end">
           <Col md={4}>
             <Form.Label htmlFor="label-target-type">Show</Form.Label>
-            <Form.Select id="label-target-type" value={targetType} onChange={(event) => setTargetType(event.target.value)}>
+            <Form.Select
+              id="label-target-type"
+              value={targetType}
+              onChange={(event) => {
+                setTargetType(event.target.value)
+                setPotType('')
+              }}
+            >
               <option value="">Everything with a label ({labelled})</option>
               {LABEL_TARGET_TYPES.map(([value, label]) => (
                 <option value={value} key={value}>
@@ -191,6 +292,29 @@ function LabelsView() {
               ))}
             </Form.Select>
           </Col>
+          {(targetType === '' || targetType === 'inventoryunit') && potTypes.length > 0 && (
+            <Col md={4}>
+              <Form.Label htmlFor="label-pot-type">Type of pot</Form.Label>
+              <Form.Select
+                id="label-pot-type"
+                value={potType}
+                onChange={(event) => {
+                  const next = event.target.value === '' ? '' : Number(event.target.value)
+                  setPotType(next)
+                  // A pot type only means something for numbered pots, so
+                  // choosing one narrows the list to them.
+                  if (next !== '') setTargetType('inventoryunit')
+                }}
+              >
+                <option value="">All types of pot</option>
+                {potTypes.map((entry) => (
+                  <option value={entry.item} key={entry.item}>
+                    {entry.name} ({entry.count})
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+          )}
         </Row>
         <Table responsive hover size="sm">
           <thead>
@@ -248,9 +372,21 @@ function LabelsView() {
           <Button disabled={!templatePk || selected.length === 0 || printMutation.isPending} onClick={() => printMutation.mutate()}>
             Print {selected.length} label{selected.length === 1 ? '' : 's'}
           </Button>
+          <Button
+            variant="outline-secondary"
+            disabled={!selectedTemplate}
+            onClick={() => {
+              setPreview(undefined)
+              setSample(true)
+              window.setTimeout(() => window.print(), 0)
+            }}
+          >
+            Print sample with borders
+          </Button>
         </div>
       </div>
       {preview && <PrintArea job={preview} />}
+      {!preview && sample && selectedTemplate && <PrintArea job={sampleJob(selectedTemplate, payloadMode)} bordered />}
     </main>
   )
 }

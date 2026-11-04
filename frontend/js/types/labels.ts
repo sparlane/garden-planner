@@ -14,6 +14,7 @@ interface LabelIdentity {
   sowing_date?: string | null
   expected_ready?: string | null
   inventory_unit?: number
+  pot_number?: number
 }
 
 // What a caller wants out of the printable list. Every field narrows on the
@@ -23,6 +24,7 @@ interface LabelIdentity {
 interface LabelIdentityQuery {
   targetType?: string
   objectId?: number
+  potType?: number
   page?: number
 }
 
@@ -34,12 +36,21 @@ interface LabelTargetTypeCount {
   count: number
 }
 
+// One kind of numbered pot (an inventory item) and how many of it are
+// printable, over the whole workspace.
+interface LabelPotTypeCount {
+  item: number
+  name: string
+  count: number
+}
+
 interface LabelIdentityPage {
   count: number
   next: string | null
   previous: string | null
   results: Array<LabelIdentity>
   target_types: Array<LabelTargetTypeCount>
+  pot_types: Array<LabelPotTypeCount>
 }
 
 // The millimetres a template is cut to. Label stock is rarely symmetrical, so
@@ -106,6 +117,7 @@ export {
   LabelIdentityQuery,
   LabelLayout,
   LabelPayloadMode,
+  LabelPotTypeCount,
   LabelPrintItem,
   LabelPrintJob,
   LabelResolution,

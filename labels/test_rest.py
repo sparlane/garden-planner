@@ -290,7 +290,7 @@ class LabelIdentityFilterTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             set(response.data),
-            {'count', 'next', 'previous', 'results', 'target_types'},
+            {'count', 'next', 'previous', 'results', 'target_types', 'pot_types'},
         )
         return response.data
 
@@ -313,6 +313,27 @@ class LabelIdentityFilterTests(TestCase):
             {row['object_id'] for row in rows},
             {unit.pk for unit in self.units},
         )
+
+    def test_the_pot_type_filter_returns_only_pots_of_that_type(self):
+        """A grower printing one size of pot sees no other size."""
+        other = make_numbered_container(
+            item=make_inventory_item(
+                category=InventoryItem.Category.POT_CONTAINER,
+                base_unit=UnitCode.EACH,
+                tracking_mode=InventoryItem.TrackingMode.MIXED,
+            ),
+        )
+        ensure_identity(other)
+        rows = self.identities(pot_type=other.item_id)
+        self.assertEqual([row['object_id'] for row in rows], [other.pk])
+        self.assertEqual(rows[0]['pot_number'], other.pk)
+        types = {row['item']: row['count'] for row in self.page()['pot_types']}
+        self.assertEqual(types[other.item_id], 1)
+        self.assertEqual(sum(types.values()), len(self.units) + 1)
+
+    def test_a_malformed_pot_type_narrows_to_nothing(self):
+        """A filter the server cannot read must not print every pot."""
+        self.assertEqual(self.identities(pot_type='abc'), [])
 
     def test_an_unknown_target_type_narrows_to_nothing_rather_than_everything(self):
         """A filter the server does not recognize must not print the workspace."""
