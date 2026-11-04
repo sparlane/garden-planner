@@ -218,6 +218,12 @@ class LabelPrintJobTests(TestCase):
         self.assertEqual(response.data['dimensions']['margin_top_mm'], 4.5)
         self.assertEqual(response.data['dimensions']['row_gap_mm'], 0)
 
+    def test_a_sheet_keeps_the_printers_unprintable_edge(self):
+        """Edge labels are padded by it, so the template has to carry it."""
+        response = self.sheet(unprintable_mm=5)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['dimensions']['unprintable_mm'], 5)
+
     def test_a_sheet_needs_the_page_it_is_cut_from(self):
         """Without a page there is nothing to place the first label against."""
         response = self.sheet(page_width_mm=0, page_height_mm=0)

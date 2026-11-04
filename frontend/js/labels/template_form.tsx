@@ -40,7 +40,10 @@ const LAYOUTS: ReadonlyArray<readonly [LabelLayout, string]> = [
 // self-checking — three 70mm labels are exactly the 210mm of A4 and eight 36mm
 // rows leave the 9mm its top and bottom bars split.
 const PRESETS: ReadonlyArray<readonly [string, LabelDimensions]> = [
-  ['LC24 — 70 × 36 mm, 3 × 8', { label_width_mm: 70, label_height_mm: 36, page_width_mm: 210, page_height_mm: 297, margin_mm: 0, margin_top_mm: 4.5, gap_mm: 0, row_gap_mm: 0 }]
+  [
+    'LC24 — 70 × 36 mm, 3 × 8',
+    { label_width_mm: 70, label_height_mm: 36, page_width_mm: 210, page_height_mm: 297, margin_mm: 0, margin_top_mm: 4.5, gap_mm: 0, row_gap_mm: 0, unprintable_mm: 5 }
+  ]
 ]
 
 const BLANK: LabelDimensions = {
@@ -252,6 +255,17 @@ function TemplateForm({ onCreated, initial, editing = false, onCancel }: Templat
                 step="0.1"
                 value={dimensions.margin_top_mm ?? 0}
                 onChange={(event) => setNumber('margin_top_mm', event.target.value)}
+              />
+            </Col>
+            <Col md={2}>
+              <Form.Label htmlFor="template-unprintable">Printer edge (mm)</Form.Label>
+              <Form.Control
+                id="template-unprintable"
+                type="number"
+                min="0"
+                step="0.1"
+                value={dimensions.unprintable_mm ?? 0}
+                onChange={(event) => setNumber('unprintable_mm', event.target.value)}
               />
             </Col>
             <Col md={2}>
