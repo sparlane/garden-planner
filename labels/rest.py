@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 
 from sales.models import SalesOrderAllocation, FulfillmentLine
 from inventory.ledger import unit_physical_state
+from inventory.models import InventoryUnit
 from health.availability import active_cases, is_quarantined
 from health.services import preview_observation
 from locations.models import location_full_name
@@ -37,6 +38,7 @@ LABEL_FIELDS = {
     'grade',
     'container',
     'container_count',
+    'pot_number',
     'code',
     'print_date',
 }
@@ -107,6 +109,19 @@ def _target_type_counts(queryset):
     ]
 
 
+def _pot_type_counts(queryset):
+    """Count printable numbered pots per kind of pot (the inventory item).
+
+    Like the target-type counts these describe the whole workspace, so the
+    picker does not shrink as it is used.
+    """
+    pot_ids = queryset.filter(target_content_type__model='inventoryunit').values('target_object_id')
+    rows = InventoryUnit.objects.filter(pk__in=pot_ids).values('item', 'item__name').annotate(
+        count=models.Count('pk'),
+    ).order_by('item__name', 'item')
+    return [{'item': row['item'], 'name': row['item__name'], 'count': row['count']} for row in rows]
+
+
 def _target_values(identity, code=None):
     """Project useful label fields without making them a second source of truth."""
     target = identity.target
@@ -161,6 +176,8 @@ def _target_values(identity, code=None):
         values.update({
             'display': f'{target.item.name} — {target.asset_code}',
             'asset_code': target.asset_code,
+            # A pot's number is its pk: what the bench card and every pot screen call it.
+            'pot_number': target.pk,
             'container': target.item.container_size_label or target.item.name,
             'location': (
                 location_full_name(target.current_location)
@@ -439,10 +456,12 @@ class LabelIdentityPagination(PageNumberPagination):
     def __init__(self):
         super().__init__()
         self.target_types = []
+        self.pot_types = []
 
     def get_paginated_response(self, data):
         response = super().get_paginated_response(data)
         response.data['target_types'] = self.target_types
+        response.data['pot_types'] = self.pot_types
         return response
 
 
@@ -471,6 +490,14 @@ class LabelIdentityViewSet(CurrentWorkspaceViewSetMixin, mixins.ListModelMixin, 
         target_type = request.query_params.get('target_type')
         if target_type:
             queryset = queryset.filter(target_content_type__model=target_type)
+        pot_type = request.query_params.get('pot_type')
+        if pot_type:
+            if not pot_type.isdigit():
+                return queryset.none()
+            # Only numbered pots have a pot type, so asking for one narrows to
+            # pots of that type and nothing else.
+            pots = InventoryUnit.objects.filter(item_id=int(pot_type)).values('pk')
+            queryset = queryset.filter(target_content_type__model='inventoryunit', target_object_id__in=pots)
         object_id = request.query_params.get('object_id')
         if object_id:
             if not object_id.isdigit():
@@ -482,6 +509,7 @@ class LabelIdentityViewSet(CurrentWorkspaceViewSetMixin, mixins.ListModelMixin, 
         printable = self.get_queryset()
         paginator = self.paginator
         paginator.target_types = _target_type_counts(printable)
+        paginator.pot_types = _pot_type_counts(printable)
         page = paginator.paginate_queryset(self._narrow(printable, request), request, view=self)
         return paginator.get_paginated_response(
             [_target_values(identity, _active_code(identity)) for identity in page],

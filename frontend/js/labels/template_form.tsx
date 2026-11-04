@@ -2,7 +2,7 @@ import React from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Form, Row } from 'react-bootstrap'
 
-import { createLabelTemplate } from '../api/labels'
+import { createLabelTemplate, updateLabelTemplate } from '../api/labels'
 import { LabelDimensions, LabelFormat, LabelLayout, LabelPayloadMode, LabelTemplate } from '../types/labels'
 import { errorsByField } from '../utils'
 import { sheetLayout } from './sheet'
@@ -22,6 +22,7 @@ const TEMPLATE_FIELDS: ReadonlyArray<readonly [string, string]> = [
   ['grade', 'Grade'],
   ['container', 'Container'],
   ['container_count', 'Container count'],
+  ['pot_number', 'Pot number'],
   ['code', 'Label code'],
   ['print_date', 'Print date']
 ]
@@ -55,20 +56,27 @@ const BLANK: LabelDimensions = {
 
 interface TemplateFormProps {
   onCreated: (template: LabelTemplate) => void
+  // Start from an existing template. With `editing` the save changes that
+  // template; without it the values only seed a new one (a copy, which is how
+  // a built-in is changed). Either way the form opens at once and `onCancel`
+  // closes it.
+  initial?: LabelTemplate
+  editing?: boolean
+  onCancel?: () => void
 }
 
 // Designing a template is measuring a sheet, so the form asks for the sheet
 // and says what it works out to before anything is saved. A template is only
 // ever added here: the built-ins are not editable, and a sheet already printed
 // against stays as it is so a reprint lands where the first print did.
-function TemplateForm({ onCreated }: TemplateFormProps) {
-  const [open, setOpen] = React.useState(false)
-  const [name, setName] = React.useState('')
-  const [format, setFormat] = React.useState<LabelFormat>('qr')
-  const [payloadMode, setPayloadMode] = React.useState<LabelPayloadMode>('url')
-  const [layout, setLayout] = React.useState<LabelLayout>('sheet')
-  const [dimensions, setDimensions] = React.useState<LabelDimensions>(BLANK)
-  const [fields, setFields] = React.useState<Array<string>>(['display', 'container', 'code'])
+function TemplateForm({ onCreated, initial, editing = false, onCancel }: TemplateFormProps) {
+  const [open, setOpen] = React.useState(initial !== undefined)
+  const [name, setName] = React.useState(initial ? (editing ? initial.name : `${initial.name} copy`) : '')
+  const [format, setFormat] = React.useState<LabelFormat>(initial?.format ?? 'qr')
+  const [payloadMode, setPayloadMode] = React.useState<LabelPayloadMode>(initial?.payload_mode ?? 'url')
+  const [layout, setLayout] = React.useState<LabelLayout>(initial?.layout ?? 'sheet')
+  const [dimensions, setDimensions] = React.useState<LabelDimensions>(initial ? { ...BLANK, ...initial.dimensions } : BLANK)
+  const [fields, setFields] = React.useState<Array<string>>(initial?.fields ?? ['display', 'container', 'code'])
   const [error, setError] = React.useState<string>()
 
   // Code 128 carries the bare code and nothing else, which the server enforces
@@ -80,7 +88,7 @@ function TemplateForm({ onCreated }: TemplateFormProps) {
 
   const mutation = useMutation({
     mutationFn: () =>
-      createLabelTemplate({
+      (editing && initial ? (data: Parameters<typeof createLabelTemplate>[0]) => updateLabelTemplate(initial.pk, data) : createLabelTemplate)({
         name: name.trim(),
         format,
         payload_mode: mode,
@@ -95,6 +103,7 @@ function TemplateForm({ onCreated }: TemplateFormProps) {
       setError(undefined)
       setOpen(false)
       onCreated(created)
+      onCancel?.()
     },
     onError: (caught: unknown) => {
       const byField = errorsByField(caught)
@@ -123,7 +132,7 @@ function TemplateForm({ onCreated }: TemplateFormProps) {
 
   return (
     <Card body className="mb-3">
-      <Card.Title>New template</Card.Title>
+      <Card.Title>{editing ? 'Edit template' : initial ? 'New template from copy' : 'New template'}</Card.Title>
       <Row className="g-2 mb-2">
         <Col md={5}>
           <Form.Label htmlFor="template-name">Name</Form.Label>
@@ -278,7 +287,13 @@ function TemplateForm({ onCreated }: TemplateFormProps) {
         <Button disabled={!usable || mutation.isPending} onClick={() => mutation.mutate()}>
           {mutation.isPending ? 'Saving…' : 'Save template'}
         </Button>
-        <Button variant="outline-secondary" onClick={() => setOpen(false)}>
+        <Button
+          variant="outline-secondary"
+          onClick={() => {
+            setOpen(false)
+            onCancel?.()
+          }}
+        >
           Cancel
         </Button>
       </div>

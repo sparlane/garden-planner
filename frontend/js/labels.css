@@ -69,6 +69,12 @@
     border: 0;
   }
 
+  /* A sample sheet exists to show where the labels sit, so it keeps its cut
+     lines on paper. */
+  .label-bordered .physical-label {
+    border: 1px solid #000;
+  }
+
   .no-print {
     display: none !important;
   }
