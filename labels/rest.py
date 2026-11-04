@@ -49,7 +49,8 @@ LABEL_FIELDS = {
 #: sheets commonly set to nothing while still parting their columns. LC24 runs
 #: its labels to both paper edges with 4.5mm above the first row and no gaps at
 #: all. A sheet that is symmetrical states `margin_mm` and `gap_mm` alone, and
-#: the other two follow them.
+#: the other two follow them. `unprintable_mm` is the edge of the paper the
+#: printer cannot reach; labels that run into it get extra inner padding.
 DIMENSION_FIELDS = {
     'label_width_mm',
     'label_height_mm',
@@ -59,6 +60,7 @@ DIMENSION_FIELDS = {
     'margin_top_mm',
     'gap_mm',
     'row_gap_mm',
+    'unprintable_mm',
 }
 TARGET_ROUTES = {
     ('plantings', 'specificplant'): '/plantings/plants/{pk}',

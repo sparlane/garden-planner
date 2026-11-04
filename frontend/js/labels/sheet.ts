@@ -47,4 +47,37 @@ function sheetLayout(template: Pick<LabelTemplate, 'layout' | 'dimensions'>): Sh
   return { columns, rows, perPage: columns * rows, pageWidthMm, pageHeightMm, marginSideMm, marginTopMm, columnGapMm, rowGapMm }
 }
 
-export { SheetLayout, sheetLayout }
+// The space between a label's edge and its contents, in millimetres. Every
+// label keeps `BASE_PADDING_MM`; one that sits within the printer's unprintable
+// strip is padded by however much of its contents would otherwise fall in it.
+// Only a sheet runs labels to the paper, and only the labels on the outer
+// column or row are affected, so the same template pads its middle labels less
+// than its edge ones. `index` is the label's place in the run, which wraps onto
+// each new page.
+const BASE_PADDING_MM = 2
+
+interface LabelInsets {
+  top: number
+  right: number
+  bottom: number
+  left: number
+}
+
+function labelInsets(template: Pick<LabelTemplate, 'layout' | 'dimensions'>, index: number): LabelInsets {
+  const base = { top: BASE_PADDING_MM, right: BASE_PADDING_MM, bottom: BASE_PADDING_MM, left: BASE_PADDING_MM }
+  const unprintable = template.dimensions.unprintable_mm ?? 0
+  if (template.layout !== 'sheet' || unprintable <= 0) return base
+  const sheet = sheetLayout(template)
+  if (sheet.perPage <= 0) return base
+  const dimensions = template.dimensions
+  const column = (index % sheet.perPage) % sheet.columns
+  const row = Math.floor((index % sheet.perPage) / sheet.columns)
+  const left = sheet.marginSideMm + column * (dimensions.label_width_mm + sheet.columnGapMm)
+  const top = sheet.marginTopMm + row * (dimensions.label_height_mm + sheet.rowGapMm)
+  const right = sheet.pageWidthMm - left - dimensions.label_width_mm
+  const bottom = sheet.pageHeightMm - top - dimensions.label_height_mm
+  const inset = (distance: number) => Math.max(BASE_PADDING_MM, unprintable - distance + BASE_PADDING_MM)
+  return { top: inset(top), right: inset(right), bottom: inset(bottom), left: inset(left) }
+}
+
+export { LabelInsets, SheetLayout, labelInsets, sheetLayout }

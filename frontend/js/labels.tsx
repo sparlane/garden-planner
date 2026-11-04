@@ -10,7 +10,7 @@ import { getLocations } from './api/locations'
 import { queryClient, queryKeys } from './query'
 import { LabelFormat, LabelPrintJob, LabelResolution, LabelTemplate } from './types/labels'
 import { LABEL_TARGET_TYPES, labelTargetLabel } from './labels/target_types'
-import { sheetLayout } from './labels/sheet'
+import { labelInsets, sheetLayout } from './labels/sheet'
 import { TemplateForm } from './labels/template_form'
 import { BulkOperationPanel } from './plantings/bulk_operations'
 import { HealthScopeType } from './types/health'
@@ -39,8 +39,13 @@ function PrintArea({ job, bordered = false }: { job: LabelPrintJob; bordered?: b
           sheet gets them too — padding would only indent the first. The column
           count is fixed for the same reason: a page narrowed by a printer
           setting must overflow visibly rather than quietly print one column
-          fewer, every label of it on the wrong gum. */}
-      <style>{`@page { size: ${sheet.pageWidthMm}mm ${sheet.pageHeightMm}mm; margin: ${sheet.marginTopMm}mm ${sheet.marginSideMm}mm; }`}</style>
+          fewer, every label of it on the wrong gum. The bottom margin is left
+          at nothing for the opposite reason: a sheet whose rows exactly fill
+          the space between its bars (LC24: eight 36mm rows between two 4.5mm
+          bars) has no slack, and the browser's pixel rounding of 288mm tips
+          the last row onto a second page. The bar below the last row is blank
+          paper, so it is the slack. */}
+      <style>{`@page { size: ${sheet.pageWidthMm}mm ${sheet.pageHeightMm}mm; margin: ${sheet.marginTopMm}mm ${sheet.marginSideMm}mm 0; }`}</style>
       <div
         className={`label-print-area label-sheet${bordered ? ' label-bordered' : ''}`}
         style={{
@@ -49,34 +54,41 @@ function PrintArea({ job, bordered = false }: { job: LabelPrintJob; bordered?: b
           rowGap: `${sheet.rowGapMm}mm`
         }}
       >
-        {job.items.map((item) => (
-          <article className="physical-label" key={`${item.identity}:${item.position}`} style={{ width, height }}>
-            <Barcode format={job.template.format} payload={item.payload} />
-            <div className="label-values">
-              {job.template.fields.map((field) => {
-                const value = item.target[field]
-                if (value === undefined || value === null || value === '') return null
-                return (
-                  <div key={field}>
-                    {field === 'display' ? (
-                      <strong>{String(value)}</strong>
-                    ) : field === 'code' ? (
-                      <>
-                        <div>code:</div>
-                        <div className="label-code">{String(value)}</div>
-                      </>
-                    ) : field === 'pot_number' ? (
-                      <strong>Pot #{String(value)}</strong>
-                    ) : (
-                      `${field.replaceAll('_', ' ')}: ${String(value)}`
-                    )}
-                  </div>
-                )
-              })}
-              {item.is_reprint && <small>Reprint</small>}
-            </div>
-          </article>
-        ))}
+        {job.items.map((item, index) => {
+          const insets = labelInsets(job.template, index)
+          return (
+            <article
+              className="physical-label"
+              key={`${item.identity}:${item.position}`}
+              style={{ width, height, padding: `${insets.top}mm ${insets.right}mm ${insets.bottom}mm ${insets.left}mm` }}
+            >
+              <Barcode format={job.template.format} payload={item.payload} />
+              <div className="label-values">
+                {job.template.fields.map((field) => {
+                  const value = item.target[field]
+                  if (value === undefined || value === null || value === '') return null
+                  return (
+                    <div key={field}>
+                      {field === 'display' ? (
+                        <strong>{String(value)}</strong>
+                      ) : field === 'code' ? (
+                        <>
+                          <div>code:</div>
+                          <div className="label-code">{String(value)}</div>
+                        </>
+                      ) : field === 'pot_number' ? (
+                        <strong>Pot #{String(value)}</strong>
+                      ) : (
+                        `${field.replaceAll('_', ' ')}: ${String(value)}`
+                      )}
+                    </div>
+                  )
+                })}
+                {item.is_reprint && <small>Reprint</small>}
+              </div>
+            </article>
+          )
+        })}
       </div>
     </>
   )

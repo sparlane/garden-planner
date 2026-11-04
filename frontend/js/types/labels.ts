@@ -69,6 +69,9 @@ interface LabelDimensions {
   margin_top_mm?: number
   gap_mm?: number
   row_gap_mm?: number
+  // How far in from each paper edge the printer cannot print. A label that
+  // runs into that strip is padded further so its contents stay on the page.
+  unprintable_mm?: number
 }
 
 interface LabelTemplate {
