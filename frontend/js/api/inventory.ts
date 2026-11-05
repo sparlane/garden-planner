@@ -11,11 +11,13 @@ import {
   ItemUnitConversionCreate,
   SerializedInventoryUnit,
   SerializedUnitFilters,
+  StockCountResult,
   StockReceipt,
   StockReceiptFilters,
   StockReceiptWrite,
   Stocktake,
-  StocktakeScope
+  StocktakeScope,
+  UnitCode
 } from '../types/inventory'
 import { csrfDelete, csrfPatch, csrfPost, fetchAsJson } from '../utils'
 
@@ -25,6 +27,7 @@ const RECEIPTS_URL = '/inventory/receipts/'
 const INPUT_TAX_ADJUSTMENTS_URL = '/inventory/input-tax-adjustments/'
 const STOCKTAKES_URL = '/inventory/stocktakes/'
 const LOTS_URL = '/inventory/lots/'
+const MOVEMENTS_URL = '/inventory/movements/'
 // Individually numbered stock. Not `/inventory/units/`, which is the unit of
 // measure registry — the two read alike and answer entirely different
 // questions.
@@ -70,6 +73,14 @@ function getInventoryBalances(item: number, signal?: AbortSignal): Promise<Array
 async function individualizeLotUnits(lot: number, values: IndividualizationWrite): Promise<Array<SerializedInventoryUnit>> {
   const response = await csrfPost(`${LOTS_URL}${lot}/individualize/`, values)
   return response.json() as Promise<Array<SerializedInventoryUnit>>
+}
+
+// The counted quantity goes up, not a difference: the server compares it with
+// the ledger under the lot lock and posts whatever gain or loss that implies,
+// so stock that moved since the page loaded cannot skew the correction.
+async function countLotStock(lot: number, location: number, quantity: string, unitCode: UnitCode, reason: string): Promise<StockCountResult> {
+  const response = await csrfPost(`${MOVEMENTS_URL}count/`, { lot, location, quantity, unit_code: unitCode, reason })
+  return response.json() as Promise<StockCountResult>
 }
 
 function getSerializedUnit(pk: number, signal?: AbortSignal): Promise<SerializedInventoryUnit> {
@@ -215,6 +226,7 @@ export {
   createItemUnitConversion,
   createStockReceipt,
   deleteStockReceipt,
+  countLotStock,
   getInventoryBalances,
   getInventoryItems,
   individualizeLotUnits,

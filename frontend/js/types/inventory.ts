@@ -161,6 +161,12 @@ interface InventoryBalance {
   low_stock: boolean
 }
 
+// `movement` is null when the count already matched the ledger, so nothing
+// was posted.
+interface StockCountResult {
+  movement: { pk: number; movement_type: 'adjustment_gain' | 'adjustment_loss'; quantity: string } | null
+}
+
 interface IndividualizationWrite {
   location: number
   count: number
@@ -402,6 +408,7 @@ export {
   SerializedPhysicalState,
   SerializedUnitFilters,
   SerializedStockMovement,
+  StockCountResult,
   StockReceipt,
   StockReceiptFilters,
   StockReceiptLine,

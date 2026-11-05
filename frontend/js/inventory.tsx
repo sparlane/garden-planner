@@ -14,6 +14,7 @@ import {
 import { CountedPotFills } from './inventory/container_fills'
 import { NumberedPotFills } from './inventory/numbered_fills'
 import { NumberedUnitsPanel } from './inventory/individualization'
+import { StockPanel } from './inventory/stock_panel'
 import { queryKeys } from './query'
 import {
   InventoryCategory,
@@ -504,7 +505,7 @@ function InventoryCatalog() {
                   <td>{item.active ? 'Active' : 'Inactive'}</td>
                   <td className="text-nowrap">
                     <Button size="sm" variant="outline-primary" onClick={() => setSelectedItemPk(item.pk)}>
-                      Units
+                      Stock &amp; units
                     </Button>{' '}
                     {item.active && (
                       <Button size="sm" variant="outline-danger" disabled={activeMutation.isPending} onClick={() => activeMutation.mutate({ pk: item.pk, active: false })}>
@@ -523,6 +524,7 @@ function InventoryCatalog() {
           </Table>
         </Card.Body>
       </Card>
+      {selectedItem && selectedItem.tracking_mode !== 'serialized' && <StockPanel key={selectedItem.pk} item={selectedItem} />}
       {selectedItem && <ConversionPanel item={selectedItem} />}
       {selectedItem?.category === 'pot_container' && selectedItem.tracking_mode !== 'serialized' && <CountedPotFills key={selectedItem.pk} item={selectedItem} />}
       {selectedItem?.tracking_mode === 'mixed' && <NumberedUnitsPanel item={selectedItem} />}
