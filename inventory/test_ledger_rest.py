@@ -347,6 +347,70 @@ class LedgerRestTests(LedgerRestFixture):
         self.assertEqual(rejected.status_code, 400)
         self.assertIn('reason', rejected.data)
 
+    def test_a_physical_count_posts_the_gain_or_loss_it_implies(self):
+        """The server derives the difference from the ledger, not the client."""
+        opening = self.create_opening(quantity='500.000000000')
+        payload = {
+            'lot': opening['lot']['pk'],
+            'location': self.store.pk,
+            'quantity': '480.000000000',
+            'unit_code': UnitCode.MILLILITRE,
+            'reason': 'Stock count',
+        }
+        loss = self.client.post(f'{self.movement_url}count/', payload, format='json')
+        self.assertEqual(loss.status_code, 201, loss.data)
+        self.assertEqual(
+            loss.data['movement']['movement_type'],
+            StockMovement.MovementType.ADJUSTMENT_LOSS,
+        )
+        self.assertEqual(Decimal(loss.data['movement']['quantity']), Decimal('20'))
+
+        payload['quantity'] = '510.000000000'
+        gain = self.client.post(f'{self.movement_url}count/', payload, format='json')
+        self.assertEqual(gain.status_code, 201, gain.data)
+        self.assertEqual(
+            gain.data['movement']['movement_type'],
+            StockMovement.MovementType.ADJUSTMENT_GAIN,
+        )
+        self.assertEqual(Decimal(gain.data['movement']['quantity']), Decimal('30'))
+
+        movements = StockMovement.objects.count()
+        same = self.client.post(f'{self.movement_url}count/', payload, format='json')
+        self.assertEqual(same.status_code, 200, same.data)
+        self.assertIsNone(same.data['movement'])
+        self.assertEqual(StockMovement.objects.count(), movements)
+
+        balances = self.client.get(
+            self.balance_url,
+            {'lot': opening['lot']['pk']},
+        )
+        self.assertEqual(Decimal(balances.data[0]['physical_quantity']), Decimal('510'))
+
+        payload['quantity'] = '0.000000000'
+        emptied = self.client.post(f'{self.movement_url}count/', payload, format='json')
+        self.assertEqual(emptied.status_code, 201, emptied.data)
+        self.assertEqual(Decimal(emptied.data['movement']['quantity']), Decimal('510'))
+
+    def test_a_physical_count_needs_a_reason_and_a_non_negative_quantity(self):
+        """An unexplained or impossible count writes nothing."""
+        opening = self.create_opening(quantity='10.000000000')
+        payload = {
+            'lot': opening['lot']['pk'],
+            'location': self.store.pk,
+            'quantity': '5.000000000',
+            'unit_code': UnitCode.MILLILITRE,
+            'reason': '',
+        }
+        movements = StockMovement.objects.count()
+        rejected = self.client.post(f'{self.movement_url}count/', payload, format='json')
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn('reason', rejected.data)
+
+        payload.update(reason='Stock count', quantity='-1.000000000')
+        rejected = self.client.post(f'{self.movement_url}count/', payload, format='json')
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(StockMovement.objects.count(), movements)
+
     def test_balances_return_valuation_low_stock_and_expiry_filters(self):
         """Derived rows expose current physical/available stock and immutable cost."""
         near_expiry = date.today() + timedelta(days=5)

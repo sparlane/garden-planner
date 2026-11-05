@@ -531,6 +531,45 @@ def post_stock_movement(workspace, user, request):
 
 
 @transaction.atomic
+def count_lot_balance(workspace, user, request):
+    """Bring one lot's loose stock at a place to a physical count.
+
+    The correction is worked out here, under the lot lock, rather than by the
+    caller from a balance it read earlier: stock that moved in between would
+    make a client-side difference post the wrong gain or loss. Numbered units
+    are not part of the count; each is counted as itself, so only the loose
+    balance is compared. Returns the adjustment, or None when the count
+    already matches.
+    """
+    counted = quantize_quantity(request.quantity)
+    if counted < 0:
+        raise ValidationError({'quantity': 'Quantity cannot be negative.'})
+    locked = lock_lots(workspace, [request.lot.pk])[request.lot.pk]
+    _validate_location(request.source, workspace, 'location')
+    delta = counted - quantize_quantity(bulk_balance(locked, request.source))
+    if not delta:
+        return None
+    gain = delta > 0
+    return post_stock_movement(
+        workspace,
+        user,
+        MovementRequest(
+            lot=locked,
+            movement_type=(
+                StockMovement.MovementType.ADJUSTMENT_GAIN
+                if gain
+                else StockMovement.MovementType.ADJUSTMENT_LOSS
+            ),
+            quantity=abs(delta),
+            source=None if gain else request.source,
+            destination=request.source if gain else None,
+            reason=request.reason,
+            reference=request.reference,
+        ),
+    )
+
+
+@transaction.atomic
 def correct_stock_movement(original, user, replacement, reason):
     """Reverse and replace one standalone movement under ordered lot locks."""
     if replacement.movement_type != StockMovement.MovementType.CONSUMPTION:

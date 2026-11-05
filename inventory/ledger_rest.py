@@ -34,6 +34,7 @@ from .ledger import (
     IndividualizationRequest,
     MovementRequest,
     OpeningBalanceRequest,
+    count_lot_balance,
     individualize_lot_units,
     normalize_quantity,
     post_opening_balance,
@@ -740,6 +741,42 @@ class AdjustmentActionSerializer(MovementActionSerializer):  # pylint: disable=a
     }
 
 
+class CountActionSerializer(MovementActionSerializer):  # pylint: disable=abstract-method
+    """Validate a physical count of one lot's loose stock at one location.
+
+    `quantity` is the amount counted, not an amount to move; the service
+    derives the gain or loss from the ledger.
+    """
+
+    location = serializers.PrimaryKeyRelatedField(
+        queryset=Location.objects.all(),
+    )
+    reason = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    workspace_field_lookups = {
+        **MovementActionSerializer.workspace_field_lookups,
+        'location': 'workspace',
+    }
+
+    def validate(self, attrs):
+        """Normalize the count, where zero is a real answer: it ran out."""
+        conversion = attrs.get('unit_conversion')
+        if conversion and not conversion.active:
+            raise ValidationError(
+                {'unit_conversion': 'The conversion is inactive.'},
+            )
+        try:
+            attrs['base_quantity'] = normalize_quantity(
+                attrs['lot'].item,
+                attrs['quantity'],
+                attrs.get('unit_code'),
+                conversion,
+                allow_zero=True,
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError(_model_errors(exc)) from exc
+        return attrs
+
+
 class OpeningBalanceActionSerializer(
     CurrentWorkspaceSerializerMixin,
     ActionSerializer,
@@ -1095,6 +1132,34 @@ class StockMovementViewSet(
         return self._post_typed(
             request,
             StockMovement.MovementType.CONSUMPTION,
+        )
+
+    @action(detail=False, methods=['post'])
+    def count(self, request):
+        """Record a physical count and post whatever gain or loss it implies."""
+        serializer = CountActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        values = serializer.validated_data
+        movement = _run_domain_action(
+            count_lot_balance,
+            self.get_current_workspace(),
+            request.user,
+            MovementRequest(
+                lot=values['lot'],
+                movement_type=StockMovement.MovementType.ADJUSTMENT_GAIN,
+                quantity=values['base_quantity'],
+                source=values['location'],
+                reason=values['reason'],
+                reference=values.get('reference', ''),
+            ),
+        )
+        return Response(
+            {
+                'movement': (
+                    StockMovementSerializer(movement).data if movement else None
+                ),
+            },
+            status=status.HTTP_201_CREATED if movement else status.HTTP_200_OK,
         )
 
     @action(detail=False, methods=['post'])
