@@ -192,6 +192,12 @@ class CommerceFilters(BaseReportFilters):  # pylint: disable=abstract-method
         return attrs
 
 
+class SeedProfitFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Optional narrowing of the per-seed-lot profit report to one variety."""
+
+    variety = serializers.IntegerField(required=False, min_value=1)
+
+
 class OrderFilters(CommerceFilters):  # pylint: disable=abstract-method
     """Operational order-state filters."""
 

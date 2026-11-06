@@ -18,6 +18,7 @@ from .filters import (
     OrderFilters,
     PotVarietyFilters,
     ProductionFilters,
+    SeedProfitFilters,
     SerializedTrayFilters,
     StocktakeVarianceFilters,
     SupplyDocumentFilters,
@@ -30,6 +31,7 @@ from .germination import germination_rates
 from .gst import gst_entry_report, gst_period_report
 from .pots import pot_varieties
 from .production import production_batches
+from .seed_profit import seed_profit
 from .traceability import lot_trace, plant_trace
 from .inventory import (
     inventory_balances,
@@ -167,6 +169,10 @@ ProfitabilityView = _view(
 )
 ProfitabilityExportView = _view(
     'ProfitabilityExportView', CommerceFilters, profitability_report, True,
+)
+SeedProfitView = _view('SeedProfitView', SeedProfitFilters, seed_profit)
+SeedProfitExportView = _view(
+    'SeedProfitExportView', SeedProfitFilters, seed_profit, True,
 )
 DashboardView = _view(
     'DashboardView', DashboardFilters, dashboard_report,
