@@ -66,6 +66,9 @@ function GPTopBar({ workspace }: GPTopBarProps) {
               <NavDropdown.Item as={NavLink} to="/reports/profitability">
                 Profitability
               </NavDropdown.Item>
+              <NavDropdown.Item as={NavLink} to="/reports/seed-profit">
+                Profit by seed lot
+              </NavDropdown.Item>
               <NavDropdown.Item as={NavLink} to="/reports/inventory">
                 Inventory
               </NavDropdown.Item>

@@ -10,7 +10,7 @@ import { DashboardRow, LossByCause, ProductionTotals, ProfitabilityTotals, Repor
 import { CohortLossCause } from './types/plantings'
 import { formatDateTime, formatMoney } from './utils'
 
-type ReportPage = 'dashboard' | 'inventory' | 'production' | 'germination' | 'assumptions' | 'orders' | 'profitability' | 'traceability' | 'gst'
+type ReportPage = 'dashboard' | 'inventory' | 'production' | 'germination' | 'assumptions' | 'orders' | 'profitability' | 'seed-profit' | 'traceability' | 'gst'
 
 // The period totals and the rows every total is the sum of. They are two
 // reports rather than one because the second is the evidence for the first,
@@ -139,7 +139,7 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
       <Row className="g-2">
         {dated && <FilterField label="From" name="date_from" type="date" params={params} update={update} />}
         {dated && <FilterField label="To" name="date_to" type="date" params={params} update={update} />}
-        {['production', 'germination', 'assumptions', 'profitability'].includes(page) && (
+        {['production', 'germination', 'assumptions', 'profitability', 'seed-profit'].includes(page) && (
           <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />
         )}
         {['production', 'germination', 'profitability'].includes(page) && <FilterField label="Batch ID" name="batch" type="number" params={params} update={update} />}
