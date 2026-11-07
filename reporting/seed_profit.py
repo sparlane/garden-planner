@@ -9,6 +9,8 @@ Three figures answer the question, each over a different slice of the stock:
 
 * realized: dispatched sales less what they cost and what was lost, over all
   time. This is the existing profitability calculation, grouped by batch.
+  A cost that is still provisional (its batch has not finalized its output) is
+  counted, and the row is flagged `provisional` because it can still move.
 * committed: units promised on open orders and not yet dispatched, at the
   order's own price. Revenue only, because their cost is not final until they
   leave.
@@ -42,7 +44,7 @@ COLUMNS = (
     'lot_id', 'lot_identifier', 'item_name', 'variety_id', 'variety_name',
     'batches', 'seed_quantity', 'currency_code', 'net_sales', 'direct_cogs',
     'production_loss', 'realized_profit', 'committed_units',
-    'committed_revenue', 'pending_units', 'pending_cost', 'complete',
+    'committed_revenue', 'pending_units', 'pending_cost', 'provisional', 'complete',
 )
 
 
@@ -76,20 +78,26 @@ def _lot_weights(workspace):
 
 
 def _realized(workspace, today):
-    """Return per-batch sales, cost and loss over all time, from the P&L rows."""
+    """Return per-batch sales, cost and loss over all time, from the P&L rows.
+
+    Also the batches with an unvalued row, and those with a provisional one.
+    """
     report = profitability_report(workspace, {
         'date_from': '1970-01-01', 'date_to': today,
     })
     batches = defaultdict(lambda: defaultdict(Decimal))
     codes = defaultdict(set)
     incomplete = set()
+    provisional = set()
     for row in report.rows:
         batch_id = row['batch_id']
         if batch_id is None:
             continue
-        if row['provisional'] or row['unvalued']:
+        if row['unvalued']:
             incomplete.add(batch_id)
             continue
+        if row['provisional']:
+            provisional.add(batch_id)
         values = batches[batch_id]
         values['net_sales'] += Decimal(row['net_sales'])
         values['direct_cogs'] += sum(
@@ -99,7 +107,7 @@ def _realized(workspace, today):
         )
         values['production_loss'] += Decimal(row['production_loss'])
         codes[batch_id].update((row['currency_code'], row['cogs_currency_code']))
-    return batches, codes, incomplete
+    return batches, codes, incomplete, provisional
 
 
 def _committed(workspace):
@@ -139,7 +147,7 @@ def _empty_lot(variety_name):
     return {
         'batches': 0, 'seed_quantity': ZERO, 'codes': set(), 'incomplete': False,
         'net_sales': ZERO, 'direct_cogs': ZERO, 'production_loss': ZERO,
-        'committed_units': ZERO, 'committed_revenue': ZERO,
+        'committed_units': ZERO, 'committed_revenue': ZERO, 'provisional': False,
         'pending_units': ZERO, 'pending_cost': ZERO, 'variety_name': variety_name,
     }
 
@@ -153,7 +161,7 @@ def seed_profit(workspace, filters):
         ).rows
     }
     weights, quantities = _lot_weights(workspace)
-    realized, realized_codes, unfinished = _realized(workspace, today)
+    realized, realized_codes, unfinished, provisional = _realized(workspace, today)
     committed = _committed(workspace)
     lots = {}
     for batch_id, batch in batch_rows.items():
@@ -172,6 +180,7 @@ def seed_profit(workspace, filters):
             entry['seed_quantity'] += quantities.get(batch_id, {}).get(lot_id, ZERO)
             entry['codes'] |= codes
             entry['incomplete'] = entry['incomplete'] or incomplete
+            entry['provisional'] = entry['provisional'] or batch_id in provisional
             for field in ('net_sales', 'direct_cogs', 'production_loss'):
                 entry[field] += realized[batch_id][field] * share
             entry['committed_units'] += promised['units'] * share
@@ -181,6 +190,7 @@ def seed_profit(workspace, filters):
     rows = _rows(workspace, lots)
     rows.sort(key=lambda row: (row['variety_name'], row['lot_id'] or 0))
     withheld = sum(not row['complete'] for row in rows)
+    provisional_rows = sum(row['provisional'] for row in rows)
     return Report(
         name='seed-profit', filters=filters, rows=rows, columns=COLUMNS,
         not_stated_columns=('realized_profit', 'pending_cost', 'currency_code'),
@@ -196,14 +206,21 @@ def seed_profit(workspace, filters):
             'committed': 'units promised on open orders, at the order price excluding tax',
             'pending': 'surviving units neither sold nor promised, at their share of held plant cost',
         },
-        data_quality=[{
+        data_quality=([{
             'code': 'withheld_profit', 'count': withheld,
             'message': (
-                'Provisional or unknown cost, or mixed currencies, withhold '
+                'Unknown cost or mixed currencies withhold '
                 'figures. ' + NOT_CONSOLIDATED
             ),
             'drill_down': '/reports/profitability/',
-        }] if withheld else [],
+        }] if withheld else []) + ([{
+            'code': 'provisional_cost', 'count': provisional_rows,
+            'message': (
+                'These lots include a cost that is still provisional because '
+                'its batch has not finalized its output, so their profit can move.'
+            ),
+            'drill_down': '/reports/profitability/',
+        }] if provisional_rows else []),
     )
 
 
@@ -236,6 +253,7 @@ def _rows(workspace, lots):
             'committed_revenue': decimal_string(entry['committed_revenue'], 4),
             'pending_units': decimal_string(entry['pending_units'], 2),
             'pending_cost': decimal_string(entry['pending_cost'], 4) if complete else None,
+            'provisional': entry['provisional'],
             'complete': complete,
         })
     return rows

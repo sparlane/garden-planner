@@ -71,6 +71,22 @@ class SeedProfitRealizedTests(CommerceReportTestCase):
         self.assertEqual(Decimal(row['direct_cogs']), Decimal('2'))
         self.assertEqual(Decimal(row['realized_profit']), Decimal('7'))
 
+    def test_a_provisional_cost_is_counted_and_flagged_not_dropped(self):
+        # Nothing finalizes a batch until its output is done, so a real garden
+        # has only provisional costs for a long time. They must still show.
+        self.fulfillment_line.cogs_provisional = True
+        self.fulfillment_line.save(update_fields=['cogs_provisional'])
+
+        response = self.client.get('/reports/seed-profit/')
+
+        row = response.data['results'][0]
+        self.assertEqual(Decimal(row['net_sales']), Decimal('9'))
+        self.assertEqual(Decimal(row['realized_profit']), Decimal('7'))
+        self.assertTrue(row['provisional'])
+        self.assertTrue(row['complete'])
+        codes = [item['code'] for item in response.data['data_quality']]
+        self.assertIn('provisional_cost', codes)
+
     def test_the_export_carries_the_same_rows(self):
         response = self.client.get('/reports/seed-profit/export/')
 
