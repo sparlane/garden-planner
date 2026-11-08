@@ -14,6 +14,7 @@ from .filters import (
     GstEntryFilters,
     GstPeriodFilters,
     InventoryBalanceFilters,
+    LotChoiceFilters,
     MovementFilters,
     OrderFilters,
     PotVarietyFilters,
@@ -29,6 +30,7 @@ from .commerce import dashboard_report, order_report, profitability_report
 from .documents import supply_document_report
 from .germination import germination_rates
 from .gst import gst_entry_report, gst_period_report
+from .lot_choices import lot_choices
 from .pots import pot_varieties
 from .production import production_batches
 from .seed_profit import seed_profit
@@ -170,6 +172,7 @@ ProfitabilityView = _view(
 ProfitabilityExportView = _view(
     'ProfitabilityExportView', CommerceFilters, profitability_report, True,
 )
+LotChoiceView = _view('LotChoiceView', LotChoiceFilters, lot_choices)
 SeedProfitView = _view('SeedProfitView', SeedProfitFilters, seed_profit)
 SeedProfitExportView = _view(
     'SeedProfitExportView', SeedProfitFilters, seed_profit, True,

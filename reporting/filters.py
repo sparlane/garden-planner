@@ -192,6 +192,14 @@ class CommerceFilters(BaseReportFilters):  # pylint: disable=abstract-method
         return attrs
 
 
+class LotChoiceFilters(BaseReportFilters):  # pylint: disable=abstract-method
+    """Narrowing of the lot picker by plant, variety and free text."""
+
+    plant = serializers.IntegerField(required=False, min_value=1)
+    variety = serializers.IntegerField(required=False, min_value=1)
+    search = serializers.CharField(required=False, allow_blank=True, max_length=100)
+
+
 class SeedProfitFilters(BaseReportFilters):  # pylint: disable=abstract-method
     """Optional narrowing of the per-seed-lot profit report to one variety."""
 

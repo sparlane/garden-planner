@@ -92,3 +92,28 @@ class SeedProfitRealizedTests(CommerceReportTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('realized_profit', response.content.decode())
+
+
+class LotChoiceTests(SeedProfitLotTests):
+    """The lot picker lists lots and narrows them by plant and variety."""
+
+    def choices(self, **params):
+        response = self.client.get('/reports/lot-choices/', params)
+        self.assertEqual(response.status_code, 200, response.data)
+        return [row['lot_id'] for row in response.data['results']]
+
+    def test_the_sown_lot_is_listed_and_found_by_its_plant_and_variety(self):
+        variety = self.plant.batch.variety
+        lot = self.packet.stock_lot_id
+
+        self.assertIn(lot, self.choices())
+        self.assertIn(lot, self.choices(variety=variety.pk))
+        self.assertIn(lot, self.choices(plant=variety.plant_id))
+        self.assertIn(lot, self.choices(search=variety.name))
+
+    def test_another_variety_or_plant_leaves_the_lot_out(self):
+        variety = self.plant.batch.variety
+        lot = self.packet.stock_lot_id
+
+        self.assertNotIn(lot, self.choices(variety=variety.pk + 1000))
+        self.assertNotIn(lot, self.choices(plant=variety.plant_id + 1000))
