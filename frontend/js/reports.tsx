@@ -5,6 +5,7 @@ import { Link, useSearchParams } from 'react-router'
 
 import { getReport, reportExportUrl } from './api/reports'
 import { LotPicker } from './lot_picker'
+import { VarietyPicker } from './variety_picker'
 import { LOSS_CAUSE_LABELS } from './plantings/loss_causes'
 import { queryKeys } from './query'
 import { DashboardRow, LossByCause, ProductionTotals, ProfitabilityTotals, ReportEnvelope } from './types/reports'
@@ -140,7 +141,8 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
       <Row className="g-2">
         {dated && <FilterField label="From" name="date_from" type="date" params={params} update={update} />}
         {dated && <FilterField label="To" name="date_to" type="date" params={params} update={update} />}
-        {['production', 'germination', 'assumptions', 'profitability', 'seed-profit'].includes(page) && (
+        {page === 'seed-profit' && <VarietyPicker value={params.get('variety') ?? ''} onChange={(varietyId) => update('variety', varietyId)} />}
+        {['production', 'germination', 'assumptions', 'profitability'].includes(page) && (
           <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />
         )}
         {['production', 'germination', 'profitability'].includes(page) && <FilterField label="Batch ID" name="batch" type="number" params={params} update={update} />}
