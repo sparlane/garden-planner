@@ -4,6 +4,7 @@ import { Alert, Button, Card, Col, Form, Row, Table } from 'react-bootstrap'
 import { Link, useSearchParams } from 'react-router'
 
 import { getReport, reportExportUrl } from './api/reports'
+import { LotPicker } from './lot_picker'
 import { LOSS_CAUSE_LABELS } from './plantings/loss_causes'
 import { queryKeys } from './query'
 import { DashboardRow, LossByCause, ProductionTotals, ProfitabilityTotals, ReportEnvelope } from './types/reports'
@@ -168,7 +169,7 @@ function ReportFilters({ page, params, setParams }: { page: ReportPage; params: 
         {page === 'orders' && <FilterField label="Order reference" name="order" params={params} update={update} />}
         {page === 'profitability' && <FilterField label="Customer ID" name="customer" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Item ID" name="item" type="number" params={params} update={update} />}
-        {page === 'inventory' && params.get('section') === 'balances' && <FilterField label="Lot ID" name="lot" type="number" params={params} update={update} />}
+        {page === 'inventory' && params.get('section') === 'balances' && <LotPicker value={params.get('lot') ?? ''} onChange={(lotId) => update('lot', lotId)} />}
         {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="Variety ID" name="variety" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="From pot number" name="pot_from" type="number" params={params} update={update} />}
         {page === 'inventory' && params.get('section') === 'pots' && <FilterField label="To pot number" name="pot_to" type="number" params={params} update={update} />}
@@ -424,10 +425,14 @@ function ReportsView({ page }: { page: ReportPage }) {
                 <option value="lot">Input lot forward</option>
               </Form.Select>
             </Col>
-            <Col md={3}>
-              <Form.Label>{traceType === 'lot' ? 'Lot ID' : 'Plant ID'}</Form.Label>
-              <Form.Control type="number" min={1} value={traceId} onChange={(event) => updateFrontend('trace_id', event.target.value)} />
-            </Col>
+            {traceType === 'lot' ? (
+              <LotPicker value={traceId} onChange={(lotId) => updateFrontend('trace_id', lotId)} />
+            ) : (
+              <Col md={3}>
+                <Form.Label>Plant ID</Form.Label>
+                <Form.Control type="number" min={1} value={traceId} onChange={(event) => updateFrontend('trace_id', event.target.value)} />
+              </Col>
+            )}
           </Row>
         </Card>
       )}

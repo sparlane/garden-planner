@@ -17,7 +17,8 @@ function searchedKey(base: ReadonlyArray<unknown>, search: string): ReadonlyArra
 const queryKeys = {
   reports: {
     all: ['reports'] as const,
-    detail: (report: string, filters: string) => ['reports', report, filters] as const
+    detail: (report: string, filters: string) => ['reports', report, filters] as const,
+    lotChoices: (filters: string) => ['reports', 'lot-choices', filters] as const
   },
   sales: {
     all: ['sales'] as const,
