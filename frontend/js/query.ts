@@ -140,7 +140,8 @@ const queryKeys = {
     family: (pk: number) => ['plants', 'families', 'detail', pk] as const,
     plant: (pk: number) => ['plants', 'plants', 'detail', pk] as const,
     variety: (pk: number) => ['plants', 'varieties', 'detail', pk] as const,
-    cropVarieties: (plant: number) => ['plants', 'varieties', 'of-crop', plant] as const
+    cropVarieties: (plant: number) => ['plants', 'varieties', 'of-crop', plant] as const,
+    familyVarieties: (family: number) => ['plants', 'varieties', 'of-family', family] as const
   },
   suppliers: {
     all: ['suppliers'] as const

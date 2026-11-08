@@ -35,6 +35,12 @@ function getCropVarieties(plant: number, signal?: AbortSignal): Promise<Array<Pl
   return fetchAsJson<Array<PlantVariety>>(`/plants/variety/?plant=${plant}`, signal)
 }
 
+// Every variety of every crop in a family, asked of the collection for the same
+// reason as above: the family's page cannot file them out of a catalog page.
+function getFamilyVarieties(family: number, signal?: AbortSignal): Promise<Array<PlantVariety>> {
+  return fetchAsJson<Array<PlantVariety>>(`/plants/variety/?family=${family}`, signal)
+}
+
 function getPlantVariety(pk: number, signal?: AbortSignal): Promise<PlantVariety> {
   return fetchAsJson<PlantVariety>(`/plants/variety/${pk}/`, signal)
 }
@@ -91,6 +97,7 @@ async function importReferenceSet(document: ReferenceSet): Promise<InstalledCata
 
 export {
   getCropVarieties,
+  getFamilyVarieties,
   getPlant,
   getPlantFamilies,
   getPlantFamily,
