@@ -25,6 +25,14 @@ class PlantRESTContractTests(RESTContractTestCase):
         self.assert_list_contract(self.LIST_URLS[:2])
         self.assert_paginated_list_contract(self.LIST_URLS[2:])
 
+    def test_varieties_can_be_narrowed_to_one_family(self):
+        """A family's page asks for every variety of every crop in it."""
+        wanted = make_plant_variety()
+        other = make_plant_variety()
+        response = self.client.get('/plants/variety/', {'family': wanted.plant.family_id})
+        self.assertEqual([row['pk'] for row in response.data['results']], [wanted.pk])
+        self.assertNotEqual(other.plant.family_id, wanted.plant.family_id)
+
     def test_varieties_expose_a_reachable_second_page(self):
         """The global page size bounds a growing catalog without hiding rows."""
         first = make_plant_variety()

@@ -3,7 +3,18 @@ import { Alert, Button, Card, Form, Table } from 'react-bootstrap'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 
-import { getCropVarieties, getPlant, getPlantFamilies, getPlantFamily, getPlantVariety, getPlants, updatePlant, updatePlantFamily, updatePlantVariety } from '../api/plants'
+import {
+  getCropVarieties,
+  getFamilyVarieties,
+  getPlant,
+  getPlantFamilies,
+  getPlantFamily,
+  getPlantVariety,
+  getPlants,
+  updatePlant,
+  updatePlantFamily,
+  updatePlantVariety
+} from '../api/plants'
 import { DuplicateWarning, MergeDialog, MergedIntoNote, ReferenceBadge, RetireButton, RetiredBadge, activeChoices, mergeChoices, referenceFigureClass } from '../catalog'
 import { queryKeys } from '../query'
 import { MaturityBasis, Plant, PlantCreate, PlantFamily, PlantFamilyCreate, PlantVariety, PlantVarietyCreate } from '../types/plants'
@@ -266,6 +277,10 @@ function PlantFamilyDetailView({ familyPk }: { familyPk: number }) {
   })
   const { data: families = [] } = useQuery({ queryKey: queryKeys.plants.families, queryFn: ({ signal }) => getPlantFamilies(signal) })
   const { data: plants = [] } = useQuery({ queryKey: queryKeys.plants.plants, queryFn: ({ signal }) => getPlants(signal) })
+  const { data: varieties = [] } = useQuery({
+    queryKey: queryKeys.plants.familyVarieties(familyPk),
+    queryFn: ({ signal }) => getFamilyVarieties(familyPk, signal)
+  })
   const edit = useMutation({ mutationFn: (data: Partial<PlantFamilyCreate>) => updatePlantFamily(familyPk, data), onSuccess: page.refresh })
   const [name, setName] = React.useState('')
   const [notes, setNotes] = React.useState('')
@@ -326,6 +341,37 @@ function PlantFamilyDetailView({ familyPk }: { familyPk: number }) {
                 </li>
               ))}
             </ul>
+          )}
+        </Card.Body>
+      </Card>
+      <Card className="mt-3">
+        <Card.Body>
+          <Card.Title className="h6">Varieties in this family</Card.Title>
+          {varieties.length === 0 ? (
+            <div className="text-body-secondary">No varieties are filed under this family.</div>
+          ) : (
+            <Table size="sm" className="mb-0">
+              <thead>
+                <tr>
+                  <th>Crop</th>
+                  <th>Variety</th>
+                </tr>
+              </thead>
+              <tbody>
+                {varieties.map((variety) => {
+                  const crop = plants.find((plant) => plant.pk === variety.plant)
+                  return (
+                    <tr key={variety.pk}>
+                      <td>{crop ? <Link to={`/plants/plant/${crop.pk}`}>{crop.name}</Link> : '—'}</td>
+                      <td>
+                        <Link to={`/plants/variety/${variety.pk}`}>{variety.name}</Link>
+                        <RetiredBadge active={variety.active} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </Table>
           )}
         </Card.Body>
       </Card>

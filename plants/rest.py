@@ -143,18 +143,22 @@ class PlantVarietyViewSet(CatalogViewSetMixin, CurrentWorkspaceViewSetMixin, vie
     search_related = ('plant__family',)
 
     def get_queryset(self):
-        """Narrow the collection to one crop's varieties when asked to.
+        """Narrow the collection to one crop's or one family's varieties when asked to.
 
         Families and crops are short enough to be sent whole and filed in the
         browser, and varieties are the one level of the catalog that is not:
         a screen showing a crop cannot find its own varieties in a page of a
-        catalog that may not contain them.
+        catalog that may not contain them. A family's page is in the same
+        position, one level further up.
         """
         queryset = super().get_queryset()
         plant = parse_integer(self.request.query_params.get('plant'), 'plant')
-        if plant is None:
-            return queryset
-        return queryset.filter(plant_id=plant)
+        family = parse_integer(self.request.query_params.get('family'), 'family')
+        if plant is not None:
+            queryset = queryset.filter(plant_id=plant)
+        if family is not None:
+            queryset = queryset.filter(plant__family_id=family)
+        return queryset
 
 
 def installed_response(request, installed):
