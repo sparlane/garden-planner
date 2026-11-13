@@ -19,6 +19,7 @@ from tests.api import RESTContractTestCase
 from tests.factories import (
     make_garden_square,
     make_location,
+    make_plant,
     make_plant_variety,
     make_production_batch,
     make_seed_packet,
@@ -301,6 +302,17 @@ class RegisterFilterTests(RegisterTestCase):
         by_variety = self.assert_filter_agrees(variety=batch.variety_id)
         self.assertEqual(self.row_ids(by_variety), [wanted.pk])
 
+    def test_filtering_by_plant_selects_every_variety_of_that_crop(self):
+        """Asking for the tomatoes should not mean asking variety by variety."""
+        tomato = make_plant(name='Tomato')
+        wanted = [
+            self.make_plant(batch=self.make_batch(variety=make_plant_variety(plant=tomato, name=name)))
+            for name in ('Roma', 'Moneymaker')
+        ]
+        self.make_plant(batch=self.make_batch(variety=make_plant_variety(name='Jalapeno')))
+        payload = self.assert_filter_agrees(plant=tomato.pk)
+        self.assertEqual(sorted(self.row_ids(payload)), sorted(plant.pk for plant in wanted))
+
     def test_age_filters_select_by_when_a_plant_germinated(self):
         """How old stock is drives what is worth chasing and what is late."""
         old = self.make_plant(germinated=timezone.now() - timedelta(days=60))
@@ -497,6 +509,7 @@ class RegisterFilterTests(RegisterTestCase):
         """A typo in a query string should say which one it was."""
         for params, field in (
             ({'variety': 'tomato'}, 'variety'),
+            ({'plant': 'tomato'}, 'plant'),
             ({'state': 'sprouting'}, 'state'),
             ({'sellable': 'maybe'}, 'sellable'),
             ({'germinated_from': 'last week'}, 'germinated_from'),

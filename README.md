@@ -255,7 +255,8 @@ API endpoints (examples)
   - POST /plantings/seedtray/complete/ — mark seedtray planting removed
   - GET /plantings/garden/squares/current/ — list current garden-square plantings
   - POST /plantings/specificplants/{id}/move/ — atomically move an individual plant
-  - GET /plantings/register/ — Nursery-only plant register; a page of current plants plus counts for the whole filter, not just the page
+  - GET /plantings/register/ — Nursery-only plant register; a page of current plants plus counts for the whole filter, not just the page; `variety` narrows to one variety and `plant` to every variety of one plant
+  - GET /plantings/specificplants/{id}/timeline/ — everything recorded about one plant, oldest first, assembled from its lifecycle, nursery, health, and order histories
   - GET /plantings/register/ids/ — resolve the same filters to the plant IDs they select, for bulk selection
   - GET /plantings/transplantedgardensquare/ — list read-only legacy aggregate transplants
   - POST /plantings/garden/squares/transplant/complete/ — complete a legacy aggregate transplant

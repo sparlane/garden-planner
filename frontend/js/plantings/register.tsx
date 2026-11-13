@@ -5,7 +5,7 @@ import { Alert, Badge, Button, ButtonGroup, Card, Col, Form, Row } from 'react-b
 import { getLocations } from '../api/locations'
 import { getInventoryItems } from '../api/inventory'
 import { getGrowthStages, getNurseryRegister, getPlantGrades, getProductionBatches } from '../api/plantings'
-import { getPlantVarieties } from '../api/plants'
+import { getPlants, getPlantVarieties } from '../api/plants'
 import { getSeedTrayGenerations, getSeedTrays } from '../api/seedtrays'
 import { queryKeys } from '../query'
 import { NurseryRegisterFilters, NurseryRegisterOrdering, NurseryRegisterTotals, PlantAllocationStatus, PlantLifecycleState } from '../types/plantings'
@@ -14,6 +14,14 @@ import { EMPTY_SELECTION, RegisterSelection, RegisterTable } from './register_li
 import { BulkOperationPanel } from './bulk_operations'
 
 const PAGE_SIZE = 50
+
+// The crop box answers at two levels: one variety, or every variety of a
+// plant. Its value says which, as `variety:<pk>` or `plant:<pk>`.
+type CropChoice = '' | `variety:${number}` | `plant:${number}`
+
+function cropFilter(choice: CropChoice, level: 'variety' | 'plant'): number | undefined {
+  return choice.startsWith(`${level}:`) ? Number(choice.slice(level.length + 1)) : undefined
+}
 
 const ORDERING_OPTIONS: Array<{ value: NurseryRegisterOrdering; label: string }> = [
   { value: '-age', label: 'Newest first' },
@@ -106,7 +114,7 @@ function SelectionBar({ selection, matching, setSelection }: SelectionBarProps) 
 
 function NurseryRegisterView() {
   const [search, setSearch] = React.useState('')
-  const [variety, setVariety] = React.useState<number | ''>('')
+  const [crop, setCrop] = React.useState<CropChoice>('')
   const [batch, setBatch] = React.useState<number | ''>('')
   const [states, setStates] = React.useState<Array<PlantLifecycleState>>([])
   const [locationType, setLocationType] = React.useState<NurseryRegisterFilters['location_type'] | ''>('')
@@ -129,7 +137,8 @@ function NurseryRegisterView() {
 
   const filters: NurseryRegisterFilters = {
     search: search || undefined,
-    variety: variety === '' ? undefined : variety,
+    variety: cropFilter(crop, 'variety'),
+    plant: cropFilter(crop, 'plant'),
     batch: batch === '' ? undefined : batch,
     state: states.length > 0 ? states : undefined,
     location_type: locationType === '' ? undefined : locationType,
@@ -165,6 +174,14 @@ function NurseryRegisterView() {
     queryKey: queryKeys.plants.varieties,
     queryFn: ({ signal }) => getPlantVarieties(signal)
   })
+  const { data: plants = [] } = useQuery({
+    queryKey: queryKeys.plants.plants,
+    queryFn: ({ signal }) => getPlants(signal)
+  })
+  // Varieties filed under their plant, so "all tomatoes" sits above the
+  // tomatoes. A variety whose plant did not load is still offered on its own.
+  const plantPks = new Set(plants.map((entry) => entry.pk))
+  const orphanVarieties = varieties.filter((entry) => !plantPks.has(entry.plant))
   const { data: batches = [] } = useQuery({
     queryKey: queryKeys.plantings.batches('active', '', '', false),
     queryFn: ({ signal }) => getProductionBatches({ status: 'active' }, signal)
@@ -208,15 +225,27 @@ function NurseryRegisterView() {
         <Col md={3}>
           <Form.Group controlId="register-variety">
             <Form.Label>Variety</Form.Label>
-            <Form.Select value={variety} onChange={(event) => narrow(setVariety)(event.target.value === '' ? '' : Number(event.target.value))}>
+            <Form.Select value={crop} onChange={(event) => narrow(setCrop)(event.target.value as CropChoice)}>
               <option value="">All varieties</option>
-              {varieties.map((entry) => (
-                <option key={entry.pk} value={entry.pk}>
+              {plants.map((plant) => (
+                <optgroup key={plant.pk} label={plant.name}>
+                  <option value={`plant:${plant.pk}`}>All {plant.name}</option>
+                  {varieties
+                    .filter((entry) => entry.plant === plant.pk)
+                    .map((entry) => (
+                      <option key={entry.pk} value={`variety:${entry.pk}`}>
+                        {entry.name}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+              {orphanVarieties.map((entry) => (
+                <option key={entry.pk} value={`variety:${entry.pk}`}>
                   {entry.name}
                 </option>
               ))}
             </Form.Select>
-            <Form.Text muted>Choose a variety to find its pot numbers, or click a crop in the table.</Form.Text>
+            <Form.Text muted>Choose a variety to find its pot numbers, or a whole plant for every variety of it. Clicking a crop in the table filters to its variety.</Form.Text>
           </Form.Group>
         </Col>
         <Col md={3}>
@@ -421,7 +450,7 @@ function NurseryRegisterView() {
         <div>Loading plants…</div>
       ) : (
         <>
-          <RegisterTable rows={register?.results ?? []} selection={selection} setSelection={setSelection} onVarietySelect={narrow(setVariety)} />
+          <RegisterTable rows={register?.results ?? []} selection={selection} setSelection={setSelection} onVarietySelect={(variety) => narrow(setCrop)(`variety:${variety}`)} />
           <div className="d-flex align-items-center gap-3">
             <ButtonGroup>
               <Button variant="outline-secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>

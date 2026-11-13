@@ -305,7 +305,7 @@ class QuarantineActionRestTests(RESTContractTestCase):
 
     def register_row(self, plant):
         """Return the plant as the nursery register reports it."""
-        response = self.client.get(f'/plantings/register/?plant={plant.pk}')
+        response = self.client.get(f'/plantings/register/?search={plant.pk}')
         self.assertEqual(response.status_code, 200, response.data)
         return next(
             row for row in response.data['results'] if row['pk'] == plant.pk

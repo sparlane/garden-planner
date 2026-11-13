@@ -775,6 +775,8 @@ type NurseryRegisterOrdering =
 // Keys are the query-parameter names the register endpoint validates.
 interface NurseryRegisterFilters {
   variety?: number
+  // Every variety of one crop, for "all the tomatoes".
+  plant?: number
   batch?: number
   state?: Array<PlantLifecycleState>
   sellable?: boolean
