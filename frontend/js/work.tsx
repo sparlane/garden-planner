@@ -11,6 +11,8 @@ import { queryKeys, searchedKey } from './query'
 import { CatalogRecordLabel } from './types/catalog'
 import { Workspace } from './types/workspace'
 import { WorkFilters, WorkRule, WorkTask, WorkView } from './types/work'
+import { TaskActionDialog } from './work_action'
+import { RuleTiming } from './work_rule_timing'
 import { errorsByField, formatDateTime, localDatetimeInputValue, parseLocalDatetimeInput } from './utils'
 
 const TASK_TYPES = [
@@ -22,6 +24,10 @@ const TASK_TYPES = [
   ['spacing', 'Spacing'],
   ['potting_on', 'Potting on'],
   ['hardening', 'Hardening'],
+  ['transplanting', 'Transplanting'],
+  ['succession_sowing', 'Succession sowing'],
+  ['seed_saving', 'Seed saving'],
+  ['seasonal_cleanup', 'Seasonal cleanup'],
   ['ready_review', 'Ready-date review'],
   ['harvest_review', 'Harvest review'],
   ['stocktake', 'Stocktake'],
@@ -45,11 +51,19 @@ const TRIGGERS = [
   ['stage_age', 'Current stage target age'],
   ['expected_ready', 'Recorded expected-ready date'],
   ['sowing_maturity', 'Expected sowing maturity'],
+  ['garden_planted', 'Garden planting date'],
+  ['garden_finished', 'Recorded garden finish date'],
   ['calendar', 'Recurring calendar work'],
   ['health_follow_up', 'Health follow-up due'],
   ['reservation_expiry', 'Sales reservation expiry'],
   ['assumption_variance', 'Diverged planning assumption']
 ]
+
+const GardenModeContext = React.createContext(false)
+const NURSERY_TYPES = new Set(['stocktake', 'order_picking', 'reservation_review', 'assumption_review', 'ready_review', 'stage_review'])
+const NURSERY_TRIGGERS = new Set(['plan_milestone', 'stage_age', 'expected_ready', 'reservation_expiry', 'assumption_variance'])
+const taskTypes = (garden: boolean) => TASK_TYPES.filter(([value]) => !garden || !NURSERY_TYPES.has(value))
+const triggers = (garden: boolean) => TRIGGERS.filter(([value]) => !garden || !NURSERY_TRIGGERS.has(value))
 
 const VIEWS: Array<[WorkView, string]> = [
   ['today', 'Today'],
@@ -60,7 +74,7 @@ const VIEWS: Array<[WorkView, string]> = [
   ['completed', 'Completed']
 ]
 
-function ManualTaskForm({ garden }: { garden: boolean }) {
+function ManualTaskForm({ garden, timezone }: { garden: boolean; timezone: string }) {
   const cache = useQueryClient()
   const [location, setLocation] = React.useState('')
   const [gardenTarget, setGardenTarget] = React.useState('')
@@ -97,15 +111,18 @@ function ManualTaskForm({ garden }: { garden: boolean }) {
       garden_target: gardenTarget,
       due_start: start.toISOString(),
       due_end: end.toISOString(),
-      recurrence: frequency ? { frequency, interval: 1, weekdays: frequency === 'weekly' ? [new Date(start).getDay() === 0 ? 6 : new Date(start).getDay() - 1] : [] } : {}
+      recurrence: frequency
+        ? { frequency, interval: 1, weekdays: frequency === 'weekly' ? [(new Date(`${calendarDate(start.toISOString(), timezone)}T00:00:00Z`).getUTCDay() + 6) % 7] : [] }
+        : {}
     })
   }
   return (
     <Card className="mb-3">
-      <Card.Header>Schedule manual work</Card.Header>
+      <Card.Header>{garden ? 'Schedule a reminder' : 'Schedule manual work'}</Card.Header>
       <Card.Body>
         {mutation.isError && <Alert variant="danger">{Object.values(errorsByField(mutation.error)).join(' ') || 'Could not save the reminder. Please try again.'}</Alert>}
         {mutation.isSuccess && <Alert variant="success">Reminder added. Choose the queue view matching its due date to review it.</Alert>}
+        <p>Enter dates and times in your device’s local time. Repeats keep their local time in {timezone}.</p>
         <Form onSubmit={submit}>
           <Form.Group controlId="manual-reminder-location" className="mb-2">
             <Form.Label>Reminder location</Form.Label>
@@ -209,7 +226,7 @@ function ManualTaskForm({ garden }: { garden: boolean }) {
             </Col>
             <Col md={2}>
               <Form.Select aria-label="Reminder type" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
-                {TASK_TYPES.map(([value, label]) => (
+                {taskTypes(garden).map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
                   </option>
@@ -340,8 +357,9 @@ function RescheduleTask({ task }: { task: WorkTask }) {
 }
 
 function TaskActions({ task }: { task: WorkTask }) {
+  const garden = React.use(GardenModeContext)
   const cache = useQueryClient()
-  const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal) })
+  const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal), enabled: !garden })
   const mutation = useMutation({
     mutationFn: async (data: Record<string, unknown>) => {
       const acknowledged = task.pk === null ? await acknowledgeWorkTask(task.key) : task
@@ -349,45 +367,36 @@ function TaskActions({ task }: { task: WorkTask }) {
     },
     onSuccess: () => cache.invalidateQueries({ queryKey: queryKeys.work.all })
   })
-  const reasoned = (action: 'skip' | 'reopen') => {
-    const reason = globalThis.prompt(`Reason to ${action} this task:`)
-    if (reason) mutation.mutate({ action, reason })
-  }
   if (task.status === 'completed' || task.status === 'skipped') {
-    return (
-      <Button size="sm" variant="outline-secondary" onClick={() => reasoned('reopen')}>
-        Reopen
-      </Button>
-    )
+    return <TaskActionDialog task={task} action="reopen" />
   }
   return (
     <div className="d-flex flex-wrap gap-1">
-      <Button size="sm" onClick={() => mutation.mutate({ action: 'claim' })}>
-        Claim
-      </Button>
-      <Form.Select
-        size="sm"
-        aria-label={`Assign ${task.title}`}
-        value={task.assignee ?? ''}
-        onChange={(event) => mutation.mutate({ action: 'assign', assignee: event.target.value ? Number(event.target.value) : null })}
-      >
-        <option value="">Unassigned</option>
-        {(assignees.data ?? []).map((user) => (
-          <option key={user.pk} value={user.pk}>
-            {user.username}
-          </option>
-        ))}
-      </Form.Select>
-      <Button size="sm" variant="outline-secondary" onClick={() => mutation.mutate({ action: 'snooze', until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })}>
-        Snooze 1 day
-      </Button>
-      <Button size="sm" variant="success" onClick={() => mutation.mutate({ action: 'complete' })}>
-        Complete
-      </Button>
+      {!garden && (
+        <>
+          <Button size="sm" onClick={() => mutation.mutate({ action: 'claim' })}>
+            Claim
+          </Button>
+          <Form.Select
+            size="sm"
+            aria-label={`Assign ${task.title}`}
+            value={task.assignee ?? ''}
+            onChange={(event) => mutation.mutate({ action: 'assign', assignee: event.target.value ? Number(event.target.value) : null })}
+          >
+            <option value="">Unassigned</option>
+            {(assignees.data ?? []).map((user) => (
+              <option key={user.pk} value={user.pk}>
+                {user.username}
+              </option>
+            ))}
+          </Form.Select>
+        </>
+      )}
+      {mutation.isError && <Alert variant="danger">{Object.values(errorsByField(mutation.error)).join(' ') || 'Could not update this reminder.'}</Alert>}
+      <TaskActionDialog task={task} action="snooze" />
+      <TaskActionDialog task={task} action="complete" />
       <RescheduleTask task={task} />
-      <Button size="sm" variant="outline-danger" onClick={() => reasoned('skip')}>
-        Skip
-      </Button>
+      <TaskActionDialog task={task} action="skip" />
     </div>
   )
 }
@@ -407,6 +416,10 @@ function TaskDetails({ task, formatDate = formatDateTime }: { task: WorkTask; fo
             <div className="small" key={entry.pk}>
               {formatDate(entry.created)} · {entry.action} · {entry.actor_name ?? 'system'}
               {entry.reason ? ` — ${entry.reason}` : ''}
+              {entry.action === 'complete' &&
+                (entry.changes.results as Array<{ object_id: number; label: string; url: string }> | undefined)?.map((result) => (
+                  <div key={`${result.object_id}:${result.label}`}>Reviewed: {result.url ? <NavLink to={result.url}>{result.label}</NavLink> : result.label}</div>
+                ))}
               {entry.action === 'reschedule' &&
                 ['due_start', 'due_end'].map((field) => {
                   const change = entry.changes[field] as { before: string; after: string } | undefined
@@ -429,23 +442,23 @@ function TaskDetails({ task, formatDate = formatDateTime }: { task: WorkTask; fo
 function TaskTargets({ task }: { task: WorkTask }) {
   return (
     <>
-      {task.links
-        .filter((link) => link.role === 'target')
-        .map((link) => (
-          <div key={`${link.target_type}:${link.object_id}`}>
-            {link.url ? <NavLink to={link.url}>{link.label}</NavLink> : link.label}
-            {link.active_health_alerts > 0 && (
-              <Badge bg="warning" text="dark" className="ms-1">
-                Health alert
-              </Badge>
-            )}
-          </div>
-        ))}
+      {task.links.map((link) => (
+        <div key={`${link.role}:${link.target_type}:${link.object_id}`}>
+          {link.role === 'result' && <strong>Reviewed result: </strong>}
+          {link.url ? <NavLink to={link.url}>{link.label}</NavLink> : link.label}
+          {link.active_health_alerts > 0 && (
+            <Badge bg="warning" text="dark" className="ms-1">
+              Health alert
+            </Badge>
+          )}
+        </div>
+      ))}
     </>
   )
 }
 
 function TaskAgenda({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: string }) {
+  const garden = React.use(GardenModeContext)
   const dateLabel = new Intl.DateTimeFormat(undefined, { timeZone: timezone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
   const dateTime = new Intl.DateTimeFormat(undefined, { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' })
   const groups = new Map<string, Array<WorkTask>>()
@@ -472,7 +485,7 @@ function TaskAgenda({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: str
                 </p>
                 <TaskTargets task={task} />
                 <div className="small text-muted mb-2">
-                  {task.assignee_name ?? 'Unassigned'} · Priority {task.priority}
+                  {!garden && `${task.assignee_name ?? 'Unassigned'} · `}Priority {task.priority}
                 </div>
                 <TaskActions task={task} />
               </li>
@@ -571,6 +584,7 @@ function TaskCalendar({ tasks, timezone }: { tasks: Array<WorkTask>; timezone: s
 }
 
 function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
+  const garden = React.use(GardenModeContext)
   return (
     <Table responsive hover>
       <thead>
@@ -578,7 +592,7 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
           <th>Due</th>
           <th>Work</th>
           <th>Targets</th>
-          <th>Assignee</th>
+          {!garden && <th>Assignee</th>}
           <th>Priority</th>
           <th>Actions</th>
         </tr>
@@ -596,7 +610,7 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
             <td>
               <TaskTargets task={task} />
             </td>
-            <td>{task.assignee_name ?? 'Unassigned'}</td>
+            {!garden && <td>{task.assignee_name ?? 'Unassigned'}</td>}
             <td>{task.priority}</td>
             <td>
               <TaskActions task={task} />
@@ -605,7 +619,7 @@ function TaskTable({ tasks }: { tasks: Array<WorkTask> }) {
         ))}
         {tasks.length === 0 && (
           <tr>
-            <td colSpan={6} className="text-muted">
+            <td colSpan={garden ? 5 : 6} className="text-muted">
               No work in this view.
             </td>
           </tr>
@@ -646,7 +660,9 @@ function ruleMergeChoices(rules: Array<WorkRule>, source: WorkRule): Array<Catal
 }
 
 function RuleEditor() {
+  const garden = React.use(GardenModeContext)
   const cache = useQueryClient()
+  const [trigger, setTrigger] = React.useState(garden ? 'garden_planted' : NEW_RULE_TRIGGER)
   const [code, setCode] = React.useState('')
   const [name, setName] = React.useState('')
   const [taskType, setTaskType] = React.useState('watering')
@@ -684,12 +700,12 @@ function RuleEditor() {
   const create = useMutation({
     mutationFn: () =>
       addWorkRule({
-        code,
+        code: garden ? `garden-${crypto.randomUUID()}` : code,
         name,
         task_type: taskType,
-        trigger: NEW_RULE_TRIGGER,
+        trigger,
         display_order: rules.length,
-        frequency,
+        frequency: trigger === 'calendar' ? frequency : '',
         interval: 1,
         weekdays: frequency === 'weekly' ? [0] : [],
         priority: 20,
@@ -699,13 +715,13 @@ function RuleEditor() {
       })
   })
   const edit = useMutation({ mutationFn: ({ pk, changes }: { pk: number; changes: Partial<WorkRule> }) => updateWorkRule(pk, changes) })
-  const visible = found.filter((rule) => rule.active || showRetired)
+  const visible = found.filter((rule) => (rule.active || showRetired) && (!garden || (!NURSERY_TYPES.has(rule.task_type) && !NURSERY_TRIGGERS.has(rule.trigger))))
 
   return (
     <Card className="mt-4">
-      <Card.Header className="d-flex justify-content-between align-items-center gap-3">
+      <Card.Header className="d-flex flex-wrap justify-content-between align-items-center gap-3">
         <span>Automation rules</span>
-        <div className="d-flex align-items-center gap-3">
+        <div className="d-flex flex-wrap align-items-center gap-3">
           <CatalogSearch id="work-rule-search" onSearch={setSearch} label="Search care rules" />
           <Form.Check type="switch" id="show-retired-rules" label="Show retired" checked={showRetired} onChange={(event) => setShowRetired(event.target.checked)} />
         </div>
@@ -728,15 +744,15 @@ function RuleEditor() {
             onCancel={() => setMerging(null)}
           />
         )}
-        <Table size="sm">
+        <Table size="sm" responsive>
           <thead>
             <tr>
               <th>Rule</th>
               <th>Work</th>
               <th>Trigger</th>
               <th>Recurrence</th>
-              <th>Code</th>
-              <th />
+              {!garden && <th>Code</th>}
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -767,7 +783,7 @@ function RuleEditor() {
                       if (next !== rule.task_type) void save(() => edit.mutateAsync({ pk: rule.pk, changes: { task_type: next } }))
                     }}
                   >
-                    {TASK_TYPES.map(([value, label]) => (
+                    {taskTypes(garden).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
                       </option>
@@ -780,10 +796,11 @@ function RuleEditor() {
                     value={rule.trigger}
                     onChange={(event) => {
                       const next = event.target.value
-                      if (next !== rule.trigger) void save(() => edit.mutateAsync({ pk: rule.pk, changes: { trigger: next } }))
+                      if (next !== rule.trigger)
+                        void save(() => edit.mutateAsync({ pk: rule.pk, changes: { trigger: next, frequency: next === 'calendar' ? rule.frequency || 'daily' : '' } }))
                     }}
                   >
-                    {TRIGGERS.map(([value, label]) => (
+                    {triggers(garden).map(([value, label]) => (
                       <option key={value} value={value}>
                         {label}
                       </option>
@@ -794,9 +811,11 @@ function RuleEditor() {
                 {/* The code is what the seeded defaults and every acknowledged
                     task hold this rule by, so it is shown and never offered for
                     editing: a wrong one is merged away instead. */}
-                <td>
-                  <code>{rule.code}</code>
-                </td>
+                {!garden && (
+                  <td>
+                    <code>{rule.code}</code>
+                  </td>
+                )}
                 <td className="text-nowrap">
                   {rule.merged_into === null && (
                     <>
@@ -809,25 +828,41 @@ function RuleEditor() {
                       </Button>{' '}
                     </>
                   )}
+                  <RuleTiming rule={rule} />{' '}
                   <RetireButton active={rule.active} saving={edit.isPending} onChange={(active) => void save(() => edit.mutateAsync({ pk: rule.pk, changes: { active } }))} />
                 </td>
               </tr>
             ))}
           </tbody>
         </Table>
+        <p>
+          Choose a source date, then use Timing to set day offsets, variety, and season. For example: thinning after germination, succession after planting, seed saving after
+          maturity, or cleanup after a recorded finish. Only germination, maturity, and existing recorded follow-ups have automatic defaults.
+        </p>
         <Row className="g-2">
           <Col>
-            <Form.Control aria-label="New care rule code" placeholder="stable_code" value={code} onChange={(event) => setCode(event.target.value)} />
+            <Form.Select aria-label="New care rule source date" value={trigger} onChange={(event) => setTrigger(event.target.value)}>
+              {triggers(garden).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Form.Select>
           </Col>
+          {!garden && (
+            <Col>
+              <Form.Control aria-label="New care rule code" placeholder="stable_code" value={code} onChange={(event) => setCode(event.target.value)} />
+            </Col>
+          )}
           <Col>
             <Form.Control aria-label="New care rule name" placeholder="New care rule" value={name} onChange={(event) => setName(event.target.value)} />
             {/* Checked among the rules making the same kind of work from the
                 same anchor, because that is where a merge would be allowed. */}
-            <DuplicateWarning collection={RULES_COLLECTION} name={name} scope={{ task_type: taskType, trigger: NEW_RULE_TRIGGER }} />
+            <DuplicateWarning collection={RULES_COLLECTION} name={name} scope={{ task_type: taskType, trigger }} />
           </Col>
           <Col>
             <Form.Select aria-label="New care rule work" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
-              {TASK_TYPES.map(([value, label]) => (
+              {taskTypes(garden).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>
@@ -835,14 +870,19 @@ function RuleEditor() {
             </Form.Select>
           </Col>
           <Col>
-            <Form.Select aria-label="New care rule recurrence" value={frequency} onChange={(event) => setFrequency(event.target.value as 'daily' | 'weekly')}>
+            <Form.Select
+              disabled={trigger !== 'calendar'}
+              aria-label="New care rule recurrence"
+              value={frequency}
+              onChange={(event) => setFrequency(event.target.value as 'daily' | 'weekly')}
+            >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly on Monday</option>
             </Form.Select>
           </Col>
           <Col xs="auto">
             <Button
-              disabled={!code || !name || create.isPending}
+              disabled={(!garden && !code) || !name || create.isPending}
               onClick={() =>
                 void save(async () => {
                   await create.mutateAsync()
@@ -861,6 +901,7 @@ function RuleEditor() {
 }
 
 function WorkQueueView({ workspace }: { workspace: Workspace }) {
+  const garden = workspace.mode === 'garden'
   const [presentation, setPresentation] = React.useState(workspace.mode === 'garden' ? 'agenda' : 'table')
   const [view, setView] = React.useState<WorkView>('today')
   const [taskType, setTaskType] = React.useState('')
@@ -876,73 +917,94 @@ function WorkQueueView({ workspace }: { workspace: Workspace }) {
     batch: batch ? Number(batch) : undefined,
     location: location ? Number(location) : undefined
   }
+  const locations = useQuery({ queryKey: queryKeys.locations.list('active'), queryFn: ({ signal }) => getLocations(signal, true), enabled: garden })
   const tasks = useQuery({ queryKey: queryKeys.work.tasks(filters), queryFn: ({ signal }) => getWorkTasks(filters, signal) })
-  const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal) })
+  const assignees = useQuery({ queryKey: queryKeys.work.assignees, queryFn: ({ signal }) => getWorkAssignees(signal), enabled: !garden })
   return (
-    <main className="container-fluid py-3">
-      <h1>{workspace.mode === 'garden' ? 'Garden reminders' : 'Nursery work'}</h1>
-      <p>Generated and manually scheduled work stays here until it is completed or deliberately skipped.</p>
-      <ManualTaskForm garden={workspace.mode === 'garden'} />
-      <Nav variant="tabs" activeKey={view} onSelect={(key) => key && setView(key as WorkView)}>
-        {VIEWS.map(([value, label]) => (
-          <Nav.Item key={value}>
-            <Nav.Link eventKey={value}>{label}</Nav.Link>
-          </Nav.Item>
-        ))}
-      </Nav>
-      <Row className="g-2 py-3">
-        <Col md={3}>
-          <Form.Select aria-label="Task type" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
-            <option value="">All task types</option>
-            {TASK_TYPES.map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
+    <GardenModeContext value={garden}>
+      <main className="container-fluid py-3">
+        <h1>{workspace.mode === 'garden' ? 'Garden reminders' : 'Nursery work'}</h1>
+        <p>
+          Review reminders here and record the work separately. Source-based reminders follow the current crop records until acknowledged. No email or push notifications are
+          required.
+        </p>
+        <ManualTaskForm garden={garden} timezone={workspace.timezone} />
+        <Nav variant="tabs" activeKey={view} onSelect={(key) => key && setView(key as WorkView)}>
+          {VIEWS.map(([value, label]) => (
+            <Nav.Item key={value}>
+              <Nav.Link eventKey={value}>{label}</Nav.Link>
+            </Nav.Item>
+          ))}
+        </Nav>
+        <Row className="g-2 py-3">
+          <Col md={3}>
+            <Form.Select aria-label="Task type" value={taskType} onChange={(event) => setTaskType(event.target.value)}>
+              <option value="">All task types</option>
+              {taskTypes(garden).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Form.Select>
+          </Col>
+          {!garden && (
+            <Col md={2}>
+              <Form.Control aria-label="Batch ID" type="number" min={1} placeholder="Batch ID" value={batch} onChange={(event) => setBatch(event.target.value)} />
+            </Col>
+          )}
+          <Col md={2}>
+            {garden ? (
+              <Form.Select aria-label="Reminder location filter" value={location} onChange={(event) => setLocation(event.target.value)}>
+                <option value="">All locations</option>
+                {locations.data?.map((place) => (
+                  <option key={place.pk} value={place.pk}>
+                    {place.full_name}
+                  </option>
+                ))}
+              </Form.Select>
+            ) : (
+              <Form.Control aria-label="Location ID" type="number" min={1} placeholder="Location ID" value={location} onChange={(event) => setLocation(event.target.value)} />
+            )}
+          </Col>
+          <Col md={2}>
+            <Form.Control aria-label="Priority" type="number" placeholder="Priority" value={priority} onChange={(event) => setPriority(event.target.value)} />
+          </Col>
+          {!garden && (
+            <Col md={3}>
+              <Form.Select aria-label="Assignee" value={assignee} onChange={(event) => setAssignee(event.target.value)}>
+                <option value="">All assignees</option>
+                {(assignees.data ?? []).map((user) => (
+                  <option key={user.pk} value={user.pk}>
+                    {user.username}
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+          )}
+        </Row>
+        <Form.Group controlId="work-presentation" className="mb-3">
+          <Form.Label>Presentation</Form.Label>
+          <Form.Select value={presentation} onChange={(event) => setPresentation(event.target.value)} style={{ maxWidth: '16rem' }}>
+            <option value="agenda">Agenda</option>
+            <option value="calendar">Calendar</option>
+            <option value="table">Table</option>
           </Form.Select>
-        </Col>
-        <Col md={2}>
-          <Form.Control aria-label="Batch ID" type="number" min={1} placeholder="Batch ID" value={batch} onChange={(event) => setBatch(event.target.value)} />
-        </Col>
-        <Col md={2}>
-          <Form.Control aria-label="Location ID" type="number" min={1} placeholder="Location ID" value={location} onChange={(event) => setLocation(event.target.value)} />
-        </Col>
-        <Col md={2}>
-          <Form.Control aria-label="Priority" type="number" placeholder="Priority" value={priority} onChange={(event) => setPriority(event.target.value)} />
-        </Col>
-        <Col md={3}>
-          <Form.Select aria-label="Assignee" value={assignee} onChange={(event) => setAssignee(event.target.value)}>
-            <option value="">All assignees</option>
-            {(assignees.data ?? []).map((user) => (
-              <option key={user.pk} value={user.pk}>
-                {user.username}
-              </option>
-            ))}
-          </Form.Select>
-        </Col>
-      </Row>
-      <Form.Group controlId="work-presentation" className="mb-3">
-        <Form.Label>Presentation</Form.Label>
-        <Form.Select value={presentation} onChange={(event) => setPresentation(event.target.value)} style={{ maxWidth: '16rem' }}>
-          <option value="agenda">Agenda</option>
-          <option value="calendar">Calendar</option>
-          <option value="table">Table</option>
-        </Form.Select>
-      </Form.Group>
-      {view === 'upcoming' && <p>Open reminders whose due windows reach tomorrow or later in the workspace timezone, including work beyond this week.</p>}
-      {tasks.isPending ? (
-        <p role="status">Loading work…</p>
-      ) : tasks.isError ? (
-        <Alert variant="danger">Could not load work. Please try again.</Alert>
-      ) : presentation === 'calendar' ? (
-        <TaskCalendar tasks={tasks.data ?? []} timezone={workspace.timezone} />
-      ) : presentation === 'agenda' ? (
-        <TaskAgenda tasks={tasks.data ?? []} timezone={workspace.timezone} />
-      ) : (
-        <TaskTable tasks={tasks.data ?? []} />
-      )}
-      <RuleEditor />
-    </main>
+        </Form.Group>
+        {view === 'upcoming' && <p>Open reminders whose due windows reach tomorrow or later in the workspace timezone, including work beyond this week.</p>}
+        {tasks.isPending ? (
+          <p role="status">Loading work…</p>
+        ) : tasks.isError ? (
+          <Alert variant="danger">Could not load work. Please try again.</Alert>
+        ) : presentation === 'calendar' ? (
+          <TaskCalendar tasks={tasks.data ?? []} timezone={workspace.timezone} />
+        ) : presentation === 'agenda' ? (
+          <TaskAgenda tasks={tasks.data ?? []} timezone={workspace.timezone} />
+        ) : (
+          <TaskTable tasks={tasks.data ?? []} />
+        )}
+        <RuleEditor />
+      </main>
+    </GardenModeContext>
   )
 }
 

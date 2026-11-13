@@ -4,7 +4,9 @@
 # the action dispatcher deliberately keeps each supported transition visible.
 # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-statements
 
+from datetime import timedelta
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -108,8 +110,11 @@ def _next_manual_occurrence(task, user):
         task.workspace, task.due_start, recurrence['frequency'],
         recurrence.get('interval', 1), recurrence.get('weekdays', ()),
     )
-    duration = task.due_end - task.due_start
-    key = f'{task.key}:next:{next_start.isoformat()}'
+    local_zone = ZoneInfo(task.workspace.timezone)
+    day_shift = next_start.date() - task.due_start.astimezone(local_zone).date()
+    next_end = task.due_end.astimezone(local_zone) + timedelta(days=day_shift.days)
+    # Parent identity is sufficient and does not grow with the series length.
+    key = f'manual:{task.pk}:next'
     following, created = WorkTask.objects.get_or_create(
         workspace=task.workspace, key=key,
         defaults={
@@ -119,7 +124,7 @@ def _next_manual_occurrence(task, user):
             'notes': task.notes,
             'priority': task.priority,
             'due_start': next_start,
-            'due_end': next_start + duration,
+            'due_end': next_end,
             'assignee': task.assignee,
             'recurrence': recurrence,
             'parent': task,
@@ -135,6 +140,17 @@ def _next_manual_occurrence(task, user):
             )
         _history(following, 'created', user, changes={'recurs_from': task.pk})
     return following
+
+
+def _link_results(task, workspace, results):
+    """Retain reviewed facts across reopen without duplicating their links."""
+    for result in results:
+        target = _result_target(workspace, result)
+        content_type, object_id = target_identity(target)
+        if not task.links.filter(role=WorkTaskLink.Role.RESULT, content_type=content_type, object_id=object_id).exists():
+            _link(task, WorkTaskLink.Role.RESULT, target,
+                  result.get('label') or str(target), result.get('url', ''))
+    return list(task.links.filter(role=WorkTaskLink.Role.RESULT).values('object_id', 'label', 'url'))
 
 
 def _reschedule(task, values):
@@ -189,6 +205,8 @@ def act_on_task(workspace, user, task_id, action, values):  # pylint: disable=to
         task.assignee = user
         changes['assignee'] = user.pk
     elif action == 'snooze':
+        if task.status not in {WorkTask.Status.OPEN, WorkTask.Status.SNOOZED}:
+            raise ValidationError({'status': 'Reopen completed or skipped work before snoozing it.'})
         until = values.get('until')
         if until is None or until <= now:
             raise ValidationError({'until': 'Snooze until a future time.'})
@@ -201,12 +219,7 @@ def act_on_task(workspace, user, task_id, action, values):  # pylint: disable=to
         task.status = WorkTask.Status.COMPLETED
         task.completed_at = now
         task.snoozed_until = None
-        for result in values.get('results', ()):
-            target = _result_target(workspace, result)
-            _link(
-                task, WorkTaskLink.Role.RESULT, target,
-                result.get('label') or str(target), result.get('url', ''),
-            )
+        changes['results'] = _link_results(task, workspace, values.get('results', ()))
     elif action == 'skip':
         if not reason:
             raise ValidationError({'reason': 'Explain why this task was skipped.'})

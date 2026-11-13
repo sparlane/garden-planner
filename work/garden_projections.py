@@ -34,12 +34,14 @@ def _known_planting(target):
 
 # Each anchor has distinct eligibility; early returns keep unknown dates out.
 # pylint: disable=too-many-return-statements,too-many-branches
-def _dates(rule, row, target, variety):
+def _dates(rule, row, target, variety, calendar_day):
     """Return a source window, or nothing when its anchor is not known."""
     if rule.trigger == WorkTaskRule.Trigger.GARDEN_FINISHED:
         return (row['finished_on'], row['finished_on']) if row['finished_on'] and row['state'] not in PRESENT_STATES else None
     if row['finished_on'] or row['state'] not in {'current', *PRESENT_STATES}:
         return None
+    if calendar_day is not None:
+        return (calendar_day, calendar_day) if row['quantity'] != 0 else None
     if row['quantity'] == 0 or not _known_planting(target):
         return None
     planted = row['planted_on']
@@ -71,16 +73,25 @@ def _dates(rule, row, target, variety):
     return planted + timedelta(days=minimum), planted + timedelta(days=maximum)
 
 
-def garden_date_tasks(rule, make_task, link_type):
-    """Project one stable occurrence per register identity and rule."""
-    rows = garden_register_projection(rule.workspace)
+def _source_data(workspace):
+    """Load one register and its authoritative targets once per queue request."""
+    rows = garden_register_projection(workspace)
     targets = {
-        kind: model.objects.filter(workspace=rule.workspace).select_related(
+        kind: model.objects.filter(workspace=workspace).select_related(
             *(['garden_planting'] if kind == 'individual' else []),
         ).in_bulk([row['record_id'] for row in rows if row['target_kind'] == kind])
         for kind, model in TARGET_MODELS.items()
     }
-    varieties = PlantVariety.objects.filter(workspace=rule.workspace).select_related('plant').in_bulk()
+    varieties = PlantVariety.objects.filter(workspace=workspace).select_related('plant').in_bulk()
+    return rows, targets, varieties
+
+
+def garden_date_tasks(rule, make_task, link_type, calendar_day=None, cache=None):  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    """Project one stable occurrence per register identity and rule."""
+    cache = {} if cache is None else cache
+    if rule.workspace_id not in cache:
+        cache[rule.workspace_id] = _source_data(rule.workspace)
+    rows, targets, varieties = cache[rule.workspace_id]
     tasks = []
     for row in rows:
         if rule.variety_id and row['variety'] != rule.variety_id:
@@ -92,12 +103,15 @@ def garden_date_tasks(rule, make_task, link_type):
         if rule.stage_id:
             continue
         target = targets[row['target_kind']][row['record_id']]
-        window = _dates(rule, row, target, varieties[row['variety']])
+        window = _dates(rule, row, target, varieties[row['variety']], calendar_day)
         if window is None:
             continue
         label = f"{row['plant_name']} — {row['variety_name']} — {row['location_label']}"
+        occurrence = f"garden:{row['key']}"
+        if calendar_day is not None:
+            occurrence += f':{calendar_day.isoformat()}'
         task = make_task(
-            rule, f"garden:{row['key']}", f'{rule.name}: {label}'[:255],
+            rule, occurrence, f'{rule.name}: {label}'[:255],
             *window, [link_type(target, label[:255], f"/plantings/garden-register/{row['key']}")],
             {'garden_target': row['key'], 'anchor_start': window[0].isoformat(),
              'anchor_end': window[1].isoformat(), 'date_is_approximate': row['date_is_approximate']},
