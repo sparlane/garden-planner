@@ -32,6 +32,7 @@ from workspaces.scoping import (
 from .models import WorkTask, WorkTaskHistory, WorkTaskLink, WorkTaskRule, WorkTaskType
 from .projections import ProjectedTask, projected_tasks
 from .services import acknowledge_projection, act_on_task, create_manual_task
+from .results import result_options
 
 
 def _errors(error):
@@ -151,12 +152,17 @@ class ManualTaskSerializer(serializers.Serializer):
         if attrs['due_end'] < attrs['due_start']:
             raise serializers.ValidationError({'due_end': 'The due window cannot end before it starts.'})
         recurrence = attrs['recurrence']
+        if not isinstance(recurrence, dict):
+            raise serializers.ValidationError({'recurrence': 'Provide a repeat rule object.'})
+        interval = recurrence.get('interval', 1)
+        if not isinstance(interval, int) or isinstance(interval, bool) or not 1 <= interval <= 365:
+            raise serializers.ValidationError({'recurrence': 'Repeat interval must be a whole number from 1 to 365.'})
         if recurrence and recurrence.get('frequency') not in {
                 WorkTaskRule.Frequency.DAILY, WorkTaskRule.Frequency.WEEKLY}:
             raise serializers.ValidationError({'recurrence': 'Choose daily or weekly recurrence.'})
         if recurrence.get('frequency') == WorkTaskRule.Frequency.WEEKLY:
             weekdays = recurrence.get('weekdays', [])
-            if not weekdays or any(day not in range(7) for day in weekdays):
+            if not isinstance(weekdays, list) or not weekdays or any(not isinstance(day, int) or isinstance(day, bool) or day not in range(7) for day in weekdays):
                 raise serializers.ValidationError({
                     'recurrence': 'Weekly recurrence requires weekdays from 0 through 6.',
                 })
@@ -311,6 +317,10 @@ class WorkTaskViewSet(OperationalWorkMixin, viewsets.GenericViewSet):
             {**values, 'assignee': assignee}, targets=targets,
         )
         return Response(WorkTaskSerializer(task).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='result-options')
+    def result_options(self, request):
+        return result_options(self.get_current_workspace(), request)
 
     @action(detail=False, methods=['post'], url_path='acknowledge')
     def acknowledge(self, request):

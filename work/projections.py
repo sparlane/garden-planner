@@ -505,12 +505,21 @@ def _calendar_day(rule, today):
     if rule.frequency == WorkTaskRule.Frequency.DAILY:
         elapsed = max((today - created).days, 0)
         return created + timedelta(days=(elapsed // rule.interval) * rule.interval)
-    candidates = [today - timedelta(days=offset) for offset in range(0, 14 * rule.interval)]
-    return next((day for day in candidates if day.weekday() in rule.weekdays), created)
+    first_week = created - timedelta(days=created.weekday())
+    for offset in range(7 * rule.interval + 7):
+        day = today - timedelta(days=offset)
+        if day < created:
+            break
+        week = day - timedelta(days=day.weekday())
+        if day.weekday() in rule.weekdays and ((week - first_week).days // 7) % rule.interval == 0:
+            return day
+    return None
 
 
 def _calendar_tasks(rule, today):
     day = _calendar_day(rule, today)
+    if day is None:
+        return []
     grouped = {}
     for target, batch, location, growth in _growth_candidates(rule):
         if not _allows(rule, batch.variety, growth['stage'], location):
@@ -806,6 +815,25 @@ PROJECTORS = {
 }
 
 
+def _rule_tasks(rule, today, garden_cache):
+    """Dispatch shared source rules and household-specific date projections."""
+    garden = rule.workspace.mode == rule.workspace.Mode.GARDEN
+    if rule.trigger in {WorkTaskRule.Trigger.GARDEN_PLANTED, WorkTaskRule.Trigger.GARDEN_FINISHED}:
+        return garden_date_tasks(rule, _source_task, TargetLink, cache=garden_cache)
+    if garden and rule.trigger in {
+            WorkTaskRule.Trigger.GERMINATION, WorkTaskRule.Trigger.GERMINATION_WINDOW_END,
+            WorkTaskRule.Trigger.MATURITY}:
+        tasks = garden_date_tasks(rule, _source_task, TargetLink, cache=garden_cache)
+        tasks.extend(PROJECTORS[rule.trigger](rule))
+        return tasks
+    if rule.trigger == WorkTaskRule.Trigger.CALENDAR:
+        if garden:
+            day = _calendar_day(rule, today)
+            return garden_date_tasks(rule, _source_task, TargetLink, day, garden_cache) if day is not None else []
+        return _calendar_tasks(rule, today)
+    return PROJECTORS[rule.trigger](rule)
+
+
 def projected_tasks(workspace, today=None):
     """Return current projections, suppressing occurrences already acknowledged."""
     today = today or timezone.now().astimezone(ZoneInfo(workspace.timezone)).date()
@@ -813,25 +841,17 @@ def projected_tasks(workspace, today=None):
     rules = WorkTaskRule.objects.filter(workspace=workspace, active=True).select_related(
         'workspace', 'variety', 'stage', 'location', 'default_assignee',
     )
+    if workspace.mode == workspace.Mode.GARDEN:
+        rules = rules.exclude(trigger__in=[
+            WorkTaskRule.Trigger.PLAN_MILESTONE, WorkTaskRule.Trigger.STAGE_AGE,
+            WorkTaskRule.Trigger.EXPECTED_READY, WorkTaskRule.Trigger.RESERVATION_EXPIRY,
+            WorkTaskRule.Trigger.ASSUMPTION_VARIANCE,
+        ])
     token = _growth_cache.set({})
     try:
+        garden_cache = {}
         for rule in rules:
-            if rule.trigger in {WorkTaskRule.Trigger.GARDEN_PLANTED, WorkTaskRule.Trigger.GARDEN_FINISHED}:
-                tasks.extend(garden_date_tasks(rule, _source_task, TargetLink))
-            elif workspace.mode == workspace.Mode.GARDEN and rule.trigger in {
-                    WorkTaskRule.Trigger.GERMINATION, WorkTaskRule.Trigger.GERMINATION_WINDOW_END,
-                    WorkTaskRule.Trigger.MATURITY}:
-                tasks.extend(garden_date_tasks(rule, _source_task, TargetLink))
-                if rule.trigger == WorkTaskRule.Trigger.GERMINATION_WINDOW_END:
-                    tasks.extend(_germination_assessment_tasks(rule))
-                elif rule.trigger == WorkTaskRule.Trigger.MATURITY:
-                    tasks.extend(_maturity_tasks(rule))
-                else:
-                    tasks.extend(_sowing_tasks(rule))
-            elif rule.trigger == WorkTaskRule.Trigger.CALENDAR:
-                tasks.extend(_calendar_tasks(rule, today))
-            else:
-                tasks.extend(PROJECTORS[rule.trigger](rule))
+            tasks.extend(_rule_tasks(rule, today, garden_cache))
     finally:
         _growth_cache.reset(token)
     acknowledged = _acknowledged_occurrences(workspace, tasks)
