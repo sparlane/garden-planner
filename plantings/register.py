@@ -72,6 +72,7 @@ class RegisterFilters(NamedTuple):
     """One validated set of register filters, shared by rows and totals."""
 
     variety: object = None
+    plant: object = None
     batch: object = None
     states: tuple = ()
     sellable: object = None
@@ -124,6 +125,7 @@ def parse_register_filters(query_params):
 
     return RegisterFilters(
         variety=parse_integer(query_params.get('variety'), 'variety'),
+        plant=parse_integer(query_params.get('plant'), 'plant'),
         batch=parse_integer(query_params.get('batch'), 'batch'),
         states=states,
         sellable=parse_boolean(query_params.get('sellable'), 'sellable'),
@@ -417,11 +419,20 @@ def _apply_search(queryset, search):
     return queryset.filter(matches)
 
 
+def _filter_crop(queryset, filters):
+    """Narrow to one variety, or to every variety of one plant."""
+    if filters.variety is not None:
+        queryset = queryset.filter(**{f'{_BATCH}__variety_id': filters.variety})
+    if filters.plant is not None:
+        # All the tomatoes, whichever variety they are.
+        queryset = queryset.filter(**{f'{_BATCH}__variety__plant_id': filters.plant})
+    return queryset
+
+
 def register_queryset(workspace, filters):  # pylint: disable=too-many-branches
     """Return the plants one validated filter set selects, in its order."""
     queryset = register_projection(workspace)
-    if filters.variety is not None:
-        queryset = queryset.filter(**{f'{_BATCH}__variety_id': filters.variety})
+    queryset = _filter_crop(queryset, filters)
     if filters.batch is not None:
         queryset = queryset.filter(**{f'{_BATCH}_id': filters.batch})
     if filters.states:
