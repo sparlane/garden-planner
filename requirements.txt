@@ -5,7 +5,7 @@ markdown==3.11.3
 Pillow==13.0.0
 
 # Database
-psycopg[binary,pool]==3.3.8
+psycopg[binary,pool]==3.3.9
 
 uwsgi==2.0.31
 
